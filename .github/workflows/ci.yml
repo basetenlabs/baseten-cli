@@ -25,4 +25,10 @@ jobs:
           git diff --exit-code
 
       - name: Test
+        env:
+          # Forks won't have these secrets so e2e tests skip, but pushes
+          # to main will run them.
+          BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
+          BASETEN_E2E_TEST_DOMAIN: ${{ secrets.BASETEN_E2E_TEST_DOMAIN }}
+          BASETEN_E2E_TEST_MODEL_ID: ${{ secrets.BASETEN_E2E_TEST_MODEL_ID }}
         run: go test ./...

@@ -18,3 +18,18 @@
 - **Public side** (`cmd/`): Define a `Command` struct and a flags struct. The flags struct must embed `CommandFlags` (directly or transitively). Use struct tags (`flag`, `short`, `desc`, `default`, `enum`, `required`) to declare flags.
 - **Internal side** (`internal/cmd/`): Write the runner function and register it in an `init()` with `Register("parent child", myRunner)`. The path and flag type must match the command definition exactly.
 - **Tests** go in `command.<name>_test.go` in the `cmd_test` package. Test names follow `Test_ParentCmd_SubCmd_WhatThisTests` (e.g. `Test_API_Management_DefaultGET`).
+
+## End-to-End Tests
+
+E2e tests in `internal/cmd/command.e2e_test.go` run against a live Baseten environment. They are skipped automatically when `BASETEN_E2E_TEST_API_KEY` is not set.
+
+To bootstrap the test model, see [baseten-python](https://github.com/basetenlabs/baseten-python)'s contributing guide.
+
+### Running
+
+```bash
+BASETEN_E2E_TEST_API_KEY=... \
+BASETEN_E2E_TEST_DOMAIN=... \
+BASETEN_E2E_TEST_MODEL_ID=... \
+    go test ./...
+```
