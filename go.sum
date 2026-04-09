@@ -1,3 +1,5 @@
+github.com/basetenlabs/baseten-go v0.0.0-20260409154506-ffe42f08f57d h1:o94p3Zt6OrAn5XofLsZd4CpPp5dATuPCtTDCORjFabg=
+github.com/basetenlabs/baseten-go v0.0.0-20260409154506-ffe42f08f57d/go.mod h1:V1hYwZ/70xV0s2sZ6ZXzB/QgAXGcCf9KRX3sWEvZH/I=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

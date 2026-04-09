@@ -203,4 +203,3 @@ func applyJQ(ctx *CommandContext, data any, query *gojq.Query) error {
 	}
 	return nil
 }
-

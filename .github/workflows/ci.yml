@@ -11,12 +11,21 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # TODO: Remove GOPRIVATE and the git config step below once baseten-go
+    # is open source. After that, the Go module proxy can fetch it directly.
+    env:
+      GOPRIVATE: github.com/basetenlabs/*
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      # TODO: Remove once baseten-go is open source.
+      - name: Configure private Go module access
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.TEMP_PRIVATE_REPO_SECRET }}@github.com/".insteadOf "https://github.com/"
 
       - name: Lint
         run: |
