@@ -65,6 +65,7 @@ func Register[T any](path string, fn func(*CommandContext, *T) error) {
 // ExecuteOptions configures command execution.
 type ExecuteOptions struct {
 	Args         []string
+	Stdin        io.Reader
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ExitWithCode func(int)
@@ -73,6 +74,9 @@ type ExecuteOptions struct {
 func (o *ExecuteOptions) applyDefaults() {
 	if o.Args == nil {
 		o.Args = os.Args[1:]
+	}
+	if o.Stdin == nil {
+		o.Stdin = os.Stdin
 	}
 	if o.Stdout == nil {
 		o.Stdout = os.Stdout
@@ -136,6 +140,13 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 		if def.Flags != nil {
 			panic(fmt.Sprintf("command %q has children and must not have Flags", path))
 		}
+		c.Args = cobra.ArbitraryArgs
+		c.RunE = func(c *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return c.Help()
+			}
+			return fmt.Errorf("unknown command %q for %q", args[0], c.CommandPath())
+		}
 		for _, child := range def.Children {
 			c.AddCommand(buildCommand(child, path, options))
 		}
@@ -164,6 +175,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				Context:      c.Context(),
 				Command:      c,
 				Args:         args,
+				Stdin:        options.Stdin,
 				Stdout:       options.Stdout,
 				Stderr:       options.Stderr,
 				ExitWithCode: options.ExitWithCode,

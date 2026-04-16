@@ -9,8 +9,10 @@ import (
 	"os"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 )
 
 // CommandContext is passed to run functions.
@@ -21,6 +23,7 @@ type CommandContext struct {
 	JSON         bool
 	JSONCompact  bool
 	JSONLines    bool
+	Stdin        io.Reader
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ExitWithCode func(int)
@@ -169,35 +172,119 @@ func WithHTTPClient(ctx context.Context, c *http.Client) context.Context {
 	return context.WithValue(ctx, httpClientKey{}, c)
 }
 
-// NewManagementClient creates a management API client using the API key from
-// BASETEN_API_KEY and base URL from BASETEN_BASE_URL (defaulting to
-// https://api.baseten.co).
-func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error) {
-	apiKey, err := GetAPIKey()
+const defaultHost = "https://app.baseten.co"
+const oauthClientID = "baseten-cli"
+
+// ResolveHost returns the API host from BASETEN_BASE_URL env var, or the
+// default.
+func ResolveHost() string {
+	if h := os.Getenv("BASETEN_BASE_URL"); h != "" {
+		return h
+	}
+	return defaultHost
+}
+
+// IsInteractive returns true if the context's stdin is a terminal.
+func (c *CommandContext) IsInteractive() bool {
+	f, ok := c.Stdin.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// OAuthConfig returns the OAuth2 configuration for the given host.
+func OAuthConfig(host string) *oauth2.Config {
+	return &oauth2.Config{
+		ClientID: oauthClientID,
+		Endpoint: oauth2.Endpoint{
+			DeviceAuthURL: host + "/v1/users/auth/device/authorize",
+			TokenURL:      host + "/v1/users/auth/device/token",
+		},
+	}
+}
+
+// NewAuthStore creates an auth store using the default config directory.
+func NewAuthStore(insecureStorage bool) (*auth.Store, error) {
+	dir, err := auth.DefaultConfigDir()
 	if err != nil {
 		return nil, err
 	}
+	return auth.NewStore(auth.StoreOptions{
+		Dir:             dir,
+		InsecureStorage: insecureStorage,
+	}), nil
+}
+
+// NewManagementClient creates a management API client that resolves
+// credentials via the auth store (env var > stored credential).
+func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error) {
+	host := ResolveHost()
+	store, err := NewAuthStore(false)
+	if err != nil {
+		return nil, err
+	}
+	transport := &auth.Transport{
+		Store:       store,
+		Host:        host,
+		OAuthConfig: OAuthConfig(host),
+		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
+	}
 	return client.NewManagementClient(client.ManagementClientOptions{
-		APIKey:     apiKey,
-		BaseURL:    os.Getenv("BASETEN_BASE_URL"),
-		HTTPClient: c.httpClient(),
+		BaseURL:    host,
+		DeferAuth:  true,
+		HTTPClient: transport,
 	})
 }
 
-// NewInferenceClient creates an inference API client using the API key from
-// BASETEN_API_KEY. The base URL is computed from the given flags, or from
-// BASETEN_BASE_URL if set.
+// NewManagementClientWithAuth creates a management API client with a specific
+// auth header. Used during login to validate a credential before storing it.
+func (c *CommandContext) NewManagementClientWithAuth(authHeader string) (*client.ManagementClient, error) {
+	return client.NewManagementClient(client.ManagementClientOptions{
+		BaseURL:   ResolveHost(),
+		DeferAuth: true,
+		HTTPClient: &staticAuthClient{
+			header: authHeader,
+		},
+	})
+}
+
+// NewInferenceClient creates an inference API client that resolves
+// credentials via the auth store. Inference only supports API key auth.
 func (c *CommandContext) NewInferenceClient(flags cmd.InferenceClientFlags) (*client.InferenceClient, error) {
-	apiKey, err := GetAPIKey()
+	host := ResolveHost()
+	store, err := NewAuthStore(false)
 	if err != nil {
 		return nil, err
 	}
+	transport := &auth.Transport{
+		Store:       store,
+		Host:        host,
+		OAuthConfig: OAuthConfig(host),
+		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
+		APIKeyOnly:  true,
+	}
 	return client.NewInferenceClient(client.InferenceClientOptions{
-		APIKey:      apiKey,
 		ModelID:     flags.ModelID,
 		ChainID:     flags.ChainID,
 		Environment: flags.Environment,
-		BaseURL:     os.Getenv("BASETEN_BASE_URL"),
-		HTTPClient:  c.httpClient(),
+		BaseURL:     os.Getenv("BASETEN_INFERENCE_URL"),
+		DeferAuth:   true,
+		HTTPClient:  transport,
 	})
+}
+
+// staticAuthClient is an HTTP client that sets a fixed Authorization header.
+type staticAuthClient struct {
+	header string
+}
+
+func (c *staticAuthClient) Do(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", c.header)
+	return http.DefaultClient.Do(req)
 }

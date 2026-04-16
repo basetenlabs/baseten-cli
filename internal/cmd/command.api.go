@@ -24,7 +24,8 @@ func commandAPIManagement(ctx *CommandContext, flags *cmd.APIManagementFlags) er
 		return err
 	}
 	api := cl.API()
-	// Prepend /v1 to the base URL since all management API paths are under /v1.
+	// Accept paths with or without a leading /v1 since the docs show the v1 prefix.
+	ctx.Args[0] = strings.TrimPrefix(strings.TrimPrefix(ctx.Args[0], "/"), "v1/")
 	return callAPI(ctx, &flags.APIFlags, strings.TrimRight(api.BaseURL, "/")+"/v1", api.HTTPClient, api.Headers)
 }
 
