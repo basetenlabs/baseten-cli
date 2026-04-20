@@ -93,7 +93,7 @@ func Test_E2E_API_Management_JQFilter(t *testing.T) {
 func Test_E2E_API_Inference_Predict(t *testing.T) {
 	skipOrFailE2E(t)
 	h := newE2EHarness(t)
-	t.Setenv("BASETEN_BASE_URL", fmt.Sprintf("https://model-%s.api.%s", e2eModelID, e2eDomain))
+	t.Setenv("BASETEN_INFERENCE_URL", fmt.Sprintf("https://model-%s.api.%s", e2eModelID, e2eDomain))
 	err := h.Execute("api", "inference",
 		"-F", `prompt="hello"`,
 		"production/predict",

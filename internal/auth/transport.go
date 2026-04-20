@@ -50,7 +50,7 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 	}
 
 	if t.APIKeyOnly && entry.AuthType != AuthTypeAPIKey {
-		return nil, fmt.Errorf("this operation requires an API key; OAuth login is not supported for inference (use `baseten auth login --with-token`)")
+		return nil, fmt.Errorf("this operation requires an API key; OAuth login is not supported for inference (use `baseten auth login --with-api-key`)")
 	}
 
 	switch entry.AuthType {
@@ -64,6 +64,9 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 		return t.base().RoundTrip(req)
 
 	case AuthTypeOAuth:
+		if t.OAuthConfig == nil {
+			return nil, fmt.Errorf("OAuth credential requires OAuthConfig to be set on Transport")
+		}
 		cred, err := t.Store.GetOAuthCredential(t.Host, label)
 		if err != nil {
 			return nil, err

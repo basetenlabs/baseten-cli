@@ -172,7 +172,7 @@ func WithHTTPClient(ctx context.Context, c *http.Client) context.Context {
 	return context.WithValue(ctx, httpClientKey{}, c)
 }
 
-const defaultHost = "https://app.baseten.co"
+const defaultHost = "https://api.baseten.co"
 const oauthClientID = "baseten-cli"
 
 // ResolveHost returns the API host from BASETEN_BASE_URL env var, or the
@@ -233,6 +233,7 @@ func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error)
 		Host:        host,
 		OAuthConfig: OAuthConfig(host),
 		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
+		Base:        c.httpClient().Transport,
 	}
 	return client.NewManagementClient(client.ManagementClientOptions{
 		BaseURL:    host,
@@ -249,6 +250,7 @@ func (c *CommandContext) NewManagementClientWithAuth(authHeader string) (*client
 		DeferAuth: true,
 		HTTPClient: &staticAuthClient{
 			header: authHeader,
+			base:   c.httpClient(),
 		},
 	})
 }
@@ -267,6 +269,7 @@ func (c *CommandContext) NewInferenceClient(flags cmd.InferenceClientFlags) (*cl
 		OAuthConfig: OAuthConfig(host),
 		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
 		APIKeyOnly:  true,
+		Base:        c.httpClient().Transport,
 	}
 	return client.NewInferenceClient(client.InferenceClientOptions{
 		ModelID:     flags.ModelID,
@@ -281,10 +284,11 @@ func (c *CommandContext) NewInferenceClient(flags cmd.InferenceClientFlags) (*cl
 // staticAuthClient is an HTTP client that sets a fixed Authorization header.
 type staticAuthClient struct {
 	header string
+	base   *http.Client
 }
 
 func (c *staticAuthClient) Do(req *http.Request) (*http.Response, error) {
 	req = req.Clone(req.Context())
 	req.Header.Set("Authorization", c.header)
-	return http.DefaultClient.Do(req)
+	return c.base.Do(req)
 }

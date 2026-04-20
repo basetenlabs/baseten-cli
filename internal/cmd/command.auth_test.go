@@ -114,6 +114,65 @@ func TestAuthLogout_RemovesActiveUser(t *testing.T) {
 	h.Require.False(ok, "user should be removed")
 }
 
+func TestAuthLogout_APIKey_SkipsServerCall(t *testing.T) {
+	h := newAuthHarness(t)
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("BASETEN_BASE_URL", srv.URL)
+
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyUser(srv.URL, "alice", "key-xyz", nil))
+
+	h.Require.NoError(h.Execute("auth", "logout"))
+	h.Require.Equal(0, calls, "API key logout should not call server")
+}
+
+func TestAuthLogout_OAuth_CallsRevokeEndpoint(t *testing.T) {
+	h := newAuthHarness(t)
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("BASETEN_BASE_URL", srv.URL)
+
+	store := configDirStore(t)
+	cred := auth.OAuthCredential{AccessToken: "at_abc", RefreshToken: "rt_abc"}
+	h.Require.NoError(store.SetOAuthUser(srv.URL, "alice", cred, nil))
+
+	h.Require.NoError(h.Execute("auth", "logout"))
+	h.Require.Equal("/v1/users/auth/logout", gotPath)
+	h.Require.Equal("Bearer at_abc", gotAuth)
+
+	_, _, ok := configDirStore(t).ActiveUser(srv.URL)
+	h.Require.False(ok, "user should be removed")
+}
+
+func TestAuthLogout_OAuth_WarnsOnServerFailureButStillRemoves(t *testing.T) {
+	h := newAuthHarness(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"code":"VALIDATION_ERROR","message":"nope"}`, http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("BASETEN_BASE_URL", srv.URL)
+
+	store := configDirStore(t)
+	cred := auth.OAuthCredential{AccessToken: "at_abc", RefreshToken: "rt_abc"}
+	h.Require.NoError(store.SetOAuthUser(srv.URL, "alice", cred, nil))
+
+	h.Require.NoError(h.Execute("auth", "logout"))
+	h.Require.Contains(h.Stderr.String(), "warning")
+
+	_, _, ok := configDirStore(t).ActiveUser(srv.URL)
+	h.Require.False(ok, "user should still be removed after server failure")
+}
+
 func TestAuthSwitch_RequiresUserNonInteractive(t *testing.T) {
 	h := newAuthHarness(t)
 	err := h.Execute("auth", "switch")

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net/http"
+	"os"
 	"strings"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -76,9 +78,15 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 		return err
 	}
 
-	label, _, ok := store.ActiveUser(host)
+	label, entry, ok := store.ActiveUser(host)
 	if !ok {
 		return fmt.Errorf("no active user for %s", host)
+	}
+
+	if entry.AuthType == auth.AuthTypeOAuth {
+		if err := revokeOAuthSession(ctx, store, host, label); err != nil {
+			ctx.Logf("warning: server-side session revocation failed: %v\n", err)
+		}
 	}
 
 	if err := store.RemoveUser(host, label); err != nil {
@@ -89,6 +97,32 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 		ctx.OutputJSON(map[string]string{"user": label})
 	} else {
 		ctx.Outputf("Logged out %s\n", label)
+	}
+	return nil
+}
+
+func revokeOAuthSession(ctx *CommandContext, store *auth.Store, host, label string) error {
+	transport := &auth.Transport{
+		Store:       store,
+		Host:        host,
+		OAuthConfig: OAuthConfig(host),
+		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
+		Base:        ctx.httpClient().Transport,
+	}
+	req, err := http.NewRequestWithContext(
+		ctx.Context, http.MethodPost, host+"/v1/users/auth/logout", nil,
+	)
+	if err != nil {
+		return err
+	}
+	resp, err := transport.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
 }

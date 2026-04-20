@@ -31,7 +31,7 @@ var commandAuth = Command{
 		{
 			Name:        "status",
 			Summary:     "Show authentication status",
-			Description: "Show the current authentication state, including the active user and credential validity.",
+			Description: "Show the current authentication state, including the active user and auth type.",
 			Flags:       AuthStatusFlags{},
 		},
 	},
