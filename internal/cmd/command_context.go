@@ -256,7 +256,7 @@ func (c *CommandContext) NewManagementClientWithAuth(authHeader string) (*client
 }
 
 // NewInferenceClient creates an inference API client that resolves
-// credentials via the auth store. Inference only supports API key auth.
+// credentials via the auth store.
 func (c *CommandContext) NewInferenceClient(flags cmd.InferenceClientFlags) (*client.InferenceClient, error) {
 	host := ResolveHost()
 	store, err := NewAuthStore(false)
@@ -268,7 +268,6 @@ func (c *CommandContext) NewInferenceClient(flags cmd.InferenceClientFlags) (*cl
 		Host:        host,
 		OAuthConfig: OAuthConfig(host),
 		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
-		APIKeyOnly:  true,
 		Base:        c.httpClient().Transport,
 	}
 	return client.NewInferenceClient(client.InferenceClientOptions{

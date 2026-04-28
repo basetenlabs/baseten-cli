@@ -95,32 +95,6 @@ func TestTransport_NotLoggedInErrors(t *testing.T) {
 	require.ErrorContains(t, err, "not logged in")
 }
 
-func TestTransport_APIKeyOnlyRejectsOAuth(t *testing.T) {
-	s := newKeyringStore(t)
-	cred := auth.OAuthCredential{AccessToken: accessToken, RefreshToken: refreshToken}
-	require.NoError(t, s.SetOAuthUser(testHost, userLabelA, cred, nil))
-
-	tr := &auth.Transport{
-		Store:      s,
-		Host:       testHost,
-		APIKeyOnly: true,
-	}
-	_, err := tr.Do(mustRequest(t, "http://127.0.0.1:1"))
-	require.ErrorContains(t, err, "requires an API key")
-}
-
-func TestTransport_APIKeyOnlyAllowsAPIKey(t *testing.T) {
-	s := newKeyringStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
-
-	es := newEchoServer(t)
-	tr := &auth.Transport{Store: s, Host: testHost, APIKeyOnly: true}
-	resp, err := tr.Do(mustRequest(t, es.URL))
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, "Api-Key "+apiKeyA, es.LastAuthHeader)
-}
-
 func TestTransport_OAuthRefreshRotatesStoredToken(t *testing.T) {
 	s := newKeyringStore(t)
 	// Blank access token with a refresh token forces oauth2 to refresh

@@ -23,10 +23,6 @@ type Transport struct {
 	// EnvAPIKey, if set, takes priority over all stored credentials.
 	EnvAPIKey string
 
-	// APIKeyOnly, when true, rejects OAuth credentials. Use this for
-	// endpoints that only accept API key authentication (e.g. inference).
-	APIKeyOnly bool
-
 	Base http.RoundTripper
 }
 
@@ -47,10 +43,6 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 	label, entry, ok := t.Store.ActiveUser(t.Host)
 	if !ok {
 		return nil, fmt.Errorf("not logged in; run `baseten auth login` or set BASETEN_API_KEY")
-	}
-
-	if t.APIKeyOnly && entry.AuthType != AuthTypeAPIKey {
-		return nil, fmt.Errorf("this operation requires an API key; OAuth login is not supported for inference (use `baseten auth login --with-api-key`)")
 	}
 
 	switch entry.AuthType {
