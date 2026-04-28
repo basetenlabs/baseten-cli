@@ -207,7 +207,7 @@ func Test_API_Management_RequiresPath(t *testing.T) {
 func Test_API_Management_RequiresAPIKey(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.T.Setenv("BASETEN_API_KEY", "")
-	h.Require.NoError(h.Execute("api", "management", "some/path"))
+	h.Require.Error(h.Execute("api", "management", "some/path"))
 	h.Require.Equal(1, h.ExitCode)
 	h.Require.Contains(h.Stderr.String(), "BASETEN_API_KEY")
 }

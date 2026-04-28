@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
@@ -56,6 +57,9 @@ func (h *CommandHarness) Execute(args ...string) error {
 	})
 	if err != nil && !h.exited {
 		h.ExitCode = 1
+	}
+	if err == nil && h.exited && h.ExitCode != 0 {
+		return fmt.Errorf("command exited with code %d: %s", h.ExitCode, h.Stderr.String())
 	}
 	return err
 }

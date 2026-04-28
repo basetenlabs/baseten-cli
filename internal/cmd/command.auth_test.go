@@ -59,7 +59,7 @@ func newUserInfoServer(t *testing.T) *userInfoServer {
 
 func TestAuthStatus_NotLoggedIn(t *testing.T) {
 	h := newAuthHarness(t)
-	h.Require.NoError(h.Execute("auth", "status"))
+	h.Require.Error(h.Execute("auth", "status"))
 	h.Require.Equal(1, h.ExitCode)
 	h.Require.Contains(h.Stderr.String(), "not logged in")
 }
@@ -95,7 +95,7 @@ func TestAuthStatus_JSON(t *testing.T) {
 
 func TestAuthLogout_NoActiveUser(t *testing.T) {
 	h := newAuthHarness(t)
-	h.Require.NoError(h.Execute("auth", "logout"))
+	h.Require.Error(h.Execute("auth", "logout"))
 	h.Require.Equal(1, h.ExitCode)
 	h.Require.Contains(h.Stderr.String(), "no active user")
 }
@@ -200,7 +200,7 @@ func TestAuthSwitch_UnknownUserFails(t *testing.T) {
 	store := configDirStore(t)
 	h.Require.NoError(store.SetAPIKeyUser("https://api.example.com", "alice", "key-alice", nil))
 
-	h.Require.NoError(h.Execute("auth", "switch", "--user", "ghost"))
+	h.Require.Error(h.Execute("auth", "switch", "--user", "ghost"))
 	h.Require.Equal(1, h.ExitCode)
 	h.Require.Contains(h.Stderr.String(), "not found")
 }
