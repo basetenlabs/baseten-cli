@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -214,6 +216,10 @@ func loginWeb(ctx *CommandContext, store *auth.Store, host string) error {
 		return fmt.Errorf("waiting for authorization: %w", err)
 	}
 
+	if claims, err := decodeJWTClaims(token.AccessToken); err == nil {
+		ctx.VerboseLogf("access token claims: %s\n", claims)
+	}
+
 	cl, err := ctx.NewManagementClientWithAuth("Bearer " + token.AccessToken)
 	if err != nil {
 		return err
@@ -227,6 +233,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, host string) error {
 	cred := auth.OAuthCredential{
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
+		Expiry:       token.Expiry,
 	}
 	email := deref(user.Email)
 	if err := store.SetOAuthUser(host, email, cred, warnWriter); err != nil {
@@ -324,4 +331,24 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func decodeJWTClaims(token string) (string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("not a JWT (got %d segments)", len(parts))
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("base64 decode: %w", err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", fmt.Errorf("json unmarshal: %w", err)
+	}
+	pretty, err := json.MarshalIndent(claims, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(pretty), nil
 }

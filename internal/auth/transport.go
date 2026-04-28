@@ -74,6 +74,7 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 		token := &oauth2.Token{
 			AccessToken:  cred.AccessToken,
 			RefreshToken: cred.RefreshToken,
+			Expiry:       cred.Expiry,
 			TokenType:    "Bearer",
 		}
 		src := t.OAuthConfig.TokenSource(req.Context(), token)
@@ -85,6 +86,7 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 			updated := OAuthCredential{
 				AccessToken:  newToken.AccessToken,
 				RefreshToken: newToken.RefreshToken,
+				Expiry:       newToken.Expiry,
 			}
 			if err := t.Store.SetOAuthUser(t.Host, label, updated, nil); err != nil {
 				return nil, fmt.Errorf("storing refreshed credential: %w", err)

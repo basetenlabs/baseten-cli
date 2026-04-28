@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/zalando/go-keyring"
 )
@@ -20,10 +21,14 @@ const (
 	AuthTypeAPIKey AuthType = "api_key"
 )
 
-// OAuthCredential holds an OAuth access and refresh token pair.
+// OAuthCredential holds an OAuth access and refresh token pair, along with
+// the access token's absolute expiry. Expiry is what golang.org/x/oauth2 uses
+// to decide whether to refresh; persisting it lets refresh work across CLI
+// invocations.
 type OAuthCredential struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	Expiry       time.Time `json:"expiry,omitempty"`
 }
 
 // UserEntry is a single stored credential in auth.json.
