@@ -11,10 +11,10 @@ var Root = Command{
 	Name:    "baseten",
 	Summary: "Baseten CLI",
 	Description: "Command-line interface for managing Baseten resources.\n\n" +
-		"Authentication is via the BASETEN_API_KEY environment variable. " +
-		"Set BASETEN_BASE_URL to override the default API endpoint.",
+		"Authentication is via 'baseten auth login' or the BASETEN_API_KEY environment variable.",
 	Children: []Command{
 		commandAPI,
+		commandAuth,
 		commandTruss,
 	},
 }

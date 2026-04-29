@@ -50,6 +50,7 @@ func newAPIHarness(t *testing.T, status int, respBody any) (*CommandHarness, *ap
 
 	h := NewCommandHarness(t)
 	h.T.Setenv("BASETEN_BASE_URL", srv.URL)
+	h.T.Setenv("BASETEN_INFERENCE_URL", srv.URL)
 	h.Context = cmd.WithHTTPClient(h.Context, srv.Client())
 	return h, captured
 }
@@ -68,6 +69,15 @@ func Test_API_Management_JSONLOutput(t *testing.T) {
 	err := h.Execute("api", "management", "-o", "jsonl", "models")
 	h.Require.NoError(err)
 	h.Require.Equal("{\"ok\":true}\n", h.Stdout.String())
+}
+
+func Test_API_Management_AcceptsV1Prefix(t *testing.T) {
+	for _, path := range []string{"models", "/v1/models", "v1/models"} {
+		h, req := newAPIHarness(t, 200, map[string]any{"ok": true})
+		err := h.Execute("api", "management", path)
+		h.Require.NoError(err)
+		h.Require.Equal("/v1/models", req.Path)
+	}
 }
 
 func Test_API_Management_AuthHeader(t *testing.T) {
@@ -197,8 +207,9 @@ func Test_API_Management_RequiresPath(t *testing.T) {
 func Test_API_Management_RequiresAPIKey(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.T.Setenv("BASETEN_API_KEY", "")
-	err := h.Execute("api", "management", "some/path")
-	h.Require.ErrorContains(err, "BASETEN_API_KEY")
+	h.Require.Error(h.Execute("api", "management", "some/path"))
+	h.Require.Equal(1, h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), "BASETEN_API_KEY")
 }
 
 func Test_API_Help(t *testing.T) {
