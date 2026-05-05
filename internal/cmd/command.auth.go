@@ -204,14 +204,15 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 
 func loginWeb(ctx *CommandContext, store *auth.Store, host string) error {
 	cfg := OAuthConfig(host)
-	devResp, err := cfg.DeviceAuth(ctx.Context)
+	oauthCtx := auth.OAuthContext(ctx.Context, ctx.httpClient().Transport)
+	devResp, err := cfg.DeviceAuth(oauthCtx)
 	if err != nil {
 		return fmt.Errorf("starting device authorization: %w", err)
 	}
 
 	ctx.Logf("Enter code %s at %s\n", devResp.UserCode, devResp.VerificationURI)
 
-	token, err := cfg.DeviceAccessToken(ctx.Context, devResp)
+	token, err := cfg.DeviceAccessToken(oauthCtx, devResp)
 	if err != nil {
 		return fmt.Errorf("waiting for authorization: %w", err)
 	}

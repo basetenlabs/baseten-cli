@@ -1,11 +1,31 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
+	"github.com/basetenlabs/baseten-go/client"
 	"golang.org/x/oauth2"
 )
+
+// OAuthContext returns a context that carries an oauth2 HTTP client which
+// stamps the Baseten User-Agent on every request, layered over base.
+func OAuthContext(ctx context.Context, base http.RoundTripper) context.Context {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	c := &http.Client{Transport: userAgentRoundTripper{base: base}}
+	return context.WithValue(ctx, oauth2.HTTPClient, c)
+}
+
+type userAgentRoundTripper struct{ base http.RoundTripper }
+
+func (r userAgentRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	client.ApplyUserAgentHeader(req.Header)
+	return r.base.RoundTrip(req)
+}
 
 // Transport is an HTTP client that injects the appropriate Authorization
 // header based on the active credential. For OAuth credentials, it uses
@@ -69,7 +89,7 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 			Expiry:       cred.Expiry,
 			TokenType:    "Bearer",
 		}
-		src := t.OAuthConfig.TokenSource(req.Context(), token)
+		src := t.OAuthConfig.TokenSource(OAuthContext(req.Context(), t.base()), token)
 		newToken, err := src.Token()
 		if err != nil {
 			return nil, fmt.Errorf("token expired and refresh failed: %w (run `baseten auth login` to re-authenticate)", err)
