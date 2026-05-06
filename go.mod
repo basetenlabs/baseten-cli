@@ -3,7 +3,7 @@ module github.com/basetenlabs/baseten-cli
 go 1.26.1
 
 require (
-	github.com/basetenlabs/baseten-go v0.0.0-20260505160058-d67fd4abcea1
+	github.com/basetenlabs/baseten-go v0.0.0-20260506124153-57513d4d58d7
 	github.com/charmbracelet/huh v1.0.0
 	github.com/itchyny/gojq v0.12.18
 	github.com/spf13/cobra v1.10.2
