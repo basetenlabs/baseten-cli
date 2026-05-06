@@ -9,9 +9,14 @@ import (
 	"strings"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-go/client"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
+
+func init() {
+	client.SetClientName("baseten-cli")
+}
 
 // ErrWithCode is an error that carries a specific process exit code.
 type ErrWithCode struct {
