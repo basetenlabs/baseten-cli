@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client"
@@ -27,6 +30,7 @@ type CommandContext struct {
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ExitWithCode func(int)
+	Remote       *Remote
 
 	verbose bool
 }
@@ -157,32 +161,7 @@ func panicOnOutputError(_ any, err error) {
 	}
 }
 
-func (c *CommandContext) httpClient() *http.Client {
-	if cl, ok := c.Value(httpClientKey{}).(*http.Client); ok {
-		return cl
-	}
-	return http.DefaultClient
-}
-
-type httpClientKey struct{}
-
-// WithHTTPClient returns a context that overrides the HTTP client used by
-// CommandContext and therefore all SDK clients created from it.
-func WithHTTPClient(ctx context.Context, c *http.Client) context.Context {
-	return context.WithValue(ctx, httpClientKey{}, c)
-}
-
-const defaultHost = "https://api.baseten.co"
 const oauthClientID = "baseten-cli"
-
-// ResolveHost returns the API host from BASETEN_BASE_URL env var, or the
-// default.
-func ResolveHost() string {
-	if h := os.Getenv("BASETEN_BASE_URL"); h != "" {
-		return h
-	}
-	return defaultHost
-}
 
 // IsInteractive returns true if the context's stdin is a terminal.
 func (c *CommandContext) IsInteractive() bool {
@@ -223,20 +202,20 @@ func NewAuthStore(insecureStorage bool) (*auth.Store, error) {
 // NewManagementClient creates a management API client that resolves
 // credentials via the auth store (env var > stored credential).
 func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error) {
-	host := ResolveHost()
 	store, err := NewAuthStore(false)
 	if err != nil {
 		return nil, err
 	}
+	mgmtURL := c.Remote.ManagementURL()
 	transport := &auth.Transport{
 		Store:       store,
-		Host:        host,
-		OAuthConfig: OAuthConfig(host),
+		Host:        c.Remote.RemoteURL(),
+		OAuthConfig: OAuthConfig(mgmtURL),
 		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
 		Base:        c.httpClient().Transport,
 	}
 	return client.NewManagementClient(client.ManagementClientOptions{
-		BaseURL:    host,
+		BaseURL:    mgmtURL,
 		DeferAuth:  true,
 		HTTPClient: transport,
 	})
@@ -246,7 +225,7 @@ func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error)
 // auth header. Used during login to validate a credential before storing it.
 func (c *CommandContext) NewManagementClientWithAuth(authHeader string) (*client.ManagementClient, error) {
 	return client.NewManagementClient(client.ManagementClientOptions{
-		BaseURL:   ResolveHost(),
+		BaseURL:   c.Remote.ManagementURL(),
 		DeferAuth: true,
 		HTTPClient: &staticAuthClient{
 			header: authHeader,
@@ -258,26 +237,71 @@ func (c *CommandContext) NewManagementClientWithAuth(authHeader string) (*client
 // NewInferenceClient creates an inference API client that resolves
 // credentials via the auth store.
 func (c *CommandContext) NewInferenceClient(flags cmd.InferenceClientFlags) (*client.InferenceClient, error) {
-	host := ResolveHost()
 	store, err := NewAuthStore(false)
 	if err != nil {
 		return nil, err
 	}
+	mgmtURL := c.Remote.ManagementURL()
 	transport := &auth.Transport{
 		Store:       store,
-		Host:        host,
-		OAuthConfig: OAuthConfig(host),
+		Host:        c.Remote.RemoteURL(),
+		OAuthConfig: OAuthConfig(mgmtURL),
 		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
 		Base:        c.httpClient().Transport,
 	}
-	return client.NewInferenceClient(client.InferenceClientOptions{
-		ModelID:     flags.ModelID,
-		ChainID:     flags.ChainID,
-		Environment: flags.Environment,
-		BaseURL:     os.Getenv("BASETEN_INFERENCE_URL"),
-		DeferAuth:   true,
-		HTTPClient:  transport,
-	})
+	baseURL, err := c.Remote.InferenceBaseURL(flags.ModelID, flags.ChainID, flags.Environment)
+	if err != nil {
+		return nil, err
+	}
+	hostHeader, hostOverride, err := c.Remote.InferenceHostHeader(flags.ModelID, flags.ChainID, flags.Environment)
+	if err != nil {
+		return nil, err
+	}
+	opts := client.InferenceClientOptions{
+		BaseURL:    baseURL,
+		DeferAuth:  true,
+		HTTPClient: transport,
+	}
+	if hostOverride {
+		opts.HTTPClient = &hostHeaderClient{host: hostHeader, base: transport}
+	}
+	return client.NewInferenceClient(opts)
+}
+
+func (c *CommandContext) httpClient() *http.Client {
+	if cl, ok := c.Value(httpClientKey{}).(*http.Client); ok {
+		return cl
+	}
+	return http.DefaultClient
+}
+
+type httpClientKey struct{}
+
+// WithHTTPClient returns a context that overrides the HTTP client used by
+// CommandContext and therefore all SDK clients created from it.
+func WithHTTPClient(ctx context.Context, c *http.Client) context.Context {
+	return context.WithValue(ctx, httpClientKey{}, c)
+}
+
+// S3APIClientFactory builds an S3 client from a fully-populated aws.Config
+// (region + credentials). Tests can inject a fake to capture upload calls.
+type S3APIClientFactory func(aws.Config) transfermanager.S3APIClient
+
+type s3FactoryKey struct{}
+
+// WithS3APIClientFactory returns a context that overrides how
+// CommandContext.NewS3APIClient builds the S3 client used for archive uploads.
+func WithS3APIClientFactory(ctx context.Context, f S3APIClientFactory) context.Context {
+	return context.WithValue(ctx, s3FactoryKey{}, f)
+}
+
+// newS3APIClient builds the S3 client used for archive uploads. The default
+// is s3.NewFromConfig; tests can substitute a fake via WithS3APIClientFactory.
+func (c *CommandContext) newS3APIClient(cfg aws.Config) transfermanager.S3APIClient {
+	if f, ok := c.Value(s3FactoryKey{}).(S3APIClientFactory); ok {
+		return f(cfg)
+	}
+	return s3.NewFromConfig(cfg)
 }
 
 // staticAuthClient is an HTTP client that sets a fixed Authorization header.
@@ -289,5 +313,21 @@ type staticAuthClient struct {
 func (c *staticAuthClient) Do(req *http.Request) (*http.Response, error) {
 	req = req.Clone(req.Context())
 	req.Header.Set("Authorization", c.header)
+	return c.base.Do(req)
+}
+
+// hostHeaderClient wraps an HTTP client to force a specific Host header on
+// outgoing requests. Used when the remote requires a Host header that does
+// not match the request URL's host.
+type hostHeaderClient struct {
+	host string
+	base interface {
+		Do(*http.Request) (*http.Response, error)
+	}
+}
+
+func (c *hostHeaderClient) Do(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Host = c.host
 	return c.base.Do(req)
 }

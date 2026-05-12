@@ -49,8 +49,8 @@ func newAPIHarness(t *testing.T, status int, respBody any) (*CommandHarness, *ap
 	t.Cleanup(srv.Close)
 
 	h := NewCommandHarness(t)
-	h.T.Setenv("BASETEN_BASE_URL", srv.URL)
-	h.T.Setenv("BASETEN_INFERENCE_URL", srv.URL)
+	h.T.Setenv("BASETEN_MANAGEMENT_API_URL_OVERRIDE", srv.URL)
+	h.T.Setenv("BASETEN_INFERENCE_BASE_URL_OVERRIDE", srv.URL)
 	h.Context = cmd.WithHTTPClient(h.Context, srv.Client())
 	return h, captured
 }
@@ -239,14 +239,12 @@ func Test_API_Inference_RequiresPath(t *testing.T) {
 
 func Test_API_Inference_RequiresModelOrChain(t *testing.T) {
 	h := NewCommandHarness(t)
-	h.T.Setenv("BASETEN_BASE_URL", "")
 	err := h.Execute("api", "inference", "predict")
 	h.Require.ErrorContains(err, "model ID or chain ID")
 }
 
 func Test_API_Inference_ModelAndChainMutuallyExclusive(t *testing.T) {
 	h := NewCommandHarness(t)
-	h.T.Setenv("BASETEN_BASE_URL", "")
 	err := h.Execute("api", "inference", "--model-id", "abc", "--chain-id", "xyz", "predict")
 	h.Require.ErrorContains(err, "mutually exclusive")
 }

@@ -17,6 +17,15 @@ func newAuthHarness(t *testing.T) *CommandHarness {
 	return h
 }
 
+// setTestRemote points the Remote at urlStr: BASETEN_REMOTE_URL becomes the
+// auth store key, and BASETEN_MANAGEMENT_API_URL_OVERRIDE routes management
+// calls to the same URL (useful for httptest servers).
+func setTestRemote(t *testing.T, urlStr string) {
+	t.Helper()
+	t.Setenv("BASETEN_REMOTE_URL", urlStr)
+	t.Setenv("BASETEN_MANAGEMENT_API_URL_OVERRIDE", urlStr)
+}
+
 // configDirStore returns a Store pointed at the harness's BASETEN_CONFIG_DIR.
 func configDirStore(t *testing.T) *auth.Store {
 	t.Helper()
@@ -66,7 +75,7 @@ func TestAuthStatus_NotLoggedIn(t *testing.T) {
 
 func TestAuthStatus_APIKey(t *testing.T) {
 	h := newAuthHarness(t)
-	t.Setenv("BASETEN_BASE_URL", "https://api.example.com")
+	setTestRemote(t, "https://api.example.com")
 
 	store := configDirStore(t)
 	h.Require.NoError(store.SetAPIKeyUser("https://api.example.com", "alice", "key-xyz", nil))
@@ -80,7 +89,7 @@ func TestAuthStatus_APIKey(t *testing.T) {
 
 func TestAuthStatus_JSON(t *testing.T) {
 	h := newAuthHarness(t)
-	t.Setenv("BASETEN_BASE_URL", "https://api.example.com")
+	setTestRemote(t, "https://api.example.com")
 
 	store := configDirStore(t)
 	h.Require.NoError(store.SetAPIKeyUser("https://api.example.com", "alice", "key-xyz", nil))
@@ -102,7 +111,7 @@ func TestAuthLogout_NoActiveUser(t *testing.T) {
 
 func TestAuthLogout_RemovesActiveUser(t *testing.T) {
 	h := newAuthHarness(t)
-	t.Setenv("BASETEN_BASE_URL", "https://api.example.com")
+	setTestRemote(t, "https://api.example.com")
 
 	store := configDirStore(t)
 	h.Require.NoError(store.SetAPIKeyUser("https://api.example.com", "alice", "key-xyz", nil))
@@ -122,7 +131,7 @@ func TestAuthLogout_APIKey_SkipsServerCall(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("BASETEN_BASE_URL", srv.URL)
+	setTestRemote(t, srv.URL)
 
 	store := configDirStore(t)
 	h.Require.NoError(store.SetAPIKeyUser(srv.URL, "alice", "key-xyz", nil))
@@ -140,7 +149,7 @@ func TestAuthLogout_OAuth_CallsRevokeEndpoint(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("BASETEN_BASE_URL", srv.URL)
+	setTestRemote(t, srv.URL)
 
 	store := configDirStore(t)
 	cred := auth.OAuthCredential{AccessToken: "at_abc", RefreshToken: "rt_abc"}
@@ -160,7 +169,7 @@ func TestAuthLogout_OAuth_WarnsOnServerFailureButStillRemoves(t *testing.T) {
 		http.Error(w, `{"code":"VALIDATION_ERROR","message":"nope"}`, http.StatusBadRequest)
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("BASETEN_BASE_URL", srv.URL)
+	setTestRemote(t, srv.URL)
 
 	store := configDirStore(t)
 	cred := auth.OAuthCredential{AccessToken: "at_abc", RefreshToken: "rt_abc"}
@@ -181,7 +190,7 @@ func TestAuthSwitch_RequiresUserNonInteractive(t *testing.T) {
 
 func TestAuthSwitch_UpdatesActiveUser(t *testing.T) {
 	h := newAuthHarness(t)
-	t.Setenv("BASETEN_BASE_URL", "https://api.example.com")
+	setTestRemote(t, "https://api.example.com")
 
 	store := configDirStore(t)
 	h.Require.NoError(store.SetAPIKeyUser("https://api.example.com", "alice", "key-alice", nil))
@@ -195,7 +204,7 @@ func TestAuthSwitch_UpdatesActiveUser(t *testing.T) {
 
 func TestAuthSwitch_UnknownUserFails(t *testing.T) {
 	h := newAuthHarness(t)
-	t.Setenv("BASETEN_BASE_URL", "https://api.example.com")
+	setTestRemote(t, "https://api.example.com")
 
 	store := configDirStore(t)
 	h.Require.NoError(store.SetAPIKeyUser("https://api.example.com", "alice", "key-alice", nil))
@@ -208,7 +217,7 @@ func TestAuthSwitch_UnknownUserFails(t *testing.T) {
 func TestAuthLogin_APIKey_Stdin(t *testing.T) {
 	h := newAuthHarness(t)
 	srv := newUserInfoServer(t)
-	t.Setenv("BASETEN_BASE_URL", srv.URL)
+	setTestRemote(t, srv.URL)
 
 	h.Stdin.WriteString("secret-api-key\n")
 	h.Require.NoError(h.Execute("auth", "login", "--with-api-key", "--label", "my-laptop"))
@@ -229,7 +238,7 @@ func TestAuthLogin_APIKey_Stdin(t *testing.T) {
 
 func TestAuthLogin_APIKey_EmptyFails(t *testing.T) {
 	h := newAuthHarness(t)
-	t.Setenv("BASETEN_BASE_URL", "http://127.0.0.1:1")
+	setTestRemote(t, "http://127.0.0.1:1")
 
 	h.Stdin.WriteString("\n")
 	err := h.Execute("auth", "login", "--with-api-key", "--label", "my-laptop")
@@ -239,7 +248,7 @@ func TestAuthLogin_APIKey_EmptyFails(t *testing.T) {
 func TestAuthLogin_APIKey_RequiresLabelNonInteractive(t *testing.T) {
 	h := newAuthHarness(t)
 	srv := newUserInfoServer(t)
-	t.Setenv("BASETEN_BASE_URL", srv.URL)
+	setTestRemote(t, srv.URL)
 
 	h.Stdin.WriteString("secret-api-key\n")
 	err := h.Execute("auth", "login", "--with-api-key")
@@ -314,7 +323,7 @@ func newDeviceAuthServer(t *testing.T) *deviceAuthServer {
 func TestAuthLogin_Web_DeviceFlow(t *testing.T) {
 	h := newAuthHarness(t)
 	srv := newDeviceAuthServer(t)
-	t.Setenv("BASETEN_BASE_URL", srv.URL)
+	setTestRemote(t, srv.URL)
 
 	h.Require.NoError(h.Execute("auth", "login", "--web"))
 

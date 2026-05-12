@@ -30,7 +30,7 @@ type whoamiResponse struct {
 }
 
 func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
-	host := ResolveHost()
+	baseURL := ctx.Remote.RemoteURL()
 	store, err := NewAuthStore(flags.InsecureStorage)
 	if err != nil {
 		return err
@@ -65,33 +65,33 @@ func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
 
 	switch method {
 	case "web":
-		return loginWeb(ctx, store, host)
+		return loginWeb(ctx, store, baseURL)
 	case "api_key":
-		return loginAPIKey(ctx, store, host, flags.Label)
+		return loginAPIKey(ctx, store, baseURL, flags.Label)
 	default:
 		return fmt.Errorf("unexpected auth method %q", method)
 	}
 }
 
 func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
-	host := ResolveHost()
+	baseURL := ctx.Remote.RemoteURL()
 	store, err := NewAuthStore(false)
 	if err != nil {
 		return err
 	}
 
-	label, entry, ok := store.ActiveUser(host)
+	label, entry, ok := store.ActiveUser(baseURL)
 	if !ok {
-		return fmt.Errorf("no active user for %s", host)
+		return fmt.Errorf("no active user for %s", baseURL)
 	}
 
 	if entry.AuthType == auth.AuthTypeOAuth {
-		if err := revokeOAuthSession(ctx, store, host, label); err != nil {
+		if err := revokeOAuthSession(ctx, store, baseURL, label); err != nil {
 			ctx.Logf("warning: server-side session revocation failed: %v\n", err)
 		}
 	}
 
-	if err := store.RemoveUser(host, label); err != nil {
+	if err := store.RemoveUser(baseURL, label); err != nil {
 		return err
 	}
 
@@ -103,16 +103,17 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 	return nil
 }
 
-func revokeOAuthSession(ctx *CommandContext, store *auth.Store, host, label string) error {
+func revokeOAuthSession(ctx *CommandContext, store *auth.Store, baseURL, label string) error {
+	mgmtURL := ctx.Remote.ManagementURL()
 	transport := &auth.Transport{
 		Store:       store,
-		Host:        host,
-		OAuthConfig: OAuthConfig(host),
+		Host:        baseURL,
+		OAuthConfig: OAuthConfig(mgmtURL),
 		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
 		Base:        ctx.httpClient().Transport,
 	}
 	req, err := http.NewRequestWithContext(
-		ctx.Context, http.MethodPost, host+"/v1/users/auth/logout", nil,
+		ctx.Context, http.MethodPost, mgmtURL+"/v1/users/auth/logout", nil,
 	)
 	if err != nil {
 		return err
@@ -130,7 +131,7 @@ func revokeOAuthSession(ctx *CommandContext, store *auth.Store, host, label stri
 }
 
 func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
-	host := ResolveHost()
+	baseURL := ctx.Remote.RemoteURL()
 	store, err := NewAuthStore(false)
 	if err != nil {
 		return err
@@ -146,9 +147,9 @@ func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
 		if err != nil {
 			return err
 		}
-		he, ok := af.Hosts[host]
+		he, ok := af.Hosts[baseURL]
 		if !ok || len(he.Users) == 0 {
-			return fmt.Errorf("no credentials stored for %s", host)
+			return fmt.Errorf("no credentials stored for %s", baseURL)
 		}
 
 		var options []huh.Option[string]
@@ -166,7 +167,7 @@ func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
 		}
 	}
 
-	if err := store.SwitchUser(host, label); err != nil {
+	if err := store.SwitchUser(baseURL, label); err != nil {
 		return err
 	}
 
@@ -179,31 +180,31 @@ func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
 }
 
 func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
-	host := ResolveHost()
+	baseURL := ctx.Remote.RemoteURL()
 	store, err := NewAuthStore(false)
 	if err != nil {
 		return err
 	}
 
-	label, entry, ok := store.ActiveUser(host)
+	label, entry, ok := store.ActiveUser(baseURL)
 	if !ok {
-		return fmt.Errorf("not logged in to %s; run `baseten auth login` or set BASETEN_API_KEY", host)
+		return fmt.Errorf("not logged in to %s; run `baseten auth login` or set BASETEN_API_KEY", baseURL)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(map[string]string{
-			"host":      host,
+			"host":      baseURL,
 			"user":      label,
 			"auth_type": string(entry.AuthType),
 		})
 	} else {
-		ctx.Outputf("%s\n  Logged in as %s\n  Auth type: %s\n", host, label, entry.AuthType)
+		ctx.Outputf("%s\n  Logged in as %s\n  Auth type: %s\n", baseURL, label, entry.AuthType)
 	}
 	return nil
 }
 
-func loginWeb(ctx *CommandContext, store *auth.Store, host string) error {
-	cfg := OAuthConfig(host)
+func loginWeb(ctx *CommandContext, store *auth.Store, baseURL string) error {
+	cfg := OAuthConfig(ctx.Remote.ManagementURL())
 	oauthCtx := auth.OAuthContext(ctx.Context, ctx.httpClient().Transport)
 	devResp, err := cfg.DeviceAuth(oauthCtx)
 	if err != nil {
@@ -237,7 +238,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, host string) error {
 		Expiry:       token.Expiry,
 	}
 	email := deref(user.Email)
-	if err := store.SetOAuthUser(host, email, cred, warnWriter); err != nil {
+	if err := store.SetOAuthUser(baseURL, email, cred, warnWriter); err != nil {
 		return err
 	}
 
@@ -255,7 +256,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, host string) error {
 	return nil
 }
 
-func loginAPIKey(ctx *CommandContext, store *auth.Store, host, label string) error {
+func loginAPIKey(ctx *CommandContext, store *auth.Store, baseURL, label string) error {
 	var apiKey string
 
 	if ctx.IsInteractive() {
@@ -309,7 +310,7 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, host, label string) err
 	}
 
 	warnWriter := func(msg string) { ctx.Log(msg) }
-	if err := store.SetAPIKeyUser(host, label, apiKey, warnWriter); err != nil {
+	if err := store.SetAPIKeyUser(baseURL, label, apiKey, warnWriter); err != nil {
 		return err
 	}
 

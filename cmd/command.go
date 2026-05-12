@@ -15,7 +15,9 @@ var Root = Command{
 	Children: []Command{
 		commandAPI,
 		commandAuth,
+		commandModel,
 		commandTruss,
+		commandVersion,
 	},
 }
 
