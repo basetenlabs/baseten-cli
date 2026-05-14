@@ -7,9 +7,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.21
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
-	github.com/basetenlabs/baseten-go v0.0.0-20260514141213-1b4754adc1f7
+	github.com/basetenlabs/baseten-go v0.0.0-20260514153940-2cacfbaf4ebe
 	github.com/charmbracelet/huh v1.0.0
 	github.com/itchyny/gojq v0.12.18
+	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	github.com/stretchr/testify v1.11.1

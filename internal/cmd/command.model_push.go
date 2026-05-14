@@ -19,6 +19,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/basetenlabs/baseten-go/client/modelarchive"
+	gitignore "github.com/sabhiram/go-gitignore"
 	"gopkg.in/yaml.v3"
 )
 
@@ -93,7 +94,15 @@ func buildModelPushInputs(flags *cmd.ModelPushFlags) (*managementapi.PrepareMode
 	prepareReq := &managementapi.PrepareModelUploadRequest{
 		DryRun: &flags.DryRun,
 	}
-	buildOpts := modelarchive.BuildModelArchiveOptions{Dir: flags.Dir}
+	buildOpts := modelarchive.BuildModelArchiveOptions{
+		Dir: flags.Dir,
+		IgnoreFileProcessor: func(_ context.Context, opts modelarchive.IgnoreFileProcessorOptions) (modelarchive.IgnoreFileFunc, error) {
+			gi := gitignore.CompileIgnoreLines(strings.Split(string(opts.Contents), "\n")...)
+			return func(_ context.Context, e modelarchive.IgnoreFileOptions) (bool, error) {
+				return gi.MatchesPath(e.RelPath), nil
+			}, nil
+		},
+	}
 
 	if err := readModelConfigYAML(flags.Dir, &prepareReq.Deployment, &buildOpts); err != nil {
 		return nil, buildOpts, err

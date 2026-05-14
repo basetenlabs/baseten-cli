@@ -298,6 +298,69 @@ func TestModelPush_OverridesAndExternalPackages(t *testing.T) {
 	h.Require.Equal("X = 1\n", entries["packages/util.py"])
 }
 
+// .truss_ignore at the truss root is parsed as gitignore-style patterns
+// and replaces (not merges with) the SDK's bundled defaults, matching the
+// Python Truss behavior.
+func TestModelPush_TrussIgnore(t *testing.T) {
+	h := newModelPushHarness(t)
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+
+	// User-supplied .truss_ignore with a mix of patterns.
+	trussIgnore := "secret.txt\ndata/*.csv\n*.log\n"
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, ".truss_ignore"), []byte(trussIgnore), 0o644))
+
+	// Files that the user's patterns should drop.
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "secret.txt"), []byte("nope"), 0o644))
+	h.Require.NoError(os.MkdirAll(filepath.Join(dir, "data"), 0o755))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "data", "rows.csv"), []byte("nope"), 0o644))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "app.log"), []byte("nope"), 0o644))
+	// Files the user's patterns do NOT mention. With the SDK defaults
+	// replaced, these would normally be ignored by defaults but should
+	// now ship, matching Python's replace-not-merge semantics.
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "model.pyc"), []byte("kept"), 0o644))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, ".DS_Store"), []byte("kept"), 0o644))
+	// Plain file that should always ship.
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "keep.txt"), []byte("kept"), 0o644))
+
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir))
+
+	entries := h.UntarUploaded()
+	h.Require.NotContains(entries, "secret.txt")
+	h.Require.NotContains(entries, "data/rows.csv")
+	h.Require.NotContains(entries, "app.log")
+	h.Require.Equal("kept", entries["model.pyc"])
+	h.Require.Equal("kept", entries[".DS_Store"])
+	h.Require.Equal("kept", entries["keep.txt"])
+}
+
+// Without a .truss_ignore present, the SDK's bundled default patterns apply,
+// covering both basename (e.g., __pycache__, *.pyc) and path-anchored
+// (e.g., docs/_build/, share/python-wheels/) cases.
+func TestModelPush_DefaultIgnore(t *testing.T) {
+	h := newModelPushHarness(t)
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "model.pyc"), []byte("junk"), 0o644))
+	h.Require.NoError(os.MkdirAll(filepath.Join(dir, "__pycache__"), 0o755))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "__pycache__", "x.pyc"), []byte("junk"), 0o644))
+	h.Require.NoError(os.MkdirAll(filepath.Join(dir, "docs", "_build"), 0o755))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "docs", "_build", "out.html"), []byte("junk"), 0o644))
+	h.Require.NoError(os.MkdirAll(filepath.Join(dir, "share", "python-wheels"), 0o755))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "share", "python-wheels", "x.whl"), []byte("junk"), 0o644))
+	// Top-level _build/ must NOT be matched by the docs/_build/ anchored pattern.
+	h.Require.NoError(os.MkdirAll(filepath.Join(dir, "_build"), 0o755))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "_build", "keep.txt"), []byte("kept"), 0o644))
+
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir))
+
+	entries := h.UntarUploaded()
+	h.Require.NotContains(entries, "model.pyc")
+	h.Require.NotContains(entries, "__pycache__/x.pyc")
+	h.Require.NotContains(entries, "docs/_build/out.html")
+	h.Require.NotContains(entries, "share/python-wheels/x.whl")
+	h.Require.Equal("kept", entries["_build/keep.txt"])
+}
+
 // Combined flag-validation coverage. Each subtest is a single Execute, no
 // HTTP/S3 traffic expected for the failure cases.
 func TestModelPush_Validation(t *testing.T) {
