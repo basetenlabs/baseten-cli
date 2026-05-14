@@ -54,7 +54,7 @@ func newLifecycle(t *testing.T) *lifecycle {
 	l := &lifecycle{
 		modelName: fmt.Sprintf("cli-e2e-%s", randomSuffix(t)),
 	}
-	l.modelDir = writeSimpleTruss(t, l.modelName)
+	l.modelDir = writeTruss(t, l.modelName)
 
 	// Register cleanup before the push so even a partial create gets removed.
 	t.Cleanup(func() {

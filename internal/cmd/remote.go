@@ -101,8 +101,7 @@ func (r *Remote) InferenceHostHeader(modelID, chainID, environment string) (stri
 	return host, true, nil
 }
 
-// PredictURL returns the user-facing predict URL printed in push output. It is
-// derived only from the remote URL and ignores inference overrides.
+// PredictURL returns the user-facing predict URL printed in push output.
 func (r *Remote) PredictURL(modelID, deploymentID string, isDraft bool) string {
 	base := r.scheme + "://model-" + modelID + "." + r.managementAPIHost
 	if isDraft {

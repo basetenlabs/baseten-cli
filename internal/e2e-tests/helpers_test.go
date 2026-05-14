@@ -17,9 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// simple-truss source files baked into the test binary. The on-disk version
-// in scratch/simple-truss/ is the reference; keep these in sync.
-const simpleTrussConfigTmpl = `model_name: %s
+// Minimal Truss source files baked into the test binary.
+const trussConfigTmpl = `model_name: %s
 python_version: py313
 resources:
   cpu: 50m
@@ -27,7 +26,7 @@ resources:
   use_gpu: false
 `
 
-const simpleTrussModelPy = `class Model:
+const trussModelPy = `class Model:
     def predict(self, request):
         return {"got request": request}
 `
@@ -85,15 +84,15 @@ func mustCLI(t *testing.T, args ...string) string {
 	return out
 }
 
-// writeSimpleTruss materializes the baked-in simple-truss source into a temp
-// dir with the given model name baked into config.yaml.
-func writeSimpleTruss(t *testing.T, modelName string) string {
+// writeTruss materializes the baked-in Truss source into a temp dir with
+// the given model name baked into config.yaml.
+func writeTruss(t *testing.T, modelName string) string {
 	t.Helper()
 	dir := t.TempDir()
-	cfg := fmt.Sprintf(simpleTrussConfigTmpl, modelName)
+	cfg := fmt.Sprintf(trussConfigTmpl, modelName)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "model"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "model", "model.py"), []byte(simpleTrussModelPy), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "model", "model.py"), []byte(trussModelPy), 0o644))
 	return dir
 }
 
