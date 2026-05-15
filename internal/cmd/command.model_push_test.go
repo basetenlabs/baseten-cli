@@ -364,6 +364,14 @@ func TestModelPush_DefaultIgnore(t *testing.T) {
 // Combined flag-validation coverage. Each subtest is a single Execute, no
 // HTTP/S3 traffic expected for the failure cases.
 func TestModelPush_Validation(t *testing.T) {
+	t.Run("missing_config_file", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := t.TempDir()
+		err := h.Execute("model", "push", "--dir", dir)
+		h.Require.ErrorContains(err, "config.yaml not found")
+		h.Require.ErrorContains(err, "--dir")
+	})
+
 	t.Run("missing_model_name", func(t *testing.T) {
 		h := newModelPushHarness(t)
 		dir := h.WriteModelDir("build: {}\n")

@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -127,7 +126,6 @@ func buildModelPushInputs(flags *cmd.ModelPushFlags) (*managementapi.PrepareMode
 		return nil, buildOpts, err
 	}
 	applyModelPushEnvironmentFlags(&prepareReq.Deployment, flags)
-	prepareReq.Deployment.UserEnv = buildModelPushUserEnv(flags)
 
 	if flags.Team != "" {
 		team := flags.Team
@@ -139,16 +137,16 @@ func buildModelPushInputs(flags *cmd.ModelPushFlags) (*managementapi.PrepareMode
 // readModelConfigYAML loads config.yaml from dir and populates the fields
 // downstream callers will read from: deployment.Config (parsed map),
 // deployment.RawConfig (verbatim bytes), and the package-dir options on
-// buildOpts. A missing config.yaml is allowed; deployment.Config defaults
-// to an empty map so flag mutations have a target.
+// buildOpts. A missing config.yaml is treated as a usage error since the
+// user is most likely pointing at the wrong directory.
 func readModelConfigYAML(dir string, deployment *managementapi.DeploymentArchivePayload, buildOpts *modelarchive.BuildModelArchiveOptions) error {
 	path := filepath.Join(dir, modelPushConfigFileName)
 	raw, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		deployment.Config = map[string]any{}
-		buildOpts.BundledPackagesDir = modelPushDefaultBundledPkgDir
-		return nil
+		return &ErrUsage{Err: fmt.Errorf(
+			"%s not found in %q: is this a model directory? Pass --dir to point to one",
+			modelPushConfigFileName, dir)}
 	case err != nil:
 		return fmt.Errorf("read %s: %w", path, err)
 	}
@@ -267,46 +265,6 @@ func applyModelPushEnvironmentFlags(deployment *managementapi.DeploymentArchiveP
 		scaleDown := !flags.PreservePreviousProductionDeployment
 		deployment.ScaleDownOldProduction = &scaleDown
 	}
-}
-
-func buildModelPushUserEnv(flags *cmd.ModelPushFlags) *map[string]any {
-	if !flags.IncludeGitInfo {
-		return nil
-	}
-	info := collectModelPushGitInfo(flags.Dir)
-	if info == nil {
-		return nil
-	}
-	env := map[string]any{"git_info": info}
-	return &env
-}
-
-func collectModelPushGitInfo(dir string) map[string]any {
-	sha, ok := runModelPushGit(dir, "rev-parse", "HEAD")
-	if !ok {
-		return nil
-	}
-	info := map[string]any{"latest_commit_sha": sha}
-	if tag, ok := runModelPushGit(dir, "describe", "--tags", "--abbrev=0"); ok {
-		info["latest_tag"] = tag
-		if count, ok := runModelPushGit(dir, "rev-list", tag+"..HEAD", "--count"); ok {
-			info["commits_since_tag"] = count
-		}
-	}
-	if status, ok := runModelPushGit(dir, "status", "--porcelain"); ok {
-		info["has_uncommitted_changes"] = status != ""
-	}
-	return info
-}
-
-func runModelPushGit(dir string, args ...string) (string, bool) {
-	c := exec.Command("git", args...)
-	c.Dir = dir
-	out, err := c.Output()
-	if err != nil {
-		return "", false
-	}
-	return strings.TrimSpace(string(out)), true
 }
 
 // announceModelPush prints the pre-push narrative to stderr.

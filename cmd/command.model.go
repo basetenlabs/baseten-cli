@@ -7,10 +7,13 @@ var commandModel = Command{
 		"Authentication is via 'baseten auth login' or the BASETEN_API_KEY environment variable.",
 	Children: []Command{
 		{
-			Name:    "push",
-			Summary: "Push a Truss model directory as a new model or deployment",
-			Description: "Build a Truss archive, upload it to Baseten, and create either a new " +
+			Name:      "push",
+			ArgsUsage: "[--dir DIR]",
+			Summary:   "Push a model directory as a new model or deployment",
+			Description: "Build a model archive, upload it to Baseten, and create either a new " +
 				"model or a new deployment of an existing model.\n\n" +
+				"The current directory is used by default; pass --dir to push a model " +
+				"directory at another path.\n\n" +
 				"The model is identified by the `model_name` field in config.yaml. " +
 				"Use --override-name to override that for this push only.",
 			Flags: ModelPushFlags{},
@@ -34,7 +37,7 @@ var commandModel = Command{
 type ModelPushFlags struct {
 	CommandFlags
 
-	Dir string `flag:"dir" desc:"Path to the Truss model directory" default:"."`
+	Dir string `flag:"dir" desc:"Model directory to push. Defaults to the current directory." default:"."`
 
 	Team string `flag:"team" desc:"Team the model belongs to. Only valid for new models."`
 
@@ -44,9 +47,8 @@ type ModelPushFlags struct {
 	Environment    string `flag:"environment" desc:"Stable environment to push to. Mutually exclusive with --promote."`
 	DeploymentName string `flag:"deployment-name" desc:"Human-readable name for the new deployment."`
 
-	NoCache        bool   `flag:"no-cache" desc:"Force a full rebuild without using cached layers."`
-	IncludeGitInfo bool   `flag:"include-git-info" desc:"Include local git commit info in deployment metadata."`
-	Labels         string `flag:"labels" desc:"User-provided labels for the deployment as a JSON object, e.g. '{\"team\":\"ml\",\"priority\":1}'."`
+	NoCache bool   `flag:"no-cache" desc:"Force a full rebuild without using cached layers."`
+	Labels  string `flag:"labels" desc:"User-provided labels for the deployment as a JSON object, e.g. '{\"team\":\"ml\",\"priority\":1}'."`
 
 	Tail bool `flag:"tail" desc:"Stream build and runtime logs after pushing. (not yet implemented)"`
 	Wait bool `flag:"wait" desc:"Block until the deployment is active. (not yet implemented)"`
