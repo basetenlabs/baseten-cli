@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
@@ -281,6 +282,45 @@ type httpClientKey struct{}
 // CommandContext and therefore all SDK clients created from it.
 func WithHTTPClient(ctx context.Context, c *http.Client) context.Context {
 	return context.WithValue(ctx, httpClientKey{}, c)
+}
+
+// Now returns the current wall-clock time, honoring any override installed
+// via WithNow. Used by command runners for any "now" calculation so tests
+// can pin the clock.
+func (c *CommandContext) Now() time.Time {
+	if fn, ok := c.Value(nowKey{}).(func() time.Time); ok {
+		return fn()
+	}
+	return time.Now()
+}
+
+// Sleep pauses for d, honoring any override installed via WithSleep and
+// returning early with ctx.Err() if the context is cancelled.
+func (c *CommandContext) Sleep(d time.Duration) error {
+	if fn, ok := c.Value(sleepKey{}).(func(context.Context, time.Duration) error); ok {
+		return fn(c, d)
+	}
+	select {
+	case <-c.Done():
+		return c.Err()
+	case <-time.After(d):
+		return nil
+	}
+}
+
+type nowKey struct{}
+type sleepKey struct{}
+
+// WithNow returns a context that pins CommandContext.Now to fn. Intended for
+// tests; production code uses time.Now via the default path.
+func WithNow(ctx context.Context, fn func() time.Time) context.Context {
+	return context.WithValue(ctx, nowKey{}, fn)
+}
+
+// WithSleep returns a context that intercepts CommandContext.Sleep with fn.
+// Intended for tests so polling loops complete instantly.
+func WithSleep(ctx context.Context, fn func(context.Context, time.Duration) error) context.Context {
+	return context.WithValue(ctx, sleepKey{}, fn)
 }
 
 // S3APIClientFactory builds an S3 client from a fully-populated aws.Config

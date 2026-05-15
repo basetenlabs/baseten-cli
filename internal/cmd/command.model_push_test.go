@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
@@ -128,9 +129,15 @@ func newModelPushHarness(t *testing.T) *modelPushHarness {
 
 // SetRoute registers (or overrides) the response for a method+path.
 func (h *modelPushHarness) SetRoute(method, path string, status int, payload any) {
+	h.SetRouteFunc(method, path, func() (int, any) { return status, payload })
+}
+
+// SetRouteFunc registers a per-call response generator, so the route can
+// return a sequence of responses (e.g. for status polling, warmup 404s).
+func (h *modelPushHarness) SetRouteFunc(method, path string, fn func() (int, any)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.routes[method+" "+path] = func() (int, any) { return status, payload }
+	h.routes[method+" "+path] = fn
 }
 
 // FindCall returns the first recorded call matching method+path (or nil).
@@ -428,4 +435,160 @@ func TestModelPush_Validation(t *testing.T) {
 		h.Require.Equal(map[string]any{"team": "ml", "priority": float64(1)}, dep["labels"])
 		h.Require.Equal(float64(30), dep["deploy_timeout_minutes"])
 	})
+}
+
+// deploymentResponse builds a JSON payload matching managementapi.Deployment
+// for the test model+deployment IDs the harness creates by default.
+func deploymentResponse(status string) map[string]any {
+	return map[string]any{
+		"id":                   "deploy-456",
+		"model_id":             "model-123",
+		"name":                 "v1",
+		"status":               status,
+		"created_at":           "2026-01-01T00:00:00Z",
+		"active_replica_count": 0,
+		"autoscaling_settings": map[string]any{},
+		"is_development":       false,
+		"is_production":        false,
+	}
+}
+
+// stubModelPushTimeAndSleep pins ctx.Now and makes ctx.Sleep an instant
+// no-op so polling loops finish in the test goroutine.
+func stubModelPushTimeAndSleep(h *modelPushHarness) {
+	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, _ time.Duration) error { return nil })
+	fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.Context = cmd.WithNow(h.Context, func() time.Time { return fixed })
+}
+
+// --wait polls deployment status, logs transitions to stderr, finishes
+// cleanly when status reaches ACTIVE, and the JSON result reflects the
+// final status.
+func TestModelPush_WaitSuccess(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	statuses := []string{"BUILDING", "BUILDING", "ACTIVE"}
+	idx := 0
+	h.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456", func() (int, any) {
+		s := statuses[idx]
+		if idx < len(statuses)-1 {
+			idx++
+		}
+		return 200, deploymentResponse(s)
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--wait", "--output", "json"))
+
+	h.Require.Contains(h.Stderr.String(), "Status: BUILDING")
+	h.Require.Contains(h.Stderr.String(), "Status: ACTIVE")
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("ACTIVE", dep["status"])
+}
+
+// --wait exits non-zero on a terminal-failure status, and the JSON result
+// still emits with the failure status in deployment.status.
+func TestModelPush_WaitFailure(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	statuses := []string{"BUILDING", "BUILD_FAILED"}
+	idx := 0
+	h.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456", func() (int, any) {
+		s := statuses[idx]
+		if idx < len(statuses)-1 {
+			idx++
+		}
+		return 200, deploymentResponse(s)
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--wait", "--output", "json")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "failed deployment status: BUILD_FAILED")
+	h.Require.NotZero(h.ExitCode)
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("BUILD_FAILED", dep["status"])
+}
+
+// --tail without --wait stops only on terminal-failure statuses; logs go
+// to stderr as text regardless of --output, and the JSON result reflects
+// the final fetched status.
+func TestModelPush_TailFailure(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	h.SetRoute("POST", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
+		"logs": []any{
+			map[string]any{"timestamp": "1", "message": "build started", "replica": nil},
+		},
+	})
+	h.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456", 200, deploymentResponse("BUILD_FAILED"))
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--tail", "--output", "json")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "failed deployment status: BUILD_FAILED")
+	h.Require.Contains(h.Stderr.String(), "build started")
+
+	// JSON result is on stdout regardless of --tail.
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("BUILD_FAILED", dep["status"])
+}
+
+// --tail --wait stops on ACTIVE (success), exits zero, and the JSON
+// result reflects the final ACTIVE status.
+func TestModelPush_TailWaitSuccess(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	h.SetRoute("POST", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
+		"logs": []any{
+			map[string]any{"timestamp": "1", "message": "almost ready", "replica": nil},
+		},
+	})
+	h.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456", 200, deploymentResponse("ACTIVE"))
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--tail", "--wait", "--output", "json"))
+	h.Require.Contains(h.Stderr.String(), "almost ready")
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("ACTIVE", dep["status"])
+}
+
+// --tail tolerates 404s from the logs API during the warmup window
+// (brand-new deployments may 404 for a few seconds after creation), then
+// proceeds normally once the first response succeeds.
+func TestModelPush_TailWarmup404(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+
+	logsCall := 0
+	h.SetRouteFunc("POST", "/v1/models/model-123/deployments/deploy-456/logs", func() (int, any) {
+		logsCall++
+		if logsCall <= 2 {
+			return 404, map[string]any{"error": "not found"}
+		}
+		return 200, map[string]any{
+			"logs": []any{
+				map[string]any{"timestamp": "1", "message": "online", "replica": nil},
+			},
+		}
+	})
+	h.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456", 200, deploymentResponse("BUILD_FAILED"))
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--tail")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "failed deployment status: BUILD_FAILED")
+	h.Require.Contains(h.Stderr.String(), "online")
+	h.Require.GreaterOrEqual(logsCall, 3, "two 404s plus one success")
 }
