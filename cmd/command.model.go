@@ -47,8 +47,8 @@ type ModelPushFlags struct {
 	Environment    string `flag:"environment" desc:"Stable environment to push to. Mutually exclusive with --promote."`
 	DeploymentName string `flag:"deployment-name" desc:"Human-readable name for the new deployment."`
 
-	NoCache bool   `flag:"no-cache" desc:"Force a full rebuild without using cached layers."`
-	Labels  string `flag:"labels" desc:"User-provided labels for the deployment as a JSON object, e.g. '{\"team\":\"ml\",\"priority\":1}'."`
+	NoBuildCache bool   `flag:"no-build-cache" desc:"Force a full rebuild without using cached layers."`
+	Labels       string `flag:"labels" desc:"User-provided labels for the deployment as a JSON object, e.g. '{\"team\":\"ml\",\"priority\":1}'."`
 
 	Tail bool `flag:"tail" desc:"Stream build and runtime logs after pushing. (not yet implemented)"`
 	Wait bool `flag:"wait" desc:"Block until the deployment is active. (not yet implemented)"`

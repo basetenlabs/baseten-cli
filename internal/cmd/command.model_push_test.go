@@ -266,7 +266,7 @@ func TestModelPush_ExistingModel(t *testing.T) {
 	h.Require.Nil(h.FindCall("POST", "/v1/models"))
 }
 
-// Verifies the asymmetry: --override-name and --no-cache mutate the API
+// Verifies the asymmetry: --override-name and --no-build-cache mutate the API
 // `config` payload but NOT the archived config.yaml bytes. Also verifies
 // external_package_dirs are bundled under the configured directory.
 func TestModelPush_OverridesAndExternalPackages(t *testing.T) {
@@ -278,7 +278,7 @@ func TestModelPush_OverridesAndExternalPackages(t *testing.T) {
 	h.Require.NoError(os.WriteFile(filepath.Join(extras, "util.py"), []byte("X = 1\n"), 0o644))
 
 	h.Require.NoError(h.Execute("model", "push", "--dir", dir,
-		"--override-name", "renamed", "--no-cache"))
+		"--override-name", "renamed", "--no-build-cache"))
 
 	prep := h.FindCall("POST", "/v1/prepare_model_upload")
 	h.Require.NotNil(prep)

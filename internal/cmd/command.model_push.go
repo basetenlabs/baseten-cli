@@ -116,8 +116,8 @@ func buildModelPushInputs(flags *cmd.ModelPushFlags) (*managementapi.PrepareMode
 	if flags.OverrideName != "" {
 		prepareReq.Deployment.Config["model_name"] = flags.OverrideName
 	}
-	if flags.NoCache {
-		applyModelPushNoCache(prepareReq.Deployment.Config)
+	if flags.NoBuildCache {
+		applyModelPushNoBuildCache(prepareReq.Deployment.Config)
 	}
 	if err := applyModelPushDeployTimeout(&prepareReq.Deployment, flags.DeployTimeout); err != nil {
 		return nil, buildOpts, err
@@ -200,7 +200,7 @@ func resolvedModelPushName(req *managementapi.PrepareModelUploadRequest) string 
 	return ""
 }
 
-func applyModelPushNoCache(configMap map[string]any) {
+func applyModelPushNoBuildCache(configMap map[string]any) {
 	build, _ := configMap["build"].(map[string]any)
 	if build == nil {
 		build = map[string]any{}
