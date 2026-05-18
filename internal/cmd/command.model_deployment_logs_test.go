@@ -257,20 +257,17 @@ func TestModelDeploymentLogs_TailTerminatesOnStopStatus(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Tailing stopped: deployment status BUILD_FAILED")
 }
 
-func TestModelDeploymentLogs_TailKeepsPollingOnUnknownStatus(t *testing.T) {
+func TestModelDeploymentLogs_TailStopsOnUnknownStatus(t *testing.T) {
 	srv := newLogsServer(t)
 	srv.appendLogs(map[string]any{"timestamp": "1", "message": "alive", "replica": nil})
 	srv.appendDeployment("SOME_NEW_STATE")
-	srv.appendDeployment("SOME_NEW_STATE")
-	srv.appendDeployment("BUILD_FAILED")
 
 	h := newLogsHarness(t, srv)
 	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, _ time.Duration) error { return nil })
 	err := h.Execute("model", "deployment", "logs",
 		"--model-id", "m", "--deployment-id", "d", "--tail")
 	h.Require.NoError(err)
-	h.Require.Contains(h.Stderr.String(), "BUILD_FAILED")
-	h.Require.GreaterOrEqual(int(srv.deploymentIdx), 3)
+	h.Require.Contains(h.Stderr.String(), "SOME_NEW_STATE")
 }
 
 func TestModelDeploymentLogs_TailDedupesAcrossPolls(t *testing.T) {

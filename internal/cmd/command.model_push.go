@@ -482,16 +482,13 @@ func tailModelPushDeployment(
 	created *managementapi.CreatedModelDeployment,
 	alsoWait bool,
 ) error {
-	opts := TailDeploymentLogsOptions{
+	res := TailDeploymentLogs(ctx, TailDeploymentLogsOptions{
 		API:           api,
 		ModelID:       created.Model.Id,
 		DeploymentID:  created.Deployment.Id,
 		WarmupTimeout: modelPushWarmupTimeout,
-	}
-	if alsoWait {
-		opts.AdditionalTailStopStatuses = []managementapi.DeploymentStatus{managementapi.DeploymentStatus_ACTIVE}
-	}
-	res := TailDeploymentLogs(ctx, opts)
+		StopOnActive:  alsoWait,
+	})
 	for log, err := range res.Logs {
 		if err != nil {
 			return err
@@ -504,10 +501,13 @@ func tailModelPushDeployment(
 	return nil
 }
 
-// waitModelPushDeployment polls the deployment's status until it becomes
-// ACTIVE or enters a terminal-failure status. Status transitions are
-// logged to stderr. Mutates created.Deployment with the freshest fetch so
-// the JSON result reflects final state.
+// waitModelPushDeployment polls the deployment's status until it leaves
+// the in-progress set {BUILDING, DEPLOYING, LOADING_MODEL, UPDATING}.
+// ACTIVE is treated as success; any other status (including UNHEALTHY,
+// SCALED_TO_ZERO, INACTIVE, FAILED, and unknown values) is terminal and
+// surfaces as a failure via the caller's status check. Status transitions
+// are logged to stderr. Mutates created.Deployment with the freshest
+// fetch so the JSON result reflects final state.
 func waitModelPushDeployment(
 	ctx *CommandContext,
 	api *managementapi.Client,
@@ -538,13 +538,12 @@ func waitModelPushDeployment(
 			lastStatus = dep.Status
 		}
 		switch dep.Status {
-		case managementapi.DeploymentStatus_ACTIVE,
-			managementapi.DeploymentStatus_BUILD_FAILED,
-			managementapi.DeploymentStatus_BUILD_STOPPED,
-			managementapi.DeploymentStatus_DEACTIVATING,
-			managementapi.DeploymentStatus_DEPLOY_FAILED,
-			managementapi.DeploymentStatus_FAILED,
-			managementapi.DeploymentStatus_INACTIVE:
+		case managementapi.DeploymentStatus_BUILDING,
+			managementapi.DeploymentStatus_DEPLOYING,
+			managementapi.DeploymentStatus_LOADING_MODEL,
+			managementapi.DeploymentStatus_UPDATING:
+			// keep polling
+		default:
 			created.Deployment = *dep
 			return nil
 		}
@@ -578,7 +577,20 @@ func writeModelPushSummary(printf func(string, ...any), created *managementapi.C
 	logsCmd := fmt.Sprintf("baseten model deployment logs --model-id %s --deployment-id %s",
 		created.Model.Id, created.Deployment.Id)
 	predictCmd := fmt.Sprintf("baseten model predict --model-id %s", created.Model.Id)
-	printf("✨ Model %s was successfully pushed ✨\n", created.Model.Name)
+	// When --wait/--tail observed a terminal-failure status, the upload
+	// itself succeeded but the deployment did not; say so rather than
+	// claiming success.
+	switch created.Deployment.Status {
+	case managementapi.DeploymentStatus_ACTIVE,
+		managementapi.DeploymentStatus_BUILDING,
+		managementapi.DeploymentStatus_DEPLOYING,
+		managementapi.DeploymentStatus_LOADING_MODEL,
+		managementapi.DeploymentStatus_UPDATING:
+		printf("✨ Model %s was successfully pushed ✨\n", created.Model.Name)
+	default:
+		printf("⚠️  Model %s was pushed but the deployment did not become active (status: %s)\n",
+			created.Model.Name, created.Deployment.Status)
+	}
 	if environment != nil {
 		printf("Your Truss has been deployed into the %q environment. After it successfully deploys, it will become the next %q deployment of your model.\n",
 			*environment, *environment)

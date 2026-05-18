@@ -16,6 +16,7 @@ const (
 	maxLogTimeRange              = 7 * 24 * time.Hour
 	deploymentLogPollInterval    = 2 * time.Second
 	deploymentLogClockSkewBuffer = 60 * time.Second
+	deploymentLogDedupRetention  = 30 * time.Minute
 )
 
 func init() {
@@ -25,7 +26,9 @@ func init() {
 func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentLogsFlags) error {
 	hasStart := !flags.Start.IsZero()
 	hasEnd := !flags.End.IsZero()
-	hasSince := flags.Since != 0
+	// Use Changed rather than the zero value so explicit --since 0 fails
+	// the positive-duration check below instead of being silently dropped.
+	hasSince := ctx.Command.Flags().Changed("since")
 	if flags.Tail && (hasStart || hasEnd || hasSince) {
 		return &ErrUsage{Err: errors.New("--tail cannot be combined with --start, --end, or --since")}
 	}
@@ -58,7 +61,7 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	var startMs, endMs *int
 	if hasSince {
 		if flags.Since <= 0 {
-			return &ErrUsage{Err: errors.New("--since must be greater than zero")}
+			return &ErrUsage{Err: errors.New("--since must be a positive duration")}
 		}
 		if flags.Since > maxLogTimeRange {
 			return &ErrUsage{Err: errors.New("--since must be at most 7d")}
@@ -150,17 +153,16 @@ type TailDeploymentLogsOptions struct {
 	ModelID      string
 	DeploymentID string
 
-	// AdditionalTailStopStatuses extends the default terminal-failure stop
-	// set with additional statuses that end tailing cleanly. Unknown
-	// statuses are treated as "keep polling" so a new server-side status
-	// string does not silently truncate a tail. push --wait passes
-	// ACTIVE here to also stop on a successful deploy.
-	AdditionalTailStopStatuses []managementapi.DeploymentStatus
+	// StopOnActive stops the tail when the deployment reaches ACTIVE. By
+	// default ACTIVE is treated as a runnable state and tailing continues
+	// (matching `truss model logs --tail`). push --tail --wait sets this
+	// so a successful deploy ends the tail.
+	StopOnActive bool
 
-	// WarmupTimeout is how long to silently retry 404s from the logs and
-	// status APIs at the start of the tail, before any successful poll.
-	// After the first successful response, 404s are surfaced as errors.
-	// Zero means no warmup retries.
+	// WarmupTimeout is how long to silently retry 404s from the logs API
+	// at the start of the tail, before any successful poll. After the
+	// first successful logs response, 404s are surfaced as errors. Zero
+	// means no warmup retries. (Status-API 404s are never retried here.)
 	WarmupTimeout time.Duration
 }
 
@@ -180,28 +182,22 @@ type TailDeploymentLogsResult struct {
 }
 
 // TailDeploymentLogs polls a deployment's logs and streams new records until
-// the status enters the stop set or the context is cancelled. The stop set
-// is the default terminal-failure statuses plus any in
-// AdditionalTailStopStatuses. Dedup is by (timestamp, message, replica)
-// across overlapping clock-skew windows. Clock-and-sleep behavior is taken
-// from ctx (overridable via WithNow / WithSleep for tests).
+// the status leaves the runnable set or the context is cancelled. The
+// runnable set is {BUILDING, DEPLOYING, LOADING_MODEL, UPDATING, WAKING_UP}
+// plus ACTIVE when StopOnActive is false (default). Any other status,
+// including unknown ones, stops the tail. Dedup is by (timestamp, message,
+// replica) across overlapping clock-skew windows. Clock-and-sleep behavior
+// is taken from ctx (overridable via WithNow / WithSleep for tests).
 func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *TailDeploymentLogsResult {
-	stop := map[managementapi.DeploymentStatus]struct{}{
-		managementapi.DeploymentStatus_BUILD_FAILED:  {},
-		managementapi.DeploymentStatus_BUILD_STOPPED: {},
-		managementapi.DeploymentStatus_DEACTIVATING:  {},
-		managementapi.DeploymentStatus_DEPLOY_FAILED: {},
-		managementapi.DeploymentStatus_FAILED:        {},
-		managementapi.DeploymentStatus_INACTIVE:      {},
-	}
-	for _, s := range opts.AdditionalTailStopStatuses {
-		stop[s] = struct{}{}
-	}
-
 	var finalFetched *managementapi.Deployment
 
 	seq := func(yield func(*managementapi.Log, error) bool) {
-		seen := map[deploymentLogDedupKey]struct{}{}
+		// seen maps each delivered log key to the wall-clock time it was
+		// first observed. Entries older than deploymentLogDedupRetention
+		// are evicted each poll so a long-running tail does not grow the
+		// map without bound; the retention window is far larger than the
+		// clock-skew overlap, so dedup correctness is preserved.
+		seen := map[deploymentLogDedupKey]time.Time{}
 		var lastPollMs int64
 		warmupDeadline := time.Time{}
 		if opts.WarmupTimeout > 0 {
@@ -235,6 +231,14 @@ func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *Ta
 				return
 			}
 			warmedUp = true
+			// Evict dedup keys older than the retention window so a
+			// long-running tail does not grow the map without bound.
+			cutoff := ctx.Now().Add(-deploymentLogDedupRetention)
+			for k, t := range seen {
+				if t.Before(cutoff) {
+					delete(seen, k)
+				}
+			}
 			// Poll windows overlap by deploymentLogClockSkewBuffer on each
 			// side to tolerate server/client clock skew, so the same record
 			// can reappear across polls; dedup by (timestamp, message,
@@ -249,7 +253,7 @@ func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *Ta
 				if _, dup := seen[key]; dup {
 					continue
 				}
-				seen[key] = struct{}{}
+				seen[key] = ctx.Now()
 				if !yield(&log, nil) {
 					return
 				}
@@ -268,7 +272,18 @@ func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *Ta
 					return
 				}
 				finalFetched = dep
-				if _, isStop := stop[dep.Status]; isStop {
+				switch dep.Status {
+				case managementapi.DeploymentStatus_BUILDING,
+					managementapi.DeploymentStatus_DEPLOYING,
+					managementapi.DeploymentStatus_LOADING_MODEL,
+					managementapi.DeploymentStatus_UPDATING,
+					managementapi.DeploymentStatus_WAKING_UP:
+					// keep polling
+				case managementapi.DeploymentStatus_ACTIVE:
+					if opts.StopOnActive {
+						return
+					}
+				default:
 					return
 				}
 			}
