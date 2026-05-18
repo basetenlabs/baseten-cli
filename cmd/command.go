@@ -16,6 +16,7 @@ var Root = Command{
 		commandAPI,
 		commandAuth,
 		commandModel,
+		commandOrg,
 		commandTruss,
 		commandVersion,
 	},
@@ -89,6 +90,7 @@ type CommandFlag struct {
 	Default   string
 	Enum      []string
 	Required  bool
+	Oneof     string // group name: exactly one flag in the group must be set
 	Type      reflect.Type
 	FieldName string // Go struct field name
 }
@@ -99,6 +101,12 @@ type InferenceClientFlags struct {
 	ModelID     string `flag:"model-id" desc:"Model ID to target"`
 	ChainID     string `flag:"chain-id" desc:"Chain ID to target"`
 	Environment string `flag:"environment" desc:"Environment name (e.g. production)"`
+}
+
+// TeamFlags is the --team flag, embedded by commands that target a single
+// team. Empty routes to the organization's default team server-side.
+type TeamFlags struct {
+	Team string `flag:"team" desc:"Team name or ID. Defaults to the organization's default team."`
 }
 
 func commandFlagFromField(field reflect.StructField) (CommandFlag, bool) {
@@ -112,6 +120,7 @@ func commandFlagFromField(field reflect.StructField) (CommandFlag, bool) {
 		Desc:      field.Tag.Get("desc"),
 		Default:   field.Tag.Get("default"),
 		Required:  field.Tag.Get("required") == "true",
+		Oneof:     field.Tag.Get("oneof"),
 		Type:      field.Type,
 		FieldName: field.Name,
 	}

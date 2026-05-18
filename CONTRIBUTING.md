@@ -12,6 +12,8 @@
 - **Do not use positional args unless it really makes sense.** Prefer named flags
   over positional arguments.
 
+- **Enum flag values are lowercase-kebab-case** (e.g. `workspace-invoke`).
+
 ## How to Write a Command
 
 - Commands live in files named `command.<name>.go` where `<name>` is the highest-level subcommand (e.g. `command.api.go` for all `api` subcommands). Split into separate files only if a subcommand group is large enough to warrant it.
