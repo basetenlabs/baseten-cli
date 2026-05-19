@@ -57,6 +57,14 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 		return err
 	}
 
+	teamID, err := ResolveTeam(ctx, api.API(), flags.Team)
+	if err != nil {
+		return err
+	}
+	if teamID != "" {
+		prepareReq.TeamId = &teamID
+	}
+
 	announceModelPush(ctx, *prepareReq.Name, prepareReq.Deployment.EnvironmentName)
 
 	prepareResp, existingModelID, err := prepareModelPushUpload(ctx, api.API(), prepareReq, flags)
@@ -76,7 +84,7 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	}
 
 	modelName := resolvedModelPushName(prepareReq)
-	created, err := commitModelPush(ctx, api.API(), existingModelID, modelName, *prepareResp.S3Key, prepareReq.Deployment, flags.DisableArchiveDownload)
+	created, err := commitModelPush(ctx, api.API(), existingModelID, teamID, modelName, *prepareResp.S3Key, prepareReq.Deployment, flags.DisableArchiveDownload)
 	if err != nil {
 		return err
 	}
@@ -127,10 +135,6 @@ func buildModelPushInputs(flags *cmd.ModelPushFlags) (*managementapi.PrepareMode
 	}
 	applyModelPushEnvironmentFlags(&prepareReq.Deployment, flags)
 
-	if flags.Team != "" {
-		team := flags.Team
-		prepareReq.TeamId = &team
-	}
 	return prepareReq, buildOpts, nil
 }
 
@@ -260,11 +264,6 @@ func applyModelPushEnvironmentFlags(deployment *managementapi.DeploymentArchiveP
 		preserve := !flags.OverrideEnvInstanceType
 		deployment.PreserveEnvInstanceType = &preserve
 	}
-	if flags.Promote {
-		// Server defaults to true; flag flips it off.
-		scaleDown := !flags.PreservePreviousProductionDeployment
-		deployment.ScaleDownOldProduction = &scaleDown
-	}
 }
 
 // announceModelPush prints the pre-push narrative to stderr.
@@ -390,7 +389,7 @@ func (c *readCounter) Read(p []byte) (int, error) {
 func commitModelPush(
 	ctx context.Context,
 	api *managementapi.Client,
-	existingModelID, modelName, s3Key string,
+	existingModelID, teamID, modelName, s3Key string,
 	deployment managementapi.DeploymentArchivePayload,
 	disableArchiveDownload bool,
 ) (*managementapi.CreatedModelDeployment, error) {
@@ -412,7 +411,11 @@ func commitModelPush(
 	if err := union.FromModelArchiveSource(src); err != nil {
 		return nil, err
 	}
-	return api.PostModels(ctx, managementapi.CreateModelRequest{Source: union})
+	req := managementapi.CreateModelRequest{Source: union}
+	if teamID != "" {
+		return api.PostTeamsModels(ctx, teamID, req)
+	}
+	return api.PostModels(ctx, req)
 }
 
 func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedModelDeployment, environment *string) error {

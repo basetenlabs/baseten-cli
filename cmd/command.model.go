@@ -59,9 +59,8 @@ type ModelPushFlags struct {
 
 	DeployTimeout string `flag:"deploy-timeout" desc:"Deployment timeout as a Go duration (e.g. 30m, 1h); allowed range 10m to 24h."`
 
-	OverrideName                         string `flag:"override-name" desc:"Override the model_name from config.yaml for this push only. The on-disk config.yaml is not modified."`
-	OverrideEnvInstanceType              bool   `flag:"override-env-instance-type" desc:"Use this deployment's instance type instead of preserving the target environment's. Only meaningful when an environment is targeted."`
-	PreservePreviousProductionDeployment bool   `flag:"preserve-previous-production-deployment" desc:"Keep the previous production deployment running after promotion. Only meaningful when promoting to production."`
+	OverrideName            string `flag:"override-name" desc:"Override the model_name from config.yaml for this push only. The on-disk config.yaml is not modified."`
+	OverrideEnvInstanceType bool   `flag:"override-env-instance-type" desc:"Use this deployment's instance type instead of preserving the target environment's. Only meaningful when an environment is targeted."`
 
 	DisableArchiveDownload bool `flag:"disable-archive-download" desc:"Disable archive download for the new model. Only valid for new models."`
 }

@@ -175,6 +175,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 		flagsPtr := reflect.New(reflect.TypeOf(def.Flags))
 		flagsVal := flagsPtr.Elem()
 		bindFlags(c.Flags(), flagsVal, flagMetas)
+		applyOneofGroups(c, flagMetas)
 
 		r := runners[path]
 		c.RunE = func(_ *cobra.Command, args []string) error {
@@ -292,6 +293,21 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 		if meta.Required {
 			cobra.MarkFlagRequired(flags, meta.Name)
 		}
+	}
+}
+
+// applyOneofGroups wires `oneof:"<group>"`-tagged flags as mutually exclusive
+// and one-required via Cobra. Empty group names are ignored.
+func applyOneofGroups(c *cobra.Command, metas []cmd.CommandFlag) {
+	groups := map[string][]string{}
+	for _, m := range metas {
+		if m.Oneof != "" {
+			groups[m.Oneof] = append(groups[m.Oneof], m.Name)
+		}
+	}
+	for _, names := range groups {
+		c.MarkFlagsMutuallyExclusive(names...)
+		c.MarkFlagsOneRequired(names...)
 	}
 }
 

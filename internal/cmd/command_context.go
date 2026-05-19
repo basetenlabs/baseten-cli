@@ -14,6 +14,8 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 )
@@ -68,6 +70,32 @@ func (c *CommandContext) NewJSONArrayWriter() *JSONArrayWriter {
 		compact: c.JSONCompact,
 		lines:   c.JSONLines,
 	}
+}
+
+// OutputTable writes a borderless table to stdout with bold headers. Header
+// styling auto-degrades when stdout is not a terminal.
+func (c *CommandContext) OutputTable(headers []string, rows [][]string) {
+	renderer := lipgloss.NewRenderer(c.Stdout)
+	headerStyle := renderer.NewStyle().Bold(true).PaddingRight(2)
+	cellStyle := renderer.NewStyle().PaddingRight(2)
+	t := table.New().
+		Border(lipgloss.HiddenBorder()).
+		BorderTop(false).
+		BorderBottom(false).
+		BorderLeft(false).
+		BorderRight(false).
+		BorderHeader(false).
+		BorderColumn(false).
+		BorderRow(false).
+		Headers(headers...).
+		Rows(rows...).
+		StyleFunc(func(row, _ int) lipgloss.Style {
+			if row == table.HeaderRow {
+				return headerStyle
+			}
+			return cellStyle
+		})
+	panicOnOutputError(fmt.Fprintln(c.Stdout, t.Render()))
 }
 
 // Log writes to stderr.
