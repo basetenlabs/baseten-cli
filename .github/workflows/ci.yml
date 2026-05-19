@@ -8,6 +8,7 @@ on:
 jobs:
   check:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -34,10 +35,13 @@ jobs:
           git diff --exit-code
 
       - name: Test
+        run: go test ./...
+
+      - name: E2E test
+        if: matrix.os == 'ubuntu-latest'
         env:
           # Forks won't have these secrets so e2e tests skip, but pushes
           # to main will run them.
           BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
-          BASETEN_E2E_TEST_DOMAIN: ${{ secrets.BASETEN_E2E_TEST_DOMAIN }}
-          BASETEN_E2E_TEST_MODEL_ID: ${{ secrets.BASETEN_E2E_TEST_MODEL_ID }}
-        run: go test ./...
+          BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
+        run: go test -tags=e2e ./internal/e2e-tests/...

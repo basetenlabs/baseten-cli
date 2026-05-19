@@ -101,6 +101,8 @@ func Execute(ctx context.Context, options ExecuteOptions) error {
 	root.SetOut(options.Stdout)
 	root.SetErr(options.Stderr)
 	root.SetArgs(options.Args)
+	root.Version = Version
+	root.SetVersionTemplate("{{.Version}}\n")
 	root.ResetCommands()
 	for _, child := range cmd.Root.Children {
 		root.AddCommand(buildCommand(child, "", &options))
@@ -176,6 +178,10 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 
 		r := runners[path]
 		c.RunE = func(_ *cobra.Command, args []string) error {
+			remote, err := NewRemote()
+			if err != nil {
+				return err
+			}
 			ctx := &CommandContext{
 				Context:      c.Context(),
 				Command:      c,
@@ -184,6 +190,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				Stdout:       options.Stdout,
 				Stderr:       options.Stderr,
 				ExitWithCode: options.ExitWithCode,
+				Remote:       remote,
 			}
 			if f := flagsVal.FieldByName("CommandFlags"); f.IsValid() {
 				cmdFlags := f.Interface().(cmd.CommandFlags)
@@ -202,7 +209,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			if results[0].IsNil() {
 				return nil
 			}
-			err := results[0].Interface().(error)
+			err = results[0].Interface().(error)
 			if e, ok := err.(*ErrUsage); ok {
 				return e.Err
 			}

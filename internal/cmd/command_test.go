@@ -34,7 +34,8 @@ type CommandHarness struct {
 // Tests can override any of these with a subsequent t.Setenv before Execute.
 func NewCommandHarness(t *testing.T) *CommandHarness {
 	t.Setenv("BASETEN_API_KEY", "test-key")
-	t.Setenv("BASETEN_BASE_URL", "http://127.0.0.1:1")
+	t.Setenv("BASETEN_REMOTE_URL", "http://127.0.0.1:1")
+	t.Setenv("BASETEN_MANAGEMENT_API_URL_OVERRIDE", "http://127.0.0.1:1")
 	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
 	return &CommandHarness{T: t, Require: require.New(t), Context: t.Context()}
 }
