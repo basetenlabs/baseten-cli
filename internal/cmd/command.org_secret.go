@@ -119,7 +119,7 @@ func commandOrgSecretDelete(ctx *CommandContext, flags *cmd.OrgSecretDeleteFlags
 		return err
 	}
 
-	var secret *managementapi.Secret
+	var secret *managementapi.SecretTombstone
 	if teamID == "" {
 		secret, err = cl.API().DeleteSecrets(ctx, flags.Name)
 	} else {

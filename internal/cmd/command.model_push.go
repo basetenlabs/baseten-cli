@@ -264,11 +264,6 @@ func applyModelPushEnvironmentFlags(deployment *managementapi.DeploymentArchiveP
 		preserve := !flags.OverrideEnvInstanceType
 		deployment.PreserveEnvInstanceType = &preserve
 	}
-	if flags.Promote {
-		// Server defaults to true; flag flips it off.
-		scaleDown := !flags.PreservePreviousProductionDeployment
-		deployment.ScaleDownOldProduction = &scaleDown
-	}
 }
 
 // announceModelPush prints the pre-push narrative to stderr.
