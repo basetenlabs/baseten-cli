@@ -85,11 +85,11 @@ type OrgAPIKeyListFlags struct {
 
 type OrgAPIKeyCreateFlags struct {
 	CommandFlags
-	TeamFlags
 
 	Type     string   `flag:"type" desc:"API key category." required:"true" enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all"`
 	Name     string   `flag:"name" desc:"Optional human-readable name for the key."`
 	ModelIDs []string `flag:"model-id" desc:"Restrict the key to a specific model. May be repeated. Only valid with --type workspace-export-metrics or workspace-invoke."`
+	Team     string   `flag:"team" desc:"Team name or ID to create the key in. Defaults to the organization's default team."`
 }
 
 type OrgAPIKeyDeleteFlags struct {
@@ -109,20 +109,21 @@ type OrgBillingUsageFlags struct {
 
 type OrgSecretListFlags struct {
 	CommandFlags
-	TeamFlags
+
+	Team string `flag:"team" desc:"Filter to a specific team by name or ID. Defaults to all teams the caller belongs to."`
 }
 
 type OrgSecretSetFlags struct {
 	CommandFlags
-	TeamFlags
 
 	Name  string `flag:"name" desc:"Name of the secret." required:"true"`
 	Value string `flag:"value" desc:"Secret value. Discouraged: leaks into shell history and process list. Prefer stdin or prompt."`
+	Team  string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team."`
 }
 
 type OrgSecretDeleteFlags struct {
 	CommandFlags
-	TeamFlags
 
 	Name string `flag:"name" desc:"Name of the secret to delete." required:"true"`
+	Team string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team."`
 }

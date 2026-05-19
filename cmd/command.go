@@ -69,8 +69,7 @@ func (c Command) LoadFlags() []CommandFlag {
 // LoadFlagsFromType parses flag metadata from a struct type's tags.
 func LoadFlagsFromType(t reflect.Type) []CommandFlag {
 	var flags []CommandFlag
-	for i := range t.NumField() {
-		field := t.Field(i)
+	for field := range t.Fields() {
 		if field.Anonymous {
 			flags = append(flags, LoadFlagsFromType(field.Type)...)
 			continue
@@ -101,12 +100,6 @@ type InferenceClientFlags struct {
 	ModelID     string `flag:"model-id" desc:"Model ID to target"`
 	ChainID     string `flag:"chain-id" desc:"Chain ID to target"`
 	Environment string `flag:"environment" desc:"Environment name (e.g. production)"`
-}
-
-// TeamFlags is the --team flag, embedded by commands that target a single
-// team. Empty routes to the organization's default team server-side.
-type TeamFlags struct {
-	Team string `flag:"team" desc:"Team name or ID. Defaults to the organization's default team."`
 }
 
 func commandFlagFromField(field reflect.StructField) (CommandFlag, bool) {
