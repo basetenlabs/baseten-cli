@@ -206,7 +206,7 @@ func TestHelpOutput(t *testing.T) {
 	h := NewCommandHarness(t)
 	err := h.Execute("--help")
 	h.Require.NoError(err)
-	h.Require.Contains(h.Stdout.String(), "Available Commands")
+	h.Require.Contains(h.Stdout.String(), "COMMANDS")
 }
 
 func TestOutputEnumValidation(t *testing.T) {
