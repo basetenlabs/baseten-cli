@@ -8,10 +8,12 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client"
+	"github.com/charmbracelet/fang"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -109,7 +111,14 @@ func Execute(ctx context.Context, options ExecuteOptions) error {
 	for _, child := range cmd.Root.Children {
 		root.AddCommand(buildCommand(child, "", &options))
 	}
-	return root.ExecuteContext(ctx)
+	// WithVersion feeds the styled help/manpage; WithoutVersion drops fang's
+	// -v/--version flag so it doesn't collide with -v for --verbose.
+	return fang.Execute(ctx, root,
+		fang.WithVersion(Version),
+		fang.WithoutVersion(),
+		fang.WithColorSchemeFunc(fang.AnsiColorScheme),
+		fang.WithNotifySignal(os.Interrupt, syscall.SIGTERM),
+	)
 }
 
 func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *cobra.Command {

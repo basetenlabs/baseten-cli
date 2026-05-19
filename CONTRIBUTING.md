@@ -1,31 +1,24 @@
 # Contributing
 
-## Command Best Practices
+## Authoring commands
 
-- **Commands with subcommands are not themselves executable.** A parent command
-  (e.g. `baseten api`) only serves as a grouping for its children. It should not
-  have a run function or `Flags` set on its `Command` definition.
+- Files: `command.<name>.go` where `<name>` is the top-level subcommand (`command.api.go` covers all `api` subcommands); split only when a group grows large.
+- Public (`cmd/`): a `Command` struct plus a flags struct embedding `CommandFlags`. Declare flags via struct tags (`flag`, `short`, `desc`, `default`, `enum`, `required`).
+- Internal (`internal/cmd/`): runner registered in `init()` via `Register("parent child", runner)`; path and flag type must match.
+- Parents (commands with subcommands) are not executable: no run function, no `Flags`.
+- Avoid shorthand flags and positional args unless really needed.
+- Enum values are `lowercase-kebab-case`.
+- Tests: `command.<name>_test.go` (package `cmd_test`); name `Test_ParentCmd_SubCmd_WhatThisTests` (e.g. `Test_API_Management_DefaultGET`).
 
-- **Do not use shorthand flags unless you really need them.** Single-letter flag
-  aliases are strongly discouraged.
+## End-to-end tests
 
-- **Do not use positional args unless it really makes sense.** Prefer named flags
-  over positional arguments.
+E2e tests live in `internal/e2e-tests/` behind the `e2e` build tag and run against a live Baseten environment. They auto-skip when `BASETEN_E2E_TEST_API_KEY` is unset, so CI must opt in explicitly.
 
-- **Enum flag values are lowercase-kebab-case** (e.g. `workspace-invoke`).
-
-## How to Write a Command
-
-- Commands live in files named `command.<name>.go` where `<name>` is the highest-level subcommand (e.g. `command.api.go` for all `api` subcommands). Split into separate files only if a subcommand group is large enough to warrant it.
-- **Public side** (`cmd/`): Define a `Command` struct and a flags struct. The flags struct must embed `CommandFlags` (directly or transitively). Use struct tags (`flag`, `short`, `desc`, `default`, `enum`, `required`) to declare flags.
-- **Internal side** (`internal/cmd/`): Write the runner function and register it in an `init()` with `Register("parent child", myRunner)`. The path and flag type must match the command definition exactly.
-- **Tests** go in `command.<name>_test.go` in the `cmd_test` package. Test names follow `Test_ParentCmd_SubCmd_WhatThisTests` (e.g. `Test_API_Management_DefaultGET`).
-
-## End-to-End Tests
-
-E2e tests live in `internal/e2e-tests/` behind the `e2e` build tag and run against a live Baseten environment. They are skipped automatically when `BASETEN_E2E_TEST_API_KEY` is not set.
-
-### Running
+- Keep them fast and high-level smoke only; do not exhaustively cover flag permutations (that belongs in unit tests).
+- Invoke the CLI in-process via `cmd.Execute` rather than shelling out to a built binary.
+- Tests must be idempotent and clean up resources they create.
+- Use random/unique identifiers for created resources so parallel or repeated runs don't clash.
+- Do not assume specific orgs, models, or other state exists; create or look up dynamically.
 
 ```bash
 BASETEN_E2E_TEST_API_KEY=... \

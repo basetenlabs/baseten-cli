@@ -1,0 +1,59 @@
+version: 2
+
+project_name: baseten
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: baseten
+    main: ./cmd/baseten
+    binary: baseten
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/basetenlabs/baseten-cli/internal/cmd.Version={{.Version}}
+
+archives:
+  - id: baseten
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: basetenlabs
+    name: baseten-cli
+  draft: false
+  prerelease: auto
+
+# TODO: Publish a Docker image to the official Baseten Docker Hub namespace.
+# dockers:
+#   - image_templates:
+#       - "baseten/baseten-cli:{{ .Version }}"
+#       - "baseten/baseten-cli:latest"
+#     dockerfile: Dockerfile
+
+# TODO: After first stable release, submit a Homebrew formula to
+# homebrew/homebrew-core. goreleaser can only publish to a custom tap, not
+# homebrew-core, so the initial submission is a manual PR.
