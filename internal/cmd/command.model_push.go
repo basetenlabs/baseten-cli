@@ -37,12 +37,6 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	if flags.Promote && flags.Environment != "" {
 		return &ErrUsage{Err: errors.New("--promote and --environment are mutually exclusive")}
 	}
-	if flags.Tail {
-		return errors.New("--tail is not yet implemented")
-	}
-	if flags.Wait {
-		return errors.New("--wait is not yet implemented")
-	}
 	if flags.Watch || flags.WatchHotReload || flags.WatchKeepalive {
 		return errors.New("--watch, --watch-hot-reload, and --watch-keepalive are not yet implemented")
 	}
@@ -89,7 +83,22 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 		return err
 	}
 
-	return writeModelPushResult(ctx, created, prepareReq.Deployment.EnvironmentName)
+	switch {
+	case flags.Tail:
+		err = tailModelPushDeployment(ctx, api.API(), created, flags.Wait)
+	case flags.Wait:
+		err = waitModelPushDeployment(ctx, api.API(), created)
+	}
+	if err != nil {
+		return err
+	}
+	if err := writeModelPushResult(ctx, created, prepareReq.Deployment.EnvironmentName); err != nil {
+		return err
+	}
+	if (flags.Tail || flags.Wait) && created.Deployment.Status != managementapi.DeploymentStatus_ACTIVE {
+		return fmt.Errorf("failed deployment status: %s", created.Deployment.Status)
+	}
+	return nil
 }
 
 // buildModelPushInputs assembles the two structs downstream calls consume:
@@ -418,33 +427,137 @@ func commitModelPush(
 	return api.PostModels(ctx, req)
 }
 
+const (
+	modelPushPollInterval  = 2 * time.Second
+	modelPushWarmupTimeout = 30 * time.Second
+)
+
+// tailModelPushDeployment streams build/runtime logs to stderr as text
+// (regardless of --output) until the deployment reaches a terminal status.
+// When alsoWait is true, ACTIVE is added to the stop set so a successful
+// deploy ends the tail. Mutates created.Deployment with the freshest fetch
+// so the JSON result reflects final state.
+func tailModelPushDeployment(
+	ctx *CommandContext,
+	api *managementapi.Client,
+	created *managementapi.CreatedModelDeployment,
+	alsoWait bool,
+) error {
+	res := TailDeploymentLogs(ctx, TailDeploymentLogsOptions{
+		API:           api,
+		ModelID:       created.Model.Id,
+		DeploymentID:  created.Deployment.Id,
+		WarmupTimeout: modelPushWarmupTimeout,
+		StopOnActive:  alsoWait,
+	})
+	for log, err := range res.Logs {
+		if err != nil {
+			return err
+		}
+		ctx.LogLine(FormatDeploymentLogLine(*log))
+	}
+	if dep := res.FinalFetchedDeployment(); dep != nil {
+		created.Deployment = *dep
+	}
+	return nil
+}
+
+// waitModelPushDeployment polls the deployment's status until it leaves
+// the in-progress set {BUILDING, DEPLOYING, LOADING_MODEL, UPDATING}.
+// ACTIVE is treated as success; any other status (including UNHEALTHY,
+// SCALED_TO_ZERO, INACTIVE, FAILED, and unknown values) is terminal and
+// surfaces as a failure via the caller's status check. Status transitions
+// are logged to stderr. Mutates created.Deployment with the freshest
+// fetch so the JSON result reflects final state.
+func waitModelPushDeployment(
+	ctx *CommandContext,
+	api *managementapi.Client,
+	created *managementapi.CreatedModelDeployment,
+) error {
+	warmupDeadline := ctx.Now().Add(modelPushWarmupTimeout)
+	warmedUp := false
+	var lastStatus managementapi.DeploymentStatus
+
+	for {
+		dep, err := api.GetModelsDeploymentsDeploymentId(ctx, created.Model.Id, created.Deployment.Id)
+		if err != nil {
+			// Brand-new deployments may 404 for a few seconds after creation;
+			// retry quietly within the warmup window until the first
+			// successful response.
+			var re *managementapi.ResponseError
+			if !warmedUp && errors.As(err, &re) && re.StatusCode == 404 && ctx.Now().Before(warmupDeadline) {
+				if err := ctx.Sleep(modelPushPollInterval); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
+		}
+		warmedUp = true
+		if dep.Status != lastStatus {
+			ctx.Logf("Status: %s\n", dep.Status)
+			lastStatus = dep.Status
+		}
+		switch dep.Status {
+		case managementapi.DeploymentStatus_BUILDING,
+			managementapi.DeploymentStatus_DEPLOYING,
+			managementapi.DeploymentStatus_LOADING_MODEL,
+			managementapi.DeploymentStatus_UPDATING:
+			// keep polling
+		default:
+			created.Deployment = *dep
+			return nil
+		}
+		if err := ctx.Sleep(modelPushPollInterval); err != nil {
+			return err
+		}
+	}
+}
+
 func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedModelDeployment, environment *string) error {
 	predictURL := ctx.Remote.PredictURL(created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment)
 	logsURL := ctx.Remote.LogsURL(created.Model.Id, created.Deployment.Id)
 
+	// Narrative goes first so a user piping JSON to a file or jq sees the
+	// human summary on stderr before the JSON object lands on stdout.
 	if ctx.JSON {
+		writeModelPushSummary(ctx.Logf, created, predictURL, logsURL, environment)
 		ctx.OutputJSON(map[string]any{
 			"model":       created.Model,
 			"deployment":  created.Deployment,
 			"predict_url": predictURL,
 			"logs_url":    logsURL,
 		})
-		// Mirror Python: still emit the narrative on stderr in JSON mode.
-		writeModelPushSummary(ctx.Logf, created.Model.Name, predictURL, logsURL, environment)
 		return nil
 	}
-	writeModelPushSummary(ctx.Outputf, created.Model.Name, predictURL, logsURL, environment)
+	writeModelPushSummary(ctx.Outputf, created, predictURL, logsURL, environment)
 	return nil
 }
 
-func writeModelPushSummary(printf func(string, ...any), modelName, predictURL, logsURL string, environment *string) {
-	printf("✨ Model %s was successfully pushed ✨\n", modelName)
+func writeModelPushSummary(printf func(string, ...any), created *managementapi.CreatedModelDeployment, predictURL, logsURL string, environment *string) {
+	logsCmd := fmt.Sprintf("baseten model deployment logs --model-id %s --deployment-id %s",
+		created.Model.Id, created.Deployment.Id)
+	predictCmd := fmt.Sprintf("baseten model predict --model-id %s", created.Model.Id)
+	// When --wait/--tail observed a terminal-failure status, the upload
+	// itself succeeded but the deployment did not; say so rather than
+	// claiming success.
+	switch created.Deployment.Status {
+	case managementapi.DeploymentStatus_ACTIVE,
+		managementapi.DeploymentStatus_BUILDING,
+		managementapi.DeploymentStatus_DEPLOYING,
+		managementapi.DeploymentStatus_LOADING_MODEL,
+		managementapi.DeploymentStatus_UPDATING:
+		printf("✨ Model %s was successfully pushed ✨\n", created.Model.Name)
+	default:
+		printf("⚠️  Model %s was pushed but the deployment did not become active (status: %s)\n",
+			created.Model.Name, created.Deployment.Status)
+	}
 	if environment != nil {
 		printf("Your Truss has been deployed into the %q environment. After it successfully deploys, it will become the next %q deployment of your model.\n",
 			*environment, *environment)
 	}
-	printf("🪵  View logs for your deployment at %s\n", logsURL)
-	printf("🚀  Invoke your model at %s\n", predictURL)
+	printf("🪵  View logs for your deployment at %s or %s\n", inlineCodeStyle.Render(logsURL), inlineCodeStyle.Render(logsCmd))
+	printf("🚀  Invoke your model at %s or %s\n", inlineCodeStyle.Render(predictURL), inlineCodeStyle.Render(predictCmd))
 }
 
 func formatBytes(n int64) string {

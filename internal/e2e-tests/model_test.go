@@ -20,7 +20,6 @@ import (
 // required env vars are absent.
 func TestE2EModelLifecycle(t *testing.T) {
 	l := newLifecycle(t)
-	t.Run("WaitForDeploy", l.WaitForDeploy)
 	t.Run("ManagementAPI", l.ManagementAPI)
 	t.Run("InferenceAPI", l.InferenceAPI)
 	t.Run("Redeploy", l.Redeploy)
@@ -73,17 +72,13 @@ func newLifecycle(t *testing.T) *lifecycle {
 		}
 	})
 
-	pushOut := mustCLI(t, "model", "push", "--dir", l.modelDir, "--promote", "--output", "json")
+	pushOut := mustCLI(t, "model", "push", "--dir", l.modelDir, "--promote", "--wait", "--output", "json")
 	var initial pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(pushOut), &initial))
 	require.Equal(t, l.modelName, initial.Model.Name)
 	l.modelID = initial.Model.ID
 	l.initialDeploymentID = initial.Deployment.ID
 	return l
-}
-
-func (l *lifecycle) WaitForDeploy(t *testing.T) {
-	waitForActive(t, l.modelID, l.initialDeploymentID)
 }
 
 func (l *lifecycle) ManagementAPI(t *testing.T) {
@@ -142,12 +137,11 @@ func (l *lifecycle) InferenceAPI(t *testing.T) {
 }
 
 func (l *lifecycle) Redeploy(t *testing.T) {
-	out := mustCLI(t, "model", "push", "--dir", l.modelDir, "--promote", "--output", "json")
+	out := mustCLI(t, "model", "push", "--dir", l.modelDir, "--promote", "--wait", "--output", "json")
 	var redeploy pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(out), &redeploy))
 	require.Equal(t, l.modelID, redeploy.Model.ID, "redeploy should reuse existing model")
 	require.NotEqual(t, l.initialDeploymentID, redeploy.Deployment.ID, "redeploy should create a new deployment")
-	waitForActive(t, l.modelID, redeploy.Deployment.ID)
 }
 
 func randomSuffix(t *testing.T) string {

@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/stretchr/testify/require"
@@ -30,11 +29,6 @@ const trussModelPy = `class Model:
     def predict(self, request):
         return {"got request": request}
 `
-
-// deployWaitTimeout caps how long we wait for any single deployment to reach
-// ACTIVE. Two deploys happen in this test (initial + redeploy), so the
-// effective ceiling on the whole test is roughly 2x this plus overhead.
-const deployWaitTimeout = 10 * time.Minute
 
 // pushedDeployment is the JSON shape returned by `model push --output json`.
 type pushedDeployment struct {
@@ -110,32 +104,6 @@ func writeTruss(t *testing.T, modelName string) string {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "model"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "model", "model.py"), []byte(trussModelPy), 0o644))
 	return dir
-}
-
-// waitForActive polls the deployment until it reaches ACTIVE, fatals on
-// terminal failure states or timeout.
-func waitForActive(t *testing.T, modelID, deploymentID string) {
-	t.Helper()
-	deadline := time.Now().Add(deployWaitTimeout)
-	for time.Now().Before(deadline) {
-		out, _, err := cli(t, "api", "management", fmt.Sprintf("models/%s/deployments/%s", modelID, deploymentID))
-		if err == nil {
-			var resp struct {
-				Status string `json:"status"`
-			}
-			if jerr := json.Unmarshal([]byte(out), &resp); jerr == nil {
-				t.Logf("deployment %s status: %s", deploymentID, resp.Status)
-				switch resp.Status {
-				case "ACTIVE":
-					return
-				case "FAILED", "BUILD_FAILED", "DEPLOY_FAILED", "UNHEALTHY":
-					t.Fatalf("deployment %s entered terminal failure state: %s", deploymentID, resp.Status)
-				}
-			}
-		}
-		time.Sleep(10 * time.Second)
-	}
-	t.Fatalf("deployment %s did not reach ACTIVE within %s", deploymentID, deployWaitTimeout)
 }
 
 // lookupModelIDByName is the fallback used at cleanup when we couldn't parse

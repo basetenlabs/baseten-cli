@@ -66,14 +66,14 @@ func newUserInfoServer(t *testing.T) *userInfoServer {
 	return s
 }
 
-func TestAuthStatus_NotLoggedIn(t *testing.T) {
+func Test_Auth_Status_NotLoggedIn(t *testing.T) {
 	h := newAuthHarness(t)
 	h.Require.Error(h.Execute("auth", "status"))
 	h.Require.Equal(1, h.ExitCode)
 	h.Require.Contains(h.Stderr.String(), "not logged in")
 }
 
-func TestAuthStatus_APIKey(t *testing.T) {
+func Test_Auth_Status_APIKey(t *testing.T) {
 	h := newAuthHarness(t)
 	setTestRemote(t, "https://api.example.com")
 
@@ -87,7 +87,7 @@ func TestAuthStatus_APIKey(t *testing.T) {
 	h.Require.Contains(out, "api_key")
 }
 
-func TestAuthStatus_JSON(t *testing.T) {
+func Test_Auth_Status_JSON(t *testing.T) {
 	h := newAuthHarness(t)
 	setTestRemote(t, "https://api.example.com")
 
@@ -102,14 +102,14 @@ func TestAuthStatus_JSON(t *testing.T) {
 	h.Require.Equal("https://api.example.com", got["host"])
 }
 
-func TestAuthLogout_NoActiveUser(t *testing.T) {
+func Test_Auth_Logout_NoActiveUser(t *testing.T) {
 	h := newAuthHarness(t)
 	h.Require.Error(h.Execute("auth", "logout"))
 	h.Require.Equal(1, h.ExitCode)
 	h.Require.Contains(h.Stderr.String(), "no active user")
 }
 
-func TestAuthLogout_RemovesActiveUser(t *testing.T) {
+func Test_Auth_Logout_RemovesActiveUser(t *testing.T) {
 	h := newAuthHarness(t)
 	setTestRemote(t, "https://api.example.com")
 
@@ -123,7 +123,7 @@ func TestAuthLogout_RemovesActiveUser(t *testing.T) {
 	h.Require.False(ok, "user should be removed")
 }
 
-func TestAuthLogout_APIKey_SkipsServerCall(t *testing.T) {
+func Test_Auth_Logout_APIKey_SkipsServerCall(t *testing.T) {
 	h := newAuthHarness(t)
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +140,7 @@ func TestAuthLogout_APIKey_SkipsServerCall(t *testing.T) {
 	h.Require.Equal(0, calls, "API key logout should not call server")
 }
 
-func TestAuthLogout_OAuth_CallsRevokeEndpoint(t *testing.T) {
+func Test_Auth_Logout_OAuth_CallsRevokeEndpoint(t *testing.T) {
 	h := newAuthHarness(t)
 	var gotPath, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +163,7 @@ func TestAuthLogout_OAuth_CallsRevokeEndpoint(t *testing.T) {
 	h.Require.False(ok, "user should be removed")
 }
 
-func TestAuthLogout_OAuth_WarnsOnServerFailureButStillRemoves(t *testing.T) {
+func Test_Auth_Logout_OAuth_WarnsOnServerFailureButStillRemoves(t *testing.T) {
 	h := newAuthHarness(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"code":"VALIDATION_ERROR","message":"nope"}`, http.StatusBadRequest)
@@ -182,13 +182,13 @@ func TestAuthLogout_OAuth_WarnsOnServerFailureButStillRemoves(t *testing.T) {
 	h.Require.False(ok, "user should still be removed after server failure")
 }
 
-func TestAuthSwitch_RequiresUserNonInteractive(t *testing.T) {
+func Test_Auth_Switch_RequiresUserNonInteractive(t *testing.T) {
 	h := newAuthHarness(t)
 	err := h.Execute("auth", "switch")
 	h.Require.ErrorContains(err, "--user")
 }
 
-func TestAuthSwitch_UpdatesActiveUser(t *testing.T) {
+func Test_Auth_Switch_UpdatesActiveUser(t *testing.T) {
 	h := newAuthHarness(t)
 	setTestRemote(t, "https://api.example.com")
 
@@ -202,7 +202,7 @@ func TestAuthSwitch_UpdatesActiveUser(t *testing.T) {
 	h.Require.Equal("alice", label)
 }
 
-func TestAuthSwitch_UnknownUserFails(t *testing.T) {
+func Test_Auth_Switch_UnknownUserFails(t *testing.T) {
 	h := newAuthHarness(t)
 	setTestRemote(t, "https://api.example.com")
 
@@ -214,7 +214,7 @@ func TestAuthSwitch_UnknownUserFails(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "not found")
 }
 
-func TestAuthLogin_APIKey_Stdin(t *testing.T) {
+func Test_Auth_Login_APIKey_Stdin(t *testing.T) {
 	h := newAuthHarness(t)
 	srv := newUserInfoServer(t)
 	setTestRemote(t, srv.URL)
@@ -236,7 +236,7 @@ func TestAuthLogin_APIKey_Stdin(t *testing.T) {
 	h.Require.Equal("secret-api-key", got)
 }
 
-func TestAuthLogin_APIKey_EmptyFails(t *testing.T) {
+func Test_Auth_Login_APIKey_EmptyFails(t *testing.T) {
 	h := newAuthHarness(t)
 	setTestRemote(t, "http://127.0.0.1:1")
 
@@ -245,7 +245,7 @@ func TestAuthLogin_APIKey_EmptyFails(t *testing.T) {
 	h.Require.ErrorContains(err, "empty")
 }
 
-func TestAuthLogin_APIKey_RequiresLabelNonInteractive(t *testing.T) {
+func Test_Auth_Login_APIKey_RequiresLabelNonInteractive(t *testing.T) {
 	h := newAuthHarness(t)
 	srv := newUserInfoServer(t)
 	setTestRemote(t, srv.URL)
@@ -255,7 +255,7 @@ func TestAuthLogin_APIKey_RequiresLabelNonInteractive(t *testing.T) {
 	h.Require.ErrorContains(err, "--label")
 }
 
-func TestAuthLogin_APIKey_RejectsWebAndKeyFlags(t *testing.T) {
+func Test_Auth_Login_APIKey_RejectsWebAndKeyFlags(t *testing.T) {
 	h := newAuthHarness(t)
 	err := h.Execute("auth", "login", "--web", "--with-api-key", "--label", "x")
 	h.Require.ErrorContains(err, "mutually exclusive")
@@ -320,7 +320,7 @@ func newDeviceAuthServer(t *testing.T) *deviceAuthServer {
 	return s
 }
 
-func TestAuthLogin_Web_DeviceFlow(t *testing.T) {
+func Test_Auth_Login_Web_DeviceFlow(t *testing.T) {
 	h := newAuthHarness(t)
 	srv := newDeviceAuthServer(t)
 	setTestRemote(t, srv.URL)

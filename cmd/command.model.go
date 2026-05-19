@@ -30,7 +30,14 @@ var commandModel = Command{
 			Description: "Fetch a Baseten model.",
 			Flags:       ModelFetchFlags{},
 		},
+		commandModelDeployment,
 	},
+}
+
+// ModelIDFlags identifies a model by ID. Embedded by commands that act on a
+// specific model.
+type ModelIDFlags struct {
+	ModelID string `flag:"model-id" desc:"ID of the model." required:"true"`
 }
 
 // ModelPushFlags configures `baseten model push`.
@@ -50,8 +57,8 @@ type ModelPushFlags struct {
 	NoBuildCache bool   `flag:"no-build-cache" desc:"Force a full rebuild without using cached layers."`
 	Labels       string `flag:"labels" desc:"User-provided labels for the deployment as a JSON object, e.g. '{\"team\":\"ml\",\"priority\":1}'."`
 
-	Tail bool `flag:"tail" desc:"Stream build and runtime logs after pushing. (not yet implemented)"`
-	Wait bool `flag:"wait" desc:"Block until the deployment is active. (not yet implemented)"`
+	Tail bool `flag:"tail" desc:"Stream build and runtime logs to stderr after pushing. Logs are always text-formatted; use 'baseten model deployment logs --tail' for structured log streaming."`
+	Wait bool `flag:"wait" desc:"Block until the deployment is active. Exits non-zero on a terminal-failure status."`
 
 	Watch          bool `flag:"watch" desc:"Watch the model directory and push on change. (not yet implemented)"`
 	WatchHotReload bool `flag:"watch-hot-reload" desc:"Hot-reload the running container on watched changes. (not yet implemented)"`
@@ -73,7 +80,7 @@ type ModelListFlags struct {
 // ModelFetchFlags configures `baseten model fetch`.
 type ModelFetchFlags struct {
 	CommandFlags
+	ModelIDFlags
 
-	ModelID string `flag:"model-id" desc:"ID of the model to fetch." required:"true"`
-	TeamID  string `flag:"team-id" desc:"Team the model belongs to."`
+	TeamID string `flag:"team-id" desc:"Team the model belongs to."`
 }

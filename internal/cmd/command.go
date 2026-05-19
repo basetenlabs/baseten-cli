@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client"
@@ -286,6 +288,10 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 			flags.BoolVarP(ptr, meta.Name, meta.Short, meta.Default == "true", desc)
 		case *[]string:
 			flags.StringArrayVarP(ptr, meta.Name, meta.Short, nil, desc)
+		case *time.Time:
+			flags.VarP(&friendlyTimeValue{value: ptr}, meta.Name, meta.Short, desc)
+		case *time.Duration:
+			flags.VarP(&friendlyDurationValue{value: ptr}, meta.Name, meta.Short, desc)
 		default:
 			panic(fmt.Sprintf("unsupported flag type %T for flag %q", ptr, meta.Name))
 		}
@@ -294,6 +300,68 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 			cobra.MarkFlagRequired(flags, meta.Name)
 		}
 	}
+}
+
+// friendlyTimeValue implements pflag.Value for a time.Time accepting a few
+// common ISO 8601 forms. Values without a timezone designator are parsed in
+// the local timezone (matches ISO 8601's "no tz = local" rule and other
+// CLI conventions like journalctl and docker logs); values with `Z` or an
+// offset are parsed as given.
+type friendlyTimeValue struct{ value *time.Time }
+
+func (v *friendlyTimeValue) String() string {
+	if v.value == nil || v.value.IsZero() {
+		return ""
+	}
+	return v.value.Format(time.RFC3339)
+}
+
+func (v *friendlyTimeValue) Type() string { return "time" }
+
+func (v *friendlyTimeValue) Set(s string) error {
+	// ParseInLocation only applies the location when the layout has no
+	// zone info, so RFC 3339 inputs (which require a designator) still
+	// honor their explicit zone.
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	} {
+		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+			*v.value = t
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid time %q: expected ISO 8601 (e.g. 2026-05-14, 2026-05-14T12:00:00, 2026-05-14T12:00:00Z)", s)
+}
+
+// friendlyDurationValue implements pflag.Value for a time.Duration that also
+// accepts "<N>d" forms (Go's time.ParseDuration rejects 'd').
+type friendlyDurationValue struct{ value *time.Duration }
+
+func (v *friendlyDurationValue) String() string {
+	if v.value == nil {
+		return ""
+	}
+	return v.value.String()
+}
+
+func (v *friendlyDurationValue) Type() string { return "duration" }
+
+func (v *friendlyDurationValue) Set(s string) error {
+	if d, err := time.ParseDuration(s); err == nil {
+		*v.value = d
+		return nil
+	}
+	if strings.HasSuffix(s, "d") && len(s) > 1 {
+		if days, err := strconv.ParseInt(s[:len(s)-1], 10, 64); err == nil {
+			*v.value = time.Duration(days) * 24 * time.Hour
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid duration %q: expected a Go duration (e.g. 30m, 1h30m) or <N>d (e.g. 3d)", s)
 }
 
 // applyOneofGroups wires `oneof:"<group>"`-tagged flags as mutually exclusive

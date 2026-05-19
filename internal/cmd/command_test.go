@@ -100,6 +100,19 @@ type MockAPICall struct {
 	Body   string
 }
 
+// BodyJSON parses Body as a JSON object. Returns an empty map if Body is empty.
+func (c *MockAPICall) BodyJSON(t *testing.T) map[string]any {
+	t.Helper()
+	if c.Body == "" {
+		return map[string]any{}
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal([]byte(c.Body), &out); err != nil {
+		t.Fatalf("decode body for %s %s: %v", c.Method, c.Path, err)
+	}
+	return out
+}
+
 // MockManagementAPI is a fake management API backed by httptest.Server.
 // Register specific routes via SetRoute or SetRouteFunc; use SetHandler to
 // supply a fallthrough for any request that no route matches. Without a

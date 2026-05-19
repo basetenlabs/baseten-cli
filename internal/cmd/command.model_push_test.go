@@ -7,24 +7,17 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 )
-
-// modelPushAPICall captures one HTTP request to the fake management API.
-type modelPushAPICall struct {
-	Method string
-	Path   string
-	Body   map[string]any
-}
 
 // modelPushFakeS3 satisfies transfermanager.S3APIClient via embedding; only
 // PutObject is implemented, so any other method call (multipart, etc.) panics.
@@ -50,24 +43,22 @@ func (f *modelPushFakeS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ 
 	return &s3.PutObjectOutput{}, nil
 }
 
-// modelPushHarness wires the CommandHarness with a fake HTTP server (per-route
-// canned responses) and a fake S3 client (captured upload body).
+// modelPushHarness wires the CommandHarness with the shared MockManagementAPI
+// and a fake S3 client (captured upload body).
 type modelPushHarness struct {
 	*CommandHarness
-	S3 *modelPushFakeS3
-	// mu guards Calls and routes.
-	mu     sync.Mutex
-	Calls  []modelPushAPICall
-	routes map[string]func() (int, any) // key = "METHOD PATH"
+	API *MockManagementAPI
+	S3  *modelPushFakeS3
 }
 
 func newModelPushHarness(t *testing.T) *modelPushHarness {
 	h := &modelPushHarness{
-		S3:     &modelPushFakeS3{},
-		routes: map[string]func() (int, any){},
+		CommandHarness: NewCommandHarness(t),
+		S3:             &modelPushFakeS3{},
 	}
-	h.SetRoute("GET", "/v1/models", 200, map[string]any{"models": []any{}})
-	h.SetRoute("POST", "/v1/prepare_model_upload", 200, map[string]any{
+	h.API = h.MockManagementAPI()
+	h.API.SetRoute("GET", "/v1/models", 200, map[string]any{"models": []any{}})
+	h.API.SetRoute("POST", "/v1/prepare_model_upload", 200, map[string]any{
 		"creds": map[string]any{
 			"aws_access_key_id":     "AKIA-TEST",
 			"aws_secret_access_key": "secret",
@@ -95,54 +86,13 @@ func newModelPushHarness(t *testing.T) *modelPushHarness {
 			"status":         "BUILDING",
 		},
 	}
-	h.SetRoute("POST", "/v1/models", 200, defaultCreated)
-	h.SetRoute("POST", "/v1/models/model-123/deployments", 200, defaultCreated)
+	h.API.SetRoute("POST", "/v1/models", 200, defaultCreated)
+	h.API.SetRoute("POST", "/v1/models/model-123/deployments", 200, defaultCreated)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		body := map[string]any{}
-		_ = json.Unmarshal(raw, &body)
-		h.mu.Lock()
-		h.Calls = append(h.Calls, modelPushAPICall{Method: r.Method, Path: r.URL.Path, Body: body})
-		handler, ok := h.routes[r.Method+" "+r.URL.Path]
-		h.mu.Unlock()
-		if !ok {
-			http.Error(w, "no route for "+r.Method+" "+r.URL.Path, http.StatusNotFound)
-			return
-		}
-		status, payload := handler()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(payload)
-	}))
-	t.Cleanup(srv.Close)
-
-	h.CommandHarness = NewCommandHarness(t)
-	h.T.Setenv("BASETEN_MANAGEMENT_API_URL_OVERRIDE", srv.URL)
-	h.Context = cmd.WithHTTPClient(h.Context, srv.Client())
 	h.Context = cmd.WithS3APIClientFactory(h.Context, func(aws.Config) transfermanager.S3APIClient {
 		return h.S3
 	})
 	return h
-}
-
-// SetRoute registers (or overrides) the response for a method+path.
-func (h *modelPushHarness) SetRoute(method, path string, status int, payload any) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.routes[method+" "+path] = func() (int, any) { return status, payload }
-}
-
-// FindCall returns the first recorded call matching method+path (or nil).
-func (h *modelPushHarness) FindCall(method, path string) *modelPushAPICall {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for i := range h.Calls {
-		if h.Calls[i].Method == method && h.Calls[i].Path == path {
-			return &h.Calls[i]
-		}
-	}
-	return nil
 }
 
 // WriteModelDir creates a minimal Truss directory: config.yaml + model.py.
@@ -185,9 +135,9 @@ const modelPushMinimalConfig = "model_name: test-model\n"
 
 // Dry-run path: prepare is called with dry_run=true, no S3 upload happens,
 // no model is created.
-func TestModelPush_DryRun(t *testing.T) {
+func Test_Model_Push_DryRun(t *testing.T) {
 	h := newModelPushHarness(t)
-	h.SetRoute("POST", "/v1/prepare_model_upload", 200, map[string]any{
+	h.API.SetRoute("POST", "/v1/prepare_model_upload", 200, map[string]any{
 		// dry-run response: creds/bucket/key are null per the REST contract.
 		"creds": nil, "s3_bucket": nil, "s3_key": nil,
 	})
@@ -195,30 +145,32 @@ func TestModelPush_DryRun(t *testing.T) {
 	dir := h.WriteModelDir(modelPushMinimalConfig)
 	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--dry-run"))
 
-	prep := h.FindCall("POST", "/v1/prepare_model_upload")
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 	h.Require.NotNil(prep)
-	h.Require.Equal(true, prep.Body["dry_run"])
-	h.Require.Equal("test-model", prep.Body["name"])
+	body := prep.BodyJSON(h.T)
+	h.Require.Equal(true, body["dry_run"])
+	h.Require.Equal("test-model", body["name"])
 
 	h.Require.Nil(h.S3.body, "no S3 upload on dry run")
-	h.Require.Nil(h.FindCall("POST", "/v1/models"))
+	h.Require.Nil(h.API.FindCall("POST", "/v1/models"))
 	h.Require.Contains(h.Stderr.String(), "Dry run successful")
 }
 
 // New-model happy path: routes through POST /v1/models, S3 receives the tar
 // archive, deployment payload reflects user-env client version.
-func TestModelPush_NewModel(t *testing.T) {
+func Test_Model_Push_NewModel(t *testing.T) {
 	h := newModelPushHarness(t)
 	dir := h.WriteModelDir(modelPushMinimalConfig)
 
 	h.Require.NoError(h.Execute("model", "push", "--dir", dir))
 
 	// Prepare uses Name (new), not ModelId (existing).
-	prep := h.FindCall("POST", "/v1/prepare_model_upload")
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 	h.Require.NotNil(prep)
-	h.Require.Equal("test-model", prep.Body["name"])
-	h.Require.NotContains(prep.Body, "model_id")
-	dep, _ := prep.Body["deployment"].(map[string]any)
+	prepBody := prep.BodyJSON(h.T)
+	h.Require.Equal("test-model", prepBody["name"])
+	h.Require.NotContains(prepBody, "model_id")
+	dep, _ := prepBody["deployment"].(map[string]any)
 	h.Require.NotNil(dep)
 	h.Require.NotContains(dep, "user_env")
 
@@ -230,22 +182,22 @@ func TestModelPush_NewModel(t *testing.T) {
 	h.Require.Contains(entries, "model.py")
 
 	// Create-model call references the same s3_key.
-	create := h.FindCall("POST", "/v1/models")
+	create := h.API.FindCall("POST", "/v1/models")
 	h.Require.NotNil(create)
-	src, _ := create.Body["source"].(map[string]any)
+	src, _ := create.BodyJSON(h.T)["source"].(map[string]any)
 	h.Require.NotNil(src)
 	h.Require.Equal("uploads/test-key.tar", src["s3_key"])
 	h.Require.Equal("test-model", src["name"])
 
 	// No existing-model route hit.
-	h.Require.Nil(h.FindCall("POST", "/v1/models/model-123/deployments"))
+	h.Require.Nil(h.API.FindCall("POST", "/v1/models/model-123/deployments"))
 }
 
 // Existing model: GetModels finds a match, push routes through
 // POST /v1/models/{id}/deployments and skips POST /v1/models.
-func TestModelPush_ExistingModel(t *testing.T) {
+func Test_Model_Push_ExistingModel(t *testing.T) {
 	h := newModelPushHarness(t)
-	h.SetRoute("GET", "/v1/models", 200, map[string]any{
+	h.API.SetRoute("GET", "/v1/models", 200, map[string]any{
 		"models": []any{
 			map[string]any{
 				"id": "model-123", "name": "test-model",
@@ -257,26 +209,27 @@ func TestModelPush_ExistingModel(t *testing.T) {
 	dir := h.WriteModelDir(modelPushMinimalConfig)
 	h.Require.NoError(h.Execute("model", "push", "--dir", dir))
 
-	prep := h.FindCall("POST", "/v1/prepare_model_upload")
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 	h.Require.NotNil(prep)
-	h.Require.Equal("model-123", prep.Body["model_id"])
-	h.Require.NotContains(prep.Body, "name")
+	body := prep.BodyJSON(h.T)
+	h.Require.Equal("model-123", body["model_id"])
+	h.Require.NotContains(body, "name")
 
-	h.Require.NotNil(h.FindCall("POST", "/v1/models/model-123/deployments"))
-	h.Require.Nil(h.FindCall("POST", "/v1/models"))
+	h.Require.NotNil(h.API.FindCall("POST", "/v1/models/model-123/deployments"))
+	h.Require.Nil(h.API.FindCall("POST", "/v1/models"))
 }
 
 // --team <id>: resolves through GET /v1/teams, sets prepareReq.team_id, and
 // routes create through POST /v1/teams/{team_id}/models.
-func TestModelPush_TeamByID(t *testing.T) {
+func Test_Model_Push_TeamByID(t *testing.T) {
 	h := newModelPushHarness(t)
-	h.SetRoute("GET", "/v1/teams", 200, map[string]any{
+	h.API.SetRoute("GET", "/v1/teams", 200, map[string]any{
 		"teams": []any{
 			map[string]any{"id": "team-abc", "name": "ml"},
 			map[string]any{"id": "team-xyz", "name": "infra"},
 		},
 	})
-	h.SetRoute("POST", "/v1/teams/team-abc/models", 200, map[string]any{
+	h.API.SetRoute("POST", "/v1/teams/team-abc/models", 200, map[string]any{
 		"model": map[string]any{
 			"id": "model-123", "name": "test-model",
 			"created_at":        "2026-01-01T00:00:00Z",
@@ -292,24 +245,24 @@ func TestModelPush_TeamByID(t *testing.T) {
 	dir := h.WriteModelDir(modelPushMinimalConfig)
 	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--team", "team-abc"))
 
-	prep := h.FindCall("POST", "/v1/prepare_model_upload")
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 	h.Require.NotNil(prep)
-	h.Require.Equal("team-abc", prep.Body["team_id"])
+	h.Require.Equal("team-abc", prep.BodyJSON(h.T)["team_id"])
 
-	h.Require.NotNil(h.FindCall("POST", "/v1/teams/team-abc/models"))
-	h.Require.Nil(h.FindCall("POST", "/v1/models"))
+	h.Require.NotNil(h.API.FindCall("POST", "/v1/teams/team-abc/models"))
+	h.Require.Nil(h.API.FindCall("POST", "/v1/models"))
 }
 
 // --team <name>: ResolveTeam matches by Name, routing uses the resolved ID.
-func TestModelPush_TeamByName(t *testing.T) {
+func Test_Model_Push_TeamByName(t *testing.T) {
 	h := newModelPushHarness(t)
-	h.SetRoute("GET", "/v1/teams", 200, map[string]any{
+	h.API.SetRoute("GET", "/v1/teams", 200, map[string]any{
 		"teams": []any{
 			map[string]any{"id": "team-abc", "name": "ml"},
 			map[string]any{"id": "team-xyz", "name": "infra"},
 		},
 	})
-	h.SetRoute("POST", "/v1/teams/team-abc/models", 200, map[string]any{
+	h.API.SetRoute("POST", "/v1/teams/team-abc/models", 200, map[string]any{
 		"model": map[string]any{
 			"id": "model-123", "name": "test-model",
 			"created_at":        "2026-01-01T00:00:00Z",
@@ -325,18 +278,18 @@ func TestModelPush_TeamByName(t *testing.T) {
 	dir := h.WriteModelDir(modelPushMinimalConfig)
 	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--team", "ml"))
 
-	prep := h.FindCall("POST", "/v1/prepare_model_upload")
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 	h.Require.NotNil(prep)
-	h.Require.Equal("team-abc", prep.Body["team_id"])
+	h.Require.Equal("team-abc", prep.BodyJSON(h.T)["team_id"])
 
-	h.Require.NotNil(h.FindCall("POST", "/v1/teams/team-abc/models"))
-	h.Require.Nil(h.FindCall("POST", "/v1/models"))
+	h.Require.NotNil(h.API.FindCall("POST", "/v1/teams/team-abc/models"))
+	h.Require.Nil(h.API.FindCall("POST", "/v1/models"))
 }
 
 // Verifies the asymmetry: --override-name and --no-build-cache mutate the API
 // `config` payload but NOT the archived config.yaml bytes. Also verifies
 // external_package_dirs are bundled under the configured directory.
-func TestModelPush_OverridesAndExternalPackages(t *testing.T) {
+func Test_Model_Push_OverridesAndExternalPackages(t *testing.T) {
 	h := newModelPushHarness(t)
 	dir := h.WriteModelDir("model_name: original\nexternal_package_dirs:\n  - extras\n")
 
@@ -347,10 +300,11 @@ func TestModelPush_OverridesAndExternalPackages(t *testing.T) {
 	h.Require.NoError(h.Execute("model", "push", "--dir", dir,
 		"--override-name", "renamed", "--no-build-cache"))
 
-	prep := h.FindCall("POST", "/v1/prepare_model_upload")
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 	h.Require.NotNil(prep)
-	h.Require.Equal("renamed", prep.Body["name"])
-	dep := prep.Body["deployment"].(map[string]any)
+	body := prep.BodyJSON(h.T)
+	h.Require.Equal("renamed", body["name"])
+	dep := body["deployment"].(map[string]any)
 	cfg := dep["config"].(map[string]any)
 	h.Require.Equal("renamed", cfg["model_name"])
 	build := cfg["build"].(map[string]any)
@@ -368,7 +322,7 @@ func TestModelPush_OverridesAndExternalPackages(t *testing.T) {
 // .truss_ignore at the truss root is parsed as gitignore-style patterns
 // and replaces (not merges with) the SDK's bundled defaults, matching the
 // Python Truss behavior.
-func TestModelPush_TrussIgnore(t *testing.T) {
+func Test_Model_Push_TrussIgnore(t *testing.T) {
 	h := newModelPushHarness(t)
 	dir := h.WriteModelDir(modelPushMinimalConfig)
 
@@ -403,7 +357,7 @@ func TestModelPush_TrussIgnore(t *testing.T) {
 // Without a .truss_ignore present, the SDK's bundled default patterns apply,
 // covering both basename (e.g., __pycache__, *.pyc) and path-anchored
 // (e.g., docs/_build/, share/python-wheels/) cases.
-func TestModelPush_DefaultIgnore(t *testing.T) {
+func Test_Model_Push_DefaultIgnore(t *testing.T) {
 	h := newModelPushHarness(t)
 	dir := h.WriteModelDir(modelPushMinimalConfig)
 
@@ -430,7 +384,7 @@ func TestModelPush_DefaultIgnore(t *testing.T) {
 
 // Combined flag-validation coverage. Each subtest is a single Execute, no
 // HTTP/S3 traffic expected for the failure cases.
-func TestModelPush_Validation(t *testing.T) {
+func Test_Model_Push_Validation(t *testing.T) {
 	t.Run("missing_config_file", func(t *testing.T) {
 		h := newModelPushHarness(t)
 		dir := t.TempDir()
@@ -476,7 +430,7 @@ func TestModelPush_Validation(t *testing.T) {
 
 	t.Run("disable_archive_download_on_existing", func(t *testing.T) {
 		h := newModelPushHarness(t)
-		h.SetRoute("GET", "/v1/models", 200, map[string]any{
+		h.API.SetRoute("GET", "/v1/models", 200, map[string]any{
 			"models": []any{
 				map[string]any{
 					"id": "model-123", "name": "test-model",
@@ -497,10 +451,171 @@ func TestModelPush_Validation(t *testing.T) {
 			"--labels", `{"team":"ml","priority":1}`,
 			"--deploy-timeout", "30m",
 		))
-		prep := h.FindCall("POST", "/v1/prepare_model_upload")
+		prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 		h.Require.NotNil(prep)
-		dep := prep.Body["deployment"].(map[string]any)
+		dep := prep.BodyJSON(h.T)["deployment"].(map[string]any)
 		h.Require.Equal(map[string]any{"team": "ml", "priority": float64(1)}, dep["labels"])
 		h.Require.Equal(float64(30), dep["deploy_timeout_minutes"])
 	})
+}
+
+// deploymentResponse builds a JSON payload matching managementapi.Deployment
+// for the test model+deployment IDs the harness creates by default.
+func deploymentResponse(status string) map[string]any {
+	return map[string]any{
+		"id":                   "deploy-456",
+		"model_id":             "model-123",
+		"name":                 "v1",
+		"status":               status,
+		"created_at":           "2026-01-01T00:00:00Z",
+		"active_replica_count": 0,
+		"autoscaling_settings": map[string]any{},
+		"is_development":       false,
+		"is_production":        false,
+	}
+}
+
+// stubModelPushTimeAndSleep pins ctx.Now and makes ctx.Sleep an instant
+// no-op so polling loops finish in the test goroutine.
+func stubModelPushTimeAndSleep(h *modelPushHarness) {
+	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, _ time.Duration) error { return nil })
+	fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.Context = cmd.WithNow(h.Context, func() time.Time { return fixed })
+}
+
+// --wait polls deployment status, logs transitions to stderr, finishes
+// cleanly when status reaches ACTIVE, and the JSON result reflects the
+// final status.
+func Test_Model_Push_WaitSuccess(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	statuses := []string{"BUILDING", "BUILDING", "ACTIVE"}
+	idx := 0
+	h.API.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456", func(w http.ResponseWriter, _ *http.Request) {
+		s := statuses[idx]
+		if idx < len(statuses)-1 {
+			idx++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(deploymentResponse(s))
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--wait", "--output", "json"))
+
+	h.Require.Contains(h.Stderr.String(), "Status: BUILDING")
+	h.Require.Contains(h.Stderr.String(), "Status: ACTIVE")
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("ACTIVE", dep["status"])
+}
+
+// --wait exits non-zero on a terminal-failure status, and the JSON result
+// still emits with the failure status in deployment.status.
+func Test_Model_Push_WaitFailure(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	statuses := []string{"BUILDING", "BUILD_FAILED"}
+	idx := 0
+	h.API.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456", func(w http.ResponseWriter, _ *http.Request) {
+		s := statuses[idx]
+		if idx < len(statuses)-1 {
+			idx++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(deploymentResponse(s))
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--wait", "--output", "json")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "failed deployment status: BUILD_FAILED")
+	h.Require.NotZero(h.ExitCode)
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("BUILD_FAILED", dep["status"])
+}
+
+// --tail without --wait stops only on terminal-failure statuses; logs go
+// to stderr as text regardless of --output, and the JSON result reflects
+// the final fetched status.
+func Test_Model_Push_TailFailure(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	h.API.SetRoute("POST", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
+		"logs": []any{
+			map[string]any{"timestamp": "1", "message": "build started", "replica": nil},
+		},
+	})
+	h.API.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456", 200, deploymentResponse("BUILD_FAILED"))
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--tail", "--output", "json")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "failed deployment status: BUILD_FAILED")
+	h.Require.Contains(h.Stderr.String(), "build started")
+
+	// JSON result is on stdout regardless of --tail.
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("BUILD_FAILED", dep["status"])
+}
+
+// --tail --wait stops on ACTIVE (success), exits zero, and the JSON
+// result reflects the final ACTIVE status.
+func Test_Model_Push_TailWaitSuccess(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	h.API.SetRoute("POST", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
+		"logs": []any{
+			map[string]any{"timestamp": "1", "message": "almost ready", "replica": nil},
+		},
+	})
+	h.API.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456", 200, deploymentResponse("ACTIVE"))
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--tail", "--wait", "--output", "json"))
+	h.Require.Contains(h.Stderr.String(), "almost ready")
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("ACTIVE", dep["status"])
+}
+
+// --tail tolerates 404s from the logs API during the warmup window
+// (brand-new deployments may 404 for a few seconds after creation), then
+// proceeds normally once the first response succeeds.
+func Test_Model_Push_TailWarmup404(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+
+	logsCall := 0
+	h.API.SetRouteFunc("POST", "/v1/models/model-123/deployments/deploy-456/logs", func(w http.ResponseWriter, _ *http.Request) {
+		logsCall++
+		w.Header().Set("Content-Type", "application/json")
+		if logsCall <= 2 {
+			w.WriteHeader(404)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "not found"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"logs": []any{
+				map[string]any{"timestamp": "1", "message": "online", "replica": nil},
+			},
+		})
+	})
+	h.API.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456", 200, deploymentResponse("BUILD_FAILED"))
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--tail")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "failed deployment status: BUILD_FAILED")
+	h.Require.Contains(h.Stderr.String(), "online")
+	h.Require.GreaterOrEqual(logsCall, 3, "two 404s plus one success")
 }
