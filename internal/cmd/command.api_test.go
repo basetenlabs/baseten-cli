@@ -4,12 +4,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/basetenlabs/baseten-cli/internal/cmd"
 )
 
 // apiRequest captures what the server received.
@@ -20,15 +17,17 @@ type apiRequest struct {
 	Body    string
 }
 
-// TODO: Refactor into a general-purpose test helper if other command tests need
-// to mock HTTP calls.
-//
-// newAPIHarness creates a CommandHarness with an httptest server wired in via
-// context. The server records the request and responds with the given status
-// and body (JSON-encoded unless body is a string).
+// newAPIHarness wires a CommandHarness to a MockManagementAPI that serves a
+// single canned response for every request (via the fallback handler). The
+// inference base URL is also pointed at the same server. The returned
+// apiRequest is mutated in-place on each request.
 func newAPIHarness(t *testing.T, status int, respBody any) (*CommandHarness, *apiRequest) {
 	captured := &apiRequest{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	h.T.Setenv("BASETEN_INFERENCE_BASE_URL_OVERRIDE", m.URL)
+
+	m.SetHandlerFallback(func(w http.ResponseWriter, r *http.Request) {
 		captured.Method = r.Method
 		captured.Path = r.URL.Path
 		captured.Headers = r.Header.Clone()
@@ -39,19 +38,13 @@ func newAPIHarness(t *testing.T, status int, respBody any) (*CommandHarness, *ap
 		case string:
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(status)
-			w.Write([]byte(body))
+			_, _ = w.Write([]byte(body))
 		default:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
-			json.NewEncoder(w).Encode(body)
+			_ = json.NewEncoder(w).Encode(body)
 		}
-	}))
-	t.Cleanup(srv.Close)
-
-	h := NewCommandHarness(t)
-	h.T.Setenv("BASETEN_MANAGEMENT_API_URL_OVERRIDE", srv.URL)
-	h.T.Setenv("BASETEN_INFERENCE_BASE_URL_OVERRIDE", srv.URL)
-	h.Context = cmd.WithHTTPClient(h.Context, srv.Client())
+	})
 	return h, captured
 }
 

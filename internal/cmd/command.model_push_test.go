@@ -273,7 +273,74 @@ func TestModelPush_ExistingModel(t *testing.T) {
 	h.Require.Nil(h.FindCall("POST", "/v1/models"))
 }
 
-// Verifies the asymmetry: --override-name and --no-cache mutate the API
+// --team <id>: resolves through GET /v1/teams, sets prepareReq.team_id, and
+// routes create through POST /v1/teams/{team_id}/models.
+func TestModelPush_TeamByID(t *testing.T) {
+	h := newModelPushHarness(t)
+	h.SetRoute("GET", "/v1/teams", 200, map[string]any{
+		"teams": []any{
+			map[string]any{"id": "team-abc", "name": "ml"},
+			map[string]any{"id": "team-xyz", "name": "infra"},
+		},
+	})
+	h.SetRoute("POST", "/v1/teams/team-abc/models", 200, map[string]any{
+		"model": map[string]any{
+			"id": "model-123", "name": "test-model",
+			"created_at":        "2026-01-01T00:00:00Z",
+			"deployments_count": 1, "instance_type_name": "1x2",
+		},
+		"deployment": map[string]any{
+			"id": "deploy-456", "model_id": "model-123", "name": "v1",
+			"created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z",
+			"is_development": false, "status": "BUILDING",
+		},
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--team", "team-abc"))
+
+	prep := h.FindCall("POST", "/v1/prepare_model_upload")
+	h.Require.NotNil(prep)
+	h.Require.Equal("team-abc", prep.Body["team_id"])
+
+	h.Require.NotNil(h.FindCall("POST", "/v1/teams/team-abc/models"))
+	h.Require.Nil(h.FindCall("POST", "/v1/models"))
+}
+
+// --team <name>: ResolveTeam matches by Name, routing uses the resolved ID.
+func TestModelPush_TeamByName(t *testing.T) {
+	h := newModelPushHarness(t)
+	h.SetRoute("GET", "/v1/teams", 200, map[string]any{
+		"teams": []any{
+			map[string]any{"id": "team-abc", "name": "ml"},
+			map[string]any{"id": "team-xyz", "name": "infra"},
+		},
+	})
+	h.SetRoute("POST", "/v1/teams/team-abc/models", 200, map[string]any{
+		"model": map[string]any{
+			"id": "model-123", "name": "test-model",
+			"created_at":        "2026-01-01T00:00:00Z",
+			"deployments_count": 1, "instance_type_name": "1x2",
+		},
+		"deployment": map[string]any{
+			"id": "deploy-456", "model_id": "model-123", "name": "v1",
+			"created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z",
+			"is_development": false, "status": "BUILDING",
+		},
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--team", "ml"))
+
+	prep := h.FindCall("POST", "/v1/prepare_model_upload")
+	h.Require.NotNil(prep)
+	h.Require.Equal("team-abc", prep.Body["team_id"])
+
+	h.Require.NotNil(h.FindCall("POST", "/v1/teams/team-abc/models"))
+	h.Require.Nil(h.FindCall("POST", "/v1/models"))
+}
+
+// Verifies the asymmetry: --override-name and --no-build-cache mutate the API
 // `config` payload but NOT the archived config.yaml bytes. Also verifies
 // external_package_dirs are bundled under the configured directory.
 func TestModelPush_OverridesAndExternalPackages(t *testing.T) {
@@ -285,7 +352,7 @@ func TestModelPush_OverridesAndExternalPackages(t *testing.T) {
 	h.Require.NoError(os.WriteFile(filepath.Join(extras, "util.py"), []byte("X = 1\n"), 0o644))
 
 	h.Require.NoError(h.Execute("model", "push", "--dir", dir,
-		"--override-name", "renamed", "--no-cache"))
+		"--override-name", "renamed", "--no-build-cache"))
 
 	prep := h.FindCall("POST", "/v1/prepare_model_upload")
 	h.Require.NotNil(prep)
@@ -371,6 +438,14 @@ func TestModelPush_DefaultIgnore(t *testing.T) {
 // Combined flag-validation coverage. Each subtest is a single Execute, no
 // HTTP/S3 traffic expected for the failure cases.
 func TestModelPush_Validation(t *testing.T) {
+	t.Run("missing_config_file", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := t.TempDir()
+		err := h.Execute("model", "push", "--dir", dir)
+		h.Require.ErrorContains(err, "config.yaml not found")
+		h.Require.ErrorContains(err, "--dir")
+	})
+
 	t.Run("missing_model_name", func(t *testing.T) {
 		h := newModelPushHarness(t)
 		dir := h.WriteModelDir("build: {}\n")

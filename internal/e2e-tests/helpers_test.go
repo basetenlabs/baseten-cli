@@ -53,11 +53,17 @@ func cli(t *testing.T, args ...string) (stdout, stderr string, err error) {
 // `t.Context()` is canceled before cleanup runs.
 func cliCtx(t *testing.T, ctx context.Context, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
+	return cliWithStdin(t, ctx, "", args...)
+}
+
+// cliWithStdin is cliCtx that pipes the given string to the command's stdin.
+func cliWithStdin(t *testing.T, ctx context.Context, stdin string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
 	var sout, serr bytes.Buffer
 	exit := 0
 	err = cmd.Execute(ctx, cmd.ExecuteOptions{
 		Args:         args,
-		Stdin:        strings.NewReader(""),
+		Stdin:        strings.NewReader(stdin),
 		Stdout:       &sout,
 		Stderr:       &serr,
 		ExitWithCode: func(c int) { exit = c },
@@ -72,6 +78,16 @@ func cliCtx(t *testing.T, ctx context.Context, args ...string) (stdout, stderr s
 func mustCLI(t *testing.T, args ...string) string {
 	t.Helper()
 	out, errOut, err := cli(t, args...)
+	if err != nil {
+		t.Fatalf("baseten %s failed: %v\nstderr: %s", strings.Join(args, " "), err, errOut)
+	}
+	return out
+}
+
+// mustCLIStdin is mustCLI with a string piped to the command's stdin.
+func mustCLIStdin(t *testing.T, stdin string, args ...string) string {
+	t.Helper()
+	out, errOut, err := cliWithStdin(t, t.Context(), stdin, args...)
 	if err != nil {
 		t.Fatalf("baseten %s failed: %v\nstderr: %s", strings.Join(args, " "), err, errOut)
 	}

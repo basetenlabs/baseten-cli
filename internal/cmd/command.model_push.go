@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,6 +51,14 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 		return err
 	}
 
+	teamID, err := ResolveTeam(ctx, api.API(), flags.Team)
+	if err != nil {
+		return err
+	}
+	if teamID != "" {
+		prepareReq.TeamId = &teamID
+	}
+
 	announceModelPush(ctx, *prepareReq.Name, prepareReq.Deployment.EnvironmentName)
 
 	prepareResp, existingModelID, err := prepareModelPushUpload(ctx, api.API(), prepareReq, flags)
@@ -71,7 +78,7 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	}
 
 	modelName := resolvedModelPushName(prepareReq)
-	created, err := commitModelPush(ctx, api.API(), existingModelID, modelName, *prepareResp.S3Key, prepareReq.Deployment, flags.DisableArchiveDownload)
+	created, err := commitModelPush(ctx, api.API(), existingModelID, teamID, modelName, *prepareResp.S3Key, prepareReq.Deployment, flags.DisableArchiveDownload)
 	if err != nil {
 		return err
 	}
@@ -126,8 +133,8 @@ func buildModelPushInputs(flags *cmd.ModelPushFlags) (*managementapi.PrepareMode
 	if flags.OverrideName != "" {
 		prepareReq.Deployment.Config["model_name"] = flags.OverrideName
 	}
-	if flags.NoCache {
-		applyModelPushNoCache(prepareReq.Deployment.Config)
+	if flags.NoBuildCache {
+		applyModelPushNoBuildCache(prepareReq.Deployment.Config)
 	}
 	if err := applyModelPushDeployTimeout(&prepareReq.Deployment, flags.DeployTimeout); err != nil {
 		return nil, buildOpts, err
@@ -136,28 +143,23 @@ func buildModelPushInputs(flags *cmd.ModelPushFlags) (*managementapi.PrepareMode
 		return nil, buildOpts, err
 	}
 	applyModelPushEnvironmentFlags(&prepareReq.Deployment, flags)
-	prepareReq.Deployment.UserEnv = buildModelPushUserEnv(flags)
 
-	if flags.Team != "" {
-		team := flags.Team
-		prepareReq.TeamId = &team
-	}
 	return prepareReq, buildOpts, nil
 }
 
 // readModelConfigYAML loads config.yaml from dir and populates the fields
 // downstream callers will read from: deployment.Config (parsed map),
 // deployment.RawConfig (verbatim bytes), and the package-dir options on
-// buildOpts. A missing config.yaml is allowed; deployment.Config defaults
-// to an empty map so flag mutations have a target.
+// buildOpts. A missing config.yaml is treated as a usage error since the
+// user is most likely pointing at the wrong directory.
 func readModelConfigYAML(dir string, deployment *managementapi.DeploymentArchivePayload, buildOpts *modelarchive.BuildModelArchiveOptions) error {
 	path := filepath.Join(dir, modelPushConfigFileName)
 	raw, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		deployment.Config = map[string]any{}
-		buildOpts.BundledPackagesDir = modelPushDefaultBundledPkgDir
-		return nil
+		return &ErrUsage{Err: fmt.Errorf(
+			"%s not found in %q: is this a model directory? Pass --dir to point to one",
+			modelPushConfigFileName, dir)}
 	case err != nil:
 		return fmt.Errorf("read %s: %w", path, err)
 	}
@@ -211,7 +213,7 @@ func resolvedModelPushName(req *managementapi.PrepareModelUploadRequest) string 
 	return ""
 }
 
-func applyModelPushNoCache(configMap map[string]any) {
+func applyModelPushNoBuildCache(configMap map[string]any) {
 	build, _ := configMap["build"].(map[string]any)
 	if build == nil {
 		build = map[string]any{}
@@ -271,51 +273,6 @@ func applyModelPushEnvironmentFlags(deployment *managementapi.DeploymentArchiveP
 		preserve := !flags.OverrideEnvInstanceType
 		deployment.PreserveEnvInstanceType = &preserve
 	}
-	if flags.Promote {
-		// Server defaults to true; flag flips it off.
-		scaleDown := !flags.PreservePreviousProductionDeployment
-		deployment.ScaleDownOldProduction = &scaleDown
-	}
-}
-
-func buildModelPushUserEnv(flags *cmd.ModelPushFlags) *map[string]any {
-	if !flags.IncludeGitInfo {
-		return nil
-	}
-	info := collectModelPushGitInfo(flags.Dir)
-	if info == nil {
-		return nil
-	}
-	env := map[string]any{"git_info": info}
-	return &env
-}
-
-func collectModelPushGitInfo(dir string) map[string]any {
-	sha, ok := runModelPushGit(dir, "rev-parse", "HEAD")
-	if !ok {
-		return nil
-	}
-	info := map[string]any{"latest_commit_sha": sha}
-	if tag, ok := runModelPushGit(dir, "describe", "--tags", "--abbrev=0"); ok {
-		info["latest_tag"] = tag
-		if count, ok := runModelPushGit(dir, "rev-list", tag+"..HEAD", "--count"); ok {
-			info["commits_since_tag"] = count
-		}
-	}
-	if status, ok := runModelPushGit(dir, "status", "--porcelain"); ok {
-		info["has_uncommitted_changes"] = status != ""
-	}
-	return info
-}
-
-func runModelPushGit(dir string, args ...string) (string, bool) {
-	c := exec.Command("git", args...)
-	c.Dir = dir
-	out, err := c.Output()
-	if err != nil {
-		return "", false
-	}
-	return strings.TrimSpace(string(out)), true
 }
 
 // announceModelPush prints the pre-push narrative to stderr.
@@ -441,7 +398,7 @@ func (c *readCounter) Read(p []byte) (int, error) {
 func commitModelPush(
 	ctx context.Context,
 	api *managementapi.Client,
-	existingModelID, modelName, s3Key string,
+	existingModelID, teamID, modelName, s3Key string,
 	deployment managementapi.DeploymentArchivePayload,
 	disableArchiveDownload bool,
 ) (*managementapi.CreatedModelDeployment, error) {
@@ -463,7 +420,11 @@ func commitModelPush(
 	if err := union.FromModelArchiveSource(src); err != nil {
 		return nil, err
 	}
-	return api.PostModels(ctx, managementapi.CreateModelRequest{Source: union})
+	req := managementapi.CreateModelRequest{Source: union}
+	if teamID != "" {
+		return api.PostTeamsModels(ctx, teamID, req)
+	}
+	return api.PostModels(ctx, req)
 }
 
 const (

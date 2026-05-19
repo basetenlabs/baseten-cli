@@ -16,6 +16,7 @@ var Root = Command{
 		commandAPI,
 		commandAuth,
 		commandModel,
+		commandOrg,
 		commandTruss,
 		commandVersion,
 	},
@@ -68,8 +69,7 @@ func (c Command) LoadFlags() []CommandFlag {
 // LoadFlagsFromType parses flag metadata from a struct type's tags.
 func LoadFlagsFromType(t reflect.Type) []CommandFlag {
 	var flags []CommandFlag
-	for i := range t.NumField() {
-		field := t.Field(i)
+	for field := range t.Fields() {
 		if field.Anonymous {
 			flags = append(flags, LoadFlagsFromType(field.Type)...)
 			continue
@@ -89,6 +89,7 @@ type CommandFlag struct {
 	Default   string
 	Enum      []string
 	Required  bool
+	Oneof     string // group name: exactly one flag in the group must be set
 	Type      reflect.Type
 	FieldName string // Go struct field name
 }
@@ -112,6 +113,7 @@ func commandFlagFromField(field reflect.StructField) (CommandFlag, bool) {
 		Desc:      field.Tag.Get("desc"),
 		Default:   field.Tag.Get("default"),
 		Required:  field.Tag.Get("required") == "true",
+		Oneof:     field.Tag.Get("oneof"),
 		Type:      field.Type,
 		FieldName: field.Name,
 	}

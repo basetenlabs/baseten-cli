@@ -12,6 +12,8 @@
 - **Do not use positional args unless it really makes sense.** Prefer named flags
   over positional arguments.
 
+- **Enum flag values are lowercase-kebab-case** (e.g. `workspace-invoke`).
+
 ## How to Write a Command
 
 - Commands live in files named `command.<name>.go` where `<name>` is the highest-level subcommand (e.g. `command.api.go` for all `api` subcommands). Split into separate files only if a subcommand group is large enough to warrant it.
@@ -21,15 +23,12 @@
 
 ## End-to-End Tests
 
-E2e tests in `internal/cmd/command.e2e_test.go` run against a live Baseten environment. They are skipped automatically when `BASETEN_E2E_TEST_API_KEY` is not set.
-
-To bootstrap the test model, see [baseten-python](https://github.com/basetenlabs/baseten-python)'s contributing guide.
+E2e tests live in `internal/e2e-tests/` behind the `e2e` build tag and run against a live Baseten environment. They are skipped automatically when `BASETEN_E2E_TEST_API_KEY` is not set.
 
 ### Running
 
 ```bash
 BASETEN_E2E_TEST_API_KEY=... \
-BASETEN_E2E_TEST_DOMAIN=... \
-BASETEN_E2E_TEST_MODEL_ID=... \
-    go test ./...
+BASETEN_E2E_TEST_REMOTE_URL=... \
+    go test -tags=e2e ./internal/e2e-tests/...
 ```
