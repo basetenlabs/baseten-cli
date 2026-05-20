@@ -226,18 +226,22 @@ func openPredictBody(ctx *CommandContext, flags *cmd.ModelPredictFlags) (io.Read
 }
 
 func writePredictResponse(ctx *CommandContext, resp *predictResponse) error {
-	if resp.streaming {
-		if err := writePredictStreamingResponse(ctx, resp.body, resp.contentType == "text/event-stream"); err != nil {
-			return err
-		}
-	} else if resp.contentType == "application/json" {
-		if err := writePredictJSONResponse(ctx, resp.body); err != nil {
-			return err
-		}
-	} else {
-		if err := writePredictBinaryResponse(ctx, resp.body); err != nil {
-			return err
-		}
+	var writeErr error
+	switch {
+	case resp.contentType == "text/event-stream":
+		// Parse SSE from the body regardless of Transfer-Encoding. Beefeater
+		// may serve SSE chunked or buffered with Content-Length; framing lives
+		// in the body bytes either way.
+		writeErr = writePredictStreamingResponse(ctx, resp.body, true)
+	case resp.streaming:
+		writeErr = writePredictStreamingResponse(ctx, resp.body, false)
+	case resp.contentType == "application/json":
+		writeErr = writePredictJSONResponse(ctx, resp.body)
+	default:
+		writeErr = writePredictBinaryResponse(ctx, resp.body)
+	}
+	if writeErr != nil {
+		return writeErr
 	}
 	if sa, ok := resp.body.(*statusAwareBody); ok && sa.status >= 400 {
 		return fmt.Errorf("request failed with status %d", sa.status)
