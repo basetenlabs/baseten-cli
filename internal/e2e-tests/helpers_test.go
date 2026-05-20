@@ -25,8 +25,22 @@ resources:
   use_gpu: false
 `
 
-const trussModelPy = `class Model:
+const trussModelPy = `from fastapi.responses import StreamingResponse
+
+class Model:
     def predict(self, request):
+        if request.get("style") == "streaming":
+            chunks = request.get("chunks", ["alpha", "beta", "gamma"])
+            def gen():
+                for c in chunks:
+                    yield c
+            return gen()
+        if request.get("style") == "sse":
+            chunks = request.get("chunks", ["alpha", "beta", "gamma"])
+            def gen():
+                for c in chunks:
+                    yield f"data: {c}\n\n"
+            return StreamingResponse(gen(), media_type="text/event-stream")
         return {"got request": request}
 `
 
