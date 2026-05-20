@@ -297,7 +297,11 @@ func prepareModelPushUpload(
 ) (*managementapi.PrepareModelUploadResponse, string, error) {
 	modelName := *prepareReq.Name
 
-	existingModelID, err := findModelIDByName(ctx, api, modelName, "")
+	teamScope := ""
+	if prepareReq.TeamId != nil {
+		teamScope = *prepareReq.TeamId
+	}
+	existingModelID, err := findModelIDByName(ctx, api, modelName, teamScope)
 	if err != nil {
 		return nil, "", err
 	}
@@ -305,11 +309,8 @@ func prepareModelPushUpload(
 		if flags.DisableArchiveDownload {
 			return nil, "", &ErrUsage{Err: errors.New("--disable-archive-download is only valid when creating a new model")}
 		}
-		if flags.Team != "" {
-			ctx.Logf("Ignoring --team: model %q already exists.\n", modelName)
-			prepareReq.TeamId = nil
-		}
 		prepareReq.Name = nil
+		prepareReq.TeamId = nil
 		prepareReq.ModelId = &existingModelID
 	}
 
