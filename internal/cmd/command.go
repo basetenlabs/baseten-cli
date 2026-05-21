@@ -190,7 +190,11 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 
 		r := runners[path]
 		c.RunE = func(_ *cobra.Command, args []string) error {
-			remote, err := NewRemote()
+			var cmdFlags cmd.CommandFlags
+			if f := flagsVal.FieldByName("CommandFlags"); f.IsValid() {
+				cmdFlags = f.Interface().(cmd.CommandFlags)
+			}
+			remote, err := NewRemote(cmdFlags.RemoteURL)
 			if err != nil {
 				return err
 			}
@@ -204,15 +208,12 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				ExitWithCode: options.ExitWithCode,
 				Remote:       remote,
 			}
-			if f := flagsVal.FieldByName("CommandFlags"); f.IsValid() {
-				cmdFlags := f.Interface().(cmd.CommandFlags)
-				ctx.JSON = cmdFlags.Output == "json" || cmdFlags.Output == "jsonl"
-				ctx.JSONCompact = cmdFlags.Output == "jsonl"
-				ctx.JSONLines = cmdFlags.Output == "jsonl"
-				ctx.verbose = cmdFlags.Verbose
-				if cmdFlags.Output == "none" {
-					ctx.Stdout = io.Discard
-				}
+			ctx.JSON = cmdFlags.Output == "json" || cmdFlags.Output == "jsonl"
+			ctx.JSONCompact = cmdFlags.Output == "jsonl"
+			ctx.JSONLines = cmdFlags.Output == "jsonl"
+			ctx.verbose = cmdFlags.Verbose
+			if cmdFlags.Output == "none" {
+				ctx.Stdout = io.Discard
 			}
 			results := reflect.ValueOf(r.fn).Call([]reflect.Value{
 				reflect.ValueOf(ctx),

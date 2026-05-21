@@ -21,17 +21,20 @@ type Remote struct {
 	inferenceHostSuffix string
 }
 
-// NewRemote parses BASETEN_REMOTE_URL (default https://app.baseten.co), looks
-// up any known per-remote URL overrides, and applies the optional override
-// env vars on top.
-func NewRemote() (*Remote, error) {
-	r := &Remote{remoteURL: os.Getenv("BASETEN_REMOTE_URL")}
+// NewRemote resolves the remote URL (flag arg, then BASETEN_REMOTE_URL, then
+// https://app.baseten.co), looks up any known per-remote URL overrides, and
+// applies the optional override env vars on top.
+func NewRemote(remoteURL string) (*Remote, error) {
+	r := &Remote{remoteURL: remoteURL}
+	if r.remoteURL == "" {
+		r.remoteURL = os.Getenv("BASETEN_REMOTE_URL")
+	}
 	if r.remoteURL == "" {
 		r.remoteURL = "https://app.baseten.co"
 	}
 	u, err := url.Parse(r.remoteURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return nil, fmt.Errorf("invalid BASETEN_REMOTE_URL: %q", r.remoteURL)
+		return nil, fmt.Errorf("invalid remote URL: %q", r.remoteURL)
 	}
 	r.scheme = u.Scheme
 	r.baseHost = strings.TrimPrefix(u.Host, "app.")
