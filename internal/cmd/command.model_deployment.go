@@ -262,7 +262,7 @@ func commandModelDeploymentDownload(ctx *CommandContext, flags *cmd.ModelDeploym
 	if err != nil {
 		return fmt.Errorf("build download request: %w", err)
 	}
-	httpResp, err := http.DefaultClient.Do(req)
+	httpResp, err := ctx.httpClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("download truss: %w", err)
 	}
