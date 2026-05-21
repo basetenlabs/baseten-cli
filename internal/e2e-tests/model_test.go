@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,8 @@ func TestE2EModelLifecycle(t *testing.T) {
 	t.Run("APIManagement", l.APIManagement)
 	t.Run("APIInference", l.APIInference)
 	t.Run("Model", l.Model)
+	t.Run("Deployment", l.Deployment)
+	t.Run("Environment", l.Environment)
 	t.Run("ModelPredict", l.ModelPredict)
 	t.Run("Redeploy", l.Redeploy)
 	t.Run("Delete", l.Delete)
@@ -179,6 +182,118 @@ func (l *lifecycle) Model(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(out), &resp))
 		require.Equal(t, l.modelID, resp.ID)
 		require.Equal(t, l.modelName, resp.Name)
+	})
+}
+
+func (l *lifecycle) Deployment(t *testing.T) {
+	t.Run("List", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "list", "--model-id", l.modelID, "--output", "json")
+		var resp struct {
+			Deployments []struct {
+				ID      string `json:"id"`
+				ModelID string `json:"model_id"`
+			} `json:"deployments"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		for _, d := range resp.Deployments {
+			if d.ID == l.initialDeploymentID {
+				require.Equal(t, l.modelID, d.ModelID)
+				return
+			}
+		}
+		t.Fatalf("deployment %s missing from deployment list", l.initialDeploymentID)
+	})
+
+	t.Run("Fetch", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "fetch",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--output", "json")
+		var resp struct {
+			ID      string `json:"id"`
+			ModelID string `json:"model_id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, l.initialDeploymentID, resp.ID)
+		require.Equal(t, l.modelID, resp.ModelID)
+	})
+
+	t.Run("Config_Text", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "config",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID)
+		require.Equal(t, fmt.Sprintf(trussConfigTmpl, l.modelName), out)
+	})
+
+	t.Run("Config_JSON", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "config",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--output", "json")
+		var resp struct {
+			Config    map[string]any `json:"config"`
+			RawConfig *string        `json:"raw_config"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.NotNil(t, resp.RawConfig, "raw_config should be persisted from the original push")
+		require.Equal(t, fmt.Sprintf(trussConfigTmpl, l.modelName), *resp.RawConfig)
+	})
+
+	t.Run("Download_OutDir", func(t *testing.T) {
+		outDir := filepath.Join(t.TempDir(), "truss")
+		mustCLI(t, "model", "deployment", "download",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--out-dir", outDir)
+
+		gotCfg, err := os.ReadFile(filepath.Join(outDir, "config.yaml"))
+		require.NoError(t, err)
+		require.Equal(t, fmt.Sprintf(trussConfigTmpl, l.modelName), string(gotCfg))
+		gotModel, err := os.ReadFile(filepath.Join(outDir, "model", "model.py"))
+		require.NoError(t, err)
+		require.Equal(t, trussModelPy, string(gotModel))
+	})
+
+	t.Run("Download_OutFile", func(t *testing.T) {
+		outFile := filepath.Join(t.TempDir(), "truss.tar")
+		mustCLI(t, "model", "deployment", "download",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--out-file", outFile)
+		st, err := os.Stat(outFile)
+		require.NoError(t, err)
+		require.Greater(t, st.Size(), int64(0), "downloaded tar should be non-empty")
+	})
+}
+
+func (l *lifecycle) Environment(t *testing.T) {
+	t.Run("List", func(t *testing.T) {
+		out := mustCLI(t, "model", "environment", "list", "--model-id", l.modelID, "--output", "json")
+		var resp struct {
+			Environments []struct {
+				Name              string `json:"name"`
+				ModelID           string `json:"model_id"`
+				CurrentDeployment struct {
+					ID string `json:"id"`
+				} `json:"current_deployment"`
+			} `json:"environments"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		for _, e := range resp.Environments {
+			if e.Name == "production" {
+				require.Equal(t, l.modelID, e.ModelID)
+				require.Equal(t, l.initialDeploymentID, e.CurrentDeployment.ID)
+				return
+			}
+		}
+		t.Fatalf("production environment missing from environment list")
+	})
+
+	t.Run("Fetch", func(t *testing.T) {
+		out := mustCLI(t, "model", "environment", "fetch",
+			"--model-id", l.modelID, "--environment", "production", "--output", "json")
+		var resp struct {
+			Name              string `json:"name"`
+			ModelID           string `json:"model_id"`
+			CurrentDeployment struct {
+				ID string `json:"id"`
+			} `json:"current_deployment"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, "production", resp.Name)
+		require.Equal(t, l.modelID, resp.ModelID)
+		require.Equal(t, l.initialDeploymentID, resp.CurrentDeployment.ID)
 	})
 }
 

@@ -50,6 +50,7 @@ var commandModel = Command{
 			Flags: ModelDeleteFlags{},
 		},
 		commandModelDeployment,
+		commandModelEnvironment,
 	},
 }
 

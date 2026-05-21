@@ -15,6 +15,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/spf13/cobra"
@@ -203,6 +204,23 @@ func (c *CommandContext) IsInteractive() bool {
 		return false
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// ConfirmYesNo prompts the user with a yes/no question. Returns an ErrUsage
+// when stdin is not a terminal so callers can instruct the user to pass --yes
+// or similar. Returns a non-nil error if the user declines.
+func (c *CommandContext) ConfirmYesNo(title string) error {
+	if !c.IsInteractive() {
+		return &ErrUsage{Err: fmt.Errorf("cannot confirm: stdin is not a terminal; pass --yes to skip the prompt")}
+	}
+	var ok bool
+	if err := huh.NewConfirm().Title(title).Value(&ok).Run(); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("aborted")
+	}
+	return nil
 }
 
 // OAuthConfig returns the OAuth2 configuration for the given host.
