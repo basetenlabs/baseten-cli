@@ -17,6 +17,7 @@ import (
 	"github.com/basetenlabs/baseten-go/client"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
+	"github.com/itchyny/gojq"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 )
@@ -34,8 +35,13 @@ type CommandContext struct {
 	Stderr       io.Writer
 	ExitWithCode func(int)
 	Remote       *Remote
+	// JQQuery is a compiled --jq expression installed by the framework. When
+	// non-nil, [OutputJSON] and [JSONArrayWriter.Write] route their input
+	// through the query before encoding. Leaves should not set this directly.
+	JQQuery *gojq.Query
 
 	verbose bool
+	jqErr   error
 }
 
 // Output writes to stdout.
@@ -54,8 +60,51 @@ func (c *CommandContext) Outputf(format string, args ...any) {
 }
 
 // OutputJSON writes a value as JSON to stdout. Uses indentation unless
-// JSONCompact is set.
+// JSONCompact is set. When [CommandContext.JQQuery] is set, the value is
+// routed through the jq query and each result is emitted in turn; a jq
+// runtime error is stashed on the context and surfaced by the framework
+// after the runner returns.
 func (c *CommandContext) OutputJSON(v any) {
+	if c.jqErr != nil {
+		return
+	}
+	if c.JQQuery != nil {
+		normalized, err := normalizeForJQ(v)
+		if err != nil {
+			c.jqErr = err
+			return
+		}
+		iter := c.JQQuery.Run(normalized)
+		for {
+			res, ok := iter.Next()
+			if !ok {
+				return
+			}
+			if err, isErr := res.(error); isErr {
+				c.jqErr = fmt.Errorf("jq error: %w", err)
+				return
+			}
+			c.encodeJSON(res)
+		}
+	}
+	c.encodeJSON(v)
+}
+
+// normalizeForJQ round-trips v through JSON so struct values become the
+// map/slice primitives gojq expects.
+func normalizeForJQ(v any) (any, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("normalizing value for jq: %w", err)
+	}
+	var out any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, fmt.Errorf("normalizing value for jq: %w", err)
+	}
+	return out, nil
+}
+
+func (c *CommandContext) encodeJSON(v any) {
 	enc := json.NewEncoder(c.Stdout)
 	if !c.JSONCompact {
 		enc.SetIndent("", "  ")
@@ -67,6 +116,7 @@ func (c *CommandContext) OutputJSON(v any) {
 // incrementally. Call Write for each element and Close when done.
 func (c *CommandContext) NewJSONArrayWriter() *JSONArrayWriter {
 	return &JSONArrayWriter{
+		ctx:     c,
 		w:       c.Stdout,
 		compact: c.JSONCompact,
 		lines:   c.JSONLines,
@@ -137,14 +187,44 @@ func (c *CommandContext) VerboseLogf(format string, args ...any) {
 
 // JSONArrayWriter writes a JSON array to a writer incrementally.
 type JSONArrayWriter struct {
+	ctx     *CommandContext
 	w       io.Writer
 	compact bool
 	lines   bool
 	started bool
 }
 
-// Write writes a single element to the JSON array.
+// Write writes a single element to the JSON array. When the owning context
+// has [CommandContext.JQQuery] set, the element is routed through the query
+// and each result is emitted as its own record; runtime errors are stashed
+// on the context and surfaced by the framework.
 func (w *JSONArrayWriter) Write(v any) {
+	if w.ctx.jqErr != nil {
+		return
+	}
+	if w.ctx.JQQuery != nil {
+		normalized, err := normalizeForJQ(v)
+		if err != nil {
+			w.ctx.jqErr = err
+			return
+		}
+		iter := w.ctx.JQQuery.Run(normalized)
+		for {
+			res, ok := iter.Next()
+			if !ok {
+				return
+			}
+			if err, isErr := res.(error); isErr {
+				w.ctx.jqErr = fmt.Errorf("jq error: %w", err)
+				return
+			}
+			w.writeOne(res)
+		}
+	}
+	w.writeOne(v)
+}
+
+func (w *JSONArrayWriter) writeOne(v any) {
 	if w.lines {
 		b, err := json.Marshal(v)
 		if err != nil {

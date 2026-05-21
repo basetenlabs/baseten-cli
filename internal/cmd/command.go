@@ -12,8 +12,9 @@ import (
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/help"
 	"github.com/basetenlabs/baseten-go/client"
-	"github.com/charmbracelet/fang"
+	"github.com/itchyny/gojq"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -22,30 +23,12 @@ func init() {
 	client.SetClientName("baseten-cli")
 }
 
-// ErrWithCode is an error that carries a specific process exit code.
-type ErrWithCode struct {
-	Err  error
-	Code int
-}
-
-func (e *ErrWithCode) Error() string { return e.Err.Error() }
-func (e *ErrWithCode) Unwrap() error { return e.Err }
-
-// ErrUsage is an error that signals Cobra should display usage alongside the
-// error message.
-type ErrUsage struct {
-	Err error
-}
-
-func (e *ErrUsage) Error() string { return e.Err.Error() }
-func (e *ErrUsage) Unwrap() error { return e.Err }
-
 // GetAPIKey returns the Baseten API key from the BASETEN_API_KEY environment
 // variable or an ErrUsage if not set.
 func GetAPIKey() (string, error) {
 	key := os.Getenv("BASETEN_API_KEY")
 	if key == "" {
-		return "", &ErrUsage{Err: fmt.Errorf("BASETEN_API_KEY environment variable is required")}
+		return "", cmd.NewErrUsagef("BASETEN_API_KEY environment variable is required")
 	}
 	return key, nil
 }
@@ -111,14 +94,12 @@ func Execute(ctx context.Context, options ExecuteOptions) error {
 	for _, child := range cmd.Root.Children {
 		root.AddCommand(buildCommand(child, "", &options))
 	}
-	// WithVersion feeds the styled help/manpage; WithoutVersion drops fang's
-	// -v/--version flag so it doesn't collide with -v for --verbose.
-	return fang.Execute(ctx, root,
-		fang.WithVersion(Version),
-		fang.WithoutVersion(),
-		fang.WithColorSchemeFunc(fang.AnsiColorScheme),
-		fang.WithNotifySignal(os.Interrupt, syscall.SIGTERM),
-	)
+	return help.Execute(ctx, root, help.Options{
+		Args:    options.Args,
+		Version: Version,
+		Signals: []os.Signal{os.Interrupt, syscall.SIGTERM},
+		Tree:    cmd.Root,
+	})
 }
 
 func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *cobra.Command {
@@ -136,6 +117,15 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 		Use:   use,
 		Short: def.Summary,
 		Long:  def.Description,
+	}
+	c.InitDefaultHelpFlag()
+	if f := c.Flags().Lookup("help"); f != nil {
+		f.Usage += " (use --help-output for output details)"
+		if f.Annotations == nil {
+			f.Annotations = map[string][]string{}
+		}
+		f.Annotations[cmd.FlagAnnotationGroup] = []string{"common"}
+		f.Annotations[cmd.FlagAnnotationGroupPri] = []string{"500"}
 	}
 
 	if def.DisableFlagParsing {
@@ -157,6 +147,9 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 	if len(def.Children) > 0 {
 		if def.Flags != nil {
 			panic(fmt.Sprintf("command %q has children and must not have Flags", path))
+		}
+		if def.Output != nil {
+			panic(fmt.Sprintf("command %q has children and must not have Output", path))
 		}
 		c.Args = cobra.ArbitraryArgs
 		c.RunE = func(c *cobra.Command, args []string) error {
@@ -181,6 +174,10 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 	} else if def.Flags == nil {
 		panic(fmt.Sprintf("command %q has no children and must have Flags", path))
 	} else {
+		if def.Output == nil {
+			panic(fmt.Sprintf("command %q has no children and must have Output", path))
+		}
+		validateOutput(path, def)
 		flagMetas := def.LoadFlags()
 		// Create a fresh instance so repeated Build() calls don't share state.
 		flagsPtr := reflect.New(reflect.TypeOf(def.Flags))
@@ -189,7 +186,9 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 		applyOneofGroups(c, flagMetas)
 
 		r := runners[path]
+		streamed := def.Output != nil && def.Output.JSONArrayStreamedBool()
 		c.RunE = func(_ *cobra.Command, args []string) error {
+			// Build context.
 			remote, err := NewRemote()
 			if err != nil {
 				return err
@@ -204,8 +203,31 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				ExitWithCode: options.ExitWithCode,
 				Remote:       remote,
 			}
+
+			// Resolve --jq and --output, populating ctx.
+			var runErr error
 			if f := flagsVal.FieldByName("CommandFlags"); f.IsValid() {
 				cmdFlags := f.Interface().(cmd.CommandFlags)
+				if cmdFlags.JQ != "" {
+					outputChanged := c.Flags().Changed("output")
+					if outputChanged && (cmdFlags.Output == "text" || cmdFlags.Output == "none") {
+						runErr = cmd.NewErrUsagef("--jq cannot be used with --output %s", cmdFlags.Output)
+					} else {
+						if !outputChanged {
+							if streamed {
+								cmdFlags.Output = "jsonl"
+							} else {
+								cmdFlags.Output = "json"
+							}
+						}
+						q, parseErr := gojq.Parse(cmdFlags.JQ)
+						if parseErr != nil {
+							runErr = fmt.Errorf("invalid jq expression: %w", parseErr)
+						} else {
+							ctx.JQQuery = q
+						}
+					}
+				}
 				ctx.JSON = cmdFlags.Output == "json" || cmdFlags.Output == "jsonl"
 				ctx.JSONCompact = cmdFlags.Output == "jsonl"
 				ctx.JSONLines = cmdFlags.Output == "jsonl"
@@ -214,30 +236,57 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 					ctx.Stdout = io.Discard
 				}
 			}
-			results := reflect.ValueOf(r.fn).Call([]reflect.Value{
-				reflect.ValueOf(ctx),
-				flagsPtr,
-			})
-			if results[0].IsNil() {
+
+			// Run the leaf. Runner-returned errors win over jqErr.
+			if runErr == nil {
+				results := reflect.ValueOf(r.fn).Call([]reflect.Value{
+					reflect.ValueOf(ctx),
+					flagsPtr,
+				})
+				if !results[0].IsNil() {
+					runErr = results[0].Interface().(error)
+				}
+				if runErr == nil && ctx.jqErr != nil {
+					runErr = ctx.jqErr
+				}
+			}
+			if runErr == nil {
 				return nil
 			}
-			err = results[0].Interface().(error)
-			if e, ok := err.(*ErrUsage); ok {
-				return e.Err
-			}
-			code := 1
-			if e, ok := err.(*ErrWithCode); ok {
-				code = e.Code
-			}
-			fmt.Fprintln(options.Stderr, err)
+
+			// Render the error and set exit code.
+			ce := normalizeError(runErr)
 			c.SilenceErrors = true
 			c.SilenceUsage = true
-			ctx.ExitWithCode(code)
+			fmt.Fprintln(options.Stderr, ce)
+			if ce.ExitCode() == cmd.ExitUsage {
+				_ = c.Usage()
+			}
+			ctx.ExitWithCode(int(ce.ExitCode()))
 			return nil
 		}
 	}
 
 	return c
+}
+
+// validateOutput panics if a leaf command's Output is malformed: missing
+// examples, or a JQExample whose Command doesn't actually invoke --jq.
+// Leaves with DisableFlagParsing are exempt from the JQExample requirement
+// since --jq is not honored when the framework doesn't parse flags.
+func validateOutput(path string, def cmd.Command) {
+	if len(def.Output.ExampleList()) == 0 {
+		panic(fmt.Sprintf("command %q Output requires at least one example", path))
+	}
+	if def.DisableFlagParsing {
+		return
+	}
+	if def.Output.JQ().Command == "" {
+		panic(fmt.Sprintf("command %q Output requires a JQExample", path))
+	}
+	if !strings.Contains(def.Output.JQ().Command, "--jq") {
+		panic(fmt.Sprintf("command %q JQExample.Command must invoke --jq, got %q", path, def.Output.JQ().Command))
+	}
 }
 
 // VerifyRunners panics if any command with Flags is missing a registered
@@ -307,6 +356,16 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 
 		if meta.Required {
 			cobra.MarkFlagRequired(flags, meta.Name)
+		}
+		f := flags.Lookup(meta.Name)
+		if f != nil {
+			if f.Annotations == nil {
+				f.Annotations = map[string][]string{}
+			}
+			f.Annotations[cmd.FlagAnnotationGroup] = []string{meta.Group}
+			if meta.GroupPri != 0 {
+				f.Annotations[cmd.FlagAnnotationGroupPri] = []string{strconv.Itoa(meta.GroupPri)}
+			}
 		}
 	}
 }

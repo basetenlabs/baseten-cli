@@ -35,7 +35,7 @@ func init() {
 
 func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	if flags.Promote && flags.Environment != "" {
-		return &ErrUsage{Err: errors.New("--promote and --environment are mutually exclusive")}
+		return cmd.NewErrUsagef("--promote and --environment are mutually exclusive")
 	}
 	if flags.Watch || flags.WatchHotReload || flags.WatchKeepalive {
 		return errors.New("--watch, --watch-hot-reload, and --watch-keepalive are not yet implemented")
@@ -157,9 +157,9 @@ func readModelConfigYAML(dir string, deployment *managementapi.DeploymentArchive
 	raw, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return &ErrUsage{Err: fmt.Errorf(
+		return cmd.NewErrUsagef(
 			"%s not found in %q: is this a model directory? Pass --dir to point to one",
-			modelPushConfigFileName, dir)}
+			modelPushConfigFileName, dir)
 	case err != nil:
 		return fmt.Errorf("read %s: %w", path, err)
 	}
@@ -307,7 +307,7 @@ func prepareModelPushUpload(
 	}
 	if existingModelID != "" {
 		if flags.DisableArchiveDownload {
-			return nil, "", &ErrUsage{Err: errors.New("--disable-archive-download is only valid when creating a new model")}
+			return nil, "", cmd.NewErrUsagef("--disable-archive-download is only valid when creating a new model")
 		}
 		prepareReq.Name = nil
 		prepareReq.TeamId = nil
@@ -502,11 +502,11 @@ func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedMod
 	// human summary on stderr before the JSON object lands on stdout.
 	if ctx.JSON {
 		writeModelPushSummary(ctx.Logf, created, predictURL, logsURL, environment)
-		ctx.OutputJSON(map[string]any{
-			"model":       created.Model,
-			"deployment":  created.Deployment,
-			"predict_url": predictURL,
-			"logs_url":    logsURL,
+		ctx.OutputJSON(cmd.ModelPushResult{
+			Model:      created.Model,
+			Deployment: created.Deployment,
+			PredictURL: predictURL,
+			LogsURL:    logsURL,
 		})
 		return nil
 	}
