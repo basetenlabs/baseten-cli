@@ -297,7 +297,11 @@ func prepareModelPushUpload(
 ) (*managementapi.PrepareModelUploadResponse, string, error) {
 	modelName := *prepareReq.Name
 
-	existingModelID, err := findExistingModelByName(ctx, api, modelName)
+	teamScope := ""
+	if prepareReq.TeamId != nil {
+		teamScope = *prepareReq.TeamId
+	}
+	existingModelID, err := findModelIDByName(ctx, api, modelName, teamScope)
 	if err != nil {
 		return nil, "", err
 	}
@@ -305,11 +309,8 @@ func prepareModelPushUpload(
 		if flags.DisableArchiveDownload {
 			return nil, "", &ErrUsage{Err: errors.New("--disable-archive-download is only valid when creating a new model")}
 		}
-		if flags.Team != "" {
-			ctx.Logf("Ignoring --team: model %q already exists.\n", modelName)
-			prepareReq.TeamId = nil
-		}
 		prepareReq.Name = nil
+		prepareReq.TeamId = nil
 		prepareReq.ModelId = &existingModelID
 	}
 
@@ -318,27 +319,6 @@ func prepareModelPushUpload(
 		return nil, "", fmt.Errorf("prepare upload: %w", err)
 	}
 	return resp, existingModelID, nil
-}
-
-func findExistingModelByName(ctx context.Context, api *managementapi.Client, name string) (string, error) {
-	resp, err := api.GetModels(ctx)
-	if err != nil {
-		return "", fmt.Errorf("list models: %w", err)
-	}
-	var matches []managementapi.Model
-	for _, m := range resp.Models {
-		if m.Name == name {
-			matches = append(matches, m)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return "", nil
-	case 1:
-		return matches[0].Id, nil
-	default:
-		return "", fmt.Errorf("multiple models named %q across teams; disambiguate by team in the API or rename", name)
-	}
 }
 
 func uploadModelPushArchive(

@@ -229,6 +229,7 @@ func Test_Model_Push_TeamByID(t *testing.T) {
 			map[string]any{"id": "team-xyz", "name": "infra"},
 		},
 	})
+	h.API.SetRoute("GET", "/v1/teams/team-abc/models", 200, map[string]any{"models": []any{}})
 	h.API.SetRoute("POST", "/v1/teams/team-abc/models", 200, map[string]any{
 		"model": map[string]any{
 			"id": "model-123", "name": "test-model",
@@ -262,6 +263,7 @@ func Test_Model_Push_TeamByName(t *testing.T) {
 			map[string]any{"id": "team-xyz", "name": "infra"},
 		},
 	})
+	h.API.SetRoute("GET", "/v1/teams/team-abc/models", 200, map[string]any{"models": []any{}})
 	h.API.SetRoute("POST", "/v1/teams/team-abc/models", 200, map[string]any{
 		"model": map[string]any{
 			"id": "model-123", "name": "test-model",

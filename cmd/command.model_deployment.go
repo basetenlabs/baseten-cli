@@ -24,7 +24,7 @@ var commandModelDeployment = Command{
 // ModelDeploymentIDFlags identifies a deployment of a model. Embedded by
 // commands that act on a specific deployment.
 type ModelDeploymentIDFlags struct {
-	ModelIDFlags
+	ModelRefFlags
 	DeploymentID string `flag:"deployment-id" desc:"ID of the deployment." required:"true"`
 }
 

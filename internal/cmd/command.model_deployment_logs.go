@@ -40,11 +40,15 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	if err != nil {
 		return err
 	}
+	ref, err := ResolveModelRef(ctx, api.API(), flags.ModelRefFlags)
+	if err != nil {
+		return err
+	}
 
 	if flags.Tail {
 		res := TailDeploymentLogs(ctx, TailDeploymentLogsOptions{
 			API:          api.API(),
-			ModelID:      flags.ModelID,
+			ModelID:      ref.ID,
 			DeploymentID: flags.DeploymentID,
 		})
 		if err := emitDeploymentLogs(ctx, res.Logs); err != nil {
@@ -89,7 +93,7 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 		startMs, endMs = &s, &e
 	}
 
-	resp, err := api.API().PostModelsDeploymentsLogs(ctx, flags.ModelID, flags.DeploymentID,
+	resp, err := api.API().PostModelsDeploymentsLogs(ctx, ref.ID, flags.DeploymentID,
 		managementapi.GetDeploymentLogsRequest{StartEpochMillis: startMs, EndEpochMillis: endMs})
 	if err != nil {
 		return err

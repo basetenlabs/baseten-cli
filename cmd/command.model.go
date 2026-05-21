@@ -30,14 +30,36 @@ var commandModel = Command{
 			Description: "Fetch a Baseten model.",
 			Flags:       ModelFetchFlags{},
 		},
+		{
+			Name:    "predict",
+			Summary: "Run a prediction against a model",
+			Description: "POST a JSON request to a model and write the response to stdout.\n\n" +
+				"Targets the production environment by default. Use --environment, " +
+				"--deployment-id, or --regional to target something else.\n\n" +
+				"Streaming responses (Transfer-Encoding: chunked) are passed through " +
+				"as they arrive. For machine-readable streaming JSON from OpenAI-compatible " +
+				"models, use --output jsonl.",
+			Flags: ModelPredictFlags{},
+		},
+		{
+			Name:    "delete",
+			Summary: "Delete a model",
+			Description: "Delete a Baseten model and all of its deployments.\n\n" +
+				"Prompts for the model name to confirm the deletion. Pass --yes to " +
+				"skip the prompt. When stdin is not a terminal, --yes is required.",
+			Flags: ModelDeleteFlags{},
+		},
 		commandModelDeployment,
 	},
 }
 
-// ModelIDFlags identifies a model by ID. Embedded by commands that act on a
-// specific model.
-type ModelIDFlags struct {
-	ModelID string `flag:"model-id" desc:"ID of the model." required:"true"`
+// ModelRefFlags identifies a model by ID or by name (with optional --team for
+// disambiguation across teams in the same org). Embedded by commands that act
+// on a specific model.
+type ModelRefFlags struct {
+	ModelID   string `flag:"model-id" desc:"ID of the model." oneof:"model-ref"`
+	ModelName string `flag:"model-name" desc:"Name of the model. Use --team to disambiguate when the same name exists in multiple teams." oneof:"model-ref"`
+	Team      string `flag:"team" desc:"Team name or ID. Only valid with --model-name."`
 }
 
 // ModelPushFlags configures `baseten model push`.
@@ -75,12 +97,35 @@ type ModelPushFlags struct {
 // ModelListFlags configures `baseten model list`.
 type ModelListFlags struct {
 	CommandFlags
+
+	Team string `flag:"team" desc:"Team name or ID to scope the listing to. Defaults to all teams the caller can see."`
 }
 
 // ModelFetchFlags configures `baseten model fetch`.
 type ModelFetchFlags struct {
 	CommandFlags
-	ModelIDFlags
+	ModelRefFlags
+}
 
-	TeamID string `flag:"team-id" desc:"Team the model belongs to."`
+// ModelDeleteFlags configures `baseten model delete`.
+type ModelDeleteFlags struct {
+	CommandFlags
+	ModelRefFlags
+
+	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+}
+
+// ModelPredictFlags configures `baseten model predict`.
+type ModelPredictFlags struct {
+	CommandFlags
+	ModelRefFlags
+
+	Environment  string `flag:"environment" desc:"Environment to target (e.g. production, development). Defaults to production. Mutually exclusive with --deployment-id and --regional."`
+	DeploymentID string `flag:"deployment-id" desc:"Specific deployment to target. Mutually exclusive with --environment and --regional."`
+	Regional     string `flag:"regional" desc:"Regional environment name; routes via the regional hostname. Mutually exclusive with --environment and --deployment-id."`
+
+	Data string `flag:"data" desc:"Inline JSON request body." oneof:"predict-input"`
+	File string `flag:"file" desc:"Path to a JSON file containing the request body. Use '-' for stdin." oneof:"predict-input"`
+
+	Websocket bool `flag:"websocket" desc:"Use the WebSocket predict endpoint. Sends the body as one frame, reads one frame back, then closes. Not for multi-message or back-and-forth sessions."`
 }

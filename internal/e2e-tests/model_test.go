@@ -5,10 +5,12 @@ package e2etests
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,9 +22,12 @@ import (
 // required env vars are absent.
 func TestE2EModelLifecycle(t *testing.T) {
 	l := newLifecycle(t)
-	t.Run("ManagementAPI", l.ManagementAPI)
-	t.Run("InferenceAPI", l.InferenceAPI)
+	t.Run("APIManagement", l.APIManagement)
+	t.Run("APIInference", l.APIInference)
+	t.Run("Model", l.Model)
+	t.Run("ModelPredict", l.ModelPredict)
 	t.Run("Redeploy", l.Redeploy)
+	t.Run("Delete", l.Delete)
 }
 
 // lifecycle holds the state shared across the lifecycle sub-tests. Created
@@ -61,13 +66,12 @@ func newLifecycle(t *testing.T) *lifecycle {
 			l.modelID = lookupModelIDByName(t, l.modelName)
 		}
 		if l.modelID == "" {
-			t.Logf("no model to clean up for %s", l.modelName)
 			return
 		}
 		t.Logf("deleting model %s (%s)", l.modelName, l.modelID)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if _, errOut, err := cliCtx(t, ctx, "api", "management", "-X", "DELETE", "models/"+l.modelID); err != nil {
+		if _, errOut, err := cliCtx(t, ctx, "model", "delete", "--model-id", l.modelID, "--yes"); err != nil {
 			t.Logf("cleanup delete failed: %v\nstderr: %s", err, errOut)
 		}
 	})
@@ -81,7 +85,7 @@ func newLifecycle(t *testing.T) *lifecycle {
 	return l
 }
 
-func (l *lifecycle) ManagementAPI(t *testing.T) {
+func (l *lifecycle) APIManagement(t *testing.T) {
 	t.Run("ListIncludesModel", func(t *testing.T) {
 		out := mustCLI(t, "api", "management", "models")
 		var resp struct {
@@ -129,11 +133,87 @@ func (l *lifecycle) ManagementAPI(t *testing.T) {
 	})
 }
 
-func (l *lifecycle) InferenceAPI(t *testing.T) {
+func (l *lifecycle) APIInference(t *testing.T) {
 	out := mustCLI(t, "api", "inference", "--model-id", l.modelID, "-F", "x=1", "production/predict")
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal([]byte(out), &resp))
 	require.Equal(t, map[string]any{"got request": map[string]any{"x": float64(1)}}, resp)
+}
+
+func (l *lifecycle) Model(t *testing.T) {
+	t.Run("List", func(t *testing.T) {
+		out := mustCLI(t, "model", "list", "--output", "json")
+		var resp struct {
+			Models []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		for _, m := range resp.Models {
+			if m.ID == l.modelID {
+				require.Equal(t, l.modelName, m.Name)
+				return
+			}
+		}
+		t.Fatalf("model %s missing from model list", l.modelID)
+	})
+
+	t.Run("FetchByID", func(t *testing.T) {
+		out := mustCLI(t, "model", "fetch", "--model-id", l.modelID, "--output", "json")
+		var resp struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, l.modelID, resp.ID)
+		require.Equal(t, l.modelName, resp.Name)
+	})
+
+	t.Run("FetchByName", func(t *testing.T) {
+		out := mustCLI(t, "model", "fetch", "--model-name", l.modelName, "--output", "json")
+		var resp struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, l.modelID, resp.ID)
+		require.Equal(t, l.modelName, resp.Name)
+	})
+}
+
+func (l *lifecycle) ModelPredict(t *testing.T) {
+	t.Run("Default", func(t *testing.T) {
+		out := mustCLI(t, "model", "predict", "--model-id", l.modelID, "--data", `{"x":1}`, "--output", "json")
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, map[string]any{"got request": map[string]any{"x": float64(1)}}, resp)
+	})
+
+	t.Run("Streaming_Text", func(t *testing.T) {
+		out := mustCLI(t, "model", "predict", "--model-id", l.modelID,
+			"--data", `{"style":"streaming","chunks":["alpha","beta","gamma"]}`)
+		require.Equal(t, "alphabetagamma", out)
+	})
+
+	t.Run("SSE_JSONL", func(t *testing.T) {
+		out := mustCLI(t, "model", "predict", "--model-id", l.modelID,
+			"--data", `{"style":"sse","chunks":["alpha","beta","gamma"]}`,
+			"--output", "jsonl")
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		require.Equal(t, 3, len(lines), "SSE should yield one envelope per data: event")
+		var concat []byte
+		for _, line := range lines {
+			var env struct {
+				Body string `json:"body"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(line), &env))
+			b, err := base64.StdEncoding.DecodeString(env.Body)
+			require.NoError(t, err)
+			concat = append(concat, b...)
+		}
+		require.Equal(t, []byte("alphabetagamma"), concat)
+	})
 }
 
 func (l *lifecycle) Redeploy(t *testing.T) {
@@ -142,6 +222,15 @@ func (l *lifecycle) Redeploy(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &redeploy))
 	require.Equal(t, l.modelID, redeploy.Model.ID, "redeploy should reuse existing model")
 	require.NotEqual(t, l.initialDeploymentID, redeploy.Deployment.ID, "redeploy should create a new deployment")
+}
+
+func (l *lifecycle) Delete(t *testing.T) {
+	deletedID := l.modelID
+	mustCLI(t, "model", "delete", "--model-id", deletedID, "--yes")
+	l.modelID = ""
+
+	_, errOut, err := cli(t, "model", "fetch", "--model-id", deletedID)
+	require.Error(t, err, "fetch should fail after delete; stderr: %s", errOut)
 }
 
 func randomSuffix(t *testing.T) string {
