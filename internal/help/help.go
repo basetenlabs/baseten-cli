@@ -462,7 +462,7 @@ func calculateSpace(k1, k2 []string) int {
 
 func isSubCommand(c *cobra.Command, args []string, word string) bool {
 	cmd, _, _ := c.Root().Traverse(args)
-	return cmd != nil && cmd.Name() == word || slices.Contains(cmd.Aliases, word)
+	return cmd != nil && (cmd.Name() == word || slices.Contains(cmd.Aliases, word))
 }
 
 var redirectPrefixes = []string{">", "<", "&>", "2>", "1>", ">>", "2>>"}
