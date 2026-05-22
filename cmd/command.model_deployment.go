@@ -16,6 +16,19 @@ var commandModelDeployment = Command{
 			Summary:     "Activate a deployment",
 			Description: "Activate a model deployment.",
 			Flags:       ModelDeploymentActivateFlags{},
+			Output: &CommandOutput[managementapi.ActivateResponse]{
+				TextDescription: "On success, prints \"Activated deployment <id>\" to stderr; no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Activate a deployment.",
+						Command:     "baseten model deployment activate --model-id <model-id> --deployment-id <deployment-id>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the success flag.",
+					Command:     "baseten model deployment activate --model-id <model-id> --deployment-id <deployment-id> --jq '.success'",
+				},
+			},
 		},
 		{
 			Name:    "config",
@@ -24,6 +37,22 @@ var commandModelDeployment = Command{
 				"By default prints the original config.yaml. Use --output json to emit " +
 				"the full response {config, raw_config} as JSON.",
 			Flags: ModelDeploymentConfigFlags{},
+			Output: &CommandOutput[managementapi.DeploymentConfigResponse]{
+				TextDescription: "The original config.yaml text (preserving comments and ordering) " +
+					"when available, otherwise the parsed config marshaled as YAML.",
+				JSONDescription: "The full {config, raw_config} envelope. raw_config is the " +
+					"original config.yaml text; config is the parsed shape.",
+				Examples: []CommandExample{
+					{
+						Description: "Print the deployment's config.yaml.",
+						Command:     "baseten model deployment config --model-id <model-id> --deployment-id <deployment-id>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Extract the parsed model_name field.",
+					Command:     "baseten model deployment config --model-id <model-id> --deployment-id <deployment-id> --jq '.config.model_name'",
+				},
+			},
 		},
 		{
 			Name:    "deactivate",
@@ -32,6 +61,19 @@ var commandModelDeployment = Command{
 				"Prompts for yes/no confirmation. Pass --yes to skip the prompt. When " +
 				"stdin is not a terminal, --yes is required.",
 			Flags: ModelDeploymentDeactivateFlags{},
+			Output: &CommandOutput[managementapi.DeactivateResponse]{
+				TextDescription: "On success, prints \"Deactivated deployment <id>\" to stderr; no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Deactivate a deployment without the confirmation prompt.",
+						Command:     "baseten model deployment deactivate --model-id <model-id> --deployment-id <deployment-id> --yes",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the success flag.",
+					Command:     "baseten model deployment deactivate --model-id <model-id> --deployment-id <deployment-id> --yes --jq '.success'",
+				},
+			},
 		},
 		{
 			Name:    "download",
@@ -41,6 +83,26 @@ var commandModelDeployment = Command{
 				"raw tar bytes; --out-dir extracts the tar into the directory. Use " +
 				"--overwrite to replace an existing file or write into a non-empty directory.",
 			Flags: ModelDeploymentDownloadFlags{},
+			Output: &CommandOutput[ModelDeploymentDownloadResult]{
+				TextDescription: "Writes the Truss to disk; prints progress and the final destination " +
+					"path to stderr; no stdout output.",
+				JSONDescription: "On success, stdout is a JSON object with either out_file or out_dir " +
+					"set to the path written.",
+				Examples: []CommandExample{
+					{
+						Description: "Save the Truss as a tar file.",
+						Command:     "baseten model deployment download --model-id <model-id> --deployment-id <deployment-id> --out-file truss.tar",
+					},
+					{
+						Description: "Extract the Truss into a directory.",
+						Command:     "baseten model deployment download --model-id <model-id> --deployment-id <deployment-id> --out-dir ./truss",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the destination path.",
+					Command:     "baseten model deployment download --model-id <model-id> --deployment-id <deployment-id> --out-file truss.tar --jq '.out_file'",
+				},
+			},
 		},
 		{
 			Name:    "promote",
@@ -51,6 +113,25 @@ var commandModelDeployment = Command{
 				"Prompts for yes/no confirmation. Pass --yes to skip the prompt. When " +
 				"stdin is not a terminal, --yes is required.",
 			Flags: ModelDeploymentPromoteFlags{},
+			Output: &CommandOutput[managementapi.Deployment]{
+				TextDescription: "On success, prints \"Promoted deployment <id> to environment <env>\" " +
+					"to stderr; no stdout output.",
+				JSONDescription: "Under --output json, the promoted deployment object.",
+				Examples: []CommandExample{
+					{
+						Description: "Promote a deployment to production without the confirmation prompt.",
+						Command:     "baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id> --yes",
+					},
+					{
+						Description: "Promote to a non-production environment using the deployment's own instance type.",
+						Command:     "baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id> --environment staging --override-env-instance-type --yes",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the promoted deployment's status.",
+					Command:     "baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id> --yes --jq '.status'",
+				},
+			},
 		},
 		{
 			Name:    "delete",
@@ -61,18 +142,59 @@ var commandModelDeployment = Command{
 				"Prompts for yes/no confirmation. Pass --yes to skip the prompt. When " +
 				"stdin is not a terminal, --yes is required.",
 			Flags: ModelDeploymentDeleteFlags{},
+			Output: &CommandOutput[managementapi.DeploymentTombstone]{
+				TextDescription: "On success, prints \"Deleted deployment <id>\" to stderr; no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Delete a deployment without the confirmation prompt.",
+						Command:     "baseten model deployment delete --model-id <model-id> --deployment-id <deployment-id> --yes",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the deleted deployment's ID.",
+					Command:     "baseten model deployment delete --model-id <model-id> --deployment-id <deployment-id> --yes --jq '.id'",
+				},
+			},
 		},
 		{
 			Name:        "fetch",
 			Summary:     "Fetch a deployment",
 			Description: "Fetch a model deployment by ID.",
 			Flags:       ModelDeploymentFetchFlags{},
+			Output: &CommandOutput[managementapi.Deployment]{
+				TextDescription: "Field-per-line summary: ID, Name, Model, Environment (optional), " +
+					"Status, Instance (optional), Replicas, Created.",
+				Examples: []CommandExample{
+					{
+						Description: "Fetch a deployment by ID.",
+						Command:     "baseten model deployment fetch --model-id <model-id> --deployment-id <deployment-id>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the deployment status.",
+					Command:     "baseten model deployment fetch --model-id <model-id> --deployment-id <deployment-id> --jq '.status'",
+				},
+			},
 		},
 		{
 			Name:        "list",
 			Summary:     "List deployments for a model",
 			Description: "List all deployments of a model.",
 			Flags:       ModelDeploymentListFlags{},
+			Output: &CommandOutput[managementapi.Deployments]{
+				TextDescription: "Table with columns: ID, NAME, ENVIRONMENT, STATUS, INSTANCE, " +
+					"REPLICAS, CREATED. When no deployments exist, prints \"No deployments found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List all deployments of a model.",
+						Command:     "baseten model deployment list --model-id <model-id>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the deployment IDs.",
+					Command:     "baseten model deployment list --model-id <model-id> --jq '.deployments[].id'",
+				},
+			},
 		},
 		{
 			Name:    "logs",
@@ -162,6 +284,14 @@ type ModelDeploymentDownloadFlags struct {
 	OutFile   string `flag:"out-file" desc:"Save the Truss as an uncompressed tar file at this path." oneof:"download-out"`
 	OutDir    string `flag:"out-dir" desc:"Extract the Truss tar into this directory." oneof:"download-out"`
 	Overwrite bool   `flag:"overwrite" desc:"Allow overwriting an existing file or non-empty directory."`
+}
+
+// ModelDeploymentDownloadResult is the JSON output of `baseten model deployment
+// download`. Exactly one of OutFile or OutDir is set, matching whichever flag
+// the caller passed.
+type ModelDeploymentDownloadResult struct {
+	OutFile string `json:"out_file,omitempty"`
+	OutDir  string `json:"out_dir,omitempty"`
 }
 
 // ModelDeploymentPromoteFlags configures `baseten model deployment promote`.

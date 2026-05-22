@@ -1,5 +1,7 @@
 package cmd
 
+import "github.com/basetenlabs/baseten-go/client/managementapi"
+
 // commandModelDeploymentReplica groups the `baseten model deployment replica`
 // subcommands.
 var commandModelDeploymentReplica = Command{
@@ -13,6 +15,20 @@ var commandModelDeploymentReplica = Command{
 				"Prompts for yes/no confirmation. Pass --yes to skip the prompt. When " +
 				"stdin is not a terminal, --yes is required.",
 			Flags: ModelDeploymentReplicaTerminateFlags{},
+			Output: &CommandOutput[managementapi.TerminateReplicaResponse]{
+				TextDescription: "On success, prints \"Terminated replica <id> of deployment <id>\" " +
+					"to stderr; no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Terminate a replica without the confirmation prompt.",
+						Command:     "baseten model deployment replica terminate --model-id <model-id> --deployment-id <deployment-id> --replica-id <replica-id> --yes",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the success flag.",
+					Command:     "baseten model deployment replica terminate --model-id <model-id> --deployment-id <deployment-id> --replica-id <replica-id> --yes --jq '.success'",
+				},
+			},
 		},
 	},
 }

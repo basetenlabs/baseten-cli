@@ -228,16 +228,16 @@ func commandModelDeploymentDownload(ctx *CommandContext, flags *cmd.ModelDeploym
 	}
 	parent := filepath.Dir(outPath)
 	if st, err := os.Stat(parent); err != nil || !st.IsDir() {
-		return &ErrUsage{Err: fmt.Errorf("parent directory does not exist: %s", parent)}
+		return fmt.Errorf("parent directory does not exist: %s", parent)
 	}
 	if !flags.Overwrite {
 		if flags.OutFile != "" {
 			if _, err := os.Stat(flags.OutFile); err == nil {
-				return &ErrUsage{Err: fmt.Errorf("file already exists: %s; pass --overwrite to replace it", flags.OutFile)}
+				return fmt.Errorf("file already exists: %s; pass --overwrite to replace it", flags.OutFile)
 			}
 		} else {
 			if entries, err := os.ReadDir(flags.OutDir); err == nil && len(entries) > 0 {
-				return &ErrUsage{Err: fmt.Errorf("directory is not empty: %s; pass --overwrite to write into it", flags.OutDir)}
+				return fmt.Errorf("directory is not empty: %s; pass --overwrite to write into it", flags.OutDir)
 			}
 		}
 	}
@@ -281,6 +281,9 @@ func commandModelDeploymentDownload(ctx *CommandContext, flags *cmd.ModelDeploym
 			return fmt.Errorf("write %s: %w", flags.OutFile, err)
 		}
 		ctx.Logf("Saved to %s\n", flags.OutFile)
+		if ctx.JSON {
+			ctx.OutputJSON(cmd.ModelDeploymentDownloadResult{OutFile: flags.OutFile})
+		}
 		return nil
 	}
 
@@ -291,6 +294,9 @@ func commandModelDeploymentDownload(ctx *CommandContext, flags *cmd.ModelDeploym
 		return fmt.Errorf("extract truss into %s: %w", flags.OutDir, err)
 	}
 	ctx.Logf("Extracted to %s\n", flags.OutDir)
+	if ctx.JSON {
+		ctx.OutputJSON(cmd.ModelDeploymentDownloadResult{OutDir: flags.OutDir})
+	}
 	return nil
 }
 

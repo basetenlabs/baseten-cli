@@ -291,7 +291,7 @@ func (c *CommandContext) IsInteractive() bool {
 // or similar. Returns a non-nil error if the user declines.
 func (c *CommandContext) ConfirmYesNo(title string) error {
 	if !c.IsInteractive() {
-		return &ErrUsage{Err: fmt.Errorf("cannot confirm: stdin is not a terminal; pass --yes to skip the prompt")}
+		return cmd.NewErrUsagef("cannot confirm: stdin is not a terminal; pass --yes to skip the prompt")
 	}
 	var ok bool
 	if err := huh.NewConfirm().Title(title).Value(&ok).Run(); err != nil {
