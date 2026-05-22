@@ -25,8 +25,9 @@ var Root = Command{
 // CommandFlags are shared flags that every command must embed, either directly
 // or via another struct that embeds it.
 type CommandFlags struct {
-	Verbose bool   `flag:"verbose" short:"v" desc:"Enable verbose logging"`
-	Output  string `flag:"output" short:"o" desc:"Output format" default:"text" enum:"text,json,jsonl,none"`
+	Verbose   bool   `flag:"verbose" short:"v" desc:"Enable verbose logging"`
+	Output    string `flag:"output" short:"o" desc:"Output format" default:"text" enum:"text,json,jsonl,none"`
+	RemoteURL string `flag:"remote-url" desc:"Baseten remote URL, overrides BASETEN_REMOTE_URL (default https://app.baseten.co)"`
 }
 
 // Command defines a CLI command declaratively. The tree structure is built
