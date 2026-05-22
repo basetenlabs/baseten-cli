@@ -36,6 +36,10 @@ func NewRemote(remoteURL string) (*Remote, error) {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return nil, fmt.Errorf("invalid remote URL: %q", r.remoteURL)
 	}
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("remote URL must not include a path, query, or fragment: %q", r.remoteURL)
+	}
+	r.remoteURL = u.Scheme + "://" + u.Host
 	r.scheme = u.Scheme
 	r.baseHost = strings.TrimPrefix(u.Host, "app.")
 
