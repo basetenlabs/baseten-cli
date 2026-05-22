@@ -188,8 +188,11 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 		r := runners[path]
 		streamed := def.Output != nil && def.Output.JSONArrayStreamedBool()
 		c.RunE = func(_ *cobra.Command, args []string) error {
-			// Build context.
-			remote, err := NewRemote()
+			var cmdFlags cmd.CommandFlags
+			if f := flagsVal.FieldByName("CommandFlags"); f.IsValid() {
+				cmdFlags = f.Interface().(cmd.CommandFlags)
+			}
+			remote, err := NewRemote(cmdFlags.RemoteURL)
 			if err != nil {
 				return err
 			}
@@ -206,35 +209,32 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 
 			// Resolve --jq and --output, populating ctx.
 			var runErr error
-			if f := flagsVal.FieldByName("CommandFlags"); f.IsValid() {
-				cmdFlags := f.Interface().(cmd.CommandFlags)
-				if cmdFlags.JQ != "" {
-					outputChanged := c.Flags().Changed("output")
-					if outputChanged && (cmdFlags.Output == "text" || cmdFlags.Output == "none") {
-						runErr = cmd.NewErrUsagef("--jq cannot be used with --output %s", cmdFlags.Output)
-					} else {
-						if !outputChanged {
-							if streamed {
-								cmdFlags.Output = "jsonl"
-							} else {
-								cmdFlags.Output = "json"
-							}
-						}
-						q, parseErr := gojq.Parse(cmdFlags.JQ)
-						if parseErr != nil {
-							runErr = fmt.Errorf("invalid jq expression: %w", parseErr)
+			if cmdFlags.JQ != "" {
+				outputChanged := c.Flags().Changed("output")
+				if outputChanged && (cmdFlags.Output == "text" || cmdFlags.Output == "none") {
+					runErr = cmd.NewErrUsagef("--jq cannot be used with --output %s", cmdFlags.Output)
+				} else {
+					if !outputChanged {
+						if streamed {
+							cmdFlags.Output = "jsonl"
 						} else {
-							ctx.JQQuery = q
+							cmdFlags.Output = "json"
 						}
 					}
+					q, parseErr := gojq.Parse(cmdFlags.JQ)
+					if parseErr != nil {
+						runErr = fmt.Errorf("invalid jq expression: %w", parseErr)
+					} else {
+						ctx.JQQuery = q
+					}
 				}
-				ctx.JSON = cmdFlags.Output == "json" || cmdFlags.Output == "jsonl"
-				ctx.JSONCompact = cmdFlags.Output == "jsonl"
-				ctx.JSONLines = cmdFlags.Output == "jsonl"
-				ctx.verbose = cmdFlags.Verbose
-				if cmdFlags.Output == "none" {
-					ctx.Stdout = io.Discard
-				}
+			}
+			ctx.JSON = cmdFlags.Output == "json" || cmdFlags.Output == "jsonl"
+			ctx.JSONCompact = cmdFlags.Output == "jsonl"
+			ctx.JSONLines = cmdFlags.Output == "jsonl"
+			ctx.verbose = cmdFlags.Verbose
+			if cmdFlags.Output == "none" {
+				ctx.Stdout = io.Discard
 			}
 
 			// Run the leaf. Runner-returned errors win over jqErr.
