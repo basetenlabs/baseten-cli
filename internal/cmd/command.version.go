@@ -14,7 +14,7 @@ func init() {
 
 func commandVersion(ctx *CommandContext, _ *cmd.VersionFlags) error {
 	if ctx.JSON {
-		ctx.OutputJSON(map[string]string{"version": Version})
+		ctx.OutputJSON(cmd.VersionResult{Version: Version})
 		return nil
 	}
 	ctx.OutputLine(Version)

@@ -68,7 +68,7 @@ func commandOrgAPIKeyList(ctx *CommandContext, _ *cmd.OrgAPIKeyListFlags) error 
 func commandOrgAPIKeyCreate(ctx *CommandContext, flags *cmd.OrgAPIKeyCreateFlags) error {
 	// --model-id only makes sense for the two scopes that key on it.
 	if len(flags.ModelIDs) > 0 && flags.Type != "workspace-export-metrics" && flags.Type != "workspace-invoke" {
-		return &ErrUsage{Err: fmt.Errorf("--model-id is only valid with --type workspace-export-metrics or workspace-invoke")}
+		return cmd.NewErrUsagef("--model-id is only valid with --type workspace-export-metrics or workspace-invoke")
 	}
 
 	cl, err := ctx.NewManagementClient()

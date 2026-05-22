@@ -86,7 +86,7 @@ func commandOrgSecretSet(ctx *CommandContext, flags *cmd.OrgSecretSetFlags) erro
 		}
 		value = strings.TrimRight(string(buf), "\r\n")
 		if value == "" {
-			return &ErrUsage{Err: fmt.Errorf("no secret value supplied; pipe a value to stdin or pass --value")}
+			return cmd.NewErrUsagef("no secret value supplied; pipe a value to stdin or pass --value")
 		}
 	}
 

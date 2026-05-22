@@ -26,7 +26,7 @@ func commandTruss(ctx *CommandContext, flags *cmd.TrussFlags) error {
 	if err := trussCmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return &ErrWithCode{Err: err, Code: exitErr.ExitCode()}
+			return &ErrSubprocess{Err: err, Code: exitErr.ExitCode()}
 		}
 		return err
 	}

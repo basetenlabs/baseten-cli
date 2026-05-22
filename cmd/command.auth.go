@@ -15,26 +15,107 @@ var commandAuth = Command{
 				"(suitable for non-TTY environments). Use --with-api-key to provide an API key " +
 				"(reads from stdin, or prompts interactively if TTY).",
 			Flags: AuthLoginFlags{},
+			Output: &CommandOutput[AuthLoginResult]{
+				TextDescription: "Prints \"Logged in as <email> (<workspace>)\" to stdout on success.",
+				Examples: []CommandExample{
+					{
+						Description: "Browser-based login (OAuth device flow).",
+						Command:     "baseten auth login --web",
+					},
+					{
+						Description: "Provide an API key on stdin.",
+						Command:     "echo $API_KEY | baseten auth login --with-api-key --label <label>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the logged-in user's email.",
+					Command:     "baseten auth login --web --jq '.email'",
+				},
+			},
 		},
 		{
 			Name:        "logout",
 			Summary:     "Remove stored credentials",
 			Description: "Remove stored credentials for the active user. For OAuth credentials, also revokes the session.",
 			Flags:       AuthLogoutFlags{},
+			Output: &CommandOutput[AuthLogoutResult]{
+				TextDescription: "Prints \"Logged out <user>\" to stdout on success.",
+				Examples: []CommandExample{
+					{
+						Description: "Log out the active user.",
+						Command:     "baseten auth logout",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the logged-out user label.",
+					Command:     "baseten auth logout --jq '.user'",
+				},
+			},
 		},
 		{
 			Name:        "switch",
 			Summary:     "Switch active account",
 			Description: "Switch the active account for the current host.",
 			Flags:       AuthSwitchFlags{},
+			Output: &CommandOutput[AuthSwitchResult]{
+				TextDescription: "Prints \"Switched to <user>\" to stdout on success.",
+				Examples: []CommandExample{
+					{
+						Description: "Switch to a specific account non-interactively.",
+						Command:     "baseten auth switch --user <user>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the newly active user.",
+					Command:     "baseten auth switch --user <user> --jq '.user'",
+				},
+			},
 		},
 		{
 			Name:        "status",
 			Summary:     "Show authentication status",
 			Description: "Show the current authentication state, including the active user and auth type.",
 			Flags:       AuthStatusFlags{},
+			Output: &CommandOutput[AuthStatusResult]{
+				TextDescription: "Three-line summary: host URL, \"Logged in as <user>\", \"Auth type: <type>\".",
+				Examples: []CommandExample{
+					{
+						Description: "Show the current auth status.",
+						Command:     "baseten auth status",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the auth type.",
+					Command:     "baseten auth status --jq '.auth_type'",
+				},
+			},
 		},
 	},
+}
+
+// AuthLoginResult is the JSON output of `baseten auth login`.
+type AuthLoginResult struct {
+	UserID        string `json:"user_id"`
+	Email         string `json:"email"`
+	Name          string `json:"name"`
+	WorkspaceName string `json:"workspace_name"`
+}
+
+// AuthLogoutResult is the JSON output of `baseten auth logout`.
+type AuthLogoutResult struct {
+	User string `json:"user"`
+}
+
+// AuthSwitchResult is the JSON output of `baseten auth switch`.
+type AuthSwitchResult struct {
+	User string `json:"user"`
+}
+
+// AuthStatusResult is the JSON output of `baseten auth status`.
+type AuthStatusResult struct {
+	Host     string `json:"host"`
+	User     string `json:"user"`
+	AuthType string `json:"auth_type"`
 }
 
 // AuthLoginFlags are the flags for baseten auth login.

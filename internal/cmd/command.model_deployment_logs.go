@@ -30,10 +30,10 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	// the positive-duration check below instead of being silently dropped.
 	hasSince := ctx.Command.Flags().Changed("since")
 	if flags.Tail && (hasStart || hasEnd || hasSince) {
-		return &ErrUsage{Err: errors.New("--tail cannot be combined with --start, --end, or --since")}
+		return cmd.NewErrUsagef("--tail cannot be combined with --start, --end, or --since")
 	}
 	if hasSince && (hasStart || hasEnd) {
-		return &ErrUsage{Err: errors.New("--since cannot be combined with --start or --end")}
+		return cmd.NewErrUsagef("--since cannot be combined with --start or --end")
 	}
 
 	api, err := ctx.NewManagementClient()
@@ -65,10 +65,10 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	var startMs, endMs *int
 	if hasSince {
 		if flags.Since <= 0 {
-			return &ErrUsage{Err: errors.New("--since must be a positive duration")}
+			return cmd.NewErrUsagef("--since must be a positive duration")
 		}
 		if flags.Since > maxLogTimeRange {
-			return &ErrUsage{Err: errors.New("--since must be at most 7d")}
+			return cmd.NewErrUsagef("--since must be at most 7d")
 		}
 		now := ctx.Now()
 		s := int(now.Add(-flags.Since).UnixMilli())
@@ -83,10 +83,10 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 			startT = endT.Add(-maxLogTimeRange)
 		}
 		if !startT.Before(endT) {
-			return &ErrUsage{Err: errors.New("--start must be earlier than --end")}
+			return cmd.NewErrUsagef("--start must be earlier than --end")
 		}
 		if endT.Sub(startT) > maxLogTimeRange {
-			return &ErrUsage{Err: errors.New("log time range must be at most 7 days; narrow --start/--end or use --since")}
+			return cmd.NewErrUsagef("log time range must be at most 7 days; narrow --start/--end or use --since")
 		}
 		s := int(startT.UnixMilli())
 		e := int(endT.UnixMilli())
