@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -33,7 +32,7 @@ func ResolveModelRef(
 ) (ModelRef, error) {
 	if flags.ModelID != "" {
 		if flags.Team != "" {
-			return ModelRef{}, &ErrUsage{Err: errors.New("--team is only valid with --model-name")}
+			return ModelRef{}, cmd.NewErrUsagef("--team is only valid with --model-name")
 		}
 		return ModelRef{ID: flags.ModelID}, nil
 	}
@@ -185,7 +184,7 @@ func commandModelDelete(ctx *CommandContext, flags *cmd.ModelDeleteFlags) error 
 
 	if !flags.Yes {
 		if !ctx.IsInteractive() {
-			return &ErrUsage{Err: fmt.Errorf("cannot confirm deletion: stdin is not a terminal; pass --yes to skip the prompt")}
+			return cmd.NewErrUsagef("cannot confirm deletion: stdin is not a terminal; pass --yes to skip the prompt")
 		}
 		var typed string
 		err := huh.NewInput().

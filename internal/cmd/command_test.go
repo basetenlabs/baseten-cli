@@ -209,6 +209,46 @@ func TestHelpOutput(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "COMMANDS")
 }
 
+func TestHelpOutputRootShowsExitCodes(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.Require.NoError(h.Execute("--help-output"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "EXIT CODES")
+	h.Require.Contains(out, "ErrGeneric")
+	h.Require.Contains(out, "ErrServer")
+}
+
+func TestHelpOutputLeafShowsSchemaAndPointer(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.Require.NoError(h.Execute("model", "push", "--help-output"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "EXIT CODES")
+	h.Require.Contains(out, "baseten --help-output")
+	h.Require.Contains(out, "TEXT OUTPUT")
+	h.Require.Contains(out, "JSON OUTPUT")
+	h.Require.Contains(out, "\"$schema\"")
+	h.Require.NotContains(out, "additionalProperties")
+}
+
+func TestHelpFooterMentionsHelpOutput(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.Require.NoError(h.Execute("model", "push", "--help"))
+	h.Require.Contains(h.Stdout.String(), "--help-output")
+}
+
+func TestHelpFlagGroupsHeaders(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.Require.NoError(h.Execute("model", "push", "--help"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "COMMAND FLAGS")
+	h.Require.Contains(out, "COMMON FLAGS")
+	h.Require.Less(
+		bytes.Index(h.Stdout.Bytes(), []byte("COMMAND FLAGS")),
+		bytes.Index(h.Stdout.Bytes(), []byte("COMMON FLAGS")),
+		"COMMAND FLAGS should render before COMMON FLAGS",
+	)
+}
+
 func TestOutputEnumValidation(t *testing.T) {
 	h := NewCommandHarness(t)
 	err := h.Execute("api", "management", "--output", "invalid", "some/path")

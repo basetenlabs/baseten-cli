@@ -1,6 +1,10 @@
 package cmd
 
-import "time"
+import (
+	"time"
+
+	"github.com/basetenlabs/baseten-go/client/managementapi"
+)
 
 // commandModelDeployment groups the `baseten model deployment` subcommands.
 var commandModelDeployment = Command{
@@ -80,6 +84,24 @@ var commandModelDeployment = Command{
 				"runnable state or you interrupt with Ctrl-C.\n\n" +
 				"For machine-readable streaming, prefer --output jsonl over --output json.",
 			Flags: ModelDeploymentLogsFlags{},
+			Output: &CommandOutput[managementapi.Log]{
+				JSONArrayStreamed: true,
+				TextDescription:   "One line per log record: \"[YYYY-MM-DD HH:MM:SS]: (replica) message\".",
+				Examples: []CommandExample{
+					{
+						Description: "Print logs for a deployment over the last hour.",
+						Command:     "baseten model deployment logs --model-id <model-id> --deployment-id <deployment-id> --since 1h",
+					},
+					{
+						Description: "Tail live logs until the deployment leaves a runnable state.",
+						Command:     "baseten model deployment logs --model-id <model-id> --deployment-id <deployment-id> --tail",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Stream just the log messages as a JSONL stream.",
+					Command:     "baseten model deployment logs --model-id <model-id> --deployment-id <deployment-id> --output jsonl --jq '.message'",
+				},
+			},
 		},
 		commandModelDeploymentReplica,
 	},

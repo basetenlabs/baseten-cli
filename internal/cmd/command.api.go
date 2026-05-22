@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
-	"github.com/itchyny/gojq"
 )
 
 func init() {
@@ -32,7 +31,7 @@ func commandAPIManagement(ctx *CommandContext, flags *cmd.APIManagementFlags) er
 func commandAPIInference(ctx *CommandContext, flags *cmd.APIInferenceFlags) error {
 	cl, err := ctx.NewInferenceClient(flags.InferenceClientFlags)
 	if err != nil {
-		return &ErrUsage{Err: err}
+		return cmd.NewErrUsage(err)
 	}
 	api := cl.API()
 	return callAPI(ctx, &flags.APIFlags, api.BaseURL, api.HTTPClient, api.Headers)
@@ -41,15 +40,6 @@ func commandAPIInference(ctx *CommandContext, flags *cmd.APIInferenceFlags) erro
 func callAPI(ctx *CommandContext, flags *cmd.APIFlags, baseURL string, httpClient interface {
 	Do(*http.Request) (*http.Response, error)
 }, headers http.Header) error {
-	var jqQuery *gojq.Query
-	if flags.JQ != "" {
-		var err error
-		jqQuery, err = gojq.Parse(flags.JQ)
-		if err != nil {
-			return fmt.Errorf("invalid jq expression: %w", err)
-		}
-	}
-
 	req, cleanup, err := buildAPIRequest(ctx, flags, baseURL)
 	defer cleanup()
 	if err != nil {
@@ -71,7 +61,7 @@ func callAPI(ctx *CommandContext, flags *cmd.APIFlags, baseURL string, httpClien
 	}
 	defer resp.Body.Close()
 
-	if err := outputAPIResponse(ctx, jqQuery, resp); err != nil {
+	if err := outputAPIResponse(ctx, resp); err != nil {
 		return err
 	}
 
@@ -89,7 +79,7 @@ func buildAPIRequest(ctx *CommandContext, flags *cmd.APIFlags, baseURL string) (
 	apiPath := ctx.Args[0]
 	hasFields := len(flags.Field) > 0 || len(flags.RawField) > 0
 	if hasFields && flags.Input != "" {
-		return nil, cleanup, &ErrUsage{Err: fmt.Errorf("--input is mutually exclusive with --field and --raw-field")}
+		return nil, cleanup, cmd.NewErrUsagef("--input is mutually exclusive with --field and --raw-field")
 	}
 
 	var body io.Reader
@@ -162,7 +152,7 @@ func buildAPIRequest(ctx *CommandContext, flags *cmd.APIFlags, baseURL string) (
 	return req, cleanup, nil
 }
 
-func outputAPIResponse(ctx *CommandContext, jqQuery *gojq.Query, resp *http.Response) error {
+func outputAPIResponse(ctx *CommandContext, resp *http.Response) error {
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -171,36 +161,13 @@ func outputAPIResponse(ctx *CommandContext, jqQuery *gojq.Query, resp *http.Resp
 		if len(respBody) > 0 {
 			var parsed any
 			if err := json.Unmarshal(respBody, &parsed); err == nil {
-				if jqQuery != nil {
-					return applyJQ(ctx, parsed, jqQuery)
-				}
 				ctx.OutputJSON(parsed)
 			} else {
 				ctx.Output(string(respBody))
 			}
 		}
-	} else {
-		if jqQuery != nil {
-			return fmt.Errorf("--jq can only be used with JSON responses")
-		}
-		if _, err := io.Copy(ctx.Stdout, resp.Body); err != nil {
-			return fmt.Errorf("reading response: %w", err)
-		}
-	}
-	return nil
-}
-
-func applyJQ(ctx *CommandContext, data any, query *gojq.Query) error {
-	iter := query.Run(data)
-	for {
-		v, ok := iter.Next()
-		if !ok {
-			break
-		}
-		if err, ok := v.(error); ok {
-			return fmt.Errorf("jq error: %w", err)
-		}
-		ctx.OutputJSON(v)
+	} else if _, err := io.Copy(ctx.Stdout, resp.Body); err != nil {
+		return fmt.Errorf("reading response: %w", err)
 	}
 	return nil
 }

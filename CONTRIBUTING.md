@@ -4,6 +4,10 @@
 
 - Files: `command.<name>.go` where `<name>` is the top-level subcommand (`command.api.go` covers all `api` subcommands); split only when a group grows large.
 - Public (`cmd/`): a `Command` struct plus a flags struct embedding `CommandFlags`. Declare flags via struct tags (`flag`, `short`, `desc`, `default`, `enum`, `required`).
+- Every leaf (no `Children`) must declare an `Output` (`*CommandOutput[T]`) with `TextDescription`, at least one `Examples` entry, and a `JQExample` that includes `--jq`. Use `JSONAny` for free-shape JSON, `JSONUndefined` for raw passthrough; set `JSONArrayStreamed: true` for commands that emit a stream of records.
+- Use `ctx.Output*` for stdout, `ctx.Log*` (or `VerboseLog*` behind `--verbose`) for stderr; never mix the two. `--output` controls stdout only.
+- Return typed errors (`cmd.NewErrUsage`/`NewErrAuth`/...) so the framework maps them to the right exit code. New exit codes go in `Command.Errors` via `ErrorDescOf[*ErrFoo]()`.
+- Before prompting, check `ctx.IsInteractive()` and fail fast otherwise: the CLI never prompts in non-TTY contexts.
 - Internal (`internal/cmd/`): runner registered in `init()` via `Register("parent child", runner)`; path and flag type must match.
 - Parents (commands with subcommands) are not executable: no run function, no `Flags`.
 - Avoid shorthand flags and positional args unless really needed.

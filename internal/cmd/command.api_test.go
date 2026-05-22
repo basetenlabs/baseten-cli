@@ -158,10 +158,12 @@ func Test_API_Management_JQFilter(t *testing.T) {
 }
 
 func Test_API_Management_JQOnNonJSON(t *testing.T) {
+	// --jq implies --output json, which for the api command still streams a
+	// non-JSON upstream response through verbatim; jq has nothing to filter.
 	h, _ := newAPIHarness(t, 200, "plain text")
-	_ = h.Execute("api", "management", "--jq", ".foo", "models")
-	h.Require.True(h.Exited())
-	h.Require.Contains(h.Stderr.String(), "--jq can only be used with JSON")
+	err := h.Execute("api", "management", "--jq", ".foo", "models")
+	h.Require.NoError(err)
+	h.Require.Equal("plain text", h.Stdout.String())
 }
 
 func Test_API_Management_NonJSONResponse(t *testing.T) {

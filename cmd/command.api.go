@@ -16,6 +16,26 @@ var commandAPI = Command{
 			ArgsUsage: "<api-path>",
 			ExactArgs: 1,
 			Flags:     APIManagementFlags{},
+			Output: &CommandOutput[JSONUndefined]{
+				TextDescription: "The HTTP response body, passed through verbatim. JSON responses are " +
+					"pretty-printed; non-JSON responses are streamed raw to stdout.",
+				JSONDescription: "Shape depends on the requested endpoint. See the management API " +
+					"OpenAPI spec at https://api.baseten.co/v1/spec.",
+				Examples: []CommandExample{
+					{
+						Description: "GET a management resource.",
+						Command:     "baseten api management models",
+					},
+					{
+						Description: "POST a management resource with fields.",
+						Command:     "baseten api management models --field name=my-model",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "List model IDs from /v1/models.",
+					Command:     "baseten api management models --jq '.models[].id'",
+				},
+			},
 		},
 		{
 			Name:    "inference",
@@ -26,6 +46,22 @@ var commandAPI = Command{
 			ArgsUsage: "<api-path>",
 			ExactArgs: 1,
 			Flags:     APIInferenceFlags{},
+			Output: &CommandOutput[JSONUndefined]{
+				TextDescription: "The inference endpoint's response body, passed through verbatim. JSON " +
+					"responses are pretty-printed; non-JSON responses are streamed raw.",
+				JSONDescription: "Shape depends on the model and endpoint. See the inference API " +
+					"OpenAPI spec at https://api.baseten.co/inference-spec.",
+				Examples: []CommandExample{
+					{
+						Description: "POST a predict body to a model.",
+						Command:     `baseten api inference production/predict --model-id <model-id> --field prompt=hello`,
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Filter a JSON predict response.",
+					Command:     `baseten api inference production/predict --model-id <model-id> --field prompt=hello --jq '.result'`,
+				},
+			},
 		},
 	},
 }
@@ -38,7 +74,6 @@ type APIFlags struct {
 	RawField []string `flag:"raw-field" short:"f" desc:"Add a raw string field (key=value)"`
 	Header   []string `flag:"header" short:"H" desc:"Add a request header (key:value)"`
 	Input    string   `flag:"input" desc:"Read request body from file (use - for stdin)"`
-	JQ       string   `flag:"jq" short:"q" desc:"Filter JSON response with a jq expression"`
 }
 
 type APIManagementFlags struct {

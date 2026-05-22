@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,7 +41,7 @@ func commandModelPredict(ctx *CommandContext, flags *cmd.ModelPredictFlags) erro
 		targets++
 	}
 	if targets > 1 {
-		return &ErrUsage{Err: errors.New("--environment, --deployment-id, and --regional are mutually exclusive")}
+		return cmd.NewErrUsagef("--environment, --deployment-id, and --regional are mutually exclusive")
 	}
 
 	mgmtCl, err := ctx.NewManagementClient()

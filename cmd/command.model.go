@@ -1,5 +1,7 @@
 package cmd
 
+import "github.com/basetenlabs/baseten-go/client/managementapi"
+
 var commandModel = Command{
 	Name:    "model",
 	Summary: "Manage Baseten models",
@@ -17,18 +19,77 @@ var commandModel = Command{
 				"The model is identified by the `model_name` field in config.yaml. " +
 				"Use --override-name to override that for this push only.",
 			Flags: ModelPushFlags{},
+			Output: &CommandOutput[ModelPushResult]{
+				TextDescription: "Narrative summary on stdout: success banner, deployment status, " +
+					"log/predict URLs and example next-step commands. Under --output json the " +
+					"narrative is redirected to stderr so stdout stays a clean JSON document.",
+				JSONDescription: "Under --dry-run no upload or deployment happens; the push is " +
+					"validated, upload credentials are requested, and stdout is the empty JSON " +
+					"object `{}`. Otherwise stdout is the full model+deployment result.",
+				Examples: []CommandExample{
+					{
+						Description: "Push the current directory as a new deployment.",
+						Command:     "baseten model push",
+					},
+					{
+						Description: "Push and stream build/runtime logs until the deployment is active.",
+						Command:     "baseten model push --tail --wait",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the new deployment's predict URL.",
+					Command:     "baseten model push --jq '.predict_url'",
+				},
+			},
 		},
 		{
 			Name:        "list",
 			Summary:     "List models",
 			Description: "List Baseten models.",
 			Flags:       ModelListFlags{},
+			Output: &CommandOutput[managementapi.Models]{
+				TextDescription: "Table with columns: ID, NAME, TEAM, DEPLOYMENTS, CREATED. " +
+					"When no models exist, prints \"No models found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List all models accessible to the caller.",
+						Command:     "baseten model list",
+					},
+					{
+						Description: "List only models in a specific team.",
+						Command:     "baseten model list --team my-team",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the model IDs.",
+					Command:     "baseten model list --jq '.models[].id'",
+				},
+			},
 		},
 		{
 			Name:        "fetch",
 			Summary:     "Fetch a model",
 			Description: "Fetch a Baseten model.",
 			Flags:       ModelFetchFlags{},
+			Output: &CommandOutput[managementapi.Model]{
+				TextDescription: "Field-per-line summary: ID, Name, Team, Deployments, " +
+					"Instance, Production, Development, Created. Optional fields are omitted " +
+					"when unset.",
+				Examples: []CommandExample{
+					{
+						Description: "Fetch a model by ID.",
+						Command:     "baseten model fetch --model-id <model-id>",
+					},
+					{
+						Description: "Fetch a model by name.",
+						Command:     "baseten model fetch --model-name <name>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the production deployment ID.",
+					Command:     "baseten model fetch --model-id <model-id> --jq '.production_deployment_id'",
+				},
+			},
 		},
 		{
 			Name:    "predict",
@@ -40,6 +101,28 @@ var commandModel = Command{
 				"as they arrive. For machine-readable streaming JSON from OpenAI-compatible " +
 				"models, use --output jsonl.",
 			Flags: ModelPredictFlags{},
+			Output: &CommandOutput[JSONUndefined]{
+				TextDescription: "The model's response body, passed through verbatim. May be JSON, " +
+					"plain text, or binary, and may stream when the model uses chunked " +
+					"transfer encoding or SSE.",
+				JSONDescription: "Under --output json, binary frames are base64-encoded under a " +
+					"'body' key. Under --output jsonl, each SSE or binary chunk is emitted as " +
+					"its own record, one per line.",
+				Examples: []CommandExample{
+					{
+						Description: "Send an inline JSON body.",
+						Command:     `baseten model predict --model-id <model-id> --data '{"prompt":"hello"}'`,
+					},
+					{
+						Description: "Send a request body from a file.",
+						Command:     "baseten model predict --model-id <model-id> --file request.json",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Extract a field when the model returns JSON.",
+					Command:     `baseten model predict --model-id <model-id> --data '{"x":1}' --jq '.result'`,
+				},
+			},
 		},
 		{
 			Name:    "delete",
@@ -48,10 +131,37 @@ var commandModel = Command{
 				"Prompts for the model name to confirm the deletion. Pass --yes to " +
 				"skip the prompt. When stdin is not a terminal, --yes is required.",
 			Flags: ModelDeleteFlags{},
+			Output: &CommandOutput[managementapi.ModelTombstone]{
+				TextDescription: "On success, prints \"Deleted model <name> (<id>)\" to stderr; no " +
+					"stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Delete by ID without confirmation.",
+						Command:     "baseten model delete --model-id <model-id> --yes",
+					},
+					{
+						Description: "Delete by name with interactive confirmation.",
+						Command:     "baseten model delete --model-name <name>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the deleted model's ID.",
+					Command:     "baseten model delete --model-id <model-id> --yes --jq '.id'",
+				},
+			},
 		},
 		commandModelDeployment,
 		commandModelEnvironment,
 	},
+}
+
+// ModelPushResult is the JSON output of `baseten model push` on a successful
+// non-dry-run push.
+type ModelPushResult struct {
+	Model      managementapi.Model      `json:"model"`
+	Deployment managementapi.Deployment `json:"deployment"`
+	PredictURL string                   `json:"predict_url"`
+	LogsURL    string                   `json:"logs_url"`
 }
 
 // ModelRefFlags identifies a model by ID or by name (with optional --team for

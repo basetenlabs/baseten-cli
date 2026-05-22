@@ -22,13 +22,6 @@ func init() {
 	Register("auth status", commandAuthStatus)
 }
 
-type whoamiResponse struct {
-	UserID        string `json:"user_id"`
-	Email         string `json:"email"`
-	Name          string `json:"name"`
-	WorkspaceName string `json:"workspace_name"`
-}
-
 func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
 	baseURL := ctx.Remote.RemoteURL()
 	store, err := NewAuthStore(flags.InsecureStorage)
@@ -37,7 +30,7 @@ func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
 	}
 
 	if flags.Web && flags.WithAPIKey {
-		return &ErrUsage{Err: fmt.Errorf("--web and --with-api-key are mutually exclusive")}
+		return cmd.NewErrUsagef("--web and --with-api-key are mutually exclusive")
 	}
 
 	method := ""
@@ -60,7 +53,7 @@ func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
 		}
 		method = choice
 	} else {
-		return &ErrUsage{Err: fmt.Errorf("must specify --web or --with-api-key when not interactive")}
+		return cmd.NewErrUsagef("must specify --web or --with-api-key when not interactive")
 	}
 
 	switch method {
@@ -96,7 +89,7 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(map[string]string{"user": label})
+		ctx.OutputJSON(cmd.AuthLogoutResult{User: label})
 	} else {
 		ctx.Outputf("Logged out %s\n", label)
 	}
@@ -140,7 +133,7 @@ func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
 	label := flags.User
 	if label == "" {
 		if !ctx.IsInteractive() {
-			return &ErrUsage{Err: fmt.Errorf("must specify --user when not interactive")}
+			return cmd.NewErrUsagef("must specify --user when not interactive")
 		}
 
 		af, err := store.Load()
@@ -172,7 +165,7 @@ func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(map[string]string{"user": label})
+		ctx.OutputJSON(cmd.AuthSwitchResult{User: label})
 	} else {
 		ctx.Outputf("Switched to %s\n", label)
 	}
@@ -192,10 +185,10 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(map[string]string{
-			"host":      baseURL,
-			"user":      label,
-			"auth_type": string(entry.AuthType),
+		ctx.OutputJSON(cmd.AuthStatusResult{
+			Host:     baseURL,
+			User:     label,
+			AuthType: string(entry.AuthType),
 		})
 	} else {
 		ctx.Outputf("%s\n  Logged in as %s\n  Auth type: %s\n", baseURL, label, entry.AuthType)
@@ -242,7 +235,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, baseURL string) error {
 		return err
 	}
 
-	result := whoamiResponse{
+	result := cmd.AuthLoginResult{
 		UserID:        user.UserId,
 		Email:         email,
 		Name:          deref(user.Name),
@@ -278,7 +271,7 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, baseURL, label string) 
 	}
 
 	if apiKey == "" {
-		return &ErrUsage{Err: fmt.Errorf("API key cannot be empty")}
+		return cmd.NewErrUsagef("API key cannot be empty")
 	}
 
 	cl, err := ctx.NewManagementClientWithAuth("Api-Key " + apiKey)
@@ -301,12 +294,12 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, baseURL, label string) 
 				return err
 			}
 		} else {
-			return &ErrUsage{Err: fmt.Errorf("--label is required when not interactive")}
+			return cmd.NewErrUsagef("--label is required when not interactive")
 		}
 	}
 
 	if label == "" {
-		return &ErrUsage{Err: fmt.Errorf("label cannot be empty")}
+		return cmd.NewErrUsagef("label cannot be empty")
 	}
 
 	warnWriter := func(msg string) { ctx.Log(msg) }
@@ -314,7 +307,7 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, baseURL, label string) 
 		return err
 	}
 
-	result := whoamiResponse{
+	result := cmd.AuthLoginResult{
 		UserID:        user.UserId,
 		Email:         deref(user.Email),
 		Name:          deref(user.Name),
