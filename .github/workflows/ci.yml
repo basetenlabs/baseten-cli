@@ -28,6 +28,12 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Emit docs.json (smoke)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go run ./cmd/docs --cli-version=ci --out=/tmp/docs.json
+          python3 -c "import json,sys; json.load(open('/tmp/docs.json')); print('valid JSON, $(wc -c < /tmp/docs.json) bytes')"
+
       - name: E2E test
         if: matrix.os == 'ubuntu-latest'
         env:
