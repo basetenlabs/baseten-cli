@@ -277,11 +277,12 @@ func newDeviceAuthServer(t *testing.T) *deviceAuthServer {
 			s.DeviceAuthCalls++
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"device_code":      "dev-code-xyz",
-				"user_code":        "ABCD-EFGH",
-				"verification_uri": "https://auth.example.com/device",
-				"expires_in":       300,
-				"interval":         1,
+				"device_code":               "dev-code-xyz",
+				"user_code":                 "ABCD-EFGH",
+				"verification_uri":          "https://auth.example.com/device",
+				"verification_uri_complete": "https://auth.example.com/device?user_code=ABCD-EFGH",
+				"expires_in":                300,
+				"interval":                  1,
 			})
 		case "/v1/users/auth/device/token":
 			s.DeviceTokenCalls++
