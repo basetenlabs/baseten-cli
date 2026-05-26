@@ -13,6 +13,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/charmbracelet/huh"
+	"github.com/cli/browser"
 )
 
 func init() {
@@ -204,7 +205,16 @@ func loginWeb(ctx *CommandContext, store *auth.Store, baseURL string) error {
 		return fmt.Errorf("starting device authorization: %w", err)
 	}
 
-	ctx.Logf("Enter code %s at %s\n", devResp.UserCode, devResp.VerificationURI)
+	verificationURI := devResp.VerificationURIComplete
+	if verificationURI == "" {
+		verificationURI = devResp.VerificationURI
+	}
+	browser.Stdout = io.Discard
+	browser.Stderr = io.Discard
+	_ = browser.OpenURL(verificationURI)
+	ctx.Logf("Browser opened to authenticate...\n\nIf it didn't open, visit:\n  %s\n\n", verificationURI)
+	ctx.Logf("Verification code: %s\n\n", devResp.UserCode)
+	ctx.Logf("Waiting...\n")
 
 	token, err := cfg.DeviceAccessToken(oauthCtx, devResp)
 	if err != nil {

@@ -15,6 +15,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/term v0.2.2
+	github.com/cli/browser v1.3.0
 	github.com/coder/websocket v1.8.14
 	github.com/invopop/jsonschema v0.14.0
 	github.com/itchyny/gojq v0.12.18
