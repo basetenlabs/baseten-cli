@@ -5,6 +5,7 @@ project_name: baseten
 before:
   hooks:
     - go mod tidy
+    - sh -c 'go run ./cmd/docs --cli-version={{ .Version }} --out=docs.json'
 
 builds:
   - id: baseten
@@ -46,6 +47,8 @@ release:
     name: baseten-cli
   draft: false
   prerelease: auto
+  extra_files:
+    - glob: docs.json
 
 # TODO: Publish a Docker image to the official Baseten Docker Hub namespace.
 # dockers:
