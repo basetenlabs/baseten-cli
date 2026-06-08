@@ -13,12 +13,12 @@ Or install v0.1.0 with a one-liner:
 ### Linux (x64)
 
     curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.1.0/baseten_0.1.0_linux_amd64.tar.gz \
-      | tar xz && sudo mv baseten /usr/local/bin/
+      | sudo tar xz -C /usr/local/bin baseten
 
 ### macOS (arm64)
 
     curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.1.0/baseten_0.1.0_darwin_arm64.tar.gz \
-      | tar xz && sudo mv baseten /usr/local/bin/
+      | sudo tar xz -C /usr/local/bin baseten
 
 ### Windows (x64)
 
