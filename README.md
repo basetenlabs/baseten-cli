@@ -6,9 +6,29 @@ CLI for the [Baseten Inference Platform](https://baseten.co).
 
 ## Installation
 
-Download the [latest release](https://github.com/basetenlabs/baseten-cli/releases/latest) for your platform.
+Download the [latest release](https://github.com/basetenlabs/baseten-cli/releases/latest) for your platform, extract the archive, and place the `baseten` executable on your `PATH`.
 
-Extract the archive and use the `baseten` executable within. Place it on your `PATH` to invoke it from anywhere.
+Or install v0.1.0 with a one-liner:
+
+### Linux (x64)
+
+    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.1.0/baseten_0.1.0_linux_amd64.tar.gz \
+      | sudo tar xz -C /usr/local/bin baseten
+
+### macOS (arm64)
+
+    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.1.0/baseten_0.1.0_darwin_arm64.tar.gz \
+      | sudo tar xz -C /usr/local/bin baseten
+
+### Windows (x64)
+
+PowerShell:
+
+    Invoke-WebRequest `
+      https://github.com/basetenlabs/baseten-cli/releases/download/v0.1.0/baseten_0.1.0_windows_amd64.zip `
+      -OutFile baseten.zip; Expand-Archive -Force baseten.zip .
+
+Then move `baseten.exe` to a directory on your `PATH`.
 
 ## Usage
 
