@@ -28,6 +28,17 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Verify README references the latest release
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          if ! grep -qF "Or install $TAG with a one-liner:" README.md; then
+            echo "README.md install instructions do not reference latest release $TAG; please update them."
+            exit 1
+          fi
+
       - name: E2E test
         if: matrix.os == 'ubuntu-latest'
         env:
