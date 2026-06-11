@@ -32,7 +32,7 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	hasFilters := flags.MinLevel != "" || len(flags.Includes) > 0 || len(flags.Excludes) > 0 ||
 		flags.SearchPattern != "" || flags.Replica != "" || flags.RequestID != ""
 	if flags.Tail && (hasStart || hasEnd || hasSince || hasFilters) {
-		return cmd.NewErrUsagef("--tail cannot be combined with the filter flags")
+		return cmd.NewErrUsagef("--tail cannot be combined with the time-range or filter flags")
 	}
 	if hasSince && (hasStart || hasEnd) {
 		return cmd.NewErrUsagef("--since cannot be combined with --start or --end")
