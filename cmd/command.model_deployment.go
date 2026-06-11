@@ -310,9 +310,16 @@ type ModelDeploymentLogsFlags struct {
 	CommandFlags
 	ModelDeploymentIDFlags
 
-	Tail bool `flag:"tail" desc:"Stream new logs as they arrive until the deployment leaves a runnable state or you interrupt with Ctrl-C. Cannot be combined with --start, --end, or --since. For machine-readable streaming, prefer --output jsonl over --output json."`
+	Tail bool `flag:"tail" desc:"Stream new logs as they arrive until the deployment leaves a runnable state or you interrupt with Ctrl-C. Cannot be combined with the filter flags. For machine-readable streaming, prefer --output jsonl over --output json."`
 
-	Start time.Time     `flag:"start" desc:"Start of the log time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. If omitted but --end is given, defaults to 7 days before --end. Window must be at most 7 days."`
-	End   time.Time     `flag:"end" desc:"End of the log time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. If omitted but --start is given, defaults to now. Window must be at most 7 days."`
+	Start time.Time     `flag:"start" desc:"Start of the log time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. If omitted, the server defaults the start to 30 minutes before the end. Window must be at most 7 days."`
+	End   time.Time     `flag:"end" desc:"End of the log time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. If omitted, the server defaults the end to now. Window must be at most 7 days."`
 	Since time.Duration `flag:"since" desc:"Shortcut for fetching logs from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
+
+	MinLevel      string   `flag:"min-level" desc:"Only return logs at or above this severity level." enum:"debug,info,warning,error"`
+	Includes      []string `flag:"includes" desc:"Case-sensitive substring that must appear in the log message. May be repeated; all must match."`
+	Excludes      []string `flag:"excludes" desc:"Case-sensitive substring; lines containing it are dropped. May be repeated."`
+	SearchPattern string   `flag:"search-pattern" desc:"RE2 regular expression matched against the log message. Prefer --includes and --excludes for plain substring matches."`
+	Replica       string   `flag:"replica" desc:"Only return logs emitted by this replica (5-char short ID)."`
+	RequestID     string   `flag:"request-id" desc:"Only return logs tagged with this inference request ID."`
 }

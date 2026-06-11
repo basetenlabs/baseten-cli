@@ -117,7 +117,8 @@ func commandModelDeploymentConfig(ctx *CommandContext, flags *cmd.ModelDeploymen
 	if err != nil {
 		return err
 	}
-	resp, err := cl.API().GetModelsDeploymentsConfig(ctx, ref.ID, flags.DeploymentID)
+	resp, err := cl.API().GetModelsDeploymentsConfig(ctx, ref.ID, flags.DeploymentID,
+		managementapi.GetV1ModelsModelIdDeploymentsDeploymentIdConfigParams{})
 	if err != nil {
 		return fmt.Errorf("fetch deployment config for %s: %w", flags.DeploymentID, err)
 	}
