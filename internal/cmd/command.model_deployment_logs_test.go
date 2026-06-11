@@ -80,6 +80,57 @@ func Test_Model_Deployment_Logs_SinceOver7DaysRejected(t *testing.T) {
 	h.Require.Contains(err.Error(), "at most 7d")
 }
 
+func Test_Model_Deployment_Logs_FiltersSent(t *testing.T) {
+	h := NewCommandHarness(t)
+	api := h.MockManagementAPI()
+	api.SetRoute("POST", logsLogsPath, 200, logsResponse())
+	err := h.Execute("model", "deployment", "logs",
+		"--model-id", "m", "--deployment-id", "d",
+		"--min-level", "info",
+		"--includes", "warn", "--includes", "fail",
+		"--excludes", "healthz",
+		"--search-pattern", ".*timeout",
+		"--replica", "g00r0",
+		"--request-id", "req-123")
+	h.Require.NoError(err)
+	req := api.FindCall("POST", logsLogsPath).BodyJSON(h.T)
+	// --min-level is uppercased before sending.
+	h.Require.Equal("INFO", req["min_level"])
+	h.Require.Equal([]any{"warn", "fail"}, req["includes"])
+	h.Require.Equal([]any{"healthz"}, req["excludes"])
+	h.Require.Equal(".*timeout", req["search_pattern"])
+	h.Require.Equal("g00r0", req["replica"])
+	h.Require.Equal("req-123", req["request_id"])
+}
+
+func Test_Model_Deployment_Logs_FiltersOmittedWhenUnset(t *testing.T) {
+	h := NewCommandHarness(t)
+	api := h.MockManagementAPI()
+	api.SetRoute("POST", logsLogsPath, 200, logsResponse())
+	err := h.Execute("model", "deployment", "logs", "--model-id", "m", "--deployment-id", "d")
+	h.Require.NoError(err)
+	req := api.FindCall("POST", logsLogsPath).BodyJSON(h.T)
+	for _, field := range []string{"min_level", "includes", "excludes", "search_pattern", "replica", "request_id"} {
+		h.Require.Nil(req[field], "expected %s to be omitted", field)
+	}
+}
+
+func Test_Model_Deployment_Logs_MinLevelInvalidRejected(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("model", "deployment", "logs",
+		"--model-id", "m", "--deployment-id", "d", "--min-level", "trace")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "must be one of")
+}
+
+func Test_Model_Deployment_Logs_TailWithFilterRejected(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("model", "deployment", "logs",
+		"--model-id", "m", "--deployment-id", "d", "--tail", "--min-level", "info")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "--tail cannot be combined")
+}
+
 func Test_Model_Deployment_Logs_OneShotText(t *testing.T) {
 	h := NewCommandHarness(t)
 	// 2026-05-14T12:00:00Z in nanoseconds since epoch. Display is in the
@@ -161,17 +212,32 @@ func Test_Model_Deployment_Logs_SinceWithDaySuffix(t *testing.T) {
 	h.Require.Equal(float64(startMs), req["start_epoch_millis"])
 }
 
-func Test_Model_Deployment_Logs_StartOnlyEndDefaultsToNow(t *testing.T) {
+func Test_Model_Deployment_Logs_StartOnlyDefersEndToServer(t *testing.T) {
 	h := NewCommandHarness(t)
 	api := h.MockManagementAPI()
 	api.SetRoute("POST", logsLogsPath, 200, logsResponse())
-	fixed := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
-	h.Context = cmd.WithNow(h.Context, func() time.Time { return fixed })
+	start := time.Date(2026, 5, 13, 11, 0, 0, 0, time.Local)
 	err := h.Execute("model", "deployment", "logs",
 		"--model-id", "m", "--deployment-id", "d", "--start", "2026-05-13T11:00:00")
 	h.Require.NoError(err)
 	req := api.FindCall("POST", logsLogsPath).BodyJSON(h.T)
-	h.Require.Equal(float64(fixed.UnixMilli()), req["end_epoch_millis"])
+	// Only --start is sent; end is left for the server to backfill.
+	h.Require.Equal(float64(start.UnixMilli()), req["start_epoch_millis"])
+	h.Require.Nil(req["end_epoch_millis"])
+}
+
+func Test_Model_Deployment_Logs_EndOnlyDefersStartToServer(t *testing.T) {
+	h := NewCommandHarness(t)
+	api := h.MockManagementAPI()
+	api.SetRoute("POST", logsLogsPath, 200, logsResponse())
+	end := time.Date(2026, 5, 14, 12, 0, 0, 0, time.Local)
+	err := h.Execute("model", "deployment", "logs",
+		"--model-id", "m", "--deployment-id", "d", "--end", "2026-05-14T12:00:00")
+	h.Require.NoError(err)
+	req := api.FindCall("POST", logsLogsPath).BodyJSON(h.T)
+	// Only --end is sent; start is left for the server to backfill.
+	h.Require.Equal(float64(end.UnixMilli()), req["end_epoch_millis"])
+	h.Require.Nil(req["start_epoch_millis"])
 }
 
 func Test_Model_Deployment_Logs_TailTerminatesOnStopStatus(t *testing.T) {

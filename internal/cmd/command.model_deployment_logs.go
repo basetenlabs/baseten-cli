@@ -29,8 +29,10 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	// Use Changed rather than the zero value so explicit --since 0 fails
 	// the positive-duration check below instead of being silently dropped.
 	hasSince := ctx.Command.Flags().Changed("since")
-	if flags.Tail && (hasStart || hasEnd || hasSince) {
-		return cmd.NewErrUsagef("--tail cannot be combined with --start, --end, or --since")
+	hasFilters := flags.MinLevel != "" || len(flags.Includes) > 0 || len(flags.Excludes) > 0 ||
+		flags.SearchPattern != "" || flags.Replica != "" || flags.RequestID != ""
+	if flags.Tail && (hasStart || hasEnd || hasSince || hasFilters) {
+		return cmd.NewErrUsagef("--tail cannot be combined with the time-range or filter flags")
 	}
 	if hasSince && (hasStart || hasEnd) {
 		return cmd.NewErrUsagef("--since cannot be combined with --start or --end")
@@ -62,7 +64,7 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 
 	// Resolve --start/--end/--since into epoch-millis bounds. Nil bounds mean
 	// "server default"; unset start/end/since pass nils.
-	var startMs, endMs *int
+	var req managementapi.GetDeploymentLogsRequest
 	if hasSince {
 		if flags.Since <= 0 {
 			return cmd.NewErrUsagef("--since must be a positive duration")
@@ -73,28 +75,50 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 		now := ctx.Now()
 		s := int(now.Add(-flags.Since).UnixMilli())
 		e := int(now.UnixMilli())
-		startMs, endMs = &s, &e
+		req.StartEpochMillis, req.EndEpochMillis = &s, &e
 	} else if hasStart || hasEnd {
-		startT, endT := flags.Start, flags.End
-		if !hasEnd {
-			endT = ctx.Now().Truncate(time.Second)
+		// Send only the bounds given and leave the other nil so the server
+		// backfills it (missing end -> now, missing start -> 30m before end).
+		// Validate the window client-side only when both bounds are given.
+		if hasStart {
+			s := int(flags.Start.UnixMilli())
+			req.StartEpochMillis = &s
 		}
-		if !hasStart {
-			startT = endT.Add(-maxLogTimeRange)
+		if hasEnd {
+			e := int(flags.End.UnixMilli())
+			req.EndEpochMillis = &e
 		}
-		if !startT.Before(endT) {
-			return cmd.NewErrUsagef("--start must be earlier than --end")
+		if hasStart && hasEnd {
+			if !flags.Start.Before(flags.End) {
+				return cmd.NewErrUsagef("--start must be earlier than --end")
+			}
+			if flags.End.Sub(flags.Start) > maxLogTimeRange {
+				return cmd.NewErrUsagef("log time range must be at most 7 days; narrow --start/--end or use --since")
+			}
 		}
-		if endT.Sub(startT) > maxLogTimeRange {
-			return cmd.NewErrUsagef("log time range must be at most 7 days; narrow --start/--end or use --since")
-		}
-		s := int(startT.UnixMilli())
-		e := int(endT.UnixMilli())
-		startMs, endMs = &s, &e
 	}
 
-	resp, err := api.API().PostModelsDeploymentsLogs(ctx, ref.ID, flags.DeploymentID,
-		managementapi.GetDeploymentLogsRequest{StartEpochMillis: startMs, EndEpochMillis: endMs})
+	if flags.MinLevel != "" {
+		level := managementapi.LogLevel(strings.ToUpper(flags.MinLevel))
+		req.MinLevel = &level
+	}
+	if len(flags.Includes) > 0 {
+		req.Includes = &flags.Includes
+	}
+	if len(flags.Excludes) > 0 {
+		req.Excludes = &flags.Excludes
+	}
+	if flags.SearchPattern != "" {
+		req.SearchPattern = &flags.SearchPattern
+	}
+	if flags.Replica != "" {
+		req.Replica = &flags.Replica
+	}
+	if flags.RequestID != "" {
+		req.RequestId = &flags.RequestID
+	}
+
+	resp, err := api.API().PostModelsDeploymentsLogs(ctx, ref.ID, flags.DeploymentID, req)
 	if err != nil {
 		return err
 	}

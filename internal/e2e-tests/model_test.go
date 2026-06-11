@@ -27,6 +27,7 @@ func TestE2EModelLifecycle(t *testing.T) {
 	t.Run("APIInference", l.APIInference)
 	t.Run("Model", l.Model)
 	t.Run("Deployment", l.Deployment)
+	t.Run("Logs", l.Logs)
 	t.Run("Environment", l.Environment)
 	t.Run("ModelPredict", l.ModelPredict)
 	t.Run("Redeploy", l.Redeploy)
@@ -254,6 +255,99 @@ func (l *lifecycle) Deployment(t *testing.T) {
 		st, err := os.Stat(outFile)
 		require.NoError(t, err)
 		require.Greater(t, st.Size(), int64(0), "downloaded tar should be non-empty")
+	})
+}
+
+// logLine is the subset of a log record the Logs phase asserts on.
+type logLine struct {
+	Message string `json:"message"`
+	Level   string `json:"level"`
+}
+
+// collectLogs runs `model deployment logs --output jsonl` over the last hour
+// with the given extra filter args and parses each line. CLI errors are
+// returned (not fatal) so callers can retry while logs propagate.
+func (l *lifecycle) collectLogs(t *testing.T, extraArgs ...string) ([]logLine, error) {
+	t.Helper()
+	args := append([]string{"model", "deployment", "logs",
+		"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID,
+		"--since", "1h", "--output", "jsonl"}, extraArgs...)
+	out, _, err := cli(t, args...)
+	if err != nil {
+		return nil, err
+	}
+	var lines []logLine
+	for _, raw := range strings.Split(strings.TrimSpace(out), "\n") {
+		if raw == "" {
+			continue
+		}
+		var ll logLine
+		require.NoError(t, json.Unmarshal([]byte(raw), &ll))
+		lines = append(lines, ll)
+	}
+	return lines, nil
+}
+
+func (l *lifecycle) Logs(t *testing.T) {
+	contains := func(lines []logLine, word string) bool {
+		for _, ll := range lines {
+			if strings.Contains(ll.Message, word) {
+				return true
+			}
+		}
+		return false
+	}
+	mustCollect := func(t *testing.T, extraArgs ...string) []logLine {
+		lines, err := l.collectLogs(t, extraArgs...)
+		require.NoError(t, err)
+		return lines
+	}
+
+	// Loki can lag a few seconds after the deployment goes ACTIVE; poll until
+	// the info marker lands.
+	var lines []logLine
+	require.Eventually(t, func() bool {
+		got, err := l.collectLogs(t)
+		if err != nil {
+			return false
+		}
+		lines = got
+		return contains(lines, e2eLogInfoWord)
+	}, 10*time.Second, time.Second, "info log line never appeared")
+
+	t.Run("AllLevels", func(t *testing.T) {
+		require.True(t, contains(lines, e2eLogInfoWord), "info line missing")
+		require.True(t, contains(lines, e2eLogWarningWord), "warning line missing")
+		require.True(t, contains(lines, e2eLogErrorWord), "error line missing")
+	})
+
+	t.Run("MinLevelWarning", func(t *testing.T) {
+		lines := mustCollect(t, "--min-level", "warning")
+		require.False(t, contains(lines, e2eLogInfoWord), "info should be filtered out")
+		require.True(t, contains(lines, e2eLogWarningWord))
+		require.True(t, contains(lines, e2eLogErrorWord))
+	})
+
+	t.Run("MinLevelError", func(t *testing.T) {
+		lines := mustCollect(t, "--min-level", "error")
+		require.False(t, contains(lines, e2eLogInfoWord))
+		require.False(t, contains(lines, e2eLogWarningWord))
+		require.True(t, contains(lines, e2eLogErrorWord))
+	})
+
+	t.Run("Includes", func(t *testing.T) {
+		lines := mustCollect(t, "--includes", e2eLogWarningWord)
+		require.NotEmpty(t, lines)
+		for _, ll := range lines {
+			require.Contains(t, ll.Message, e2eLogWarningWord)
+		}
+	})
+
+	t.Run("Excludes", func(t *testing.T) {
+		lines := mustCollect(t, "--includes", e2eLogMarker, "--excludes", e2eLogWarningWord)
+		require.True(t, contains(lines, e2eLogInfoWord))
+		require.True(t, contains(lines, e2eLogErrorWord))
+		require.False(t, contains(lines, e2eLogWarningWord))
 	})
 }
 

@@ -25,9 +25,29 @@ resources:
   use_gpu: false
 `
 
-const trussModelPy = `from fastapi.responses import StreamingResponse
+// Marker tokens emitted by the test model's load() and asserted by the Logs
+// phase. The shared marker scopes queries to our lines; the per-level words
+// drive the min-level / includes / excludes assertions. A fixed marker is
+// safe because we only ever query this deployment's logs.
+const (
+	e2eLogMarker      = "baseten-e2e-log"
+	e2eLogInfoWord    = "apple"
+	e2eLogWarningWord = "banana"
+	e2eLogErrorWord   = "cherry"
+)
+
+const trussModelPy = `import logging
+
+from fastapi.responses import StreamingResponse
+
+_logger = logging.getLogger(__name__)
 
 class Model:
+    def load(self):
+        _logger.info("baseten-e2e-log info apple")
+        _logger.warning("baseten-e2e-log warning banana")
+        _logger.error("baseten-e2e-log error cherry")
+
     def predict(self, request):
         if request.get("style") == "streaming":
             chunks = request.get("chunks", ["alpha", "beta", "gamma"])
