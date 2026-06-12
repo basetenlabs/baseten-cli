@@ -16,6 +16,7 @@ type Remote struct {
 	remoteURL           string
 	scheme              string
 	baseHost            string
+	hostLabel           string
 	managementAPIHost   string
 	inferenceBaseURL    string
 	inferenceHostSuffix string
@@ -42,6 +43,7 @@ func NewRemote(remoteURL string) (*Remote, error) {
 	r.remoteURL = u.Scheme + "://" + u.Host
 	r.scheme = u.Scheme
 	r.baseHost = strings.TrimPrefix(u.Host, "app.")
+	r.hostLabel = strings.TrimPrefix(u.Hostname(), "app.")
 
 	switch r.remoteURL {
 	case "https://app.baseten.co":
@@ -72,8 +74,15 @@ func NewRemote(remoteURL string) (*Remote, error) {
 	return r, nil
 }
 
-// RemoteURL returns the raw remote URL (suitable as the auth store key).
+// RemoteURL returns the raw remote URL.
 func (r *Remote) RemoteURL() string { return r.remoteURL }
+
+// IsDefault reports whether this is the default Baseten remote.
+func (r *Remote) IsDefault() bool { return r.remoteURL == "https://app.baseten.co" }
+
+// HostLabel returns the remote's host without the "app." prefix or any port,
+// used to disambiguate profile names across non-default remotes.
+func (r *Remote) HostLabel() string { return r.hostLabel }
 
 // ManagementURL returns the base URL for the REST management API.
 func (r *Remote) ManagementURL() string {
