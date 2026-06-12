@@ -68,10 +68,10 @@ func commandModelDeploymentList(ctx *CommandContext, flags *cmd.ModelDeploymentL
 			d.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	ctx.OutputTable(
-		[]string{"ID", "NAME", "ENVIRONMENT", "STATUS", "INSTANCE", "REPLICAS", "CREATED"},
-		rows,
-	)
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"ID", "NAME", "ENVIRONMENT", "STATUS", "INSTANCE", "REPLICAS", "CREATED"},
+		Rows:    rows,
+	})
 	return nil
 }
 
