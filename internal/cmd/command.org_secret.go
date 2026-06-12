@@ -50,7 +50,10 @@ func commandOrgSecretList(ctx *CommandContext, flags *cmd.OrgSecretListFlags) er
 	for _, s := range secrets.Secrets {
 		rows = append(rows, []string{s.Name, s.TeamName, s.CreatedAt.UTC().Format(time.RFC3339)})
 	}
-	ctx.OutputTable([]string{"NAME", "TEAM", "CREATED"}, rows)
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"NAME", "TEAM", "CREATED"},
+		Rows:    rows,
+	})
 	return nil
 }
 

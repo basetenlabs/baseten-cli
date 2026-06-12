@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
-	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -58,19 +57,22 @@ func commandModelAPIList(ctx *CommandContext, flags *cmd.ModelAPIListFlags) erro
 	}
 	rows := make([][]string, 0, len(items))
 	for _, m := range items {
-		family := ""
-		if m.ModelFamily != nil {
-			family = *m.ModelFamily
-		}
 		added := ""
 		if m.OrgDetails != nil {
 			added = "yes"
 		}
 		rows = append(rows, []string{
-			m.Name, m.DisplayName, family, fmt.Sprintf("%d", m.ContextLength), added,
+			m.Name, fmt.Sprintf("%d", m.ContextLength),
+			modelAPICurrencyString(m.CostPerMillionInputTokens),
+			modelAPICurrencyString(m.CostPerMillionOutputTokens),
+			added,
 		})
 	}
-	ctx.OutputTable([]string{"NAME", "DISPLAY NAME", "FAMILY", "CONTEXT", "ADDED"}, rows)
+	ctx.OutputTable(TableOutput{
+		Headers:             []string{"NAME", "CONTEXT", "$/1M IN", "$/1M OUT", "ADDED"},
+		Rows:                rows,
+		RightAlignedColumns: []int{1, 2, 3},
+	})
 	return nil
 }
 
@@ -79,9 +81,9 @@ func commandModelAPIFetch(ctx *CommandContext, flags *cmd.ModelAPIFetchFlags) er
 	if err != nil {
 		return err
 	}
-	m, err := cl.API().GetModelApisModelApiName(ctx, flags.Name)
+	m, err := cl.API().GetModelApisModelApiName(ctx, flags.Model)
 	if err != nil {
-		return fmt.Errorf("fetch model API %s: %w", flags.Name, err)
+		return fmt.Errorf("fetch model API %s: %w", flags.Model, err)
 	}
 
 	if ctx.JSON {
@@ -120,24 +122,20 @@ func commandModelAPIPredict(ctx *CommandContext, flags *cmd.ModelAPIPredictFlags
 	}
 
 	// Build a transport that injects the active credential, then POST straight
-	// to --url. No management lookup is needed: the model is selected by the
-	// request body, not the URL path.
-	store, err := NewAuthStore(false)
+	// to the target URL. No management lookup is needed: the model is selected
+	// by the request body, not the URL path.
+	transport, remote, err := ctx.AuthTransport()
 	if err != nil {
 		return err
 	}
-	// TODO(cretz): https://github.com/basetenlabs/baseten-cli/pull/17 reworks client
-	// and auth construction. Once it lands, build this transport via the shared helper
-	// rather than duplicating NewManagementClient's setup here.
-	transport := &auth.Transport{
-		Store:       store,
-		Host:        ctx.Remote.RemoteURL(),
-		OAuthConfig: OAuthConfig(ctx.Remote.ManagementURL()),
-		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
-		Base:        ctx.httpClient().Transport,
+
+	// Default to the remote's chat-completions endpoint when --url is unset.
+	url := flags.URL
+	if url == "" {
+		url = remote.ModelAPIInferenceURL() + "/v1/chat/completions"
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, flags.URL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
@@ -173,15 +171,15 @@ func commandModelAPIPredict(ctx *CommandContext, flags *cmd.ModelAPIPredictFlags
 
 // modelAPIPredictBody resolves the request body from exactly one of --content,
 // --data, or --file. --content builds a single-message OpenAI chat-completions
-// request with --name as the model; --data and --file are verbatim.
+// request with --model as the model; --data and --file are verbatim.
 func modelAPIPredictBody(ctx *CommandContext, flags *cmd.ModelAPIPredictFlags) ([]byte, error) {
 	switch {
 	case flags.Content != "":
-		if flags.Name == "" {
-			return nil, cmd.NewErrUsagef("--content requires --name")
+		if flags.Model == "" {
+			return nil, cmd.NewErrUsagef("--content requires --model")
 		}
 		return json.Marshal(map[string]any{
-			"model": flags.Name,
+			"model": flags.Model,
 			"messages": []map[string]string{
 				{"role": "user", "content": flags.Content},
 			},

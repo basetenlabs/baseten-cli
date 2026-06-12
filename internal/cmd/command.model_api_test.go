@@ -41,11 +41,16 @@ func Test_ModelApi_List_Rows(t *testing.T) {
 	h.Require.NoError(h.Execute("model-api", "list"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "NAME")
-	h.Require.Contains(out, "DISPLAY NAME")
 	h.Require.Contains(out, "CONTEXT")
+	h.Require.Contains(out, "$/1M IN")
+	h.Require.Contains(out, "$/1M OUT")
 	h.Require.Contains(out, "llama-3")
-	h.Require.Contains(out, "Llama 3")
 	h.Require.Contains(out, "8192")
+	h.Require.Contains(out, "0.5")
+	h.Require.Contains(out, "1.5")
+	// Display name and family were dropped from the list table.
+	h.Require.NotContains(out, "DISPLAY NAME")
+	h.Require.NotContains(out, "Llama 3")
 }
 
 func Test_ModelApi_List_JSON(t *testing.T) {
@@ -117,7 +122,7 @@ func Test_ModelApi_Fetch_Text(t *testing.T) {
 	fixture["rate_limits"] = []any{map[string]any{"threshold": 100, "type": "requests", "unit": "minute"}}
 	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis/llama-3", 200, fixture)
 
-	h.Require.NoError(h.Execute("model-api", "fetch", "--name", "llama-3"))
+	h.Require.NoError(h.Execute("model-api", "fetch", "--model", "llama-3"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Name:")
 	h.Require.Contains(out, "llama-3")
@@ -132,7 +137,7 @@ func Test_ModelApi_Fetch_JSON(t *testing.T) {
 	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis/llama-3", 200,
 		modelAPIFixture("llama-3", "Llama 3", "llama"))
 
-	h.Require.NoError(h.Execute("model-api", "fetch", "--name", "llama-3", "--output", "json"))
+	h.Require.NoError(h.Execute("model-api", "fetch", "--model", "llama-3", "--output", "json"))
 	h.Require.Contains(h.Stdout.String(), `"name": "llama-3"`)
 }
 
@@ -144,7 +149,7 @@ func Test_ModelApi_Predict_Content(t *testing.T) {
 	})
 
 	err := h.Execute("model-api", "predict", "--url", m.URL+"/v1/chat/completions",
-		"--name", "llama-3", "--content", "hi")
+		"--model", "llama-3", "--content", "hi")
 	h.Require.NoError(err)
 	h.Require.Equal("hello there\n", h.Stdout.String())
 
@@ -162,15 +167,15 @@ func Test_ModelApi_Predict_ContentJSONFullEnvelope(t *testing.T) {
 	})
 
 	err := h.Execute("model-api", "predict", "--url", m.URL+"/v1/chat/completions",
-		"--name", "llama-3", "--content", "hi", "--output", "json")
+		"--model", "llama-3", "--content", "hi", "--output", "json")
 	h.Require.NoError(err)
 	h.Require.Contains(h.Stdout.String(), `"choices"`)
 }
 
-func Test_ModelApi_Predict_ContentRequiresName(t *testing.T) {
+func Test_ModelApi_Predict_ContentRequiresModel(t *testing.T) {
 	h := NewCommandHarness(t)
 	err := h.Execute("model-api", "predict", "--content", "hi")
-	h.Require.ErrorContains(err, "--content requires --name")
+	h.Require.ErrorContains(err, "--content requires --model")
 }
 
 func Test_ModelApi_Predict_DataVerbatim(t *testing.T) {
@@ -190,12 +195,12 @@ func Test_ModelApi_Predict_DataVerbatim(t *testing.T) {
 
 func Test_ModelApi_Predict_InputRequired(t *testing.T) {
 	h := NewCommandHarness(t)
-	err := h.Execute("model-api", "predict", "--name", "llama-3")
+	err := h.Execute("model-api", "predict", "--model", "llama-3")
 	h.Require.Error(err)
 }
 
 func Test_ModelApi_Predict_InputExclusive(t *testing.T) {
 	h := NewCommandHarness(t)
-	err := h.Execute("model-api", "predict", "--name", "llama-3", "--content", "hi", "--data", "{}")
+	err := h.Execute("model-api", "predict", "--model", "llama-3", "--content", "hi", "--data", "{}")
 	h.Require.Error(err)
 }

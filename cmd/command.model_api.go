@@ -9,22 +9,21 @@ var commandModelAPI = Command{
 		"Authentication is via 'baseten auth login' or the BASETEN_API_KEY environment variable.",
 	Children: []Command{
 		{
-			Name:    "fetch",
-			Summary: "Fetch a Model API",
-			Description: "Fetch a single Model API by name.\n\n" +
-				"The name is the stable, URL-safe slug used as the Model API's public identifier.",
-			Flags: ModelAPIFetchFlags{},
+			Name:        "fetch",
+			Summary:     "Fetch a Model API",
+			Description: "Fetch a single Model API by name.",
+			Flags:       ModelAPIFetchFlags{},
 			Output: &CommandOutput[managementapi.ModelAPI]{
 				TextDescription: "Field-per-line summary of the Model API.",
 				Examples: []CommandExample{
 					{
 						Description: "Fetch a Model API by name.",
-						Command:     "baseten model-api fetch --name <name>",
+						Command:     "baseten model-api fetch --model <name>",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the Model API's invoke URL.",
-					Command:     "baseten model-api fetch --name <name> --jq '.invoke_url'",
+					Command:     "baseten model-api fetch --model <name> --jq '.invoke_url'",
 				},
 			},
 		},
@@ -35,7 +34,7 @@ var commandModelAPI = Command{
 				"Pass --all to browse the full visible catalog instead of just the added ones.",
 			Flags: ModelAPIListFlags{},
 			Output: &CommandOutput[ModelAPIList]{
-				TextDescription: "Table with columns: NAME, DISPLAY NAME, FAMILY, CONTEXT, ADDED. " +
+				TextDescription: "Table with columns: NAME, CONTEXT, $/1M IN, $/1M OUT, ADDED. " +
 					"When no Model APIs match, prints \"No Model APIs found.\" to stderr.",
 				Examples: []CommandExample{
 					{
@@ -62,8 +61,8 @@ var commandModelAPI = Command{
 				"endpoint on the shared inference host. Override it for other shapes (e.g. " +
 				"/v1/messages, /v1/embeddings) or different hosts.\n\n" +
 				"--content is the simple path: it builds an OpenAI chat-completions body with a " +
-				"single user message and --name as the model, and prints just the assistant's " +
-				"reply. It is only valid for OpenAI chat URLs and requires --name.\n\n" +
+				"single user message and --model as the model, and prints just the assistant's " +
+				"reply. It is only valid for OpenAI chat URLs and requires --model.\n\n" +
 				"--data and --file send a request body verbatim, so any format the endpoint " +
 				"accepts works (OpenAI, Anthropic, embeddings, custom). The response is written " +
 				"as-is: JSON is pretty-printed, streams and binary bodies are passed through.",
@@ -77,16 +76,16 @@ var commandModelAPI = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Send a single user message.",
-						Command:     `baseten model-api predict --name <name> --content "hello"`,
+						Command:     `baseten model-api predict --model <name> --content "hello"`,
 					},
 					{
 						Description: "Send a full OpenAI-shaped body and stream it as JSONL.",
-						Command:     `baseten model-api predict --name <name> --data '{"model":"<name>","messages":[{"role":"user","content":"hi"}],"stream":true}' --output jsonl`,
+						Command:     `baseten model-api predict --model <name> --data '{"model":"<name>","messages":[{"role":"user","content":"hi"}],"stream":true}' --output jsonl`,
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Extract the assistant's message content.",
-					Command:     `baseten model-api predict --name <name> --content "hi" --jq '.choices[0].message.content'`,
+					Command:     `baseten model-api predict --model <name> --content "hi" --jq '.choices[0].message.content'`,
 				},
 			},
 		},
@@ -103,7 +102,7 @@ type ModelAPIList struct {
 type ModelAPIFetchFlags struct {
 	CommandFlags
 
-	Name string `flag:"name" desc:"Name of the Model API (its stable, URL-safe slug)." required:"true"`
+	Model string `flag:"model" desc:"Name of the Model API to fetch." required:"true"`
 }
 
 // ModelAPIListFlags configures `baseten model-api list`.
@@ -117,10 +116,10 @@ type ModelAPIListFlags struct {
 type ModelAPIPredictFlags struct {
 	CommandFlags
 
-	URL  string `flag:"url" desc:"Endpoint to POST the request to." default:"https://inference.baseten.co/v1/chat/completions"`
-	Name string `flag:"name" desc:"Name of the Model API (its stable, URL-safe slug). Required with --content, where it sets the request's model." `
+	URL   string `flag:"url" desc:"Endpoint to POST the request to. Defaults to https://inference.baseten.co/v1/chat/completions."`
+	Model string `flag:"model" desc:"Name of the Model API. Required with --content, where it sets the request's model." `
 
-	Content string `flag:"content" desc:"Single user message; builds an OpenAI chat-completions request and prints the assistant's reply. Only valid for OpenAI chat URLs and requires --name." oneof:"predict-input"`
+	Content string `flag:"content" desc:"Single user message; builds an OpenAI chat-completions request and prints the assistant's reply. Only valid for OpenAI chat URLs and requires --model." oneof:"predict-input"`
 	Data    string `flag:"data" desc:"Inline request body, sent verbatim." oneof:"predict-input"`
 	File    string `flag:"file" desc:"Path to a file containing the request body, sent verbatim. Use '-' for stdin." oneof:"predict-input"`
 }
