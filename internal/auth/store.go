@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 )
 
 const authFileName = "auth.json"
+
+// keyringServiceName namespaces CLI profile secrets in the system keyring,
+// keyed by profile name.
+const keyringServiceName = "baseten-profile"
 
 // AuthType identifies how a credential was obtained.
 type AuthType string
@@ -31,26 +36,27 @@ type OAuthCredential struct {
 	Expiry       time.Time `json:"expiry,omitempty"`
 }
 
-// UserEntry is a single stored credential in auth.json.
-type UserEntry struct {
-	AuthType AuthType `json:"auth_type"`
+// Profile is a single named, self-contained credential: a remote URL plus the
+// auth used against it. The profile name is the keyring account and the
+// auth.json map key.
+type Profile struct {
+	RemoteURL string   `json:"remote_url"`
+	AuthType  AuthType `json:"auth_type"`
 
-	// InsecureOAuthCredential and InsecureAPIKey are only populated when
-	// the keyring is unavailable or --insecure-storage was used.
+	// InsecureOAuthCredential and InsecureAPIKey are only populated when the
+	// keyring is unavailable or --insecure-storage was used.
 	InsecureOAuthCredential *OAuthCredential `json:"oauth_credential,omitempty"`
 	InsecureAPIKey          string           `json:"api_key,omitempty"`
 }
 
-// HostEntry holds all users for a single host.
-type HostEntry struct {
-	ActiveUser string               `json:"active_user"`
-	Users      map[string]UserEntry `json:"users"`
-}
-
-// AuthFile is the on-disk auth.json structure.
+// AuthFile is the on-disk auth.json structure. Unrecognized keys are ignored
+// on read and dropped on the next write.
 type AuthFile struct {
-	Version int                  `json:"version"`
-	Hosts   map[string]HostEntry `json:"hosts"`
+	Version int `json:"version"`
+	// Current is the name of the profile used when no profile is selected via
+	// flag or environment.
+	Current  string             `json:"current,omitempty"`
+	Profiles map[string]Profile `json:"profiles"`
 }
 
 // Store manages reading and writing auth.json and keyring secrets.
@@ -92,10 +98,6 @@ func (s *Store) path() string {
 	return filepath.Join(s.dir, authFileName)
 }
 
-func keyringService(host string) string {
-	return "baseten:" + host
-}
-
 // Load reads auth.json from disk. Returns an empty AuthFile if it does not
 // exist.
 func (s *Store) Load() (*AuthFile, error) {
@@ -107,7 +109,7 @@ func (s *Store) Load() (*AuthFile, error) {
 func (s *Store) loadLocked() (*AuthFile, error) {
 	data, err := os.ReadFile(s.path())
 	if os.IsNotExist(err) {
-		return &AuthFile{Version: 1, Hosts: map[string]HostEntry{}}, nil
+		return &AuthFile{Version: 1, Profiles: map[string]Profile{}}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", s.path(), err)
@@ -116,23 +118,17 @@ func (s *Store) loadLocked() (*AuthFile, error) {
 	if err := json.Unmarshal(data, &af); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", s.path(), err)
 	}
-	if af.Hosts == nil {
-		af.Hosts = map[string]HostEntry{}
+	if af.Profiles == nil {
+		af.Profiles = map[string]Profile{}
 	}
 	return &af, nil
-}
-
-// Save writes auth.json to disk, creating the directory if needed.
-func (s *Store) Save(af *AuthFile) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.saveLocked(af)
 }
 
 func (s *Store) saveLocked(af *AuthFile) error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
+	af.Version = 1
 	data, err := json.MarshalIndent(af, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling auth file: %w", err)
@@ -144,10 +140,11 @@ func (s *Store) saveLocked(af *AuthFile) error {
 	return nil
 }
 
-// SetOAuthUser stores an OAuth credential for a user and sets them as active.
-// Tries the keyring first; falls back to plaintext in auth.json with a
-// warning written to warnWriter (if non-nil).
-func (s *Store) SetOAuthUser(host, label string, cred OAuthCredential, warnWriter func(string)) error {
+// SetOAuthProfile stores an OAuth credential under name. When switchCurrent is
+// true, the profile also becomes the current profile. Tries the keyring first;
+// falls back to plaintext in auth.json with a warning written to warnWriter
+// (if non-nil).
+func (s *Store) SetOAuthProfile(profileName, remoteURL string, cred OAuthCredential, switchCurrent bool, warnWriter func(string)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -156,33 +153,32 @@ func (s *Store) SetOAuthUser(host, label string, cred OAuthCredential, warnWrite
 		return err
 	}
 
-	he := s.getOrCreateHost(af, host)
-	entry := UserEntry{AuthType: AuthTypeOAuth}
-
+	profile := Profile{RemoteURL: remoteURL, AuthType: AuthTypeOAuth}
 	if !s.insecureStorage {
 		secretJSON, err := json.Marshal(cred)
 		if err != nil {
 			return fmt.Errorf("marshaling credential: %w", err)
 		}
-		if err := keyring.Set(keyringService(host), label, string(secretJSON)); err != nil {
+		if err := keyring.Set(keyringServiceName, profileName, string(secretJSON)); err != nil {
 			if warnWriter != nil {
 				warnWriter("warning: could not store credentials in system keyring, storing in plain text\n")
 			}
-			entry.InsecureOAuthCredential = &cred
+			profile.InsecureOAuthCredential = &cred
 		}
 	} else {
-		entry.InsecureOAuthCredential = &cred
+		profile.InsecureOAuthCredential = &cred
 	}
 
-	he.Users[label] = entry
-	he.ActiveUser = label
-	af.Hosts[host] = he
+	af.Profiles[profileName] = profile
+	if switchCurrent {
+		af.Current = profileName
+	}
 	return s.saveLocked(af)
 }
 
-// SetAPIKeyUser stores an API key credential for a user and sets them as
-// active.
-func (s *Store) SetAPIKeyUser(host, label, apiKey string, warnWriter func(string)) error {
+// SetAPIKeyProfile stores an API key credential under name. When switchCurrent
+// is true, the profile also becomes the current profile.
+func (s *Store) SetAPIKeyProfile(profileName, remoteURL, apiKey string, switchCurrent bool, warnWriter func(string)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -191,30 +187,29 @@ func (s *Store) SetAPIKeyUser(host, label, apiKey string, warnWriter func(string
 		return err
 	}
 
-	he := s.getOrCreateHost(af, host)
-	entry := UserEntry{AuthType: AuthTypeAPIKey}
-
+	profile := Profile{RemoteURL: remoteURL, AuthType: AuthTypeAPIKey}
 	if !s.insecureStorage {
-		if err := keyring.Set(keyringService(host), label, apiKey); err != nil {
+		if err := keyring.Set(keyringServiceName, profileName, apiKey); err != nil {
 			if warnWriter != nil {
 				warnWriter("warning: could not store credentials in system keyring, storing in plain text\n")
 			}
-			entry.InsecureAPIKey = apiKey
+			profile.InsecureAPIKey = apiKey
 		}
 	} else {
-		entry.InsecureAPIKey = apiKey
+		profile.InsecureAPIKey = apiKey
 	}
 
-	he.Users[label] = entry
-	he.ActiveUser = label
-	af.Hosts[host] = he
+	af.Profiles[profileName] = profile
+	if switchCurrent {
+		af.Current = profileName
+	}
 	return s.saveLocked(af)
 }
 
-// GetOAuthCredential retrieves the OAuth credential for a user, trying the
+// GetOAuthCredential retrieves the OAuth credential for a profile, trying the
 // keyring first, then falling back to the auth.json plaintext field.
-func (s *Store) GetOAuthCredential(host, label string) (*OAuthCredential, error) {
-	secret, err := keyring.Get(keyringService(host), label)
+func (s *Store) GetOAuthCredential(profileName string) (*OAuthCredential, error) {
+	secret, err := keyring.Get(keyringServiceName, profileName)
 	if err == nil {
 		var cred OAuthCredential
 		if err := json.Unmarshal([]byte(secret), &cred); err != nil {
@@ -227,24 +222,20 @@ func (s *Store) GetOAuthCredential(host, label string) (*OAuthCredential, error)
 	if err != nil {
 		return nil, err
 	}
-	he, ok := af.Hosts[host]
+	profile, ok := af.Profiles[profileName]
 	if !ok {
-		return nil, fmt.Errorf("no credentials for host %s", host)
+		return nil, fmt.Errorf("no profile named %q", profileName)
 	}
-	ue, ok := he.Users[label]
-	if !ok {
-		return nil, fmt.Errorf("no credential for user %q on host %s", label, host)
+	if profile.InsecureOAuthCredential == nil {
+		return nil, fmt.Errorf("no OAuth credential found for profile %q", profileName)
 	}
-	if ue.InsecureOAuthCredential == nil {
-		return nil, fmt.Errorf("no OAuth credential found for user %q on host %s", label, host)
-	}
-	return ue.InsecureOAuthCredential, nil
+	return profile.InsecureOAuthCredential, nil
 }
 
-// GetAPIKey retrieves the API key for a user, trying the keyring first, then
+// GetAPIKey retrieves the API key for a profile, trying the keyring first, then
 // falling back to the auth.json plaintext field.
-func (s *Store) GetAPIKey(host, label string) (string, error) {
-	secret, err := keyring.Get(keyringService(host), label)
+func (s *Store) GetAPIKey(profileName string) (string, error) {
+	secret, err := keyring.Get(keyringServiceName, profileName)
 	if err == nil {
 		return secret, nil
 	}
@@ -253,48 +244,38 @@ func (s *Store) GetAPIKey(host, label string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	he, ok := af.Hosts[host]
+	profile, ok := af.Profiles[profileName]
 	if !ok {
-		return "", fmt.Errorf("no credentials for host %s", host)
+		return "", fmt.Errorf("no profile named %q", profileName)
 	}
-	ue, ok := he.Users[label]
-	if !ok {
-		return "", fmt.Errorf("no credential for user %q on host %s", label, host)
+	if profile.InsecureAPIKey == "" {
+		return "", fmt.Errorf("no API key found for profile %q", profileName)
 	}
-	if ue.InsecureAPIKey == "" {
-		return "", fmt.Errorf("no API key found for user %q on host %s", label, host)
-	}
-	return ue.InsecureAPIKey, nil
+	return profile.InsecureAPIKey, nil
 }
 
-// RemoveUser removes a user from a host and deletes their keyring entry. If
-// the removed user was active, active_user is cleared.
-func (s *Store) RemoveUser(host, label string) error {
+// RemoveProfile removes a profile and deletes its keyring entry. If the removed
+// profile was current, the current pointer is cleared.
+func (s *Store) RemoveProfile(profileName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_ = keyring.Delete(keyringService(host), label)
+	_ = keyring.Delete(keyringServiceName, profileName)
 
 	af, err := s.loadLocked()
 	if err != nil {
 		return err
 	}
-
-	he, ok := af.Hosts[host]
-	if !ok {
-		return nil
+	delete(af.Profiles, profileName)
+	if af.Current == profileName {
+		af.Current = ""
 	}
-	delete(he.Users, label)
-	if he.ActiveUser == label {
-		he.ActiveUser = ""
-	}
-	af.Hosts[host] = he
 	return s.saveLocked(af)
 }
 
-// SwitchUser sets the active user for a host. Returns an error if the user
-// does not exist.
-func (s *Store) SwitchUser(host, label string) error {
+// SwitchProfile sets the current profile. Returns an error if it does not
+// exist.
+func (s *Store) SwitchProfile(profileName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -302,43 +283,46 @@ func (s *Store) SwitchUser(host, label string) error {
 	if err != nil {
 		return err
 	}
-
-	he, ok := af.Hosts[host]
-	if !ok {
-		return fmt.Errorf("no credentials stored for host %s", host)
+	if _, ok := af.Profiles[profileName]; !ok {
+		return fmt.Errorf("profile %q not found", profileName)
 	}
-	if _, ok := he.Users[label]; !ok {
-		return fmt.Errorf("user %q not found for host %s", label, host)
-	}
-	he.ActiveUser = label
-	af.Hosts[host] = he
+	af.Current = profileName
 	return s.saveLocked(af)
 }
 
-// ActiveUser returns the active user label and entry for a host.
-func (s *Store) ActiveUser(host string) (label string, entry UserEntry, ok bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	af, err := s.loadLocked()
+// GetProfile returns the profile with the given name.
+func (s *Store) GetProfile(profileName string) (Profile, bool) {
+	af, err := s.Load()
 	if err != nil {
-		return "", UserEntry{}, false
+		return Profile{}, false
 	}
-	he, exists := af.Hosts[host]
-	if !exists || he.ActiveUser == "" {
-		return "", UserEntry{}, false
-	}
-	ue, exists := he.Users[he.ActiveUser]
-	if !exists {
-		return "", UserEntry{}, false
-	}
-	return he.ActiveUser, ue, true
+	profile, ok := af.Profiles[profileName]
+	return profile, ok
 }
 
-func (s *Store) getOrCreateHost(af *AuthFile, host string) HostEntry {
-	he, ok := af.Hosts[host]
-	if !ok {
-		he = HostEntry{Users: map[string]UserEntry{}}
+// CurrentProfile returns the current profile name and entry.
+func (s *Store) CurrentProfile() (name string, profile Profile, ok bool) {
+	af, err := s.Load()
+	if err != nil || af.Current == "" {
+		return "", Profile{}, false
 	}
-	return he
+	profile, ok = af.Profiles[af.Current]
+	if !ok {
+		return "", Profile{}, false
+	}
+	return af.Current, profile, true
+}
+
+// ProfileNames returns the stored profile names in sorted order.
+func (s *Store) ProfileNames() ([]string, error) {
+	af, err := s.Load()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(af.Profiles))
+	for name := range af.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
 }

@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	testHost     = "https://api.example.com"
-	otherHost    = "https://api.other.example.com"
-	userLabelA   = "alice@example.com"
-	userLabelB   = "bob@example.com"
+	remoteURL    = "https://app.example.com"
+	otherRemote  = "https://app.other.example.com"
+	profileA     = "alice@example.com"
+	profileB     = "bob@example.com"
 	apiKeyA      = "api-key-alice"
 	accessToken  = "access-token-xyz"
 	refreshToken = "refresh-token-xyz"
@@ -35,159 +35,193 @@ func newInsecureStore(t *testing.T) *auth.Store {
 	return auth.NewStore(auth.StoreOptions{Dir: t.TempDir(), InsecureStorage: true})
 }
 
-func TestStore_EmptyNoActiveUser(t *testing.T) {
+func TestStore_EmptyNoCurrentProfile(t *testing.T) {
 	s := newKeyringStore(t)
-	label, _, ok := s.ActiveUser(testHost)
+	name, _, ok := s.CurrentProfile()
 	require.False(t, ok)
-	require.Empty(t, label)
+	require.Empty(t, name)
 }
 
-func TestStore_SetAPIKeyUser_Keyring(t *testing.T) {
+func TestStore_SetAPIKeyProfile_Keyring(t *testing.T) {
 	s := newKeyringStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
 
-	label, entry, ok := s.ActiveUser(testHost)
+	name, profile, ok := s.CurrentProfile()
 	require.True(t, ok)
-	require.Equal(t, userLabelA, label)
-	require.Equal(t, auth.AuthTypeAPIKey, entry.AuthType)
-	require.Empty(t, entry.InsecureAPIKey, "keyring-stored key must not leak to auth.json")
+	require.Equal(t, profileA, name)
+	require.Equal(t, remoteURL, profile.RemoteURL)
+	require.Equal(t, auth.AuthTypeAPIKey, profile.AuthType)
+	require.Empty(t, profile.InsecureAPIKey, "keyring-stored key must not leak to auth.json")
 
-	got, err := s.GetAPIKey(testHost, userLabelA)
+	got, err := s.GetAPIKey(profileA)
 	require.NoError(t, err)
 	require.Equal(t, apiKeyA, got)
 }
 
-func TestStore_SetAPIKeyUser_Insecure(t *testing.T) {
+func TestStore_SetAPIKeyProfile_Insecure(t *testing.T) {
 	s := newInsecureStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
 
-	_, entry, ok := s.ActiveUser(testHost)
+	_, profile, ok := s.CurrentProfile()
 	require.True(t, ok)
-	require.Equal(t, apiKeyA, entry.InsecureAPIKey)
+	require.Equal(t, apiKeyA, profile.InsecureAPIKey)
 
-	got, err := s.GetAPIKey(testHost, userLabelA)
+	got, err := s.GetAPIKey(profileA)
 	require.NoError(t, err)
 	require.Equal(t, apiKeyA, got)
 }
 
-func TestStore_SetOAuthUser_Keyring(t *testing.T) {
+func TestStore_SetOAuthProfile_Keyring(t *testing.T) {
 	s := newKeyringStore(t)
 	cred := auth.OAuthCredential{AccessToken: accessToken, RefreshToken: refreshToken}
-	require.NoError(t, s.SetOAuthUser(testHost, userLabelA, cred, nil))
+	require.NoError(t, s.SetOAuthProfile(profileA, remoteURL, cred, true, nil))
 
-	_, entry, ok := s.ActiveUser(testHost)
+	_, profile, ok := s.CurrentProfile()
 	require.True(t, ok)
-	require.Equal(t, auth.AuthTypeOAuth, entry.AuthType)
-	require.Nil(t, entry.InsecureOAuthCredential)
+	require.Equal(t, auth.AuthTypeOAuth, profile.AuthType)
+	require.Nil(t, profile.InsecureOAuthCredential)
 
-	got, err := s.GetOAuthCredential(testHost, userLabelA)
+	got, err := s.GetOAuthCredential(profileA)
 	require.NoError(t, err)
 	require.Equal(t, cred, *got)
 }
 
-func TestStore_SetOAuthUser_Insecure(t *testing.T) {
+func TestStore_SetOAuthProfile_Insecure(t *testing.T) {
 	s := newInsecureStore(t)
 	cred := auth.OAuthCredential{AccessToken: accessToken, RefreshToken: refreshToken}
-	require.NoError(t, s.SetOAuthUser(testHost, userLabelA, cred, nil))
+	require.NoError(t, s.SetOAuthProfile(profileA, remoteURL, cred, true, nil))
 
-	_, entry, ok := s.ActiveUser(testHost)
+	_, profile, ok := s.CurrentProfile()
 	require.True(t, ok)
-	require.NotNil(t, entry.InsecureOAuthCredential)
-	require.Equal(t, cred, *entry.InsecureOAuthCredential)
+	require.NotNil(t, profile.InsecureOAuthCredential)
+	require.Equal(t, cred, *profile.InsecureOAuthCredential)
 }
 
-func TestStore_SwitchUser(t *testing.T) {
+func TestStore_SetProfile_NoSwitchKeepsCurrent(t *testing.T) {
 	s := newKeyringStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelB, "key-bob", nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileB, remoteURL, "key-bob", false, nil))
 
-	label, _, _ := s.ActiveUser(testHost)
-	require.Equal(t, userLabelB, label)
-
-	require.NoError(t, s.SwitchUser(testHost, userLabelA))
-	label, _, _ = s.ActiveUser(testHost)
-	require.Equal(t, userLabelA, label)
+	name, _, ok := s.CurrentProfile()
+	require.True(t, ok)
+	require.Equal(t, profileA, name, "switchCurrent=false must not move the current pointer")
 }
 
-func TestStore_SwitchUser_UnknownFails(t *testing.T) {
+func TestStore_SwitchProfile(t *testing.T) {
 	s := newKeyringStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
-	err := s.SwitchUser(testHost, "ghost@example.com")
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileB, remoteURL, "key-bob", true, nil))
+
+	name, _, _ := s.CurrentProfile()
+	require.Equal(t, profileB, name)
+
+	require.NoError(t, s.SwitchProfile(profileA))
+	name, _, _ = s.CurrentProfile()
+	require.Equal(t, profileA, name)
+}
+
+func TestStore_SwitchProfile_UnknownFails(t *testing.T) {
+	s := newKeyringStore(t)
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	err := s.SwitchProfile("ghost@example.com")
 	require.ErrorContains(t, err, "not found")
 }
 
-func TestStore_SwitchUser_UnknownHostFails(t *testing.T) {
+func TestStore_RemoveProfile_ClearsCurrent(t *testing.T) {
 	s := newKeyringStore(t)
-	err := s.SwitchUser(testHost, userLabelA)
-	require.ErrorContains(t, err, "no credentials stored")
-}
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.RemoveProfile(profileA))
 
-func TestStore_RemoveUser_ClearsActive(t *testing.T) {
-	s := newKeyringStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
-	require.NoError(t, s.RemoveUser(testHost, userLabelA))
-
-	_, _, ok := s.ActiveUser(testHost)
+	_, _, ok := s.CurrentProfile()
 	require.False(t, ok)
 
-	_, err := s.GetAPIKey(testHost, userLabelA)
+	_, err := s.GetAPIKey(profileA)
 	require.Error(t, err, "keyring and file entry must both be gone")
 }
 
-func TestStore_RemoveUser_OnlyActiveIsCleared(t *testing.T) {
+func TestStore_RemoveProfile_OnlyCurrentIsCleared(t *testing.T) {
 	s := newKeyringStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelB, "key-bob", nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileB, remoteURL, "key-bob", true, nil))
 
-	require.NoError(t, s.RemoveUser(testHost, userLabelA))
+	require.NoError(t, s.RemoveProfile(profileA))
 
-	label, _, ok := s.ActiveUser(testHost)
+	name, _, ok := s.CurrentProfile()
 	require.True(t, ok)
-	require.Equal(t, userLabelB, label)
+	require.Equal(t, profileB, name)
 }
 
-func TestStore_RemoveUser_MissingHostNoError(t *testing.T) {
+func TestStore_RemoveProfile_MissingNoError(t *testing.T) {
 	s := newKeyringStore(t)
-	require.NoError(t, s.RemoveUser(testHost, userLabelA))
+	require.NoError(t, s.RemoveProfile(profileA))
 }
 
-func TestStore_HostIsolation(t *testing.T) {
+func TestStore_ProfileIsolation(t *testing.T) {
 	s := newKeyringStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
-	require.NoError(t, s.SetAPIKeyUser(otherHost, userLabelA, "key-other", nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileB, otherRemote, "key-other", true, nil))
 
-	got, err := s.GetAPIKey(testHost, userLabelA)
+	got, err := s.GetAPIKey(profileA)
 	require.NoError(t, err)
 	require.Equal(t, apiKeyA, got)
 
-	got, err = s.GetAPIKey(otherHost, userLabelA)
+	got, err = s.GetAPIKey(profileB)
 	require.NoError(t, err)
 	require.Equal(t, "key-other", got)
+}
+
+func TestStore_ProfileNames(t *testing.T) {
+	s := newKeyringStore(t)
+	require.NoError(t, s.SetAPIKeyProfile(profileB, remoteURL, "key-bob", true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+
+	names, err := s.ProfileNames()
+	require.NoError(t, err)
+	require.Equal(t, []string{profileA, profileB}, names)
 }
 
 func TestStore_SaveLoadRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 	keyring.MockInit()
 	s := auth.NewStore(auth.StoreOptions{Dir: dir, InsecureStorage: true})
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
 
 	s2 := auth.NewStore(auth.StoreOptions{Dir: dir, InsecureStorage: true})
-	label, _, ok := s2.ActiveUser(testHost)
+	name, _, ok := s2.CurrentProfile()
 	require.True(t, ok)
-	require.Equal(t, userLabelA, label)
+	require.Equal(t, profileA, name)
 }
 
 func TestStore_AuthFileFormat(t *testing.T) {
 	dir := t.TempDir()
 	keyring.MockInit()
 	s := auth.NewStore(auth.StoreOptions{Dir: dir, InsecureStorage: true})
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
 
 	data, err := os.ReadFile(filepath.Join(dir, "auth.json"))
 	require.NoError(t, err)
 	var af auth.AuthFile
 	require.NoError(t, json.Unmarshal(data, &af))
 	require.Equal(t, 1, af.Version)
-	require.Contains(t, af.Hosts, testHost)
-	require.Equal(t, userLabelA, af.Hosts[testHost].ActiveUser)
+	require.Equal(t, profileA, af.Current)
+	require.Contains(t, af.Profiles, profileA)
+	require.Equal(t, remoteURL, af.Profiles[profileA].RemoteURL)
+}
+
+// TestStore_IgnoresUnknownKeys confirms an auth.json carrying keys from an
+// earlier layout loads without error and those keys are dropped on save.
+func TestStore_IgnoresUnknownKeys(t *testing.T) {
+	dir := t.TempDir()
+	keyring.MockInit()
+	legacy := `{"version":1,"hosts":{"https://app.example.com":{"active_user":"x","users":{}}}}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "auth.json"), []byte(legacy), 0o600))
+
+	s := auth.NewStore(auth.StoreOptions{Dir: dir, InsecureStorage: true})
+	_, _, ok := s.CurrentProfile()
+	require.False(t, ok)
+
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	data, err := os.ReadFile(filepath.Join(dir, "auth.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "hosts")
 }

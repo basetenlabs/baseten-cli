@@ -20,6 +20,24 @@ func newOAuthConfig(tokenURL string) *oauth2.Config {
 	}
 }
 
+// storeWithConfigDir points BASETEN_CONFIG_DIR at a temp dir and clears the
+// env credential vars so ResolveSession reads the returned store.
+func storeWithConfigDir(t *testing.T) *auth.Store {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("BASETEN_CONFIG_DIR", dir)
+	t.Setenv("BASETEN_API_KEY", "")
+	t.Setenv("BASETEN_PROFILE", "")
+	return auth.NewStore(auth.StoreOptions{Dir: dir})
+}
+
+func mustResolve(t *testing.T, profileFlag string) *auth.Session {
+	t.Helper()
+	session, err := auth.ResolveSession(profileFlag)
+	require.NoError(t, err)
+	return session
+}
+
 // echoServer captures the last request and replies with an empty 200.
 type echoServer struct {
 	*httptest.Server
@@ -44,12 +62,13 @@ func mustRequest(t *testing.T, url string) *http.Request {
 	return req
 }
 
-func TestTransport_EnvAPIKeyOverridesStoredCreds(t *testing.T) {
-	s := newKeyringStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, "stored-key", nil))
+func TestTransport_EphemeralAPIKeyWinsOverCurrentProfile(t *testing.T) {
+	s := storeWithConfigDir(t)
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, "stored-key", true, nil))
+	t.Setenv("BASETEN_API_KEY", "env-key")
 
 	es := newEchoServer(t)
-	tr := &auth.Transport{Store: s, Host: testHost, EnvAPIKey: "env-key"}
+	tr := &auth.Transport{Session: mustResolve(t, "")}
 
 	resp, err := tr.Do(mustRequest(t, es.URL))
 	require.NoError(t, err)
@@ -58,11 +77,11 @@ func TestTransport_EnvAPIKeyOverridesStoredCreds(t *testing.T) {
 }
 
 func TestTransport_APIKeyInjected(t *testing.T) {
-	s := newKeyringStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
+	s := storeWithConfigDir(t)
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
 
 	es := newEchoServer(t)
-	tr := &auth.Transport{Store: s, Host: testHost}
+	tr := &auth.Transport{Session: mustResolve(t, profileA)}
 
 	resp, err := tr.Do(mustRequest(t, es.URL))
 	require.NoError(t, err)
@@ -71,14 +90,13 @@ func TestTransport_APIKeyInjected(t *testing.T) {
 }
 
 func TestTransport_OAuthBearerInjected(t *testing.T) {
-	s := newKeyringStore(t)
+	s := storeWithConfigDir(t)
 	cred := auth.OAuthCredential{AccessToken: accessToken, RefreshToken: refreshToken}
-	require.NoError(t, s.SetOAuthUser(testHost, userLabelA, cred, nil))
+	require.NoError(t, s.SetOAuthProfile(profileA, remoteURL, cred, true, nil))
 
 	es := newEchoServer(t)
 	tr := &auth.Transport{
-		Store:       s,
-		Host:        testHost,
+		Session:     mustResolve(t, profileA),
 		OAuthConfig: newOAuthConfig("http://unused/token"),
 	}
 
@@ -89,18 +107,18 @@ func TestTransport_OAuthBearerInjected(t *testing.T) {
 }
 
 func TestTransport_NotLoggedInErrors(t *testing.T) {
-	s := newKeyringStore(t)
-	tr := &auth.Transport{Store: s, Host: testHost}
+	storeWithConfigDir(t)
+	tr := &auth.Transport{Session: mustResolve(t, "")}
 	_, err := tr.Do(mustRequest(t, "http://127.0.0.1:1"))
 	require.ErrorContains(t, err, "not logged in")
 }
 
 func TestTransport_OAuthRefreshRotatesStoredToken(t *testing.T) {
-	s := newKeyringStore(t)
+	s := storeWithConfigDir(t)
 	// Blank access token with a refresh token forces oauth2 to refresh
 	// immediately: the library treats a missing access token as invalid.
-	require.NoError(t, s.SetOAuthUser(testHost, userLabelA,
-		auth.OAuthCredential{AccessToken: "", RefreshToken: "old-refresh"}, nil))
+	require.NoError(t, s.SetOAuthProfile(profileA, remoteURL,
+		auth.OAuthCredential{AccessToken: "", RefreshToken: "old-refresh"}, true, nil))
 
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, r.ParseForm())
@@ -117,24 +135,23 @@ func TestTransport_OAuthRefreshRotatesStoredToken(t *testing.T) {
 	defer tokenSrv.Close()
 
 	es := newEchoServer(t)
-	cfg := newOAuthConfig(tokenSrv.URL)
-	tr := &auth.Transport{Store: s, Host: testHost, OAuthConfig: cfg}
+	tr := &auth.Transport{Session: mustResolve(t, profileA), OAuthConfig: newOAuthConfig(tokenSrv.URL)}
 
 	resp, err := tr.Do(mustRequest(t, es.URL))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, "Bearer new-access", es.LastAuthHeader)
 
-	stored, err := s.GetOAuthCredential(testHost, userLabelA)
+	stored, err := s.GetOAuthCredential(profileA)
 	require.NoError(t, err)
 	require.Equal(t, "new-access", stored.AccessToken)
 	require.Equal(t, "new-refresh", stored.RefreshToken)
 }
 
 func TestTransport_OAuthRefreshFailureSurfacesError(t *testing.T) {
-	s := newKeyringStore(t)
-	require.NoError(t, s.SetOAuthUser(testHost, userLabelA,
-		auth.OAuthCredential{AccessToken: "", RefreshToken: "bad-refresh"}, nil))
+	s := storeWithConfigDir(t)
+	require.NoError(t, s.SetOAuthProfile(profileA, remoteURL,
+		auth.OAuthCredential{AccessToken: "", RefreshToken: "bad-refresh"}, true, nil))
 
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -144,8 +161,7 @@ func TestTransport_OAuthRefreshFailureSurfacesError(t *testing.T) {
 	defer tokenSrv.Close()
 
 	tr := &auth.Transport{
-		Store:       s,
-		Host:        testHost,
+		Session:     mustResolve(t, profileA),
 		OAuthConfig: newOAuthConfig(tokenSrv.URL),
 	}
 	_, err := tr.Do(mustRequest(t, "http://127.0.0.1:1"))
@@ -153,8 +169,8 @@ func TestTransport_OAuthRefreshFailureSurfacesError(t *testing.T) {
 }
 
 func TestTransport_CustomBaseUsed(t *testing.T) {
-	s := newKeyringStore(t)
-	require.NoError(t, s.SetAPIKeyUser(testHost, userLabelA, apiKeyA, nil))
+	s := storeWithConfigDir(t)
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
 
 	called := false
 	base := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -166,7 +182,7 @@ func TestTransport_CustomBaseUsed(t *testing.T) {
 			Request:    r,
 		}, nil
 	})
-	tr := &auth.Transport{Store: s, Host: testHost, Base: base}
+	tr := &auth.Transport{Session: mustResolve(t, profileA), Base: base}
 	req := mustRequest(t, "http://example.invalid/")
 	resp, err := tr.Do(req)
 	require.NoError(t, err)

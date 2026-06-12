@@ -10,74 +10,81 @@ var commandAuth = Command{
 		{
 			Name:    "login",
 			Summary: "Authenticate with Baseten",
-			Description: "Log in to Baseten via browser (OAuth device flow) or API key.\n\n" +
+			Description: "Log in to Baseten via browser (OAuth device flow) or API key, storing a " +
+				"named profile.\n\n" +
 				"By default, opens a browser for interactive login. Use --web to skip prompts " +
 				"(suitable for non-TTY environments). Use --with-api-key to provide an API key " +
-				"(reads from stdin, or prompts interactively if TTY).",
+				"(reads from stdin, or prompts interactively if TTY).\n\n" +
+				"Browser logins name the profile after your email; API key logins require an " +
+				"explicit --profile name. The new profile becomes current unless --no-switch is given.",
 			Flags: AuthLoginFlags{},
 			Output: &CommandOutput[AuthLoginResult]{
-				TextDescription: "Prints \"Logged in as <email> (<workspace>)\" to stdout on success.",
+				TextDescription: "Prints \"Logged in as <email> (<workspace>) as profile <profile>\" to stdout on success.",
 				Examples: []CommandExample{
 					{
 						Description: "Browser-based login (OAuth device flow).",
 						Command:     "baseten auth login --web",
 					},
 					{
-						Description: "Provide an API key on stdin.",
-						Command:     "echo $API_KEY | baseten auth login --with-api-key --label <label>",
+						Description: "Provide an API key on stdin under a named profile.",
+						Command:     "echo $API_KEY | baseten auth login --with-api-key --profile <profile>",
 					},
 				},
 				JQExample: CommandExample{
-					Description: "Print just the logged-in user's email.",
-					Command:     "baseten auth login --web --jq '.email'",
+					Description: "Print just the new profile name.",
+					Command:     "baseten auth login --web --jq '.profile'",
 				},
 			},
 		},
 		{
 			Name:        "logout",
-			Summary:     "Remove stored credentials",
-			Description: "Remove stored credentials for the active user. For OAuth credentials, also revokes the session.",
+			Summary:     "Remove a stored profile",
+			Description: "Remove a stored profile and its credentials. Defaults to the current profile; pass --profile to choose another. For OAuth credentials, also revokes the session.",
 			Flags:       AuthLogoutFlags{},
 			Output: &CommandOutput[AuthLogoutResult]{
-				TextDescription: "Prints \"Logged out <user>\" to stdout on success.",
+				TextDescription: "Prints \"Logged out <profile>\" to stdout on success.",
 				Examples: []CommandExample{
 					{
-						Description: "Log out the active user.",
+						Description: "Log out the current profile.",
 						Command:     "baseten auth logout",
+					},
+					{
+						Description: "Log out a specific profile.",
+						Command:     "baseten auth logout --profile <profile>",
 					},
 				},
 				JQExample: CommandExample{
-					Description: "Print just the logged-out user label.",
-					Command:     "baseten auth logout --jq '.user'",
+					Description: "Print just the logged-out profile name.",
+					Command:     "baseten auth logout --jq '.profile'",
 				},
 			},
 		},
 		{
 			Name:        "switch",
-			Summary:     "Switch active account",
-			Description: "Switch the active account for the current host.",
+			Summary:     "Switch the current profile",
+			Description: "Set the current profile used when no profile is selected via --profile or BASETEN_PROFILE.",
 			Flags:       AuthSwitchFlags{},
 			Output: &CommandOutput[AuthSwitchResult]{
-				TextDescription: "Prints \"Switched to <user>\" to stdout on success.",
+				TextDescription: "Prints \"Switched to <profile>\" to stdout on success.",
 				Examples: []CommandExample{
 					{
-						Description: "Switch to a specific account non-interactively.",
-						Command:     "baseten auth switch --user <user>",
+						Description: "Switch to a specific profile non-interactively.",
+						Command:     "baseten auth switch --profile <profile>",
 					},
 				},
 				JQExample: CommandExample{
-					Description: "Print just the newly active user.",
-					Command:     "baseten auth switch --user <user> --jq '.user'",
+					Description: "Print just the new current profile.",
+					Command:     "baseten auth switch --profile <profile> --jq '.profile'",
 				},
 			},
 		},
 		{
 			Name:        "status",
 			Summary:     "Show authentication status",
-			Description: "Show the current authentication state, including the active user and auth type.",
+			Description: "Show the resolved authentication state, including the profile, remote, and auth type.",
 			Flags:       AuthStatusFlags{},
 			Output: &CommandOutput[AuthStatusResult]{
-				TextDescription: "Three-line summary: host URL, \"Logged in as <user>\", \"Auth type: <type>\".",
+				TextDescription: "Summary of the resolved profile: profile name, remote URL, and auth type.",
 				Examples: []CommandExample{
 					{
 						Description: "Show the current auth status.",
@@ -95,6 +102,7 @@ var commandAuth = Command{
 
 // AuthLoginResult is the JSON output of `baseten auth login`.
 type AuthLoginResult struct {
+	Profile       string `json:"profile"`
 	UserID        string `json:"user_id"`
 	Email         string `json:"email"`
 	Name          string `json:"name"`
@@ -103,19 +111,19 @@ type AuthLoginResult struct {
 
 // AuthLogoutResult is the JSON output of `baseten auth logout`.
 type AuthLogoutResult struct {
-	User string `json:"user"`
+	Profile string `json:"profile"`
 }
 
 // AuthSwitchResult is the JSON output of `baseten auth switch`.
 type AuthSwitchResult struct {
-	User string `json:"user"`
+	Profile string `json:"profile"`
 }
 
 // AuthStatusResult is the JSON output of `baseten auth status`.
 type AuthStatusResult struct {
-	Host     string `json:"host"`
-	User     string `json:"user"`
-	AuthType string `json:"auth_type"`
+	Profile   string `json:"profile"`
+	RemoteURL string `json:"remote_url"`
+	AuthType  string `json:"auth_type"`
 }
 
 // AuthLoginFlags are the flags for baseten auth login.
@@ -123,7 +131,8 @@ type AuthLoginFlags struct {
 	CommandFlags
 	Web             bool   `flag:"web" desc:"Use browser login without interactive prompts"`
 	WithAPIKey      bool   `flag:"with-api-key" desc:"Read API key from stdin"`
-	Label           string `flag:"label" desc:"Label for the API key credential"`
+	RemoteURL       string `flag:"remote-url" desc:"Baseten remote URL for this profile (default https://app.baseten.co)"`
+	NoSwitch        bool   `flag:"no-switch" desc:"Store the profile without making it the current profile"`
 	InsecureStorage bool   `flag:"insecure-storage" desc:"Store credentials in plain text instead of system keyring"`
 }
 
@@ -135,7 +144,6 @@ type AuthLogoutFlags struct {
 // AuthSwitchFlags are the flags for baseten auth switch.
 type AuthSwitchFlags struct {
 	CommandFlags
-	User string `flag:"user" desc:"User to switch to"`
 }
 
 // AuthStatusFlags are the flags for baseten auth status.

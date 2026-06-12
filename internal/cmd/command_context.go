@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -35,7 +36,6 @@ type CommandContext struct {
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ExitWithCode func(int)
-	Remote       *Remote
 	// JQQuery is a compiled --jq expression installed by the framework. When
 	// non-nil, [OutputJSON] and [JSONArrayWriter.Write] route their input
 	// through the query before encoding. Leaves should not set this directly.
@@ -43,6 +43,10 @@ type CommandContext struct {
 
 	verbose bool
 	jqErr   error
+
+	// authInfo lazily resolves the remote and auth session. Use the Remote and
+	// Session accessors; do not read its cached fields directly.
+	authInfo authInfo
 }
 
 // Output writes to stdout.
@@ -329,16 +333,18 @@ func NewAuthStore(insecureStorage bool) (*auth.Store, error) {
 // NewManagementClient creates a management API client that resolves
 // credentials via the auth store (env var > stored credential).
 func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error) {
-	store, err := NewAuthStore(false)
+	remote, err := c.authInfo.Remote()
 	if err != nil {
 		return nil, err
 	}
-	mgmtURL := c.Remote.ManagementURL()
+	session, err := c.authInfo.Session()
+	if err != nil {
+		return nil, err
+	}
+	mgmtURL := remote.ManagementURL()
 	transport := &auth.Transport{
-		Store:       store,
-		Host:        c.Remote.RemoteURL(),
+		Session:     session,
 		OAuthConfig: OAuthConfig(mgmtURL),
-		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
 		Base:        c.httpClient().Transport,
 	}
 	return client.NewManagementClient(client.ManagementClientOptions{
@@ -348,11 +354,12 @@ func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error)
 	})
 }
 
-// NewManagementClientWithAuth creates a management API client with a specific
-// auth header. Used during login to validate a credential before storing it.
-func (c *CommandContext) NewManagementClientWithAuth(authHeader string) (*client.ManagementClient, error) {
+// NewManagementClientWithAuth creates a management API client against mgmtURL
+// with a specific auth header. Used during login to validate a credential
+// before storing it, before any profile exists.
+func (c *CommandContext) NewManagementClientWithAuth(mgmtURL, authHeader string) (*client.ManagementClient, error) {
 	return client.NewManagementClient(client.ManagementClientOptions{
-		BaseURL:   c.Remote.ManagementURL(),
+		BaseURL:   mgmtURL,
 		DeferAuth: true,
 		HTTPClient: &staticAuthClient{
 			header: authHeader,
@@ -364,23 +371,25 @@ func (c *CommandContext) NewManagementClientWithAuth(authHeader string) (*client
 // NewInferenceClient creates an inference API client that resolves
 // credentials via the auth store.
 func (c *CommandContext) NewInferenceClient(flags cmd.InferenceClientFlags) (*client.InferenceClient, error) {
-	store, err := NewAuthStore(false)
+	remote, err := c.authInfo.Remote()
 	if err != nil {
 		return nil, err
 	}
-	mgmtURL := c.Remote.ManagementURL()
+	session, err := c.authInfo.Session()
+	if err != nil {
+		return nil, err
+	}
+	mgmtURL := remote.ManagementURL()
 	transport := &auth.Transport{
-		Store:       store,
-		Host:        c.Remote.RemoteURL(),
+		Session:     session,
 		OAuthConfig: OAuthConfig(mgmtURL),
-		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
 		Base:        c.httpClient().Transport,
 	}
-	baseURL, err := c.Remote.InferenceBaseURL(flags.ModelID, flags.ChainID, flags.Environment)
+	baseURL, err := remote.InferenceBaseURL(flags.ModelID, flags.ChainID, flags.Environment)
 	if err != nil {
 		return nil, err
 	}
-	hostHeader, hostOverride, err := c.Remote.InferenceHostHeader(flags.ModelID, flags.ChainID, flags.Environment)
+	hostHeader, hostOverride, err := remote.InferenceHostHeader(flags.ModelID, flags.ChainID, flags.Environment)
 	if err != nil {
 		return nil, err
 	}
@@ -496,4 +505,44 @@ func (c *hostHeaderClient) Do(req *http.Request) (*http.Response, error) {
 	req = req.Clone(req.Context())
 	req.Host = c.host
 	return c.base.Do(req)
+}
+
+// authInfo lazily resolves and caches the remote and auth session for one
+// invocation. Because the selected profile carries the remote URL, both are
+// resolved together by resolve (guarded by once). The remote and session
+// fields are caches; callers use the Remote and Session accessors.
+type authInfo struct {
+	profileFlag string
+
+	once    sync.Once
+	err     error
+	remote  *Remote
+	session *auth.Session
+}
+
+func (a *authInfo) resolve() error {
+	a.once.Do(func() {
+		if a.session, a.err = auth.ResolveSession(a.profileFlag); a.err != nil {
+			return
+		}
+		a.remote, a.err = NewRemote(a.session.RemoteURL())
+	})
+	return a.err
+}
+
+// Remote returns the remote for this invocation, derived from the selected
+// profile (or ephemeral env credentials, or the default).
+func (a *authInfo) Remote() (*Remote, error) {
+	if err := a.resolve(); err != nil {
+		return nil, err
+	}
+	return a.remote, nil
+}
+
+// Session returns the auth session for this invocation.
+func (a *authInfo) Session() (*auth.Session, error) {
+	if err := a.resolve(); err != nil {
+		return nil, err
+	}
+	return a.session, nil
 }

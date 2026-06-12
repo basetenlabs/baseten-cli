@@ -192,10 +192,6 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			if f := flagsVal.FieldByName("CommandFlags"); f.IsValid() {
 				cmdFlags = f.Interface().(cmd.CommandFlags)
 			}
-			remote, err := NewRemote(cmdFlags.RemoteURL)
-			if err != nil {
-				return err
-			}
 			ctx := &CommandContext{
 				Context:      c.Context(),
 				Command:      c,
@@ -204,7 +200,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				Stdout:       options.Stdout,
 				Stderr:       options.Stderr,
 				ExitWithCode: options.ExitWithCode,
-				Remote:       remote,
+				authInfo:     authInfo{profileFlag: cmdFlags.Profile},
 			}
 
 			// Resolve --jq and --output, populating ctx.
