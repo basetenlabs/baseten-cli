@@ -43,10 +43,10 @@ var Root = Command{
 // CommandFlags are shared flags that every command must embed, either directly
 // or via another struct that embeds it.
 type CommandFlags struct {
-	Verbose   bool   `flag:"verbose" short:"v" desc:"Enable verbose logging" group:"common" group-pri:"500"`
-	Output    string `flag:"output" short:"o" desc:"Output format" default:"text" enum:"text,json,jsonl,none" group:"common"`
-	JQ        string `flag:"jq" short:"q" desc:"Filter JSON output with a jq expression; implies --output json (or jsonl for streamed commands)" group:"common"`
-	RemoteURL string `flag:"remote-url" desc:"Baseten remote URL, overrides BASETEN_REMOTE_URL (default https://app.baseten.co)" group:"common"`
+	Verbose bool   `flag:"verbose" short:"v" desc:"Enable verbose logging" group:"common" group-pri:"500"`
+	Output  string `flag:"output" short:"o" desc:"Output format" default:"text" enum:"text,json,jsonl,none" group:"common"`
+	JQ      string `flag:"jq" short:"q" desc:"Filter JSON output with a jq expression; implies --output json (or jsonl for streamed commands)" group:"common"`
+	Profile string `flag:"profile" desc:"Use a specific stored profile for this command, overriding BASETEN_PROFILE and the current profile" group:"common"`
 }
 
 // Command defines a CLI command declaratively. The tree structure is built

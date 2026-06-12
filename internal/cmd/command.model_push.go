@@ -495,8 +495,12 @@ func waitModelPushDeployment(
 }
 
 func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedModelDeployment, environment *string) error {
-	predictURL := ctx.Remote.PredictURL(created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment)
-	logsURL := ctx.Remote.LogsURL(created.Model.Id, created.Deployment.Id)
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return err
+	}
+	predictURL := remote.PredictURL(created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment)
+	logsURL := remote.LogsURL(created.Model.Id, created.Deployment.Id)
 
 	// Narrative goes first so a user piping JSON to a file or jq sees the
 	// human summary on stderr before the JSON object lands on stdout.

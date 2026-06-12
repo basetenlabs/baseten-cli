@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/charmbracelet/huh"
 	"github.com/cli/browser"
 )
@@ -24,14 +24,17 @@ func init() {
 }
 
 func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
-	baseURL := ctx.Remote.RemoteURL()
-	store, err := NewAuthStore(flags.InsecureStorage)
+	if flags.Web && flags.WithAPIKey {
+		return cmd.NewErrUsagef("--web and --with-api-key are mutually exclusive")
+	}
+
+	remote, err := NewRemote(flags.RemoteURL)
 	if err != nil {
 		return err
 	}
-
-	if flags.Web && flags.WithAPIKey {
-		return cmd.NewErrUsagef("--web and --with-api-key are mutually exclusive")
+	store, err := NewAuthStore(flags.InsecureStorage)
+	if err != nil {
+		return err
 	}
 
 	method := ""
@@ -59,51 +62,65 @@ func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
 
 	switch method {
 	case "web":
-		return loginWeb(ctx, store, baseURL)
+		return loginWeb(ctx, store, remote, flags)
 	case "api_key":
-		return loginAPIKey(ctx, store, baseURL, flags.Label)
+		return loginAPIKey(ctx, store, remote, flags)
 	default:
 		return fmt.Errorf("unexpected auth method %q", method)
 	}
 }
 
 func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
-	baseURL := ctx.Remote.RemoteURL()
 	store, err := NewAuthStore(false)
 	if err != nil {
 		return err
 	}
 
-	label, entry, ok := store.ActiveUser(baseURL)
-	if !ok {
-		return fmt.Errorf("no active user for %s", baseURL)
+	profileName := flags.Profile
+	if profileName == "" {
+		current, _, ok := store.CurrentProfile()
+		if !ok {
+			return fmt.Errorf("no current profile; pass --profile to choose one to remove")
+		}
+		profileName = current
 	}
 
-	if entry.AuthType == auth.AuthTypeOAuth {
-		if err := revokeOAuthSession(ctx, store, baseURL, label); err != nil {
+	profile, ok := store.GetProfile(profileName)
+	if !ok {
+		return fmt.Errorf("profile %q not found", profileName)
+	}
+
+	if profile.AuthType == auth.AuthTypeOAuth {
+		if err := revokeOAuthSession(ctx, profileName); err != nil {
 			ctx.Logf("warning: server-side session revocation failed: %v\n", err)
 		}
 	}
 
-	if err := store.RemoveUser(baseURL, label); err != nil {
+	if err := store.RemoveProfile(profileName); err != nil {
 		return err
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.AuthLogoutResult{User: label})
+		ctx.OutputJSON(cmd.AuthLogoutResult{Profile: profileName})
 	} else {
-		ctx.Outputf("Logged out %s\n", label)
+		ctx.Outputf("Logged out %s\n", profileName)
 	}
 	return nil
 }
 
-func revokeOAuthSession(ctx *CommandContext, store *auth.Store, baseURL, label string) error {
-	mgmtURL := ctx.Remote.ManagementURL()
+func revokeOAuthSession(ctx *CommandContext, profileName string) error {
+	session, err := auth.ResolveSession(profileName)
+	if err != nil {
+		return err
+	}
+	remote, err := NewRemote(session.RemoteURL())
+	if err != nil {
+		return err
+	}
+	mgmtURL := remote.ManagementURL()
 	transport := &auth.Transport{
-		Store:       store,
-		Host:        baseURL,
+		Session:     session,
 		OAuthConfig: OAuthConfig(mgmtURL),
-		EnvAPIKey:   os.Getenv("BASETEN_API_KEY"),
 		Base:        ctx.httpClient().Transport,
 	}
 	req, err := http.NewRequestWithContext(
@@ -125,80 +142,99 @@ func revokeOAuthSession(ctx *CommandContext, store *auth.Store, baseURL, label s
 }
 
 func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
-	baseURL := ctx.Remote.RemoteURL()
 	store, err := NewAuthStore(false)
 	if err != nil {
 		return err
 	}
 
-	label := flags.User
-	if label == "" {
+	profileName := flags.Profile
+	if profileName == "" {
 		if !ctx.IsInteractive() {
-			return cmd.NewErrUsagef("must specify --user when not interactive")
+			return cmd.NewErrUsagef("must specify --profile when not interactive")
 		}
 
-		af, err := store.Load()
+		names, err := store.ProfileNames()
 		if err != nil {
 			return err
 		}
-		he, ok := af.Hosts[baseURL]
-		if !ok || len(he.Users) == 0 {
-			return fmt.Errorf("no credentials stored for %s", baseURL)
+		if len(names) == 0 {
+			return fmt.Errorf("no profiles stored; run `baseten auth login`")
 		}
 
-		var options []huh.Option[string]
-		for name := range he.Users {
+		options := make([]huh.Option[string], 0, len(names))
+		for _, name := range names {
 			options = append(options, huh.NewOption(name, name))
 		}
-
 		err = huh.NewSelect[string]().
-			Title("Switch to which account?").
+			Title("Switch to which profile?").
 			Options(options...).
-			Value(&label).
+			Value(&profileName).
 			Run()
 		if err != nil {
 			return err
 		}
 	}
 
-	if err := store.SwitchUser(baseURL, label); err != nil {
+	if err := store.SwitchProfile(profileName); err != nil {
 		return err
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.AuthSwitchResult{User: label})
+		ctx.OutputJSON(cmd.AuthSwitchResult{Profile: profileName})
 	} else {
-		ctx.Outputf("Switched to %s\n", label)
+		ctx.Outputf("Switched to %s\n", profileName)
 	}
 	return nil
 }
 
 func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
-	baseURL := ctx.Remote.RemoteURL()
 	store, err := NewAuthStore(false)
 	if err != nil {
 		return err
 	}
 
-	label, entry, ok := store.ActiveUser(baseURL)
+	session, err := auth.ResolveSession(flags.Profile)
+	if err != nil {
+		return err
+	}
+
+	if session.IsEphemeral() {
+		remoteURL := session.RemoteURL()
+		if remoteURL == "" {
+			remoteURL = "https://app.baseten.co"
+		}
+		if ctx.JSON {
+			ctx.OutputJSON(cmd.AuthStatusResult{RemoteURL: remoteURL, AuthType: string(auth.AuthTypeAPIKey)})
+		} else {
+			ctx.Outputf("Using API key from BASETEN_API_KEY\n  Remote: %s\n", remoteURL)
+		}
+		return nil
+	}
+
+	profileName := session.ProfileName()
+	if profileName == "" {
+		return fmt.Errorf("not logged in; run `baseten auth login` or set BASETEN_API_KEY")
+	}
+	profile, ok := store.GetProfile(profileName)
 	if !ok {
-		return fmt.Errorf("not logged in to %s; run `baseten auth login` or set BASETEN_API_KEY", baseURL)
+		return fmt.Errorf("profile %q not found", profileName)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(cmd.AuthStatusResult{
-			Host:     baseURL,
-			User:     label,
-			AuthType: string(entry.AuthType),
+			Profile:   profileName,
+			RemoteURL: profile.RemoteURL,
+			AuthType:  string(profile.AuthType),
 		})
 	} else {
-		ctx.Outputf("%s\n  Logged in as %s\n  Auth type: %s\n", baseURL, label, entry.AuthType)
+		ctx.Outputf("%s\n  Remote: %s\n  Auth type: %s\n", profileName, profile.RemoteURL, profile.AuthType)
 	}
 	return nil
 }
 
-func loginWeb(ctx *CommandContext, store *auth.Store, baseURL string) error {
-	cfg := OAuthConfig(ctx.Remote.ManagementURL())
+func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) error {
+	mgmtURL := remote.ManagementURL()
+	cfg := OAuthConfig(mgmtURL)
 	oauthCtx := auth.OAuthContext(ctx.Context, ctx.httpClient().Transport)
 	devResp, err := cfg.DeviceAuth(oauthCtx)
 	if err != nil {
@@ -225,7 +261,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, baseURL string) error {
 		ctx.VerboseLogf("access token claims: %s\n", claims)
 	}
 
-	cl, err := ctx.NewManagementClientWithAuth("Bearer " + token.AccessToken)
+	cl, err := ctx.NewManagementClientWithAuth(mgmtURL, "Bearer "+token.AccessToken)
 	if err != nil {
 		return err
 	}
@@ -234,34 +270,30 @@ func loginWeb(ctx *CommandContext, store *auth.Store, baseURL string) error {
 		return fmt.Errorf("validating credentials: %w", err)
 	}
 
+	email := deref(user.Email)
+	profileName := flags.Profile
+	if profileName == "" {
+		if email == "" {
+			return fmt.Errorf("could not determine a profile name from the account; pass --profile")
+		}
+		profileName = defaultProfileName(email, remote)
+	}
+
 	warnWriter := func(msg string) { ctx.Log(msg) }
 	cred := auth.OAuthCredential{
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
 		Expiry:       token.Expiry,
 	}
-	email := deref(user.Email)
-	if err := store.SetOAuthUser(baseURL, email, cred, warnWriter); err != nil {
+	if err := store.SetOAuthProfile(profileName, remote.RemoteURL(), cred, !flags.NoSwitch, warnWriter); err != nil {
 		return err
 	}
 
-	result := cmd.AuthLoginResult{
-		UserID:        user.UserId,
-		Email:         email,
-		Name:          deref(user.Name),
-		WorkspaceName: deref(user.WorkspaceName),
-	}
-	if ctx.JSON {
-		ctx.OutputJSON(result)
-	} else {
-		ctx.Outputf("Logged in as %s (%s)\n", result.Email, result.WorkspaceName)
-	}
-	return nil
+	return writeLoginResult(ctx, profileName, user)
 }
 
-func loginAPIKey(ctx *CommandContext, store *auth.Store, baseURL, label string) error {
+func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) error {
 	var apiKey string
-
 	if ctx.IsInteractive() {
 		err := huh.NewInput().
 			Title("Paste your API key").
@@ -281,10 +313,10 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, baseURL, label string) 
 	}
 
 	if apiKey == "" {
-		return cmd.NewErrUsagef("API key cannot be empty")
+		return fmt.Errorf("API key cannot be empty")
 	}
 
-	cl, err := ctx.NewManagementClientWithAuth("Api-Key " + apiKey)
+	cl, err := ctx.NewManagementClientWithAuth(remote.ManagementURL(), "Api-Key "+apiKey)
 	if err != nil {
 		return err
 	}
@@ -293,31 +325,35 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, baseURL, label string) 
 		return fmt.Errorf("validating API key: %w", err)
 	}
 
-	if label == "" {
-		if ctx.IsInteractive() {
-			err := huh.NewInput().
-				Title("Label for this credential").
-				Description("e.g. personal, deploy-bot").
-				Value(&label).
-				Run()
-			if err != nil {
-				return err
-			}
-		} else {
-			return cmd.NewErrUsagef("--label is required when not interactive")
+	profileName := flags.Profile
+	if profileName == "" {
+		if !ctx.IsInteractive() {
+			return cmd.NewErrUsagef("--profile is required when logging in with an API key non-interactively")
+		}
+		err := huh.NewInput().
+			Title("Profile name for this credential").
+			Description("e.g. personal, deploy-bot").
+			Value(&profileName).
+			Run()
+		if err != nil {
+			return err
 		}
 	}
-
-	if label == "" {
-		return cmd.NewErrUsagef("label cannot be empty")
+	if profileName == "" {
+		return cmd.NewErrUsagef("profile name cannot be empty")
 	}
 
 	warnWriter := func(msg string) { ctx.Log(msg) }
-	if err := store.SetAPIKeyUser(baseURL, label, apiKey, warnWriter); err != nil {
+	if err := store.SetAPIKeyProfile(profileName, remote.RemoteURL(), apiKey, !flags.NoSwitch, warnWriter); err != nil {
 		return err
 	}
 
+	return writeLoginResult(ctx, profileName, user)
+}
+
+func writeLoginResult(ctx *CommandContext, profileName string, user *managementapi.UserInfo) error {
 	result := cmd.AuthLoginResult{
+		Profile:       profileName,
 		UserID:        user.UserId,
 		Email:         deref(user.Email),
 		Name:          deref(user.Name),
@@ -326,9 +362,18 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, baseURL, label string) 
 	if ctx.JSON {
 		ctx.OutputJSON(result)
 	} else {
-		ctx.Outputf("Logged in as %s (%s)\n", result.Email, result.WorkspaceName)
+		ctx.Outputf("Logged in as %s (%s) as profile %s\n", result.Email, result.WorkspaceName, profileName)
 	}
 	return nil
+}
+
+// defaultProfileName derives the profile name for an OAuth login: the email,
+// with the remote host appended for non-default remotes to disambiguate.
+func defaultProfileName(email string, remote *Remote) string {
+	if remote.IsDefault() {
+		return email
+	}
+	return email + ":" + remote.HostLabel()
 }
 
 func deref(s *string) string {
