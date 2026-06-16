@@ -183,8 +183,7 @@ type ModelPushFlags struct {
 
 	DryRun bool `flag:"dry-run" desc:"Validate the push and request upload credentials without uploading or creating anything."`
 
-	Promote        bool   `flag:"promote" desc:"Promote the new deployment to the production environment."`
-	Environment    string `flag:"environment" desc:"Stable environment to push to. Mutually exclusive with --promote."`
+	Environment    string `flag:"environment" desc:"Stable environment to push to."`
 	DeploymentName string `flag:"deployment-name" desc:"Human-readable name for the new deployment."`
 
 	NoBuildCache bool   `flag:"no-build-cache" desc:"Force a full rebuild without using cached layers."`
