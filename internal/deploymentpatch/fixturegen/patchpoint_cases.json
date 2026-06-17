@@ -1,0 +1,76 @@
+[
+  {
+    "name": "simple_model_inline_requirements",
+    "files": {
+      "config.yaml": "model_name: inline-model\npython_version: py311\nrequirements:\n  - requests==2.31.0\n  - numpy>=1.0\n",
+      "model/__init__.py": "",
+      "model/model.py": "class Model:\n    def predict(self, x):\n        return x\n"
+    }
+  },
+  {
+    "name": "pip_requirements_permutations",
+    "files": {
+      "config.yaml": "model_name: pip-model\npython_version: py311\nrequirements_file: requirements.txt\n",
+      "requirements.txt": "# a comment line\nrequests==2.31.0\n\nnumpy>=1.0   \ntorch\nflask[async]>=2.0\nmypackage; python_version >= \"3.10\"\ngit+https://github.com/foo/bar.git#egg=bar\nhttps://example.com/pkg.whl\n",
+      "model/model.py": "x = 1\n"
+    }
+  },
+  {
+    "name": "pyproject_requirements",
+    "files": {
+      "config.yaml": "model_name: pyproject-model\npython_version: py311\nrequirements_file: pyproject.toml\n",
+      "pyproject.toml": "[project]\nname = \"x\"\nversion = \"0.0.0\"\ndependencies = [\n  \"requests==2.31.0\",\n  \"numpy>=1.0\",\n  \"flask[async]>=2.0\",\n  \"mypackage; python_version >= '3.10'\",\n]\n",
+      "model/model.py": "x = 1\n"
+    }
+  },
+  {
+    "name": "uv_lock_resolves_to_sibling_pyproject",
+    "files": {
+      "config.yaml": "model_name: uvlock-model\npython_version: py311\nrequirements_file: uv.lock\n",
+      "pyproject.toml": "[project]\nname = \"x\"\nversion = \"0.0.0\"\ndependencies = [\n  \"requests==2.31.0\",\n  \"pydantic>=2\",\n]\n",
+      "uv.lock": "# this lock file must be hashed but never parsed for requirements\nversion = 1\nrequires-python = \">=3.11\"\n",
+      "model/model.py": "x = 1\n"
+    }
+  },
+  {
+    "name": "nested_dirs_and_empty_dir",
+    "files": {
+      "config.yaml": "model_name: nested-model\npython_version: py311\n",
+      "model/model.py": "x = 1\n",
+      "packages/util/helper.py": "y = 2\n",
+      "packages/util/__init__.py": ""
+    },
+    "empty_dirs": ["data", "model/empty_subdir"]
+  },
+  {
+    "name": "truss_ignore_file",
+    "files": {
+      "config.yaml": "model_name: ignore-model\npython_version: py311\n",
+      ".truss_ignore": "*.log\nsecrets/\n",
+      "model/model.py": "x = 1\n",
+      "model/debug.log": "should be ignored\n",
+      "secrets/key.txt": "should be ignored\n",
+      "keep.txt": "kept\n"
+    }
+  },
+  {
+    "name": "default_ignore_patterns",
+    "files": {
+      "config.yaml": "model_name: default-ignore-model\npython_version: py311\n",
+      "model/model.py": "x = 1\n",
+      "model/__pycache__/model.cpython-311.pyc": "compiled bytecode ignored\n",
+      ".env": "SECRET=ignored\n",
+      ".DS_Store": "macos cruft ignored\n",
+      "keep.py": "kept\n"
+    }
+  },
+  {
+    "name": "binary_file_content",
+    "files": {
+      "config.yaml": "model_name: binary-model\npython_version: py311\n"
+    },
+    "binary_files": {
+      "model/weights.bin": "AAECAwQF/v38+/r5"
+    }
+  }
+]

@@ -66,6 +66,10 @@ func newLifecycle(t *testing.T) *lifecycle {
 
 	// Register cleanup before the push so even a partial create gets removed.
 	t.Cleanup(func() {
+		if os.Getenv("BASETEN_E2E_KEEP_MODEL") != "" {
+			t.Logf("BASETEN_E2E_KEEP_MODEL set; leaving model %q in place", l.modelName)
+			return
+		}
 		if l.modelID == "" {
 			l.modelID = lookupModelIDByName(t, l.modelName)
 		}

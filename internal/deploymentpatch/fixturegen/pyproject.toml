@@ -1,0 +1,6 @@
+[project]
+name = "deploymentpatch-fixturegen"
+version = "0"
+description = "Regenerates the deploymentpatch Go golden vectors from canonical Truss."
+requires-python = ">=3.11"
+dependencies = ["truss"]

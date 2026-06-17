@@ -5,6 +5,7 @@ go 1.26.1
 require (
 	charm.land/fang/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.3
+	github.com/BurntSushi/toml v1.6.0
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.21
@@ -17,6 +18,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/cli/browser v1.3.0
 	github.com/coder/websocket v1.8.14
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/invopop/jsonschema v0.14.0
 	github.com/itchyny/gojq v0.12.18
 	github.com/muesli/mango-cobra v1.2.0
@@ -26,6 +28,7 @@ require (
 	github.com/spf13/pflag v1.0.9
 	github.com/stretchr/testify v1.11.1
 	github.com/zalando/go-keyring v0.2.8
+	github.com/zeebo/blake3 v0.2.4
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/text v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -63,6 +66,7 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/itchyny/timefmt-go v0.1.7 // indirect
+	github.com/klauspost/cpuid/v2 v2.0.12 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
@@ -81,3 +85,5 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 )
+
+replace github.com/basetenlabs/baseten-go => ../baseten-go

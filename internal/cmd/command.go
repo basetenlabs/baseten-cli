@@ -250,6 +250,17 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				return nil
 			}
 
+			// A cancelled command context means the user interrupted the run
+			// (Ctrl-C / SIGTERM). Report it plainly and exit with the signal
+			// convention rather than classifying the incidental error as a
+			// generic failure. Gated on the context, not the error's identity:
+			// only an actual interrupt should be treated this way.
+			if ctx.Err() != nil {
+				fmt.Fprintln(options.Stderr, "Canceled.")
+				ctx.ExitWithCode(int(cmd.ExitInterrupted))
+				return nil
+			}
+
 			// Render the error and set exit code.
 			ce := normalizeError(runErr)
 			c.SilenceErrors = true
@@ -268,13 +279,14 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 
 // validateOutput panics if a leaf command's Output is malformed: missing
 // examples, or a JQExample whose Command doesn't actually invoke --jq.
-// Leaves with DisableFlagParsing are exempt from the JQExample requirement
-// since --jq is not honored when the framework doesn't parse flags.
+// Leaves with DisableFlagParsing, or whose JSON output is marked unimportant,
+// are exempt from the JQExample requirement since --jq is not honored (or not
+// useful) for them.
 func validateOutput(path string, def cmd.Command) {
 	if len(def.Output.ExampleList()) == 0 {
 		panic(fmt.Sprintf("command %q Output requires at least one example", path))
 	}
-	if def.DisableFlagParsing {
+	if def.DisableFlagParsing || def.Output.JSONOutputUnimportantBool() {
 		return
 	}
 	if def.Output.JQ().Command == "" {
