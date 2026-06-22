@@ -131,7 +131,10 @@ func commandModelList(ctx *CommandContext, flags *cmd.ModelListFlags) error {
 			m.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	ctx.OutputTable([]string{"ID", "NAME", "TEAM", "DEPLOYMENTS", "CREATED"}, rows)
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"ID", "NAME", "TEAM", "DEPLOYMENTS", "CREATED"},
+		Rows:    rows,
+	})
 	return nil
 }
 
