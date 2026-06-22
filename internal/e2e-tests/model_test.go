@@ -303,8 +303,8 @@ func (l *lifecycle) Logs(t *testing.T) {
 		return lines
 	}
 
-	// Loki can lag a few seconds after the deployment goes ACTIVE; poll until
-	// the info marker lands.
+	// Loki can lag well past the deployment going ACTIVE before the load()
+	// log lines are queryable; poll generously until the info marker lands.
 	var lines []logLine
 	require.Eventually(t, func() bool {
 		got, err := l.collectLogs(t)
@@ -313,7 +313,7 @@ func (l *lifecycle) Logs(t *testing.T) {
 		}
 		lines = got
 		return contains(lines, e2eLogInfoWord)
-	}, 10*time.Second, time.Second, "info log line never appeared")
+	}, 90*time.Second, 3*time.Second, "info log line never appeared")
 
 	t.Run("AllLevels", func(t *testing.T) {
 		require.True(t, contains(lines, e2eLogInfoWord), "info line missing")
