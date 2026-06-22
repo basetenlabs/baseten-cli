@@ -45,7 +45,7 @@ type lifecycle struct {
 }
 
 // newLifecycle runs the env-gate, materializes the truss source, performs the
-// initial --promote push, and registers cleanup. Fatals on setup failure so
+// initial push to production, and registers cleanup. Fatals on setup failure so
 // sub-tests can assume valid state.
 func newLifecycle(t *testing.T) *lifecycle {
 	apiKey := os.Getenv("BASETEN_E2E_TEST_API_KEY")
@@ -80,7 +80,7 @@ func newLifecycle(t *testing.T) *lifecycle {
 		}
 	})
 
-	pushOut := mustCLI(t, "model", "push", "--dir", l.modelDir, "--promote", "--wait", "--output", "json")
+	pushOut := mustCLI(t, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
 	var initial pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(pushOut), &initial))
 	require.Equal(t, l.modelName, initial.Model.Name)
@@ -426,7 +426,7 @@ func (l *lifecycle) ModelPredict(t *testing.T) {
 }
 
 func (l *lifecycle) Redeploy(t *testing.T) {
-	out := mustCLI(t, "model", "push", "--dir", l.modelDir, "--promote", "--wait", "--output", "json")
+	out := mustCLI(t, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
 	var redeploy pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(out), &redeploy))
 	require.Equal(t, l.modelID, redeploy.Model.ID, "redeploy should reuse existing model")

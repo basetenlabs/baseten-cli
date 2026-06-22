@@ -34,9 +34,6 @@ func init() {
 }
 
 func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
-	if flags.Promote && flags.Environment != "" {
-		return cmd.NewErrUsagef("--promote and --environment are mutually exclusive")
-	}
 	if flags.Watch || flags.WatchHotReload || flags.WatchKeepalive {
 		return errors.New("--watch, --watch-hot-reload, and --watch-keepalive are not yet implemented")
 	}
@@ -260,11 +257,7 @@ func applyModelPushEnvironmentFlags(deployment *managementapi.DeploymentArchiveP
 		name := flags.DeploymentName
 		deployment.DeploymentName = &name
 	}
-	switch {
-	case flags.Promote:
-		env := "production"
-		deployment.EnvironmentName = &env
-	case flags.Environment != "":
+	if flags.Environment != "" {
 		env := flags.Environment
 		deployment.EnvironmentName = &env
 	}
