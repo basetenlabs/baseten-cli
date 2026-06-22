@@ -229,12 +229,10 @@ var commandModelDeployment = Command{
 			Name:    "metrics",
 			Summary: "Fetch metrics for a deployment",
 			Description: "Fetch metrics for a model deployment.\n\n" +
-				"--mode current (the default) returns an instantaneous snapshot; summary " +
-				"aggregates a window into a single value per metric; series returns evenly-" +
-				"spaced points across a window, drawn as sparklines (use --no-chart for a " +
-				"per-step table). Scope the window with --start/--end or --since (max 7 days); " +
-				"only meaningful for summary and series. Restrict to specific metrics with " +
-				"repeated --metric; omitted returns the default set.",
+				"--mode selects what you get back: a current snapshot, a windowed " +
+				"summary, or a series; see its flag help for details. Scope the window " +
+				"with --start/--end or --since (max 7 days), which only apply to " +
+				"summary and series.",
 			Flags: ModelDeploymentMetricsFlags{},
 			Output: &CommandOutput[managementapi.GetDeploymentMetricsResponse]{
 				TextDescription: "For current/summary, a table with columns METRIC, one column per " +

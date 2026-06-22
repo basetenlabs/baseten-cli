@@ -94,7 +94,7 @@ func commandModelDeploymentMetrics(ctx *CommandContext, flags *cmd.ModelDeployme
 
 	// current is a point-in-time snapshot with no window. For the windowed modes,
 	// report the resolved window (the server backfills a missing bound and it may
-	// be historical) on stderr so it stays out of the table/JSON on stdout.
+	// be historical) on stderr so it stays out of the table on stdout.
 	if resp.Mode != managementapi.DeploymentMetricMode_CURRENT {
 		ctx.LogLine(deploymentMetricsWindowLine(resp))
 	}
@@ -286,7 +286,12 @@ func deploymentMetricsLabelKeys(descriptors []managementapi.DeploymentMetricDesc
 	seen := map[string]bool{}
 	for _, d := range descriptors {
 		for _, labelSet := range d.LabelSets {
+			labelKeys := make([]string, 0, len(labelSet))
 			for k := range labelSet {
+				labelKeys = append(labelKeys, k)
+			}
+			slices.Sort(labelKeys)
+			for _, k := range labelKeys {
 				if !seen[k] {
 					seen[k] = true
 					keys = append(keys, k)
