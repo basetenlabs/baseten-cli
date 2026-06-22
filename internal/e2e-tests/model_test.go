@@ -30,6 +30,7 @@ func TestE2EModelLifecycle(t *testing.T) {
 	t.Run("Logs", l.Logs)
 	t.Run("Environment", l.Environment)
 	t.Run("ModelPredict", l.ModelPredict)
+	t.Run("Metrics", l.Metrics)
 	t.Run("Redeploy", l.Redeploy)
 	t.Run("Delete", l.Delete)
 }
@@ -422,6 +423,48 @@ func (l *lifecycle) ModelPredict(t *testing.T) {
 			concat = append(concat, b...)
 		}
 		require.Equal(t, []byte("alphabetagamma"), concat)
+	})
+}
+
+func (l *lifecycle) Metrics(t *testing.T) {
+	type metricsResp struct {
+		Mode              string `json:"mode"`
+		MetricDescriptors []struct {
+			Name string `json:"name"`
+		} `json:"metric_descriptors"`
+	}
+	hasDescriptor := func(r metricsResp, name string) bool {
+		for _, d := range r.MetricDescriptors {
+			if d.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	// current is a point-in-time snapshot. baseten_replicas_active is always
+	// registered for a deployment, so the descriptor must appear; its value may
+	// be 0, so this asserts shape only, never a value.
+	t.Run("Current", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "metrics",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--output", "json")
+		var resp metricsResp
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, "CURRENT", resp.Mode)
+		require.True(t, hasDescriptor(resp, "baseten_replicas_active"),
+			"baseten_replicas_active missing from current snapshot")
+	})
+
+	// series exercises the windowed path; assert only the envelope shape (mode +
+	// descriptors present), not values, which may be empty this soon after deploy.
+	t.Run("Series", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "metrics",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID,
+			"--mode", "series", "--since", "1h", "--output", "json")
+		var resp metricsResp
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, "SERIES", resp.Mode)
+		require.NotEmpty(t, resp.MetricDescriptors)
 	})
 }
 

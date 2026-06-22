@@ -225,6 +225,42 @@ var commandModelDeployment = Command{
 				},
 			},
 		},
+		{
+			Name:    "metrics",
+			Summary: "Fetch metrics for a deployment",
+			Description: "Fetch metrics for a model deployment.\n\n" +
+				"--mode selects what you get back: a current snapshot, a windowed " +
+				"summary, or a series; see its flag help for details. Scope the window " +
+				"with --start/--end or --since (max 7 days), which only apply to " +
+				"summary and series.",
+			Flags: ModelDeploymentMetricsFlags{},
+			Output: &CommandOutput[managementapi.GetDeploymentMetricsResponse]{
+				TextDescription: "For current/summary, a table with columns METRIC, one column per " +
+					"label dimension (e.g. QUANTILE, STAT), and VALUE; summary COUNTER values show " +
+					"\"total (rate/s)\". For series, a sparkline per metric label set with its " +
+					"min-max range and end value, or a per-step table under --no-chart.",
+				JSONDescription: "The metrics response: metric_descriptors, index-mapped metric_values, " +
+					"the resolved mode, and the returned window.",
+				Examples: []CommandExample{
+					{
+						Description: "Show a current snapshot of the default metrics.",
+						Command:     "baseten model deployment metrics --model-name <model-name> --deployment-id <deployment-id>",
+					},
+					{
+						Description: "Summarize request volume and latency over the last hour.",
+						Command:     "baseten model deployment metrics --model-id <model-id> --deployment-id <deployment-id> --mode summary --since 1h --metric baseten_inference_requests_total --metric baseten_end_to_end_response_time_seconds",
+					},
+					{
+						Description: "Plot a series over the last 6 hours.",
+						Command:     "baseten model deployment metrics --model-id <model-id> --deployment-id <deployment-id> --mode series --since 6h",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the metric names returned.",
+					Command:     "baseten model deployment metrics --model-id <model-id> --deployment-id <deployment-id> --jq '.metric_descriptors[].name'",
+				},
+			},
+		},
 		commandModelDeploymentReplica,
 	},
 }
@@ -322,4 +358,20 @@ type ModelDeploymentLogsFlags struct {
 	SearchPattern string   `flag:"search-pattern" desc:"RE2 regular expression matched against the log message. Prefer --includes and --excludes for plain substring matches."`
 	Replica       string   `flag:"replica" desc:"Only return logs emitted by this replica (5-char short ID)."`
 	RequestID     string   `flag:"request-id" desc:"Only return logs tagged with this inference request ID."`
+}
+
+// ModelDeploymentMetricsFlags configures `baseten model deployment metrics`.
+type ModelDeploymentMetricsFlags struct {
+	CommandFlags
+	ModelDeploymentIDFlags
+
+	Mode string `flag:"mode" desc:"Aggregation mode. 'current' returns an instantaneous snapshot at now; 'summary' aggregates the whole window into one value per metric; 'series' returns evenly-spaced points across the window. --start/--end/--since are only meaningful for summary and series." enum:"current,summary,series" default:"current"`
+
+	Start time.Time     `flag:"start" desc:"Start of the metrics time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. If omitted, the server defaults the start to one hour before the end. Window must be at most 7 days."`
+	End   time.Time     `flag:"end" desc:"End of the metrics time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. If omitted, the server defaults the end to now. Window must be at most 7 days."`
+	Since time.Duration `flag:"since" desc:"Shortcut for a window from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
+
+	Metric []string `flag:"metric" desc:"Name of a metric to return; see https://docs.baseten.co/observability/export-metrics/supported-metrics for the available names. May be repeated. When omitted, a default set is returned."`
+
+	NoChart bool `flag:"no-chart" desc:"For --mode series, emit a per-step table instead of sparklines."`
 }
