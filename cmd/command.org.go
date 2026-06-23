@@ -1,6 +1,10 @@
 package cmd
 
-import "github.com/basetenlabs/baseten-go/client/managementapi"
+import (
+	"time"
+
+	"github.com/basetenlabs/baseten-go/client/managementapi"
+)
 
 var commandOrg = Command{
 	Name:        "org",
@@ -93,17 +97,30 @@ var commandOrg = Command{
 				{
 					Name:    "usage",
 					Summary: "Show billing usage summary",
-					Description: "Show a billing usage summary for the organization. Pass --since (relative " +
+					Description: "Show a billing usage summary for the organization, broken down into " +
+						"dedicated deployments, model APIs, and training. Pass --since (relative " +
 						"duration, e.g. 7d, 24h) for a sliding window ending now, or --start and --end " +
 						"together for an explicit ISO 8601 range. The two modes are mutually exclusive. The " +
-						"range cannot exceed 31 days. Defaults to --since 7d.",
+						"range cannot exceed 31 days and cannot start before 2026-01-01 UTC. Defaults " +
+						"to --since 7d.",
 					Flags: OrgBillingUsageFlags{},
-					Output: &CommandOutput[JSONAny]{
-						TextDescription: "Not yet implemented. The output shape is TBD.",
+					Output: &CommandOutput[managementapi.UsageSummary]{
+						TextDescription: "The resolved window on stderr, then a table on stdout with one row " +
+							"per category present (Dedicated, Model APIs, Training), plus an \"All\" total row " +
+							"when more than one category is present, with columns CATEGORY, MINUTES, TOTAL, " +
+							"CREDITS, SUBTOTAL. Costs are in USD; SUBTOTAL is the net cost after credits. Prints " +
+							"\"No usage in the selected window.\" to stderr when every category is absent.",
+						JSONDescription: "The usage summary: optional dedicated_usage, model_apis_usage, and " +
+							"training_usage objects, each with total/credits_used/subtotal costs and a " +
+							"per-resource breakdown whose items each carry an optional daily series.",
 						Examples: []CommandExample{
 							{
 								Description: "Show usage over the last 7 days (default).",
 								Command:     "baseten org billing usage",
+							},
+							{
+								Description: "Show usage over the last 30 days.",
+								Command:     "baseten org billing usage --since 30d",
 							},
 							{
 								Description: "Show usage over an explicit ISO 8601 range.",
@@ -111,8 +128,8 @@ var commandOrg = Command{
 							},
 						},
 						JQExample: CommandExample{
-							Description: "Print a top-level total (shape TBD).",
-							Command:     "baseten org billing usage --jq '.total'",
+							Description: "Print the total cost of model API usage.",
+							Command:     "baseten org billing usage --jq '.model_apis_usage.total'",
 						},
 					},
 				},
@@ -220,9 +237,9 @@ type OrgAPIKeyDeleteFlags struct {
 type OrgBillingUsageFlags struct {
 	CommandFlags
 
-	Since string `flag:"since" desc:"Relative window ending now, as a Go duration (e.g. 7d, 24h). Mutually exclusive with --start/--end." default:"7d"`
-	Start string `flag:"start" desc:"Start of the window (ISO 8601). Requires --end. Mutually exclusive with --since."`
-	End   string `flag:"end" desc:"End of the window (ISO 8601). Requires --start. Mutually exclusive with --since."`
+	Since time.Duration `flag:"since" desc:"Relative window ending now (e.g. 24h, 7d). Used when neither --start nor --end is given. Maximum 31d. Mutually exclusive with --start/--end."`
+	Start time.Time     `flag:"start" desc:"Start of the window. Accepts ISO 8601 (e.g. '2026-05-01', '2026-05-01T12:00:00Z'); values without a timezone are interpreted in the local timezone. Requires --end. Mutually exclusive with --since."`
+	End   time.Time     `flag:"end" desc:"End of the window. Accepts ISO 8601; values without a timezone are interpreted in the local timezone. Requires --start. Mutually exclusive with --since."`
 }
 
 type OrgSecretListFlags struct {

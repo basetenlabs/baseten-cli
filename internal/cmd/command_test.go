@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 
@@ -95,9 +96,16 @@ func (h *CommandHarness) MockManagementAPI() *MockManagementAPI {
 
 // MockAPICall captures a single request received by MockManagementAPI.
 type MockAPICall struct {
-	Method string
-	Path   string
-	Body   string
+	Method   string
+	Path     string
+	RawQuery string
+	Body     string
+}
+
+// Query parses RawQuery into url.Values.
+func (c *MockAPICall) Query() url.Values {
+	v, _ := url.ParseQuery(c.RawQuery)
+	return v
 }
 
 // BodyJSON parses Body as a JSON object. Returns an empty map if Body is empty.
@@ -133,7 +141,7 @@ func (m *MockManagementAPI) serve(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 
 	m.mu.Lock()
-	m.calls = append(m.calls, MockAPICall{Method: r.Method, Path: r.URL.Path, Body: string(raw)})
+	m.calls = append(m.calls, MockAPICall{Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery, Body: string(raw)})
 	handler, ok := m.routes[r.Method+" "+r.URL.Path]
 	if !ok {
 		handler = m.fallback
