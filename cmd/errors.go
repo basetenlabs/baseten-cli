@@ -20,6 +20,9 @@ const (
 	ExitNotFound   ExitCode = 4
 	ExitValidation ExitCode = 5
 	ExitServer     ExitCode = 6
+	// ExitInterrupted is returned when the command's context is cancelled
+	// (Ctrl-C / SIGTERM). 128 + SIGINT(2), the conventional shell convention.
+	ExitInterrupted ExitCode = 130
 )
 
 // CommandError is implemented by typed errors a command may return. The

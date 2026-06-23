@@ -43,6 +43,37 @@ var commandModel = Command{
 			},
 		},
 		{
+			Name:      "watch",
+			ArgsUsage: "[--dir DIR]",
+			Summary:   "Watch a model directory and live-patch its development deployment",
+			Description: "Watch a model directory and patch the model's development deployment " +
+				"in place on every change, skipping a full rebuild.\n\n" +
+				"The current directory is used by default; pass --dir to watch a model " +
+				"directory at another path. The model is identified by the `model_name` " +
+				"field in that directory's config.yaml, like 'baseten model push'.\n\n" +
+				"The model must already have a development deployment; if it does not, " +
+				"run 'baseten model push --develop' (or 'baseten model push --watch') first.\n\n" +
+				"Runs until interrupted. Some changes cannot be expressed as a patch " +
+				"(removing config.yaml, or any change under the data directory); the " +
+				"watcher reports these and you must re-push.",
+			Flags: ModelWatchFlags{},
+			Output: &CommandOutput[JSONUndefined]{
+				JSONOutputUnimportant: true,
+				TextDescription: "Streams patch and sync status to stderr as changes are applied. " +
+					"Runs until interrupted and produces no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Watch the current directory against its model's development deployment.",
+						Command:     "baseten model watch",
+					},
+					{
+						Description: "Watch another directory and hot-reload on model-code changes.",
+						Command:     "baseten model watch --dir ./my-model --hot-reload",
+					},
+				},
+			},
+		},
+		{
 			Name:        "list",
 			Summary:     "List models",
 			Description: "List Baseten models.",
@@ -192,9 +223,11 @@ type ModelPushFlags struct {
 	Tail bool `flag:"tail" desc:"Stream build and runtime logs to stderr after pushing. Logs are always text-formatted; use 'baseten model deployment logs --tail' for structured log streaming."`
 	Wait bool `flag:"wait" desc:"Block until the deployment is active. Exits non-zero on a terminal-failure status."`
 
-	Watch          bool `flag:"watch" desc:"Watch the model directory and push on change. (not yet implemented)"`
-	WatchHotReload bool `flag:"watch-hot-reload" desc:"Hot-reload the running container on watched changes. (not yet implemented)"`
-	WatchKeepalive bool `flag:"watch-keepalive" desc:"Keep the watcher alive after the deployment exits. (not yet implemented)"`
+	Develop bool `flag:"develop" desc:"Push as a development deployment: the model's single mutable dev slot, created if absent and overwritten in place otherwise. Incompatible with --environment and --deployment-name."`
+
+	Watch            bool `flag:"watch" desc:"After pushing, watch the model directory and live-patch the development deployment on change. Implies --develop."`
+	WatchHotReload   bool `flag:"watch-hot-reload" desc:"With --watch, hot-reload the running container when every change is to model code; mixed changes fall back to a cold patch."`
+	WatchNoKeepalive bool `flag:"watch-no-keepalive" desc:"With --watch, let the development deployment scale to zero while watching. By default it is kept warm by periodic pings."`
 
 	DeployTimeout string `flag:"deploy-timeout" desc:"Deployment timeout as a Go duration (e.g. 30m, 1h); allowed range 10m to 24h."`
 
@@ -202,6 +235,18 @@ type ModelPushFlags struct {
 	OverrideEnvInstanceType bool   `flag:"override-env-instance-type" desc:"Use this deployment's instance type instead of preserving the target environment's. Only meaningful when an environment is targeted."`
 
 	DisableArchiveDownload bool `flag:"disable-archive-download" desc:"Disable archive download for the new model. Only valid for new models."`
+}
+
+// ModelWatchFlags configures `baseten model watch`.
+type ModelWatchFlags struct {
+	CommandFlags
+
+	Dir string `flag:"dir" desc:"Model directory to watch. Defaults to the current directory." default:"."`
+
+	Team string `flag:"team" desc:"Team the model belongs to. Use to disambiguate when the same model_name exists in multiple teams."`
+
+	HotReload   bool `flag:"hot-reload" desc:"Hot-reload the running container when every change is to model code; mixed changes fall back to a cold patch."`
+	NoKeepalive bool `flag:"no-keepalive" desc:"Let the development deployment scale to zero while watching. By default it is kept warm by periodic pings."`
 }
 
 // ModelListFlags configures `baseten model list`.

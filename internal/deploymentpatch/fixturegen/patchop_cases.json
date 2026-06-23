@@ -1,0 +1,242 @@
+[
+  {
+    "name": "model_code_add_update_remove",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/__init__.py": "",
+        "model/model.py": "x = 1\n",
+        "model/old.py": "remove me\n",
+        "model/__pycache__/model.cpython-311.pyc": "old bytecode\n",
+        ".DS_Store": "old cruft\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/__init__.py": "",
+        "model/model.py": "x = 2\n",
+        "model/new.py": "added\n",
+        "model/__pycache__/model.cpython-311.pyc": "new bytecode churns but is ignored\n",
+        ".DS_Store": "new cruft churns but is ignored\n"
+      }
+    }
+  },
+  {
+    "name": "model_code_binary_content_bytes",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n"
+      },
+      "binary_files": {
+        "model/weights.bin": "AAECAwQF/v38+/r5"
+      }
+    }
+  },
+  {
+    "name": "model_code_crlf_newlines_normalized",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\r\nfoo = 2\r\n"
+      }
+    }
+  },
+  {
+    "name": "package_add_update_remove",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n",
+        "packages/util/__init__.py": "",
+        "packages/util/helper.py": "y = 1\n",
+        "packages/util/old.py": "remove me\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n",
+        "packages/util/__init__.py": "",
+        "packages/util/helper.py": "y = 2\n",
+        "packages/util/added.py": "added\n"
+      }
+    }
+  },
+  {
+    "name": "config_scalar_change_only",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py312\n",
+        "model/model.py": "x = 1\n"
+      }
+    }
+  },
+  {
+    "name": "env_var_add_update_remove",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\nenvironment_variables:\n  KEEP: same\n  CHANGE: old\n  GONE: bye\n",
+        "model/model.py": "x = 1\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\nenvironment_variables:\n  KEEP: same\n  CHANGE: new\n  ADDED: hello\n",
+        "model/model.py": "x = 1\n"
+      }
+    }
+  },
+  {
+    "name": "external_data_add_remove",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\nexternal_data:\n  - url: https://a.example/a\n    local_data_path: a.txt\n  - url: https://b.example/b\n    local_data_path: b.txt\n    backend: http_public\n    name: bee\n",
+        "model/model.py": "x = 1\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\nexternal_data:\n  - url: https://b.example/b\n    local_data_path: b.txt\n    name: bee\n  - url: https://c.example/c\n    local_data_path: c.txt\n",
+        "model/model.py": "x = 1\n"
+      }
+    }
+  },
+  {
+    "name": "requirements_inline_add_update_remove",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\nrequirements:\n  - requests==2.31.0\n  - numpy>=1.0\n  - oldpkg==1.0\n  - git+https://github.com/foo/bar.git#egg=bar\n  - https://example.com/old.whl\n",
+        "model/model.py": "x = 1\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\nrequirements:\n  - requests==2.32.0\n  - numpy>=1.0\n  - newpkg==2.0\n",
+        "model/model.py": "x = 1\n"
+      }
+    }
+  },
+  {
+    "name": "requirements_file_change_no_config_op",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\nrequirements_file: requirements.txt\n",
+        "requirements.txt": "requests==2.31.0\noldpkg==1.0\n",
+        "model/model.py": "x = 1\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\nrequirements_file: requirements.txt\n",
+        "requirements.txt": "requests==2.32.0\nnewpkg==2.0\n",
+        "model/model.py": "x = 1\n"
+      }
+    }
+  },
+  {
+    "name": "data_dir_change_needs_full_deploy",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n",
+        "data/asset.txt": "old\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n",
+        "data/asset.txt": "new\n"
+      }
+    }
+  },
+  {
+    "name": "no_changes_identical",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\nrequirements:\n  - requests==2.31.0\n",
+        "model/model.py": "x = 1\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\nrequirements:\n  - requests==2.31.0\n",
+        "model/model.py": "x = 1\n"
+      }
+    }
+  },
+  {
+    "name": "truss_ignore_changes_ignored",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        ".truss_ignore": "*.tmp\n",
+        "model/model.py": "x = 1\n",
+        "model/cache.tmp": "old scratch\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        ".truss_ignore": "*.tmp\n",
+        "model/model.py": "x = 2\n",
+        "model/cache.tmp": "new scratch ignored by .truss_ignore\n"
+      }
+    }
+  },
+  {
+    "name": "truss_ignore_added_pattern_suppresses_removal",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n",
+        "model/keep.tmp": "tracked before the ignore pattern existed\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        ".truss_ignore": "*.tmp\n",
+        "model/model.py": "x = 1\n",
+        "model/keep.tmp": "tracked before the ignore pattern existed\n"
+      }
+    }
+  },
+  {
+    "name": "outside_change_ignored",
+    "prev": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n",
+        "notes.txt": "old notes\n"
+      }
+    },
+    "next": {
+      "files": {
+        "config.yaml": "model_name: m\npython_version: py311\n",
+        "model/model.py": "x = 1\n",
+        "notes.txt": "new notes\n"
+      }
+    }
+  }
+]

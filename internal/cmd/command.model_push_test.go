@@ -614,3 +614,85 @@ func Test_Model_Push_TailWarmup404(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "online")
 	h.Require.GreaterOrEqual(logsCall, 3, "two 404s plus one success")
 }
+
+// addPushWatchRoutes points the inference base at the mock and registers the
+// patch-loop routes against the deployment the push harness creates.
+func addPushWatchRoutes(h *modelPushHarness) {
+	h.T.Setenv("BASETEN_INFERENCE_BASE_URL_OVERRIDE", h.API.URL)
+	h.API.SetRoute("GET", watchDepPath, 200, deploymentResponse("ACTIVE"))
+	h.API.SetRoute("GET", watchStatePath, 200, map[string]any{
+		"running_patch_point": map[string]any{
+			"config": "", "content_hashes": map[string]any{}, "hash": "h0",
+		},
+	})
+	h.API.SetRoute("POST", watchStagePath, 200, map[string]any{
+		"patch_point": map[string]any{
+			"config": "", "content_hashes": map[string]any{}, "hash": "h1",
+		},
+	})
+	h.API.SetRoute("POST", watchSyncPath, 200, map[string]any{})
+}
+
+// --develop (without --watch) sets is_development on the deployment payload and
+// otherwise pushes normally.
+func Test_Model_Push_Develop_SetsIsDevelopment(t *testing.T) {
+	h := newModelPushHarness(t)
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--develop"))
+
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
+	h.Require.NotNil(prep)
+	dep := prep.BodyJSON(h.T)["deployment"].(map[string]any)
+	h.Require.Equal(true, dep["is_development"])
+}
+
+func Test_Model_Push_WatchValidation(t *testing.T) {
+	t.Run("watch_and_environment", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		err := h.Execute("model", "push", "--dir", dir, "--watch", "--environment", "production")
+		h.Require.ErrorContains(err, "cannot be combined with --environment")
+	})
+
+	t.Run("hot_reload_requires_watch", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		err := h.Execute("model", "push", "--dir", dir, "--watch-hot-reload")
+		h.Require.ErrorContains(err, "require --watch")
+	})
+}
+
+// push --watch with a development deployment that never becomes ready fails out
+// of the watch loop, and because the loop errored no JSON result is written to
+// stdout (the success document must not precede a failed watch).
+func Test_Model_Push_Watch_ReadinessFailureNoJSON(t *testing.T) {
+	h := newModelPushHarness(t)
+	addPushWatchRoutes(h)
+	h.API.SetRoute("GET", watchDepPath, 200, deploymentResponse("BUILD_FAILED"))
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--watch", "--output", "json")
+	h.Require.Error(err)
+	h.Require.Contains(h.Stderr.String(), "not ready")
+	h.Require.Zero(h.Stdout.Len(), "no JSON result on a failed watch")
+
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
+	h.Require.NotNil(prep)
+	dep := prep.BodyJSON(h.T)["deployment"].(map[string]any)
+	h.Require.Equal(true, dep["is_development"])
+}
+
+// push --watch pushes a development deployment then enters the patch loop; a
+// simulated Ctrl-C during the first sync ends it as an interrupt.
+func Test_Model_Push_Watch_EntersLoopThenInterrupt(t *testing.T) {
+	h := newModelPushHarness(t)
+	addPushWatchRoutes(h)
+	interruptWatchOnSync(h.CommandHarness, h.API)
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--watch")
+	h.Require.Error(err)
+	h.Require.Equal(130, h.ExitCode)
+	h.Require.NotNil(h.API.FindCall("POST", watchSyncPath))
+	h.Require.Zero(h.Stdout.Len(), "interrupt is not a clean completion")
+}
