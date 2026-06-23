@@ -21,6 +21,7 @@ const (
 	watchStagePath     = "/v1/models/model-123/deployments/deploy-456/patches"
 	watchSyncPath      = "/v1/models/model-123/deployments/deploy-456/patches/sync"
 	watchWakeInference = "/deployment/deploy-456/wake"
+	watchKeepalivePath = "/deployment/deploy-456/sync/v1/models/model"
 )
 
 // newModelWatchHarness wires a CommandHarness to a MockManagementAPI, points the
@@ -146,6 +147,36 @@ func Test_Model_Watch_InitialPatchThenInterrupt(t *testing.T) {
 	h.Require.NotEmpty(ops)
 
 	h.Require.NotNil(m.FindCall("POST", watchSyncPath))
+}
+
+// Keepalive is on by default (Truss parity): the watch loop pings the
+// deployment to prevent scale-to-zero without any flag. Making that first ping
+// cancel the context gives a deterministic, time-independent exit that fires
+// only if the keepalive ran.
+func Test_Model_Watch_KeepaliveOnByDefault(t *testing.T) {
+	h, m, dir := newModelWatchHarness(t)
+	ctx, cancel := context.WithCancel(h.Context)
+	h.Context = ctx
+	m.SetRouteFunc("GET", watchKeepalivePath, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		cancel()
+	})
+
+	err := h.Execute("model", "watch", "--dir", dir)
+	h.Require.Error(err)
+	h.Require.Equal(130, h.ExitCode)
+	h.Require.NotNil(m.FindCall("GET", watchKeepalivePath))
+}
+
+// --no-keepalive opts out: the watch loop never pings the deployment.
+func Test_Model_Watch_NoKeepaliveSkipsPing(t *testing.T) {
+	h, m, dir := newModelWatchHarness(t)
+	interruptWatchOnSync(h, m)
+
+	err := h.Execute("model", "watch", "--dir", dir, "--no-keepalive")
+	h.Require.Error(err)
+	h.Require.Equal(130, h.ExitCode)
+	h.Require.Nil(m.FindCall("GET", watchKeepalivePath))
 }
 
 // A sync that keeps reporting a recoverable failure is retried a bounded number

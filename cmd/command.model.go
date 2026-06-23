@@ -223,11 +223,11 @@ type ModelPushFlags struct {
 	Tail bool `flag:"tail" desc:"Stream build and runtime logs to stderr after pushing. Logs are always text-formatted; use 'baseten model deployment logs --tail' for structured log streaming."`
 	Wait bool `flag:"wait" desc:"Block until the deployment is active. Exits non-zero on a terminal-failure status."`
 
-	Develop bool `flag:"develop" desc:"Push as a development deployment: the model's single mutable dev slot, created if absent and overwritten in place otherwise. Incompatible with --promote, --environment, and --deployment-name."`
+	Develop bool `flag:"develop" desc:"Push as a development deployment: the model's single mutable dev slot, created if absent and overwritten in place otherwise. Incompatible with --environment and --deployment-name."`
 
 	Watch          bool `flag:"watch" desc:"After pushing, watch the model directory and live-patch the development deployment on change. Implies --develop."`
 	WatchHotReload bool `flag:"watch-hot-reload" desc:"With --watch, hot-reload the running container when every change is to model code; mixed changes fall back to a cold patch."`
-	WatchKeepalive bool `flag:"watch-keepalive" desc:"With --watch, keep the development deployment warm (prevent scale-to-zero) by pinging it while watching."`
+	WatchNoKeepalive bool `flag:"watch-no-keepalive" desc:"With --watch, let the development deployment scale to zero while watching. By default it is kept warm by periodic pings."`
 
 	DeployTimeout string `flag:"deploy-timeout" desc:"Deployment timeout as a Go duration (e.g. 30m, 1h); allowed range 10m to 24h."`
 
@@ -246,7 +246,7 @@ type ModelWatchFlags struct {
 	Team string `flag:"team" desc:"Team the model belongs to. Use to disambiguate when the same model_name exists in multiple teams."`
 
 	HotReload bool `flag:"hot-reload" desc:"Hot-reload the running container when every change is to model code; mixed changes fall back to a cold patch."`
-	Keepalive bool `flag:"keepalive" desc:"Keep the development deployment warm (prevent scale-to-zero) by pinging it while watching."`
+	NoKeepalive bool `flag:"no-keepalive" desc:"Let the development deployment scale to zero while watching. By default it is kept warm by periodic pings."`
 }
 
 // ModelListFlags configures `baseten model list`.

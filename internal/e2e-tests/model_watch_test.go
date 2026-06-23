@@ -19,22 +19,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// watchModelPyTmpl is a model whose predict response carries a version token.
-// The watch test rewrites the token on disk and asserts the running
-// development deployment serves the new value, proving the live-patch loop.
-const watchModelPyTmpl = `class Model:
+// watchModelPyTmpl is a model whose predict response carries a version token
+// and the serving process PID. The watch test rewrites the token on disk and
+// asserts the running development deployment serves the new value, proving the
+// live-patch loop; the PID distinguishes a cold patch (process restart, new
+// PID) from a hot reload (in-place module reload, same PID).
+const watchModelPyTmpl = `import os
+
+
+class Model:
     def load(self):
         pass
 
     def predict(self, request):
-        return {"watch_version": %q}
+        return {"watch_version": %q, "pid": os.getpid()}
 `
 
 // TestE2EModelWatch exercises the live-patch loop end to end against a real
 // backend: it pushes a development deployment with --watch, confirms a code
-// change propagates to the running container, then drives the same round-trip
-// through the standalone `model watch` command. Skips when the env vars the
-// lifecycle test uses are absent. Self-contained: its own model and teardown.
+// change propagates to the running container, drives the same round-trip
+// through the standalone `model watch` command, then confirms `--hot-reload`
+// patches in place without restarting the process (same PID). Skips when the
+// env vars the lifecycle test uses are absent. Self-contained: its own model
+// and teardown.
 func TestE2EModelWatch(t *testing.T) {
 	w := newWatchTest(t)
 
@@ -48,25 +55,42 @@ func TestE2EModelWatch(t *testing.T) {
 	// confirm the development deployment serves the original code. The first
 	// predict may race the initial-sync model reload, so allow it generous time.
 	w.resolveModelID(push)
-	w.requireServesVersion(push, "v1", 5*time.Minute)
+	pidV1 := w.requireServesVersion(push, "v1", 5*time.Minute)
 
 	// Mutate the predict response and confirm the push --watch loop patches the
 	// running container. The model is already serving, so propagation is quick.
+	// Without --watch-hot-reload the patch is cold: the process restarts, so the
+	// serving PID must change.
 	w.writeModelPy("v2")
-	w.requireServesVersion(push, "v2", 20*time.Second)
+	pidV2 := w.requireServesVersion(push, "v2", 20*time.Second)
+	require.NotEqual(t, pidV1, pidV2, "a cold patch should restart the model process")
 
 	push.stop(t)
 
 	// Phase 2: standalone `model watch` attaches to the existing development
 	// deployment and patches a further change. It is already built and ACTIVE,
-	// so it reaches the watch loop in seconds (no build or deploy).
+	// so it reaches the watch loop in seconds (no build or deploy). Still cold,
+	// so the PID changes again.
 	watch := w.startWatch("model", "watch", "--dir", w.dir)
 	watch.waitForMarker(t, 30*time.Second)
 
 	w.writeModelPy("v3")
-	w.requireServesVersion(watch, "v3", 20*time.Second)
+	pidV3 := w.requireServesVersion(watch, "v3", 20*time.Second)
+	require.NotEqual(t, pidV2, pidV3, "a cold patch should restart the model process")
 
 	watch.stop(t)
+
+	// Phase 3: standalone `model watch --hot-reload`. A model-code-only change
+	// hot-reloads in place rather than restarting the process, so the new code
+	// is served under the SAME PID.
+	hot := w.startWatch("model", "watch", "--hot-reload", "--dir", w.dir)
+	hot.waitForMarker(t, 30*time.Second)
+
+	w.writeModelPy("v4")
+	pidV4 := w.requireServesVersion(hot, "v4", 20*time.Second)
+	require.Equal(t, pidV3, pidV4, "a hot reload should not restart the model process")
+
+	hot.stop(t)
 }
 
 // watchTest holds the state shared across a single watch run: the model under
@@ -167,8 +191,11 @@ const notReadyPredictMarker = "Model is not ready"
 // as is a successful predict returning a stale version (the patch has not landed
 // yet); any other predict error is fatal. Also fails if the watch exits first or
 // the timeout elapses.
-func (w *watchTest) requireServesVersion(b *bgWatch, want string, timeout time.Duration) {
+// It returns the serving process PID once the wanted version is observed, so
+// callers can assert whether a patch restarted the process (cold) or not (hot).
+func (w *watchTest) requireServesVersion(b *bgWatch, want string, timeout time.Duration) int {
 	w.t.Helper()
+	var pid int
 	b.waitFor(w.t, timeout, time.Second,
 		fmt.Sprintf("development deployment to serve watch_version %q", want), func() bool {
 			out, errOut, err := cli(w.t, "model", "predict",
@@ -181,10 +208,16 @@ func (w *watchTest) requireServesVersion(b *bgWatch, want string, timeout time.D
 			}
 			var r struct {
 				WatchVersion string `json:"watch_version"`
+				PID          int    `json:"pid"`
 			}
 			require.NoError(w.t, json.Unmarshal([]byte(out), &r))
-			return r.WatchVersion == want
+			if r.WatchVersion != want {
+				return false
+			}
+			pid = r.PID
+			return true
 		})
+	return pid
 }
 
 // startWatch launches a blocking watch command in a goroutine. cmd.Execute is

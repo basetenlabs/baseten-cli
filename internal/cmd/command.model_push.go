@@ -44,8 +44,8 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 			return cmd.NewErrUsagef("--develop/--watch cannot be combined with --deployment-name")
 		}
 	}
-	if (flags.WatchHotReload || flags.WatchKeepalive) && !flags.Watch {
-		return cmd.NewErrUsagef("--watch-hot-reload and --watch-keepalive require --watch")
+	if (flags.WatchHotReload || flags.WatchNoKeepalive) && !flags.Watch {
+		return cmd.NewErrUsagef("--watch-hot-reload and --watch-no-keepalive require --watch")
 	}
 
 	prepareReq, buildOpts, err := buildModelPushInputs(flags)
@@ -458,7 +458,7 @@ func watchModelPushDeployment(
 		}()
 	}
 	return runModelWatchLoop(ctx, api, ic, created.Model.Id, created.Deployment.Id,
-		flags.Dir, flags.WatchHotReload, flags.WatchKeepalive)
+		flags.Dir, flags.WatchHotReload, !flags.WatchNoKeepalive)
 }
 
 // tailModelPushDeployment streams build/runtime logs to stderr as text

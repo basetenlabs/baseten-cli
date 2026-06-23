@@ -91,7 +91,7 @@ func commandModelWatch(ctx *CommandContext, flags *cmd.ModelWatchFlags) error {
 	// (push --watch) is already coming up, so only the standalone watch wakes.
 	_ = ic.API().WakeDeployment(ctx, dep.Id)
 
-	return runModelWatchLoop(ctx, api, ic, modelID, dep.Id, flags.Dir, flags.HotReload, flags.Keepalive)
+	return runModelWatchLoop(ctx, api, ic, modelID, dep.Id, flags.Dir, flags.HotReload, !flags.NoKeepalive)
 }
 
 // readModelNameFromConfig reads model_name from the watched directory's
@@ -384,7 +384,7 @@ func (c *CommandContext) startKeepalive(
 	deploymentID string,
 ) {
 	url := ic.API().BaseURL + "/deployment/" + deploymentID + "/sync/v1/models/model"
-	c.LogLine("💤 Keeping development deployment warm (--keepalive)")
+	c.LogLine("💤 Keeping development deployment warm")
 	go runKeepaliveLoop(c, watchCtx, cancel, ic.API().HTTPClient, url)
 }
 

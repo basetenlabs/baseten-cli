@@ -647,11 +647,11 @@ func Test_Model_Push_Develop_SetsIsDevelopment(t *testing.T) {
 }
 
 func Test_Model_Push_WatchValidation(t *testing.T) {
-	t.Run("watch_and_promote", func(t *testing.T) {
+	t.Run("watch_and_environment", func(t *testing.T) {
 		h := newModelPushHarness(t)
 		dir := h.WriteModelDir(modelPushMinimalConfig)
-		err := h.Execute("model", "push", "--dir", dir, "--watch", "--promote")
-		h.Require.ErrorContains(err, "cannot be combined with --promote")
+		err := h.Execute("model", "push", "--dir", dir, "--watch", "--environment", "production")
+		h.Require.ErrorContains(err, "cannot be combined with --environment")
 	})
 
 	t.Run("hot_reload_requires_watch", func(t *testing.T) {
