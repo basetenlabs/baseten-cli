@@ -1,0 +1,114 @@
+[
+  {
+    "config": "model_name: inline-model\npython_version: py311\nrequirements:\n  - requests==2.31.0\n  - numpy>=1.0\n",
+    "content_hashes": {
+      "config.yaml": "99001c8afbcf4fa6094b49ea27a6aa57e8e6d448684c62d03a792d7eaef100ef",
+      "model": null,
+      "model/__init__.py": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+      "model/model.py": "c07c514022f7798a5d6371dadd70e846ca08251ce0579b79dbadf1a42f6e3fd8"
+    },
+    "name": "simple_model_inline_requirements",
+    "requirements": []
+  },
+  {
+    "config": "model_name: pip-model\npython_version: py311\nrequirements_file: requirements.txt\n",
+    "content_hashes": {
+      "config.yaml": "f94dd7febc54c3606a1610ef85d4c77865570ae0394d2d2c55a986a59bbcc20a",
+      "model": null,
+      "model/model.py": "3ceae248eacaf486357192011806a5bf7ebc58462f64e88fa1ddffd9be3cda4b",
+      "requirements.txt": "0832b99056d980734cfa179a8ed2e9e94450a0e5b2f4af503312717f51c68c64"
+    },
+    "name": "pip_requirements_permutations",
+    "requirements": [
+      "requests==2.31.0",
+      "numpy>=1.0",
+      "torch",
+      "flask[async]>=2.0",
+      "mypackage; python_version >= \"3.10\"",
+      "git+https://github.com/foo/bar.git#egg=bar",
+      "https://example.com/pkg.whl"
+    ]
+  },
+  {
+    "config": "model_name: pyproject-model\npython_version: py311\nrequirements_file: pyproject.toml\n",
+    "content_hashes": {
+      "config.yaml": "33ad74dac54afe8c744986e21b60f306f83ca7e1b8a8860397905393683086f7",
+      "model": null,
+      "model/model.py": "3ceae248eacaf486357192011806a5bf7ebc58462f64e88fa1ddffd9be3cda4b",
+      "pyproject.toml": "003af17d5d6c333ad4a88f1df47a79627928fd93acff24cdacd7b78f311dbeb2"
+    },
+    "name": "pyproject_requirements",
+    "requirements": [
+      "requests==2.31.0",
+      "numpy>=1.0",
+      "flask[async]>=2.0",
+      "mypackage; python_version >= '3.10'"
+    ]
+  },
+  {
+    "config": "model_name: uvlock-model\npython_version: py311\nrequirements_file: uv.lock\n",
+    "content_hashes": {
+      "config.yaml": "232e71c23d2dc590496ba6bbd9b822d6081b3881c9faa813359cf086731e4fda",
+      "model": null,
+      "model/model.py": "3ceae248eacaf486357192011806a5bf7ebc58462f64e88fa1ddffd9be3cda4b",
+      "pyproject.toml": "190f1e4c97d4bd713e1df046525dd390aaa1dfedbcd1d2e52190836fd97e5572",
+      "uv.lock": "0c36563b6221a3daa88d361d46f3076fd270b8a497cea9ffac9d15a56651352e"
+    },
+    "name": "uv_lock_resolves_to_sibling_pyproject",
+    "requirements": [
+      "requests==2.31.0",
+      "pydantic>=2"
+    ]
+  },
+  {
+    "config": "model_name: nested-model\npython_version: py311\n",
+    "content_hashes": {
+      "config.yaml": "3042f00c9c6674c1df372bcf3618ce1709ad2bebe0f5a750ce16c4c05f49cf73",
+      "data": null,
+      "model": null,
+      "model/empty_subdir": null,
+      "model/model.py": "3ceae248eacaf486357192011806a5bf7ebc58462f64e88fa1ddffd9be3cda4b",
+      "packages": null,
+      "packages/util": null,
+      "packages/util/__init__.py": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+      "packages/util/helper.py": "ba31bad797c8b6c2e85c68a33dfb78cafd558c7d712c3d8904015506a01b9f9b"
+    },
+    "name": "nested_dirs_and_empty_dir",
+    "requirements": []
+  },
+  {
+    "config": "model_name: ignore-model\npython_version: py311\n",
+    "content_hashes": {
+      ".truss_ignore": "7244248684caf81bd902a0a1ebfef7fc0c6dac032e63ce9757fe683990ae7a22",
+      "config.yaml": "f5c55cd2290e0a0cc89f77ec582b3a12cb98b9114537901afb4b9562f2f55501",
+      "keep.txt": "619354140c6cbd02dbc004c504bbac11a276f439cb79c5ace6069d3e7a5400dc",
+      "model": null,
+      "model/model.py": "3ceae248eacaf486357192011806a5bf7ebc58462f64e88fa1ddffd9be3cda4b",
+      "secrets": null
+    },
+    "name": "truss_ignore_file",
+    "requirements": []
+  },
+  {
+    "config": "model_name: default-ignore-model\npython_version: py311\n",
+    "content_hashes": {
+      "config.yaml": "5bf0d509afe5f41124f639ea475e91fe7b319bea5d8349240134ffc6e0e4e494",
+      "keep.py": "619354140c6cbd02dbc004c504bbac11a276f439cb79c5ace6069d3e7a5400dc",
+      "model": null,
+      "model/__pycache__": null,
+      "model/model.py": "3ceae248eacaf486357192011806a5bf7ebc58462f64e88fa1ddffd9be3cda4b"
+    },
+    "name": "default_ignore_patterns",
+    "requirements": []
+  },
+  {
+    "config": "model_name: binary-model\npython_version: py311\n",
+    "content_hashes": {
+      "config.yaml": "9dfd26960a0d94ba705945bc25dc06b3b65e3ea2d691acdf8becfe8d94e7c5ae",
+      "model": null,
+      "model/weights.bin": "1aa258e103fb2fa92726a7362b0309e788433c4f38edf836ce88bf925d3f0603"
+    },
+    "name": "binary_file_content",
+    "requirements": []
+  }
+]

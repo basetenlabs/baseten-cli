@@ -9,16 +9,15 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/deploymentpatch"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/basetenlabs/baseten-go/client/modelarchive"
-	gitignore "github.com/sabhiram/go-gitignore"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,13 +33,32 @@ func init() {
 }
 
 func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
-	if flags.Watch || flags.WatchHotReload || flags.WatchKeepalive {
-		return errors.New("--watch, --watch-hot-reload, and --watch-keepalive are not yet implemented")
+	// --watch implies --develop: it pushes a development deployment, then loops
+	// patching it in place. A development deployment owns the model's single
+	// mutable dev slot, so the stable-environment flags do not apply.
+	if flags.Develop || flags.Watch {
+		switch {
+		case flags.Environment != "":
+			return cmd.NewErrUsagef("--develop/--watch cannot be combined with --environment")
+		case flags.DeploymentName != "":
+			return cmd.NewErrUsagef("--develop/--watch cannot be combined with --deployment-name")
+		}
+	}
+	if (flags.WatchHotReload || flags.WatchNoKeepalive) && !flags.Watch {
+		return cmd.NewErrUsagef("--watch-hot-reload and --watch-no-keepalive require --watch")
 	}
 
 	prepareReq, buildOpts, err := buildModelPushInputs(flags)
 	if err != nil {
 		return err
+	}
+
+	// Fail fast on a directory we cannot turn into a patch point before
+	// uploading anything, so a bad --watch target errors before the push.
+	if flags.Watch {
+		if _, err := deploymentpatch.BuildPatchPoint(ctx, deploymentpatch.BuildPatchPointOptions{Dir: flags.Dir}); err != nil {
+			return err
+		}
 	}
 
 	api, err := ctx.NewManagementClient()
@@ -81,6 +99,8 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	}
 
 	switch {
+	case flags.Watch:
+		err = watchModelPushDeployment(ctx, api.API(), created, flags)
 	case flags.Tail:
 		err = tailModelPushDeployment(ctx, api.API(), created, flags.Wait)
 	case flags.Wait:
@@ -92,7 +112,9 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	if err := writeModelPushResult(ctx, created, prepareReq.Deployment.EnvironmentName); err != nil {
 		return err
 	}
-	if (flags.Tail || flags.Wait) && created.Deployment.Status != managementapi.DeploymentStatus_ACTIVE {
+	// The watch loop runs until interrupted, so its exit is never a deployment
+	// failure; only the one-shot tail/wait paths classify the settled status.
+	if !flags.Watch && (flags.Tail || flags.Wait) && created.Deployment.Status != managementapi.DeploymentStatus_ACTIVE {
 		return fmt.Errorf("failed deployment status: %s", created.Deployment.Status)
 	}
 	return nil
@@ -110,10 +132,7 @@ func buildModelPushInputs(flags *cmd.ModelPushFlags) (*managementapi.PrepareMode
 	buildOpts := modelarchive.BuildModelArchiveOptions{
 		Dir: flags.Dir,
 		IgnoreFileProcessor: func(_ context.Context, opts modelarchive.IgnoreFileProcessorOptions) (modelarchive.IgnoreFileFunc, error) {
-			gi := gitignore.CompileIgnoreLines(strings.Split(string(opts.Contents), "\n")...)
-			return func(_ context.Context, e modelarchive.IgnoreFileOptions) (bool, error) {
-				return gi.MatchesPath(e.RelPath), nil
-			}, nil
+			return deploymentpatch.CompileTrussIgnore(opts.Contents), nil
 		},
 	}
 
@@ -140,6 +159,12 @@ func buildModelPushInputs(flags *cmd.ModelPushFlags) (*managementapi.PrepareMode
 		return nil, buildOpts, err
 	}
 	applyModelPushEnvironmentFlags(&prepareReq.Deployment, flags)
+
+	// --watch implies --develop: both push a development deployment.
+	if flags.Develop || flags.Watch {
+		isDevelopment := true
+		prepareReq.Deployment.IsDevelopment = &isDevelopment
+	}
 
 	return prepareReq, buildOpts, nil
 }
@@ -405,6 +430,37 @@ const (
 	modelPushWarmupTimeout = 30 * time.Second
 )
 
+// watchModelPushDeployment runs the development-deployment patch loop after a
+// push. With --tail the log tail runs concurrently with the watch: it never
+// stops on ACTIVE, so logs keep flowing as patches land. Both observe ctx, so
+// Ctrl-C stops both, and a tail failure is logged without interrupting the
+// watch.
+func watchModelPushDeployment(
+	ctx *CommandContext,
+	api *managementapi.Client,
+	created *managementapi.CreatedModelDeployment,
+	flags *cmd.ModelPushFlags,
+) error {
+	ic, err := ctx.NewInferenceClient(cmd.InferenceClientFlags{ModelID: created.Model.Id})
+	if err != nil {
+		return err
+	}
+	if flags.Tail {
+		// Copy created for the background tail: it runs concurrently with the
+		// watch loop and writes the deployment's final fetched state, which
+		// would race the push result read after the loop. The trade-off is the
+		// result reflects the push, not any status the tail observed later.
+		tailTarget := *created
+		go func() {
+			if err := tailModelPushDeployment(ctx, api, &tailTarget, false); err != nil {
+				ctx.Logf("Log tail stopped: %v\n", err)
+			}
+		}()
+	}
+	return runModelWatchLoop(ctx, api, ic, created.Model.Id, created.Deployment.Id,
+		flags.Dir, flags.WatchHotReload, !flags.WatchNoKeepalive)
+}
+
 // tailModelPushDeployment streams build/runtime logs to stderr as text
 // (regardless of --output) until the deployment reaches a terminal status.
 // When alsoWait is true, ACTIVE is added to the stop set so a successful
@@ -447,12 +503,37 @@ func waitModelPushDeployment(
 	api *managementapi.Client,
 	created *managementapi.CreatedModelDeployment,
 ) error {
+	dep, err := pollDeploymentUntilSettled(ctx, api, created.Model.Id, created.Deployment.Id,
+		func(status managementapi.DeploymentStatus) bool {
+			return status == managementapi.DeploymentStatus_BUILDING ||
+				status == managementapi.DeploymentStatus_DEPLOYING ||
+				status == managementapi.DeploymentStatus_LOADING_MODEL ||
+				status == managementapi.DeploymentStatus_UPDATING
+		})
+	if err != nil {
+		return err
+	}
+	created.Deployment = *dep
+	return nil
+}
+
+// pollDeploymentUntilSettled polls the deployment's status, logging each
+// transition to stderr, until pending reports the status is no longer
+// in-progress, then returns the settled deployment for the caller to classify.
+// A brand-new deployment may 404 for a few seconds after creation; those reads
+// are retried within a warmup window.
+func pollDeploymentUntilSettled(
+	ctx *CommandContext,
+	api *managementapi.Client,
+	modelID, deploymentID string,
+	pending func(managementapi.DeploymentStatus) bool,
+) (*managementapi.Deployment, error) {
 	warmupDeadline := ctx.Now().Add(modelPushWarmupTimeout)
 	warmedUp := false
 	var lastStatus managementapi.DeploymentStatus
 
 	for {
-		dep, err := api.GetModelsDeploymentsDeploymentId(ctx, created.Model.Id, created.Deployment.Id)
+		dep, err := api.GetModelsDeploymentsDeploymentId(ctx, modelID, deploymentID)
 		if err != nil {
 			// Brand-new deployments may 404 for a few seconds after creation;
 			// retry quietly within the warmup window until the first
@@ -460,40 +541,42 @@ func waitModelPushDeployment(
 			var re *managementapi.ResponseError
 			if !warmedUp && errors.As(err, &re) && re.StatusCode == 404 && ctx.Now().Before(warmupDeadline) {
 				if err := ctx.Sleep(modelPushPollInterval); err != nil {
-					return err
+					return nil, err
 				}
 				continue
 			}
-			return err
+			return nil, err
 		}
 		warmedUp = true
 		if dep.Status != lastStatus {
 			ctx.Logf("Status: %s\n", dep.Status)
 			lastStatus = dep.Status
 		}
-		switch dep.Status {
-		case managementapi.DeploymentStatus_BUILDING,
-			managementapi.DeploymentStatus_DEPLOYING,
-			managementapi.DeploymentStatus_LOADING_MODEL,
-			managementapi.DeploymentStatus_UPDATING:
-			// keep polling
-		default:
-			created.Deployment = *dep
-			return nil
+		if !pending(dep.Status) {
+			return dep, nil
 		}
 		if err := ctx.Sleep(modelPushPollInterval); err != nil {
-			return err
+			return nil, err
 		}
 	}
 }
 
-func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedModelDeployment, environment *string) error {
+// modelPushURLs computes the predict and logs URLs for a created deployment.
+func modelPushURLs(ctx *CommandContext, created *managementapi.CreatedModelDeployment) (predictURL, logsURL string, err error) {
 	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return "", "", err
+	}
+	predictURL = remote.PredictURL(created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment)
+	logsURL = remote.LogsURL(created.Model.Id, created.Deployment.Id)
+	return predictURL, logsURL, nil
+}
+
+func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedModelDeployment, environment *string) error {
+	predictURL, logsURL, err := modelPushURLs(ctx, created)
 	if err != nil {
 		return err
 	}
-	predictURL := remote.PredictURL(created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment)
-	logsURL := remote.LogsURL(created.Model.Id, created.Deployment.Id)
 
 	// Narrative goes first so a user piping JSON to a file or jq sees the
 	// human summary on stderr before the JSON object lands on stdout.

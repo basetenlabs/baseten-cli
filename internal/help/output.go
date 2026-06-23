@@ -113,6 +113,11 @@ func renderLeafText(def cmd.Command, styles fang.Styles) string {
 }
 
 func renderLeafJSON(def cmd.Command, styles fang.Styles) string {
+	// Commands that stream status to stderr have no meaningful JSON payload;
+	// omit the schema block entirely rather than document an empty shape.
+	if def.Output.JSONOutputUnimportantBool() {
+		return ""
+	}
 	var b strings.Builder
 	b.WriteString(styles.Title.Render("json output"))
 	b.WriteString("\n")

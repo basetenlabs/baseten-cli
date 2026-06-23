@@ -24,6 +24,10 @@ type CommandOutputSpec interface {
 	// --output json wraps them in a JSON array, --output jsonl emits one
 	// record per line, and --jq applies per record.
 	JSONArrayStreamedBool() bool
+	// JSONOutputUnimportantBool reports whether the command produces no
+	// meaningful JSON stdout payload (so --jq is not useful and no JQ example
+	// is required).
+	JSONOutputUnimportantBool() bool
 }
 
 // CommandOutput declaratively documents a leaf command's output. JSONT is the
@@ -47,6 +51,11 @@ type CommandOutput[JSONT any] struct {
 	// --output json the records are wrapped in a JSON array, under
 	// --output jsonl one record per line, and --jq applies per record.
 	JSONArrayStreamed bool
+	// JSONOutputUnimportant marks a command that produces no meaningful JSON
+	// stdout payload (e.g. a long-running watcher that streams status to
+	// stderr). Such a command is exempt from the JQExample requirement, and
+	// --help-output omits the JSON schema block for it.
+	JSONOutputUnimportant bool
 }
 
 // JSONAny is the JSONT for leaf commands whose stdout JSON is valid JSON but
@@ -73,3 +82,6 @@ func (o *CommandOutput[JSONT]) JSON() string                  { return o.JSONDes
 func (o *CommandOutput[JSONT]) ExampleList() []CommandExample { return o.Examples }
 func (o *CommandOutput[JSONT]) JQ() CommandExample            { return o.JQExample }
 func (o *CommandOutput[JSONT]) JSONArrayStreamedBool() bool   { return o.JSONArrayStreamed }
+func (o *CommandOutput[JSONT]) JSONOutputUnimportantBool() bool {
+	return o.JSONOutputUnimportant
+}

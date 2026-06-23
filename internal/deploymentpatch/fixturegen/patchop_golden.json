@@ -1,0 +1,253 @@
+[
+  {
+    "name": "model_code_add_update_remove",
+    "needs_full_deploy": false,
+    "ops": [
+      {
+        "action": "REMOVE",
+        "path": "old.py",
+        "type": "model_code"
+      },
+      {
+        "action": "ADD",
+        "content": "added\n",
+        "path": "new.py",
+        "type": "model_code"
+      },
+      {
+        "action": "UPDATE",
+        "content": "x = 2\n",
+        "path": "model.py",
+        "type": "model_code"
+      }
+    ]
+  },
+  {
+    "name": "model_code_binary_content_bytes",
+    "needs_full_deploy": false,
+    "ops": [
+      {
+        "action": "ADD",
+        "content_bytes": "AAECAwQF/v38+/r5",
+        "path": "weights.bin",
+        "type": "model_code"
+      }
+    ]
+  },
+  {
+    "name": "model_code_crlf_newlines_normalized",
+    "needs_full_deploy": false,
+    "ops": [
+      {
+        "action": "UPDATE",
+        "content": "x = 1\nfoo = 2\n",
+        "path": "model.py",
+        "type": "model_code"
+      }
+    ]
+  },
+  {
+    "name": "package_add_update_remove",
+    "needs_full_deploy": false,
+    "ops": [
+      {
+        "action": "REMOVE",
+        "path": "util/old.py",
+        "type": "package"
+      },
+      {
+        "action": "ADD",
+        "content": "added\n",
+        "path": "util/added.py",
+        "type": "package"
+      },
+      {
+        "action": "UPDATE",
+        "content": "y = 2\n",
+        "path": "util/helper.py",
+        "type": "package"
+      }
+    ]
+  },
+  {
+    "name": "config_scalar_change_only",
+    "needs_full_deploy": false,
+    "ops": [
+      {
+        "config": {
+          "model_name": "m",
+          "python_version": "py312"
+        },
+        "type": "config"
+      }
+    ]
+  },
+  {
+    "name": "env_var_add_update_remove",
+    "needs_full_deploy": false,
+    "ops": [
+      {
+        "config": {
+          "environment_variables": {
+            "ADDED": "hello",
+            "CHANGE": "new",
+            "KEEP": "same"
+          },
+          "model_name": "m",
+          "python_version": "py311"
+        },
+        "type": "config"
+      },
+      {
+        "action": "REMOVE",
+        "name": "GONE",
+        "type": "environment_variable",
+        "value": "bye"
+      },
+      {
+        "action": "ADD",
+        "name": "ADDED",
+        "type": "environment_variable",
+        "value": "hello"
+      },
+      {
+        "action": "UPDATE",
+        "name": "CHANGE",
+        "type": "environment_variable",
+        "value": "new"
+      }
+    ]
+  },
+  {
+    "name": "external_data_add_remove",
+    "needs_full_deploy": false,
+    "ops": [
+      {
+        "config": {
+          "external_data": [
+            {
+              "local_data_path": "b.txt",
+              "name": "bee",
+              "url": "https://b.example/b"
+            },
+            {
+              "local_data_path": "c.txt",
+              "url": "https://c.example/c"
+            }
+          ],
+          "model_name": "m",
+          "python_version": "py311"
+        },
+        "type": "config"
+      },
+      {
+        "action": "REMOVE",
+        "item": {
+          "backend": "http_public",
+          "local_data_path": "a.txt",
+          "url": "https://a.example/a"
+        },
+        "type": "external_data"
+      },
+      {
+        "action": "ADD",
+        "item": {
+          "backend": "http_public",
+          "local_data_path": "c.txt",
+          "url": "https://c.example/c"
+        },
+        "type": "external_data"
+      }
+    ]
+  },
+  {
+    "name": "requirements_inline_add_update_remove",
+    "needs_full_deploy": false,
+    "ops": [
+      {
+        "config": {
+          "model_name": "m",
+          "python_version": "py311",
+          "requirements": [
+            "requests==2.32.0",
+            "numpy>=1.0",
+            "newpkg==2.0"
+          ]
+        },
+        "type": "config"
+      },
+      {
+        "action": "REMOVE",
+        "requirement": "oldpkg",
+        "type": "python_requirement"
+      },
+      {
+        "action": "REMOVE",
+        "requirement": "git+https://github.com/foo/bar.git#egg=bar",
+        "type": "python_requirement"
+      },
+      {
+        "action": "ADD",
+        "requirement": "newpkg==2.0",
+        "type": "python_requirement"
+      },
+      {
+        "action": "UPDATE",
+        "requirement": "requests==2.32.0",
+        "type": "python_requirement"
+      }
+    ]
+  },
+  {
+    "name": "requirements_file_change_no_config_op",
+    "needs_full_deploy": false,
+    "ops": [
+      {
+        "action": "REMOVE",
+        "requirement": "oldpkg",
+        "type": "python_requirement"
+      },
+      {
+        "action": "ADD",
+        "requirement": "newpkg==2.0",
+        "type": "python_requirement"
+      },
+      {
+        "action": "UPDATE",
+        "requirement": "requests==2.32.0",
+        "type": "python_requirement"
+      }
+    ]
+  },
+  {
+    "name": "data_dir_change_needs_full_deploy",
+    "needs_full_deploy": true
+  },
+  {
+    "name": "no_changes_identical",
+    "needs_full_deploy": false,
+    "ops": []
+  },
+  {
+    "name": "truss_ignore_changes_ignored",
+    "needs_full_deploy": false,
+    "ops": [
+      {
+        "action": "UPDATE",
+        "content": "x = 2\n",
+        "path": "model.py",
+        "type": "model_code"
+      }
+    ]
+  },
+  {
+    "name": "truss_ignore_added_pattern_suppresses_removal",
+    "needs_full_deploy": false,
+    "ops": []
+  },
+  {
+    "name": "outside_change_ignored",
+    "needs_full_deploy": false,
+    "ops": []
+  }
+]
