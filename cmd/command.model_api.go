@@ -102,7 +102,7 @@ type ModelAPIList struct {
 type ModelAPIDescribeFlags struct {
 	CommandFlags
 
-	Model string `flag:"model" desc:"Name of the Model API to fetch." required:"true"`
+	Model string `flag:"model" desc:"Name of the Model API to describe." required:"true"`
 }
 
 // ModelAPIListFlags configures `baseten model-api list`.

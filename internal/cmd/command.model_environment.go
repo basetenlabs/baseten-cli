@@ -62,7 +62,7 @@ func commandModelEnvironmentDescribe(ctx *CommandContext, flags *cmd.ModelEnviro
 	}
 	env, err := cl.API().GetModelsEnvironmentsEnvName(ctx, ref.ID, flags.Environment)
 	if err != nil {
-		return fmt.Errorf("fetch environment %s: %w", flags.Environment, err)
+		return fmt.Errorf("describe environment %s: %w", flags.Environment, err)
 	}
 
 	if ctx.JSON {

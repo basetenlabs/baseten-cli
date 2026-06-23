@@ -86,7 +86,7 @@ func commandModelDeploymentDescribe(ctx *CommandContext, flags *cmd.ModelDeploym
 	}
 	dep, err := cl.API().GetModelsDeploymentsDeploymentId(ctx, ref.ID, flags.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("fetch deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("describe deployment %s: %w", flags.DeploymentID, err)
 	}
 
 	if ctx.JSON {

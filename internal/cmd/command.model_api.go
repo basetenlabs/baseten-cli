@@ -83,7 +83,7 @@ func commandModelAPIDescribe(ctx *CommandContext, flags *cmd.ModelAPIDescribeFla
 	}
 	m, err := cl.API().GetModelApisModelApiName(ctx, flags.Model)
 	if err != nil {
-		return fmt.Errorf("fetch model API %s: %w", flags.Model, err)
+		return fmt.Errorf("describe model API %s: %w", flags.Model, err)
 	}
 
 	if ctx.JSON {
