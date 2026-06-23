@@ -225,8 +225,8 @@ type ModelPushFlags struct {
 
 	Develop bool `flag:"develop" desc:"Push as a development deployment: the model's single mutable dev slot, created if absent and overwritten in place otherwise. Incompatible with --environment and --deployment-name."`
 
-	Watch          bool `flag:"watch" desc:"After pushing, watch the model directory and live-patch the development deployment on change. Implies --develop."`
-	WatchHotReload bool `flag:"watch-hot-reload" desc:"With --watch, hot-reload the running container when every change is to model code; mixed changes fall back to a cold patch."`
+	Watch            bool `flag:"watch" desc:"After pushing, watch the model directory and live-patch the development deployment on change. Implies --develop."`
+	WatchHotReload   bool `flag:"watch-hot-reload" desc:"With --watch, hot-reload the running container when every change is to model code; mixed changes fall back to a cold patch."`
 	WatchNoKeepalive bool `flag:"watch-no-keepalive" desc:"With --watch, let the development deployment scale to zero while watching. By default it is kept warm by periodic pings."`
 
 	DeployTimeout string `flag:"deploy-timeout" desc:"Deployment timeout as a Go duration (e.g. 30m, 1h); allowed range 10m to 24h."`
@@ -245,7 +245,7 @@ type ModelWatchFlags struct {
 
 	Team string `flag:"team" desc:"Team the model belongs to. Use to disambiguate when the same model_name exists in multiple teams."`
 
-	HotReload bool `flag:"hot-reload" desc:"Hot-reload the running container when every change is to model code; mixed changes fall back to a cold patch."`
+	HotReload   bool `flag:"hot-reload" desc:"Hot-reload the running container when every change is to model code; mixed changes fall back to a cold patch."`
 	NoKeepalive bool `flag:"no-keepalive" desc:"Let the development deployment scale to zero while watching. By default it is kept warm by periodic pings."`
 }
 
