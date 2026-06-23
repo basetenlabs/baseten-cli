@@ -9,7 +9,7 @@ import (
 
 func init() {
 	Register("model environment list", commandModelEnvironmentList)
-	Register("model environment fetch", commandModelEnvironmentFetch)
+	Register("model environment describe", commandModelEnvironmentDescribe)
 	Register("model environment activate", commandModelEnvironmentActivate)
 	Register("model environment deactivate", commandModelEnvironmentDeactivate)
 }
@@ -51,7 +51,7 @@ func commandModelEnvironmentList(ctx *CommandContext, flags *cmd.ModelEnvironmen
 	return nil
 }
 
-func commandModelEnvironmentFetch(ctx *CommandContext, flags *cmd.ModelEnvironmentFetchFlags) error {
+func commandModelEnvironmentDescribe(ctx *CommandContext, flags *cmd.ModelEnvironmentDescribeFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -62,7 +62,7 @@ func commandModelEnvironmentFetch(ctx *CommandContext, flags *cmd.ModelEnvironme
 	}
 	env, err := cl.API().GetModelsEnvironmentsEnvName(ctx, ref.ID, flags.Environment)
 	if err != nil {
-		return fmt.Errorf("fetch environment %s: %w", flags.Environment, err)
+		return fmt.Errorf("describe environment %s: %w", flags.Environment, err)
 	}
 
 	if ctx.JSON {

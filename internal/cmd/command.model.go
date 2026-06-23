@@ -12,7 +12,7 @@ import (
 
 func init() {
 	Register("model list", commandModelList)
-	Register("model fetch", commandModelFetch)
+	Register("model describe", commandModelDescribe)
 	Register("model delete", commandModelDelete)
 }
 
@@ -138,7 +138,7 @@ func commandModelList(ctx *CommandContext, flags *cmd.ModelListFlags) error {
 	return nil
 }
 
-func commandModelFetch(ctx *CommandContext, flags *cmd.ModelFetchFlags) error {
+func commandModelDescribe(ctx *CommandContext, flags *cmd.ModelDescribeFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -149,7 +149,7 @@ func commandModelFetch(ctx *CommandContext, flags *cmd.ModelFetchFlags) error {
 	}
 	model, err := cl.API().GetModelsModelId(ctx, ref.ID)
 	if err != nil {
-		return fmt.Errorf("fetch model %s: %w", ref.ID, err)
+		return fmt.Errorf("describe model %s: %w", ref.ID, err)
 	}
 
 	if ctx.JSON {

@@ -163,7 +163,7 @@ func (w *watchTest) resolveModelID(b *bgWatch) {
 	w.t.Helper()
 	b.waitFor(w.t, 60*time.Second, time.Second,
 		fmt.Sprintf("model %q to be created by push", w.modelName), func() bool {
-			out, _, err := cli(w.t, "model", "fetch", "--model-name", w.modelName, "--output", "json")
+			out, _, err := cli(w.t, "model", "describe", "--model-name", w.modelName, "--output", "json")
 			if err != nil {
 				return false
 			}

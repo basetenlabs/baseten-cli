@@ -70,12 +70,12 @@ func Test_Model_Deployment_List_JSON(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), `"id": "d-1"`)
 }
 
-func Test_Model_Deployment_Fetch(t *testing.T) {
+func Test_Model_Deployment_Describe(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments/d-1", 200,
 		depFixture("d-1", "first", "production", "ACTIVE"))
 
-	h.Require.NoError(h.Execute("model", "deployment", "fetch",
+	h.Require.NoError(h.Execute("model", "deployment", "describe",
 		"--model-id", "m-1", "--deployment-id", "d-1"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "ID:")
@@ -84,9 +84,9 @@ func Test_Model_Deployment_Fetch(t *testing.T) {
 	h.Require.Contains(out, "ACTIVE")
 }
 
-func Test_Model_Deployment_Fetch_MissingDeploymentID(t *testing.T) {
+func Test_Model_Deployment_Describe_MissingDeploymentID(t *testing.T) {
 	h := NewCommandHarness(t)
-	err := h.Execute("model", "deployment", "fetch", "--model-id", "m-1")
+	err := h.Execute("model", "deployment", "describe", "--model-id", "m-1")
 	h.Require.Error(err)
 }
 

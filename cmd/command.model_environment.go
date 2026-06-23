@@ -48,22 +48,22 @@ var commandModelEnvironment = Command{
 			},
 		},
 		{
-			Name:        "fetch",
-			Summary:     "Fetch an environment",
-			Description: "Fetch a model environment by name.",
-			Flags:       ModelEnvironmentFetchFlags{},
+			Name:        "describe",
+			Summary:     "Describe an environment",
+			Description: "Describe a model environment by name.",
+			Flags:       ModelEnvironmentDescribeFlags{},
 			Output: &CommandOutput[managementapi.Environment]{
 				TextDescription: "Field-per-line summary: Name, Model, Current Deployment, Status, " +
 					"Candidate Deployment (optional), Created.",
 				Examples: []CommandExample{
 					{
-						Description: "Fetch the production environment of a model.",
-						Command:     "baseten model environment fetch --model-id <model-id> --environment production",
+						Description: "Describe the production environment of a model.",
+						Command:     "baseten model environment describe --model-id <model-id> --environment production",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the current deployment ID.",
-					Command:     "baseten model environment fetch --model-id <model-id> --environment production --jq '.current_deployment.id'",
+					Command:     "baseten model environment describe --model-id <model-id> --environment production --jq '.current_deployment.id'",
 				},
 			},
 		},
@@ -103,8 +103,8 @@ type ModelEnvironmentListFlags struct {
 	ModelRefFlags
 }
 
-// ModelEnvironmentFetchFlags configures `baseten model environment fetch`.
-type ModelEnvironmentFetchFlags struct {
+// ModelEnvironmentDescribeFlags configures `baseten model environment describe`.
+type ModelEnvironmentDescribeFlags struct {
 	CommandFlags
 	ModelEnvironmentFlags
 }

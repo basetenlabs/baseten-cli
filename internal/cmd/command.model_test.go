@@ -88,7 +88,7 @@ func Test_Model_List_ScopedByTeam(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "alpha")
 }
 
-func Test_Model_Fetch_ByID(t *testing.T) {
+func Test_Model_Describe_ByID(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1", 200, map[string]any{
 		"id": "m-1", "name": "alpha", "team_name": "default",
@@ -96,14 +96,14 @@ func Test_Model_Fetch_ByID(t *testing.T) {
 		"instance_type_name": "A10G",
 	})
 
-	h.Require.NoError(h.Execute("model", "fetch", "--model-id", "m-1"))
+	h.Require.NoError(h.Execute("model", "describe", "--model-id", "m-1"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "ID:")
 	h.Require.Contains(out, "m-1")
 	h.Require.Contains(out, "alpha")
 }
 
-func Test_Model_Fetch_ByName(t *testing.T) {
+func Test_Model_Describe_ByName(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/models", 200, map[string]any{
@@ -121,11 +121,11 @@ func Test_Model_Fetch_ByName(t *testing.T) {
 		"instance_type_name": "A10G",
 	})
 
-	h.Require.NoError(h.Execute("model", "fetch", "--model-name", "alpha"))
+	h.Require.NoError(h.Execute("model", "describe", "--model-name", "alpha"))
 	h.Require.NotNil(m.FindCall("GET", "/v1/models/m-1"))
 }
 
-func Test_Model_Fetch_ByNameAmbiguous(t *testing.T) {
+func Test_Model_Describe_ByNameAmbiguous(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/models", 200, map[string]any{
 		"models": []any{
@@ -142,12 +142,12 @@ func Test_Model_Fetch_ByNameAmbiguous(t *testing.T) {
 		},
 	})
 
-	err := h.Execute("model", "fetch", "--model-name", "alpha")
+	err := h.Execute("model", "describe", "--model-name", "alpha")
 	h.Require.ErrorContains(err, "multiple models named")
 	h.Require.ErrorContains(err, "--team")
 }
 
-func Test_Model_Fetch_ByNameWithTeam(t *testing.T) {
+func Test_Model_Describe_ByNameWithTeam(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/teams", 200, map[string]any{
@@ -170,27 +170,27 @@ func Test_Model_Fetch_ByNameWithTeam(t *testing.T) {
 		"instance_type_name": "A10G",
 	})
 
-	h.Require.NoError(h.Execute("model", "fetch", "--model-name", "alpha", "--team", "ml"))
+	h.Require.NoError(h.Execute("model", "describe", "--model-name", "alpha", "--team", "ml"))
 	h.Require.NotNil(m.FindCall("GET", "/v1/models/m-2"))
 }
 
-func Test_Model_Fetch_ByNameNotFound(t *testing.T) {
+func Test_Model_Describe_ByNameNotFound(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/models", 200, map[string]any{"models": []any{}})
 
-	err := h.Execute("model", "fetch", "--model-name", "ghost")
+	err := h.Execute("model", "describe", "--model-name", "ghost")
 	h.Require.ErrorContains(err, `no model named "ghost"`)
 }
 
-func Test_Model_Fetch_TeamWithID_Rejected(t *testing.T) {
+func Test_Model_Describe_TeamWithID_Rejected(t *testing.T) {
 	h := NewCommandHarness(t)
-	err := h.Execute("model", "fetch", "--model-id", "m-1", "--team", "ml")
+	err := h.Execute("model", "describe", "--model-id", "m-1", "--team", "ml")
 	h.Require.ErrorContains(err, "--team is only valid with --model-name")
 }
 
-func Test_Model_Fetch_MissingRef(t *testing.T) {
+func Test_Model_Describe_MissingRef(t *testing.T) {
 	h := NewCommandHarness(t)
-	err := h.Execute("model", "fetch")
+	err := h.Execute("model", "describe")
 	h.Require.Error(err)
 }
 

@@ -9,21 +9,21 @@ var commandModelAPI = Command{
 		"Authentication is via 'baseten auth login' or the BASETEN_API_KEY environment variable.",
 	Children: []Command{
 		{
-			Name:        "fetch",
-			Summary:     "Fetch a Model API",
-			Description: "Fetch a single Model API by name.",
-			Flags:       ModelAPIFetchFlags{},
+			Name:        "describe",
+			Summary:     "Describe a Model API",
+			Description: "Describe a single Model API by name.",
+			Flags:       ModelAPIDescribeFlags{},
 			Output: &CommandOutput[managementapi.ModelAPI]{
 				TextDescription: "Field-per-line summary of the Model API.",
 				Examples: []CommandExample{
 					{
-						Description: "Fetch a Model API by name.",
-						Command:     "baseten model-api fetch --model <name>",
+						Description: "Describe a Model API by name.",
+						Command:     "baseten model-api describe --model <name>",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the Model API's invoke URL.",
-					Command:     "baseten model-api fetch --model <name> --jq '.invoke_url'",
+					Command:     "baseten model-api describe --model <name> --jq '.invoke_url'",
 				},
 			},
 		},
@@ -98,11 +98,11 @@ type ModelAPIList struct {
 	Items []managementapi.ModelAPI `json:"items"`
 }
 
-// ModelAPIFetchFlags configures `baseten model-api fetch`.
-type ModelAPIFetchFlags struct {
+// ModelAPIDescribeFlags configures `baseten model-api describe`.
+type ModelAPIDescribeFlags struct {
 	CommandFlags
 
-	Model string `flag:"model" desc:"Name of the Model API to fetch." required:"true"`
+	Model string `flag:"model" desc:"Name of the Model API to describe." required:"true"`
 }
 
 // ModelAPIListFlags configures `baseten model-api list`.

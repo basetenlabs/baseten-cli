@@ -17,7 +17,7 @@ import (
 
 func init() {
 	Register("model deployment list", commandModelDeploymentList)
-	Register("model deployment fetch", commandModelDeploymentFetch)
+	Register("model deployment describe", commandModelDeploymentDescribe)
 	Register("model deployment config", commandModelDeploymentConfig)
 	Register("model deployment activate", commandModelDeploymentActivate)
 	Register("model deployment deactivate", commandModelDeploymentDeactivate)
@@ -75,7 +75,7 @@ func commandModelDeploymentList(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	return nil
 }
 
-func commandModelDeploymentFetch(ctx *CommandContext, flags *cmd.ModelDeploymentFetchFlags) error {
+func commandModelDeploymentDescribe(ctx *CommandContext, flags *cmd.ModelDeploymentDescribeFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -86,7 +86,7 @@ func commandModelDeploymentFetch(ctx *CommandContext, flags *cmd.ModelDeployment
 	}
 	dep, err := cl.API().GetModelsDeploymentsDeploymentId(ctx, ref.ID, flags.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("fetch deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("describe deployment %s: %w", flags.DeploymentID, err)
 	}
 
 	if ctx.JSON {
