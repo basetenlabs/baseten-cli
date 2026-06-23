@@ -44,10 +44,10 @@ func commandModelEnvironmentList(ctx *CommandContext, flags *cmd.ModelEnvironmen
 			string(e.CurrentDeployment.Status),
 		})
 	}
-	ctx.OutputTable(
-		[]string{"NAME", "CURRENT DEPLOYMENT", "STATUS"},
-		rows,
-	)
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"NAME", "CURRENT DEPLOYMENT", "STATUS"},
+		Rows:    rows,
+	})
 	return nil
 }
 

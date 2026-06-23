@@ -30,6 +30,7 @@ func TestE2EModelLifecycle(t *testing.T) {
 	t.Run("Logs", l.Logs)
 	t.Run("Environment", l.Environment)
 	t.Run("ModelPredict", l.ModelPredict)
+	t.Run("Metrics", l.Metrics)
 	t.Run("Redeploy", l.Redeploy)
 	t.Run("Delete", l.Delete)
 }
@@ -45,7 +46,7 @@ type lifecycle struct {
 }
 
 // newLifecycle runs the env-gate, materializes the truss source, performs the
-// initial --promote push, and registers cleanup. Fatals on setup failure so
+// initial push to production, and registers cleanup. Fatals on setup failure so
 // sub-tests can assume valid state.
 func newLifecycle(t *testing.T) *lifecycle {
 	apiKey := os.Getenv("BASETEN_E2E_TEST_API_KEY")
@@ -84,7 +85,7 @@ func newLifecycle(t *testing.T) *lifecycle {
 		}
 	})
 
-	pushOut := mustCLI(t, "model", "push", "--dir", l.modelDir, "--promote", "--wait", "--output", "json")
+	pushOut := mustCLI(t, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
 	var initial pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(pushOut), &initial))
 	require.Equal(t, l.modelName, initial.Model.Name)
@@ -307,8 +308,8 @@ func (l *lifecycle) Logs(t *testing.T) {
 		return lines
 	}
 
-	// Loki can lag a few seconds after the deployment goes ACTIVE; poll until
-	// the info marker lands.
+	// Loki can lag well past the deployment going ACTIVE before the load()
+	// log lines are queryable; poll generously until the info marker lands.
 	var lines []logLine
 	require.Eventually(t, func() bool {
 		got, err := l.collectLogs(t)
@@ -317,7 +318,7 @@ func (l *lifecycle) Logs(t *testing.T) {
 		}
 		lines = got
 		return contains(lines, e2eLogInfoWord)
-	}, 10*time.Second, time.Second, "info log line never appeared")
+	}, 90*time.Second, 3*time.Second, "info log line never appeared")
 
 	t.Run("AllLevels", func(t *testing.T) {
 		require.True(t, contains(lines, e2eLogInfoWord), "info line missing")
@@ -429,8 +430,50 @@ func (l *lifecycle) ModelPredict(t *testing.T) {
 	})
 }
 
+func (l *lifecycle) Metrics(t *testing.T) {
+	type metricsResp struct {
+		Mode              string `json:"mode"`
+		MetricDescriptors []struct {
+			Name string `json:"name"`
+		} `json:"metric_descriptors"`
+	}
+	hasDescriptor := func(r metricsResp, name string) bool {
+		for _, d := range r.MetricDescriptors {
+			if d.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	// current is a point-in-time snapshot. baseten_replicas_active is always
+	// registered for a deployment, so the descriptor must appear; its value may
+	// be 0, so this asserts shape only, never a value.
+	t.Run("Current", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "metrics",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--output", "json")
+		var resp metricsResp
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, "CURRENT", resp.Mode)
+		require.True(t, hasDescriptor(resp, "baseten_replicas_active"),
+			"baseten_replicas_active missing from current snapshot")
+	})
+
+	// series exercises the windowed path; assert only the envelope shape (mode +
+	// descriptors present), not values, which may be empty this soon after deploy.
+	t.Run("Series", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "metrics",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID,
+			"--mode", "series", "--since", "1h", "--output", "json")
+		var resp metricsResp
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, "SERIES", resp.Mode)
+		require.NotEmpty(t, resp.MetricDescriptors)
+	})
+}
+
 func (l *lifecycle) Redeploy(t *testing.T) {
-	out := mustCLI(t, "model", "push", "--dir", l.modelDir, "--promote", "--wait", "--output", "json")
+	out := mustCLI(t, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
 	var redeploy pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(out), &redeploy))
 	require.Equal(t, l.modelID, redeploy.Model.ID, "redeploy should reuse existing model")

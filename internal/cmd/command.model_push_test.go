@@ -402,13 +402,6 @@ func Test_Model_Push_Validation(t *testing.T) {
 		h.Require.ErrorContains(err, "model_name is required")
 	})
 
-	t.Run("promote_and_environment", func(t *testing.T) {
-		h := newModelPushHarness(t)
-		dir := h.WriteModelDir(modelPushMinimalConfig)
-		err := h.Execute("model", "push", "--dir", dir, "--promote", "--environment", "staging")
-		h.Require.ErrorContains(err, "mutually exclusive")
-	})
-
 	t.Run("labels_invalid_json", func(t *testing.T) {
 		h := newModelPushHarness(t)
 		dir := h.WriteModelDir(modelPushMinimalConfig)

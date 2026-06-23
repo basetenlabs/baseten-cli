@@ -128,10 +128,23 @@ func (c *CommandContext) NewJSONArrayWriter() *JSONArrayWriter {
 	}
 }
 
+// TableOutput describes a borderless table for OutputTable.
+type TableOutput struct {
+	Headers []string
+	Rows    [][]string
+	// RightAlignedColumns lists column indices whose header and cells are
+	// right-aligned; columns absent from the list default to left-aligned.
+	RightAlignedColumns []int
+}
+
 // OutputTable writes a borderless table to stdout with bold headers. Header
 // styling auto-degrades when stdout is not a terminal.
-func (c *CommandContext) OutputTable(headers []string, rows [][]string) {
+func (c *CommandContext) OutputTable(out TableOutput) {
 	renderer := lipgloss.NewRenderer(c.Stdout)
+	rightAligned := make(map[int]bool, len(out.RightAlignedColumns))
+	for _, col := range out.RightAlignedColumns {
+		rightAligned[col] = true
+	}
 	headerStyle := renderer.NewStyle().Bold(true).PaddingRight(2)
 	cellStyle := renderer.NewStyle().PaddingRight(2)
 	t := table.New().
@@ -143,13 +156,17 @@ func (c *CommandContext) OutputTable(headers []string, rows [][]string) {
 		BorderHeader(false).
 		BorderColumn(false).
 		BorderRow(false).
-		Headers(headers...).
-		Rows(rows...).
-		StyleFunc(func(row, _ int) lipgloss.Style {
+		Headers(out.Headers...).
+		Rows(out.Rows...).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			style := cellStyle
 			if row == table.HeaderRow {
-				return headerStyle
+				style = headerStyle
 			}
-			return cellStyle
+			if rightAligned[col] {
+				style = style.Align(lipgloss.Right)
+			}
+			return style
 		})
 	panicOnOutputError(fmt.Fprintln(c.Stdout, t.Render()))
 }
@@ -330,25 +347,36 @@ func NewAuthStore(insecureStorage bool) (*auth.Store, error) {
 	}), nil
 }
 
-// NewManagementClient creates a management API client that resolves
-// credentials via the auth store (env var > stored credential).
-func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error) {
+// AuthTransport builds an HTTP transport that injects the active session's
+// credential on every request, regardless of the request host. Shared by the
+// SDK clients and by commands that POST to non-SDK hosts (e.g. a Model API URL).
+// The resolved remote is returned alongside so callers can derive URLs without
+// resolving it again.
+func (c *CommandContext) AuthTransport() (*auth.Transport, *Remote, error) {
 	remote, err := c.authInfo.Remote()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	session, err := c.authInfo.Session()
 	if err != nil {
+		return nil, nil, err
+	}
+	return &auth.Transport{
+		Session:     session,
+		OAuthConfig: OAuthConfig(remote.ManagementURL()),
+		Base:        c.httpClient().Transport,
+	}, remote, nil
+}
+
+// NewManagementClient creates a management API client that resolves
+// credentials via the auth store (env var > stored credential).
+func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error) {
+	transport, remote, err := c.AuthTransport()
+	if err != nil {
 		return nil, err
 	}
-	mgmtURL := remote.ManagementURL()
-	transport := &auth.Transport{
-		Session:     session,
-		OAuthConfig: OAuthConfig(mgmtURL),
-		Base:        c.httpClient().Transport,
-	}
 	return client.NewManagementClient(client.ManagementClientOptions{
-		BaseURL:    mgmtURL,
+		BaseURL:    remote.ManagementURL(),
 		DeferAuth:  true,
 		HTTPClient: transport,
 	})
@@ -371,19 +399,9 @@ func (c *CommandContext) NewManagementClientWithAuth(mgmtURL, authHeader string)
 // NewInferenceClient creates an inference API client that resolves
 // credentials via the auth store.
 func (c *CommandContext) NewInferenceClient(flags cmd.InferenceClientFlags) (*client.InferenceClient, error) {
-	remote, err := c.authInfo.Remote()
+	transport, remote, err := c.AuthTransport()
 	if err != nil {
 		return nil, err
-	}
-	session, err := c.authInfo.Session()
-	if err != nil {
-		return nil, err
-	}
-	mgmtURL := remote.ManagementURL()
-	transport := &auth.Transport{
-		Session:     session,
-		OAuthConfig: OAuthConfig(mgmtURL),
-		Base:        c.httpClient().Transport,
 	}
 	baseURL, err := remote.InferenceBaseURL(flags.ModelID, flags.ChainID, flags.Environment)
 	if err != nil {

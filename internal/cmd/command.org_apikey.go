@@ -61,7 +61,10 @@ func commandOrgAPIKeyList(ctx *CommandContext, _ *cmd.OrgAPIKeyListFlags) error 
 		}
 		rows = append(rows, []string{name, k.Prefix + "****", apiKeyTypeFromBackend[k.Type], team})
 	}
-	ctx.OutputTable([]string{"NAME", "KEY", "TYPE", "TEAM"}, rows)
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"NAME", "KEY", "TYPE", "TEAM"},
+		Rows:    rows,
+	})
 	return nil
 }
 

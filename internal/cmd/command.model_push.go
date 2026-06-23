@@ -33,16 +33,11 @@ func init() {
 }
 
 func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
-	if flags.Promote && flags.Environment != "" {
-		return cmd.NewErrUsagef("--promote and --environment are mutually exclusive")
-	}
 	// --watch implies --develop: it pushes a development deployment, then loops
 	// patching it in place. A development deployment owns the model's single
 	// mutable dev slot, so the stable-environment flags do not apply.
 	if flags.Develop || flags.Watch {
 		switch {
-		case flags.Promote:
-			return cmd.NewErrUsagef("--develop/--watch cannot be combined with --promote")
 		case flags.Environment != "":
 			return cmd.NewErrUsagef("--develop/--watch cannot be combined with --environment")
 		case flags.DeploymentName != "":
@@ -287,11 +282,7 @@ func applyModelPushEnvironmentFlags(deployment *managementapi.DeploymentArchiveP
 		name := flags.DeploymentName
 		deployment.DeploymentName = &name
 	}
-	switch {
-	case flags.Promote:
-		env := "production"
-		deployment.EnvironmentName = &env
-	case flags.Environment != "":
+	if flags.Environment != "" {
 		env := flags.Environment
 		deployment.EnvironmentName = &env
 	}

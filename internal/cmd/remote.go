@@ -13,13 +13,14 @@ import (
 // to derive every URL the CLI talks to. Construct once via NewRemote at the
 // start of a command; callers use the methods rather than reading env directly.
 type Remote struct {
-	remoteURL           string
-	scheme              string
-	baseHost            string
-	hostLabel           string
-	managementAPIHost   string
-	inferenceBaseURL    string
-	inferenceHostSuffix string
+	remoteURL             string
+	scheme                string
+	baseHost              string
+	hostLabel             string
+	managementAPIHost     string
+	inferenceBaseURL      string
+	inferenceHostSuffix   string
+	inferenceModelAPIHost string
 }
 
 // NewRemote resolves the remote URL (flag arg, then BASETEN_REMOTE_URL, then
@@ -48,16 +49,21 @@ func NewRemote(remoteURL string) (*Remote, error) {
 	switch r.remoteURL {
 	case "https://app.baseten.co":
 		r.managementAPIHost = "api.baseten.co"
+		r.inferenceModelAPIHost = "inference.baseten.co"
 	case "https://app.staging.baseten.co":
 		r.managementAPIHost = "api.staging.baseten.co"
+		r.inferenceModelAPIHost = "inference.staging.baseten.co"
 	case "https://app.dev.baseten.co":
 		r.managementAPIHost = "api.mc-dev.baseten.co"
+		r.inferenceModelAPIHost = "inference.mc-dev.baseten.co"
 	case "http://localhost:8000":
 		r.managementAPIHost = "api.localhost:8000"
 		r.inferenceBaseURL = "http://localhost:9090"
 		r.inferenceHostSuffix = "api.dev.baseten.co"
+		r.inferenceModelAPIHost = "localhost:9090"
 	default:
 		r.managementAPIHost = "api." + r.baseHost
+		r.inferenceModelAPIHost = "inference." + r.baseHost
 	}
 
 	if v := os.Getenv("BASETEN_MANAGEMENT_API_URL_OVERRIDE"); v != "" {
@@ -87,6 +93,13 @@ func (r *Remote) HostLabel() string { return r.hostLabel }
 // ManagementURL returns the base URL for the REST management API.
 func (r *Remote) ManagementURL() string {
 	return r.scheme + "://" + r.managementAPIHost
+}
+
+// ModelAPIInferenceURL returns the base URL for Model API (shared endpoint)
+// inference on this remote, e.g. https://inference.baseten.co. OpenAI-shaped
+// routes (e.g. /v1/chat/completions) live underneath it.
+func (r *Remote) ModelAPIInferenceURL() string {
+	return r.scheme + "://" + r.inferenceModelAPIHost
 }
 
 // InferenceBaseURL returns the base URL (no path) for inference calls. When
