@@ -101,8 +101,8 @@ var commandOrg = Command{
 						"dedicated deployments, model APIs, and training. Pass --since (relative " +
 						"duration, e.g. 7d, 24h) for a sliding window ending now, or --start and --end " +
 						"together for an explicit ISO 8601 range. The two modes are mutually exclusive. The " +
-						"range cannot exceed 31 days and cannot start before 2026-01-01. Defaults to " +
-						"--since 7d.",
+						"range cannot exceed 31 days and cannot start before 2026-01-01 UTC. Defaults " +
+						"to --since 7d.",
 					Flags: OrgBillingUsageFlags{},
 					Output: &CommandOutput[managementapi.UsageSummary]{
 						TextDescription: "The resolved window on stderr, then a table on stdout with one row " +

@@ -63,7 +63,7 @@ func commandOrgBillingUsage(ctx *CommandContext, flags *cmd.OrgBillingUsageFlags
 	}
 
 	if start.Before(billingEarliest) {
-		return cmd.NewErrUsagef("usage is not available before %s", billingEarliest.Format("2006-01-02"))
+		return cmd.NewErrUsagef("usage is not available before %s UTC", billingEarliest.Format("2006-01-02"))
 	}
 
 	api, err := ctx.NewManagementClient()
@@ -94,14 +94,27 @@ func commandOrgBillingUsage(ctx *CommandContext, flags *cmd.OrgBillingUsageFlags
 	rightAligned := []int{1, 2, 3, 4}
 	var rows [][]string
 	var sumTotal, sumCredits, sumSubtotal float64
+	// Track whether every contributing value in a column parsed. A single
+	// unparseable cost makes that column's grand total an understatement, so we
+	// render "-" rather than a confident-looking partial sum.
+	okTotal, okCredits, okSubtotal := true, true, true
 
 	addRow := func(name string, minutes *int, total, credits, subtotal json.Marshaler) {
-		t, _ := billingMoney(total)
-		c, _ := billingMoney(credits)
-		s, _ := billingMoney(subtotal)
-		sumTotal += t
-		sumCredits += c
-		sumSubtotal += s
+		if t, ok := billingMoney(total); ok {
+			sumTotal += t
+		} else {
+			okTotal = false
+		}
+		if c, ok := billingMoney(credits); ok {
+			sumCredits += c
+		} else {
+			okCredits = false
+		}
+		if s, ok := billingMoney(subtotal); ok {
+			sumSubtotal += s
+		} else {
+			okSubtotal = false
+		}
 		rows = append(rows, []string{
 			name,
 			billingMinutes(minutes),
@@ -131,7 +144,9 @@ func commandOrgBillingUsage(ctx *CommandContext, flags *cmd.OrgBillingUsageFlags
 	if len(rows) > 1 {
 		rows = append(rows, []string{
 			"All", "",
-			billingFormatMoney(sumTotal), billingFormatMoney(sumCredits), billingFormatMoney(sumSubtotal),
+			billingSumCell(sumTotal, okTotal),
+			billingSumCell(sumCredits, okCredits),
+			billingSumCell(sumSubtotal, okSubtotal),
 		})
 	}
 
@@ -178,6 +193,15 @@ func billingMoneyString(m json.Marshaler) string {
 		return "-"
 	}
 	return billingFormatMoney(f)
+}
+
+// billingSumCell renders a column's grand total, or "-" when any contributing
+// value failed to parse (in which case the sum would understate the truth).
+func billingSumCell(sum float64, ok bool) string {
+	if !ok {
+		return "-"
+	}
+	return billingFormatMoney(sum)
 }
 
 // billingFormatMoney renders a dollar amount with thousands separators, e.g.

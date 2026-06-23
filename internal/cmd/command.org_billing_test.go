@@ -90,6 +90,28 @@ func Test_Org_Billing_Usage_TotalRowArithmetic(t *testing.T) {
 	h.Require.Contains(all, "$19.34") // subtotal: 12.34 + 4.00 + 3
 }
 
+func Test_Org_Billing_Usage_TotalDashesUnparseableColumn(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/billing/usage_summary", 200, map[string]any{
+		"dedicated_usage": map[string]any{
+			"minutes": 10, "total": 10.0, "credits_used": 1.0, "subtotal": 9.0,
+		},
+		"model_apis_usage": map[string]any{
+			// total is unparseable; credits/subtotal are fine.
+			"total": "oops", "credits_used": 2.0, "subtotal": 3.0,
+		},
+	})
+
+	h.Require.NoError(h.Execute("org", "billing", "usage"))
+
+	all := findRow(t, h.Stdout.String(), "All")
+	fields := strings.Fields(all)
+	// "All" <TOTAL> <CREDITS> <SUBTOTAL>
+	h.Require.Equal("-", fields[1], "TOTAL must dash out when a contributor is unparseable")
+	h.Require.Equal("$3.00", fields[2], "CREDITS still sums: 1.00 + 2.00")
+	h.Require.Equal("$12.00", fields[3], "SUBTOTAL still sums: 9.00 + 3.00")
+}
+
 func Test_Org_Billing_Usage_SingleCategoryNoTotalRow(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/billing/usage_summary", 200, map[string]any{
