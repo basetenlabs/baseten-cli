@@ -67,27 +67,27 @@ var commandModel = Command{
 			},
 		},
 		{
-			Name:        "fetch",
-			Summary:     "Fetch a model",
-			Description: "Fetch a Baseten model.",
-			Flags:       ModelFetchFlags{},
+			Name:        "describe",
+			Summary:     "Describe a model",
+			Description: "Describe a Baseten model.",
+			Flags:       ModelDescribeFlags{},
 			Output: &CommandOutput[managementapi.Model]{
 				TextDescription: "Field-per-line summary: ID, Name, Team, Deployments, " +
 					"Instance, Production, Development, Created. Optional fields are omitted " +
 					"when unset.",
 				Examples: []CommandExample{
 					{
-						Description: "Fetch a model by ID.",
-						Command:     "baseten model fetch --model-id <model-id>",
+						Description: "Describe a model by ID.",
+						Command:     "baseten model describe --model-id <model-id>",
 					},
 					{
-						Description: "Fetch a model by name.",
-						Command:     "baseten model fetch --model-name <name>",
+						Description: "Describe a model by name.",
+						Command:     "baseten model describe --model-name <name>",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the production deployment ID.",
-					Command:     "baseten model fetch --model-id <model-id> --jq '.production_deployment_id'",
+					Command:     "baseten model describe --model-id <model-id> --jq '.production_deployment_id'",
 				},
 			},
 		},
@@ -211,8 +211,8 @@ type ModelListFlags struct {
 	Team string `flag:"team" desc:"Team name or ID to scope the listing to. Defaults to all teams the caller can see."`
 }
 
-// ModelFetchFlags configures `baseten model fetch`.
-type ModelFetchFlags struct {
+// ModelDescribeFlags configures `baseten model describe`.
+type ModelDescribeFlags struct {
 	CommandFlags
 	ModelRefFlags
 }

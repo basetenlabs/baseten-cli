@@ -116,13 +116,13 @@ func Test_ModelApi_List_Paginates(t *testing.T) {
 	h.Require.Contains(out, "b")
 }
 
-func Test_ModelApi_Fetch_Text(t *testing.T) {
+func Test_ModelApi_Describe_Text(t *testing.T) {
 	h := NewCommandHarness(t)
 	fixture := modelAPIFixture("llama-3", "Llama 3", "llama")
 	fixture["rate_limits"] = []any{map[string]any{"threshold": 100, "type": "requests", "unit": "minute"}}
 	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis/llama-3", 200, fixture)
 
-	h.Require.NoError(h.Execute("model-api", "fetch", "--model", "llama-3"))
+	h.Require.NoError(h.Execute("model-api", "describe", "--model", "llama-3"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Name:")
 	h.Require.Contains(out, "llama-3")
@@ -132,12 +132,12 @@ func Test_ModelApi_Fetch_Text(t *testing.T) {
 	h.Require.Contains(out, "100 per minute (requests)")
 }
 
-func Test_ModelApi_Fetch_JSON(t *testing.T) {
+func Test_ModelApi_Describe_JSON(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis/llama-3", 200,
 		modelAPIFixture("llama-3", "Llama 3", "llama"))
 
-	h.Require.NoError(h.Execute("model-api", "fetch", "--model", "llama-3", "--output", "json"))
+	h.Require.NoError(h.Execute("model-api", "describe", "--model", "llama-3", "--output", "json"))
 	h.Require.Contains(h.Stdout.String(), `"name": "llama-3"`)
 }
 

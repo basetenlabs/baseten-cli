@@ -56,12 +56,12 @@ func Test_Model_Environment_List_JSON(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), `"name": "production"`)
 }
 
-func Test_Model_Environment_Fetch(t *testing.T) {
+func Test_Model_Environment_Describe(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/environments/production", 200,
 		envFixture("production", "d-1", "ACTIVE"))
 
-	h.Require.NoError(h.Execute("model", "environment", "fetch",
+	h.Require.NoError(h.Execute("model", "environment", "describe",
 		"--model-id", "m-1", "--environment", "production"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Name:")
@@ -70,19 +70,19 @@ func Test_Model_Environment_Fetch(t *testing.T) {
 	h.Require.Contains(out, "ACTIVE")
 }
 
-func Test_Model_Environment_Fetch_JSON(t *testing.T) {
+func Test_Model_Environment_Describe_JSON(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/environments/production", 200,
 		envFixture("production", "d-1", "ACTIVE"))
 
-	h.Require.NoError(h.Execute("model", "environment", "fetch",
+	h.Require.NoError(h.Execute("model", "environment", "describe",
 		"--model-id", "m-1", "--environment", "production", "--output", "json"))
 	h.Require.Contains(h.Stdout.String(), `"name": "production"`)
 }
 
-func Test_Model_Environment_Fetch_MissingEnvironment(t *testing.T) {
+func Test_Model_Environment_Describe_MissingEnvironment(t *testing.T) {
 	h := NewCommandHarness(t)
-	err := h.Execute("model", "environment", "fetch", "--model-id", "m-1")
+	err := h.Execute("model", "environment", "describe", "--model-id", "m-1")
 	h.Require.Error(err)
 }
 

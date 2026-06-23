@@ -157,22 +157,22 @@ var commandModelDeployment = Command{
 			},
 		},
 		{
-			Name:        "fetch",
-			Summary:     "Fetch a deployment",
-			Description: "Fetch a model deployment by ID.",
-			Flags:       ModelDeploymentFetchFlags{},
+			Name:        "describe",
+			Summary:     "Describe a deployment",
+			Description: "Describe a model deployment by ID.",
+			Flags:       ModelDeploymentDescribeFlags{},
 			Output: &CommandOutput[managementapi.Deployment]{
 				TextDescription: "Field-per-line summary: ID, Name, Model, Environment (optional), " +
 					"Status, Instance (optional), Replicas, Created.",
 				Examples: []CommandExample{
 					{
-						Description: "Fetch a deployment by ID.",
-						Command:     "baseten model deployment fetch --model-id <model-id> --deployment-id <deployment-id>",
+						Description: "Describe a deployment by ID.",
+						Command:     "baseten model deployment describe --model-id <model-id> --deployment-id <deployment-id>",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print just the deployment status.",
-					Command:     "baseten model deployment fetch --model-id <model-id> --deployment-id <deployment-id> --jq '.status'",
+					Command:     "baseten model deployment describe --model-id <model-id> --deployment-id <deployment-id> --jq '.status'",
 				},
 			},
 		},
@@ -278,8 +278,8 @@ type ModelDeploymentListFlags struct {
 	ModelRefFlags
 }
 
-// ModelDeploymentFetchFlags configures `baseten model deployment fetch`.
-type ModelDeploymentFetchFlags struct {
+// ModelDeploymentDescribeFlags configures `baseten model deployment describe`.
+type ModelDeploymentDescribeFlags struct {
 	CommandFlags
 	ModelDeploymentIDFlags
 }

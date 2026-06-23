@@ -164,8 +164,8 @@ func (l *lifecycle) Model(t *testing.T) {
 		t.Fatalf("model %s missing from model list", l.modelID)
 	})
 
-	t.Run("FetchByID", func(t *testing.T) {
-		out := mustCLI(t, "model", "fetch", "--model-id", l.modelID, "--output", "json")
+	t.Run("DescribeByID", func(t *testing.T) {
+		out := mustCLI(t, "model", "describe", "--model-id", l.modelID, "--output", "json")
 		var resp struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
@@ -175,8 +175,8 @@ func (l *lifecycle) Model(t *testing.T) {
 		require.Equal(t, l.modelName, resp.Name)
 	})
 
-	t.Run("FetchByName", func(t *testing.T) {
-		out := mustCLI(t, "model", "fetch", "--model-name", l.modelName, "--output", "json")
+	t.Run("DescribeByName", func(t *testing.T) {
+		out := mustCLI(t, "model", "describe", "--model-name", l.modelName, "--output", "json")
 		var resp struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
@@ -206,8 +206,8 @@ func (l *lifecycle) Deployment(t *testing.T) {
 		t.Fatalf("deployment %s missing from deployment list", l.initialDeploymentID)
 	})
 
-	t.Run("Fetch", func(t *testing.T) {
-		out := mustCLI(t, "model", "deployment", "fetch",
+	t.Run("Describe", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "describe",
 			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--output", "json")
 		var resp struct {
 			ID      string `json:"id"`
@@ -375,8 +375,8 @@ func (l *lifecycle) Environment(t *testing.T) {
 		t.Fatalf("production environment missing from environment list")
 	})
 
-	t.Run("Fetch", func(t *testing.T) {
-		out := mustCLI(t, "model", "environment", "fetch",
+	t.Run("Describe", func(t *testing.T) {
+		out := mustCLI(t, "model", "environment", "describe",
 			"--model-id", l.modelID, "--environment", "production", "--output", "json")
 		var resp struct {
 			Name              string `json:"name"`
@@ -481,7 +481,7 @@ func (l *lifecycle) Delete(t *testing.T) {
 	mustCLI(t, "model", "delete", "--model-id", deletedID, "--yes")
 	l.modelID = ""
 
-	_, errOut, err := cli(t, "model", "fetch", "--model-id", deletedID)
+	_, errOut, err := cli(t, "model", "describe", "--model-id", deletedID)
 	require.Error(t, err, "fetch should fail after delete; stderr: %s", errOut)
 }
 

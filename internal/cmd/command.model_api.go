@@ -15,7 +15,7 @@ import (
 )
 
 func init() {
-	Register("model-api fetch", commandModelAPIFetch)
+	Register("model-api describe", commandModelAPIDescribe)
 	Register("model-api list", commandModelAPIList)
 	Register("model-api predict", commandModelAPIPredict)
 }
@@ -76,7 +76,7 @@ func commandModelAPIList(ctx *CommandContext, flags *cmd.ModelAPIListFlags) erro
 	return nil
 }
 
-func commandModelAPIFetch(ctx *CommandContext, flags *cmd.ModelAPIFetchFlags) error {
+func commandModelAPIDescribe(ctx *CommandContext, flags *cmd.ModelAPIDescribeFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
