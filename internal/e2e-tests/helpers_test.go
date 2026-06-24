@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -23,6 +24,9 @@ resources:
   cpu: 50m
   memory: 50Mi
   use_gpu: false
+runtime:
+  remote_ssh:
+    enabled: true
 `
 
 // Marker tokens emitted by the test model's load() and asserted by the Logs
@@ -74,6 +78,16 @@ type pushedDeployment struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
 	} `json:"deployment"`
+}
+
+// repoRoot returns the module root (two levels up from this file in
+// internal/e2e-tests), so commands like `go build ./cmd/baseten` run against
+// the current source rather than whatever the working directory happens to be.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok, "runtime.Caller failed")
+	return filepath.Join(filepath.Dir(file), "..", "..")
 }
 
 // cli runs the CLI in-process with the given args, returning captured stdout

@@ -33,7 +33,7 @@ func storeWithConfigDir(t *testing.T) *auth.Store {
 
 func mustResolve(t *testing.T, profileFlag string) *auth.Session {
 	t.Helper()
-	session, err := auth.ResolveSession(profileFlag)
+	session, err := auth.ResolveSession(profileFlag, "")
 	require.NoError(t, err)
 	return session
 }

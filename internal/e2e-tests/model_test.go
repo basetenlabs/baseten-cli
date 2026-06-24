@@ -3,6 +3,7 @@
 package e2etests
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,6 +33,7 @@ func TestE2EModelLifecycle(t *testing.T) {
 	t.Run("Environment", l.Environment)
 	t.Run("ModelPredict", l.ModelPredict)
 	t.Run("Metrics", l.Metrics)
+	t.Run("SSH", l.SSH)
 	t.Run("Redeploy", l.Redeploy)
 	t.Run("Delete", l.Delete)
 }
@@ -470,6 +473,58 @@ func (l *lifecycle) Metrics(t *testing.T) {
 		require.Equal(t, "SERIES", resp.Mode)
 		require.NotEmpty(t, resp.MetricDescriptors)
 	})
+}
+
+// SSH exercises the full `baseten ssh` flow against the live deployment: it
+// builds the real binary, runs setup, then connects with the system ssh client
+// (which invokes the binary for the sign/proxy steps) and cats the remote
+// model.py, asserting it matches what was pushed.
+func (l *lifecycle) SSH(t *testing.T) {
+	if _, err := exec.LookPath("ssh"); err != nil {
+		t.Skip("ssh client not available")
+	}
+
+	// The generated config invokes `baseten ssh sign|proxy` via the ssh client,
+	// so the in-process harness cannot serve it: build a real binary from the
+	// current source and point the config's baked command at it via
+	// BASETEN_SSH_BINARY_OVERRIDE.
+	binPath := filepath.Join(t.TempDir(), "baseten")
+	build := exec.Command("go", "build", "-o", binPath, "./cmd/baseten")
+	build.Dir = repoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building baseten binary: %v\n%s", err, out)
+	}
+
+	// Isolate the keypair/cert/JWT cache and the ssh config in temp locations.
+	configPath := filepath.Join(t.TempDir(), "config")
+	t.Setenv("BASETEN_SSH_DIR", t.TempDir())
+	t.Setenv("BASETEN_SSH_CONFIG_PATH", configPath)
+	t.Setenv("BASETEN_SSH_BINARY_OVERRIDE", binPath)
+
+	mustCLI(t, "ssh", "setup")
+
+	host := fmt.Sprintf("model-%s-%s.ssh.baseten.co", l.modelID, l.initialDeploymentID)
+
+	// The workload's sshd can lag behind the deployment going ACTIVE, so retry
+	// the connection until it succeeds or the deadline passes.
+	var modelPy string
+	require.Eventually(t, func() bool {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		var stdout, stderr bytes.Buffer
+		c := exec.CommandContext(ctx, "ssh", "-F", configPath,
+			"-o", "BatchMode=yes", "-o", "ConnectTimeout=30",
+			host, "cat", "/app/model/model.py")
+		c.Stdout, c.Stderr = &stdout, &stderr
+		if err := c.Run(); err != nil {
+			t.Logf("ssh connect attempt failed: %v\nstderr: %s", err, stderr.String())
+			return false
+		}
+		modelPy = stdout.String()
+		return true
+	}, 3*time.Minute, 10*time.Second, "ssh connect to %s never succeeded", host)
+
+	require.Equal(t, trussModelPy, modelPy, "remote /app/model/model.py should match the pushed source")
 }
 
 func (l *lifecycle) Redeploy(t *testing.T) {
