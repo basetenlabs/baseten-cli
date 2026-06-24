@@ -55,6 +55,8 @@ func TestParseHostname(t *testing.T) {
 		{name: "training missing node", host: "training-job-job", wantErr: true},
 		{name: "training non-numeric node", host: "training-job-job-x", wantErr: true},
 		{name: "training empty job id", host: "training-job--0", wantErr: true},
+		{name: "model component with forward slash", host: "model-a-b/c", wantErr: true},
+		{name: "model component with backslash", host: `model-a-b\c`, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

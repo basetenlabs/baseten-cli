@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -83,5 +84,10 @@ func requirePerm(t *testing.T, path string, want os.FileMode) {
 	t.Helper()
 	info, err := os.Stat(path)
 	require.NoError(t, err)
+	if runtime.GOOS == "windows" {
+		// Windows does not honor Unix permission bits, so Perm() does not
+		// reflect the mode we wrote; only assert the file exists there.
+		return
+	}
 	require.Equal(t, want, info.Mode().Perm())
 }

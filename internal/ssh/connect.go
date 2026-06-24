@@ -30,11 +30,11 @@ func Sign(ctx context.Context, mgmt *client.ManagementClient, hostname string) (
 	// Read the public key to sign.
 	keyPath := findKey(d)
 	if keyPath == "" {
-		return nil, fmt.Errorf("no SSH keypair found; run `baseten model ssh setup` first")
+		return nil, fmt.Errorf("no SSH keypair found; run `baseten ssh setup` first")
 	}
 	pub, err := os.ReadFile(keyPath + ".pub")
 	if err != nil {
-		return nil, fmt.Errorf("reading public key: %w", err)
+		return nil, fmt.Errorf("reading public key (re-run `baseten ssh setup` to regenerate the keypair): %w", err)
 	}
 	body := managementapi.SignSSHCertificateRequest{PublicKey: strings.TrimSpace(string(pub))}
 	if h.replica != "" {
@@ -182,15 +182,31 @@ func parseHostname(h string) (hostname, error) {
 	if i := strings.IndexByte(h, '.'); i != -1 {
 		label = h[:i]
 	}
+	var hn hostname
+	var err error
 	switch {
 	case strings.HasPrefix(label, "training-job-"):
-		return parseTrainingHostname(h, label[len("training-job-"):])
+		hn, err = parseTrainingHostname(h, label[len("training-job-"):])
 	case strings.HasPrefix(label, "model-"):
-		return parseModelHostname(h, label[len("model-"):])
+		hn, err = parseModelHostname(h, label[len("model-"):])
 	default:
 		return hostname{}, fmt.Errorf(
 			"invalid ssh hostname %q: expected training-job-<job>-<node> or model-<model>-<deployment>[-<replica>]", h)
 	}
+	if err != nil {
+		return hostname{}, err
+	}
+	// Defense in depth: these components are interpolated into the on-disk JWT
+	// cache path, so reject any that contain a path separator. (Dot-containing
+	// traversal like ".." is already stripped, since label ends at the first
+	// dot, but guard explicitly against separators that survive.)
+	for _, part := range []string{hn.id, hn.deploymentID, hn.replica} {
+		if strings.ContainsAny(part, `/\`) {
+			return hostname{}, fmt.Errorf(
+				"invalid ssh hostname %q: workload identifiers must not contain path separators", h)
+		}
+	}
+	return hn, nil
 }
 
 // parseModelHostname parses the part after "model-". Model and deployment IDs
