@@ -109,7 +109,7 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 }
 
 func revokeOAuthSession(ctx *CommandContext, profileName string) error {
-	session, err := auth.ResolveSession(profileName)
+	session, err := auth.ResolveSession(profileName, "")
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 		return err
 	}
 
-	session, err := auth.ResolveSession(flags.Profile)
+	session, err := auth.ResolveSession(flags.Profile, "")
 	if err != nil {
 		return err
 	}

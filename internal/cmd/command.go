@@ -114,9 +114,10 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 	}
 
 	c := &cobra.Command{
-		Use:   use,
-		Short: def.Summary,
-		Long:  def.Description,
+		Use:    use,
+		Short:  def.Summary,
+		Long:   def.Description,
+		Hidden: def.Hidden,
 	}
 	c.InitDefaultHelpFlag()
 	if f := c.Flags().Lookup("help"); f != nil {

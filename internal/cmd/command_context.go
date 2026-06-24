@@ -347,6 +347,15 @@ func NewAuthStore(insecureStorage bool) (*auth.Store, error) {
 	}), nil
 }
 
+// SetDefaultProfile sets a fallback profile, used only when no profile is
+// selected via --profile, BASETEN_API_KEY, or BASETEN_PROFILE. It must be
+// called before anything that resolves auth (AuthTransport, NewManagementClient,
+// NewInferenceClient, or the Remote/Session accessors): the session resolves
+// once and is cached, so a call afterward has no effect.
+func (c *CommandContext) SetDefaultProfile(name string) {
+	c.authInfo.defaultProfile = name
+}
+
 // AuthTransport builds an HTTP transport that injects the active session's
 // credential on every request, regardless of the request host. Shared by the
 // SDK clients and by commands that POST to non-SDK hosts (e.g. a Model API URL).
@@ -530,7 +539,8 @@ func (c *hostHeaderClient) Do(req *http.Request) (*http.Response, error) {
 // resolved together by resolve (guarded by once). The remote and session
 // fields are caches; callers use the Remote and Session accessors.
 type authInfo struct {
-	profileFlag string
+	profileFlag    string
+	defaultProfile string
 
 	once    sync.Once
 	err     error
@@ -540,7 +550,7 @@ type authInfo struct {
 
 func (a *authInfo) resolve() error {
 	a.once.Do(func() {
-		if a.session, a.err = auth.ResolveSession(a.profileFlag); a.err != nil {
+		if a.session, a.err = auth.ResolveSession(a.profileFlag, a.defaultProfile); a.err != nil {
 			return
 		}
 		a.remote, a.err = NewRemote(a.session.RemoteURL())

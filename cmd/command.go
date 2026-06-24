@@ -36,6 +36,7 @@ var Root = Command{
 		commandModel,
 		commandModelAPI,
 		commandOrg,
+		commandSSH,
 		commandTruss,
 		commandVersion,
 	},
@@ -78,6 +79,9 @@ type Command struct {
 	// [ErrorDescOf] and documents one extra exit code surfaced by this leaf
 	// beyond the standard set. Rendered in --help-output.
 	Errors []ErrorDesc
+	// Hidden keeps the command out of help listings and completion. The command
+	// is still fully runnable.
+	Hidden bool
 }
 
 // LoadFlags parses the Flags struct tags and returns the flag metadata. Returns

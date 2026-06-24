@@ -26,12 +26,17 @@ type Session struct {
 //  1. profileFlag (the --profile flag)
 //  2. BASETEN_API_KEY (+ optional BASETEN_REMOTE_URL), ephemeral
 //  3. BASETEN_PROFILE
-//  4. the current profile in auth.json
+//  4. defaultProfile (a baked-in fallback, e.g. from the SSH config)
+//  5. the current profile in auth.json
+//
+// defaultProfile is "" for most commands; the SSH sign/proxy commands pass
+// their --default-profile so a pinned profile is used only when nothing more
+// specific selects one.
 //
 // A named profile that does not exist is not an error here; the failure
 // surfaces when a credential is actually needed (or in the auth commands that
 // manage profiles directly).
-func ResolveSession(profileFlag string) (*Session, error) {
+func ResolveSession(profileFlag, defaultProfile string) (*Session, error) {
 	dir, err := DefaultConfigDir()
 	if err != nil {
 		return nil, err
@@ -56,6 +61,14 @@ func ResolveSession(profileFlag string) (*Session, error) {
 	if envProfile := os.Getenv("BASETEN_PROFILE"); envProfile != "" {
 		s.profileName = envProfile
 		if p, ok := store.GetProfile(envProfile); ok {
+			s.remoteURL = p.RemoteURL
+		}
+		return s, nil
+	}
+
+	if defaultProfile != "" {
+		s.profileName = defaultProfile
+		if p, ok := store.GetProfile(defaultProfile); ok {
 			s.remoteURL = p.RemoteURL
 		}
 		return s, nil
