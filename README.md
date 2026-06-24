@@ -2,22 +2,22 @@
 
 CLI for the [Baseten Inference Platform](https://baseten.co).
 
-⚠️ Under active development. Nothing should be considered stable at this time.
+⚠️ This CLI is under active development, so commands and behavior may change between releases until it reaches general availability.
 
 ## Installation
 
 Download the [latest release](https://github.com/basetenlabs/baseten-cli/releases/latest) for your platform, extract the archive, and place the `baseten` executable on your `PATH`.
 
-Or install v0.1.0 with a one-liner:
+Or install v0.2.0 with a one-liner:
 
 ### Linux (x64)
 
-    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.1.0/baseten_0.1.0_linux_amd64.tar.gz \
+    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.2.0/baseten_0.2.0_linux_amd64.tar.gz \
       | sudo tar xz -C /usr/local/bin baseten
 
 ### macOS (arm64)
 
-    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.1.0/baseten_0.1.0_darwin_arm64.tar.gz \
+    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.2.0/baseten_0.2.0_darwin_arm64.tar.gz \
       | sudo tar xz -C /usr/local/bin baseten
 
 ### Windows (x64)
@@ -25,7 +25,7 @@ Or install v0.1.0 with a one-liner:
 PowerShell:
 
     Invoke-WebRequest `
-      https://github.com/basetenlabs/baseten-cli/releases/download/v0.1.0/baseten_0.1.0_windows_amd64.zip `
+      https://github.com/basetenlabs/baseten-cli/releases/download/v0.2.0/baseten_0.2.0_windows_amd64.zip `
       -OutFile baseten.zip; Expand-Archive -Force baseten.zip .
 
 Then move `baseten.exe` to a directory on your `PATH`.
