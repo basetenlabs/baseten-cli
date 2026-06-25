@@ -64,7 +64,7 @@ func Test_ModelApi_List_JSON(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), `"name": "llama-3"`)
 }
 
-func Test_ModelApi_List_DefaultRestrictsToAdded(t *testing.T) {
+func Test_ModelApi_List_DefaultBrowsesCatalog(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	var query []string
@@ -75,10 +75,10 @@ func Test_ModelApi_List_DefaultRestrictsToAdded(t *testing.T) {
 	})
 
 	h.Require.NoError(h.Execute("model-api", "list"))
-	h.Require.Equal([]string{"true"}, query)
+	h.Require.Equal([]string{"false"}, query)
 }
 
-func Test_ModelApi_List_AllBrowsesCatalog(t *testing.T) {
+func Test_ModelApi_List_AddedOnlyRestrictsToAdded(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	var query []string
@@ -88,8 +88,8 @@ func Test_ModelApi_List_AllBrowsesCatalog(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}})
 	})
 
-	h.Require.NoError(h.Execute("model-api", "list", "--all"))
-	h.Require.Empty(query)
+	h.Require.NoError(h.Execute("model-api", "list", "--added-only"))
+	h.Require.Equal([]string{"true"}, query)
 }
 
 func Test_ModelApi_List_Paginates(t *testing.T) {

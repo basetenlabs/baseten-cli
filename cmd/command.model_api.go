@@ -29,21 +29,21 @@ var commandModelAPI = Command{
 		},
 		{
 			Name:    "list",
-			Summary: "List Model APIs the workspace has added",
-			Description: "List the Model APIs the workspace has added.\n\n" +
-				"Pass --all to browse the full visible catalog instead of just the added ones.",
+			Summary: "List Model APIs",
+			Description: "List the Model APIs in the full visible catalog.\n\n" +
+				"Pass --added-only to restrict to just the Model APIs the workspace has added.",
 			Flags: ModelAPIListFlags{},
 			Output: &CommandOutput[ModelAPIList]{
 				TextDescription: "Table with columns: NAME, CONTEXT, $/1M IN, $/1M OUT, ADDED. " +
 					"When no Model APIs match, prints \"No Model APIs found.\" to stderr.",
 				Examples: []CommandExample{
 					{
-						Description: "List the Model APIs the workspace has added.",
+						Description: "List the full visible catalog of Model APIs.",
 						Command:     "baseten model-api list",
 					},
 					{
-						Description: "Browse the full visible catalog.",
-						Command:     "baseten model-api list --all",
+						Description: "List only the Model APIs the workspace has added.",
+						Command:     "baseten model-api list --added-only",
 					},
 				},
 				JQExample: CommandExample{
@@ -109,7 +109,7 @@ type ModelAPIDescribeFlags struct {
 type ModelAPIListFlags struct {
 	CommandFlags
 
-	All bool `flag:"all" desc:"Browse the full visible catalog instead of only the Model APIs the workspace has added."`
+	AddedOnly bool `flag:"added-only" desc:"Restrict to the Model APIs the workspace has added instead of the full visible catalog."`
 }
 
 // ModelAPIPredictFlags configures `baseten model-api predict`.
