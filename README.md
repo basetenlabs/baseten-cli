@@ -1,5 +1,9 @@
 # Baseten CLI
 
+[![CI](https://github.com/basetenlabs/baseten-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/basetenlabs/baseten-cli/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/basetenlabs/baseten-cli)](https://github.com/basetenlabs/baseten-cli/releases/latest)
+[![License](https://img.shields.io/github/license/basetenlabs/baseten-cli)](LICENSE)
+
 CLI for the [Baseten Inference Platform](https://baseten.co).
 
 ⚠️ This CLI is under active development, so commands and behavior may change between releases until it reaches general availability.
