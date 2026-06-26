@@ -27,13 +27,9 @@ func commandModelAPIList(ctx *CommandContext, flags *cmd.ModelAPIListFlags) erro
 	}
 
 	// The catalog is small, so walk every page and aggregate into one list
-	// rather than exposing cursors. By default restrict to the Model APIs the
-	// workspace has added; --all browses the full visible catalog.
-	params := managementapi.GetV1ModelApisParams{}
-	if !flags.All {
-		addedOnly := true
-		params.AddedOnly = &addedOnly
-	}
+	// rather than exposing cursors. By default browse the full visible catalog;
+	// --added-only restricts to the Model APIs the workspace has added.
+	params := managementapi.GetV1ModelApisParams{AddedOnly: &flags.AddedOnly}
 	var items []managementapi.ModelAPI
 	for {
 		resp, err := cl.API().GetModelApis(ctx, params)
