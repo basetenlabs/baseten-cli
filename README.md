@@ -10,21 +10,25 @@ CLI for the [Baseten Inference Platform](https://baseten.co).
 
 ## Installation
 
-Download the [latest release](https://github.com/basetenlabs/baseten-cli/releases/latest) for your platform, extract the archive, and place the `baseten` executable on your `PATH`.
+### Homebrew (macOS and Linux)
 
-Or install v0.2.0 with a one-liner:
+```bash
+# Add and trust the tap
+brew tap basetenlabs/baseten
+brew trust basetenlabs/baseten
 
-### Linux (x64)
+# Install the CLI
+brew install baseten
+```
 
-    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.2.0/baseten_0.2.0_linux_amd64.tar.gz \
-      | sudo tar xz -C /usr/local/bin baseten
+### Prebuilt binaries
 
-### macOS (arm64)
+Download the [latest release](https://github.com/basetenlabs/baseten-cli/releases/latest) for Windows, macOS, or Linux, extract the archive, and place the `baseten` executable on your `PATH`.
 
-    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.2.0/baseten_0.2.0_darwin_arm64.tar.gz \
-      | sudo tar xz -C /usr/local/bin baseten
+<details>
+<summary>Windows, macOS, and Linux one-liners</summary>
 
-### Windows (x64)
+#### Windows (x64)
 
 PowerShell:
 
@@ -33,6 +37,18 @@ PowerShell:
       -OutFile baseten.zip; Expand-Archive -Force baseten.zip .
 
 Then move `baseten.exe` to a directory on your `PATH`.
+
+#### macOS (arm64)
+
+    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.2.0/baseten_0.2.0_darwin_arm64.tar.gz \
+      | sudo tar xz -C /usr/local/bin baseten
+
+#### Linux (x64)
+
+    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.2.0/baseten_0.2.0_linux_amd64.tar.gz \
+      | sudo tar xz -C /usr/local/bin baseten
+
+</details>
 
 ## Usage
 
