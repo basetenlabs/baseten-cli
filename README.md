@@ -4,13 +4,15 @@
 [![Release](https://img.shields.io/github/v/release/basetenlabs/baseten-cli)](https://github.com/basetenlabs/baseten-cli/releases/latest)
 [![License](https://img.shields.io/github/license/basetenlabs/baseten-cli)](LICENSE)
 
-CLI for the [Baseten Inference Platform](https://baseten.co).
+CLI for the [Baseten Inference Platform](https://baseten.co). 
+
+[CLI Reference Docs](https://docs.baseten.co/reference/cli/baseten/overview)
 
 ⚠️ This CLI is under active development, so commands and behavior may change between releases until it reaches general availability.
 
 ## Installation
 
-Download the [latest release](https://github.com/basetenlabs/baseten-cli/releases/latest) for your platform, extract the archive, and place the `baseten` executable on your `PATH`.
+Download the [latest release](https://github.com/basetenlabs/baseten-cli/releases/latest) for your platform, extract the archive, and place the `baseten` executable on your `PATH`. 
 
 Or install v0.2.0 with a one-liner:
 
