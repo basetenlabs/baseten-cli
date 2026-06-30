@@ -6,6 +6,8 @@
 
 CLI for the [Baseten Inference Platform](https://baseten.co).
 
+[CLI Reference Docs](https://docs.baseten.co/reference/cli/baseten/overview)
+
 ⚠️ This CLI is under active development, so commands and behavior may change between releases until it reaches general availability.
 
 ## Installation
