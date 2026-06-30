@@ -211,7 +211,129 @@ var commandOrg = Command{
 				},
 			},
 		},
+		{
+			Name:        "team",
+			Summary:     "View teams",
+			Description: "List and inspect the teams in the organization.",
+			Children: []Command{
+				{
+					Name:        "describe",
+					Summary:     "Describe a team",
+					Description: "Describe a single team by name or ID.",
+					Flags:       OrgTeamDescribeFlags{},
+					Output: &CommandOutput[managementapi.Team]{
+						TextDescription: "Field-per-line summary of the team.",
+						Examples: []CommandExample{
+							{
+								Description: "Describe a team by ID or name.",
+								Command:     "baseten org team describe --team-id <team>",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print the team's name.",
+							Command:     "baseten org team describe --team-id <team> --jq '.name'",
+						},
+					},
+				},
+				{
+					Name:        "list",
+					Summary:     "List teams",
+					Description: "List the teams in the organization.",
+					Flags:       OrgTeamListFlags{},
+					Output: &CommandOutput[managementapi.Teams]{
+						TextDescription: "Table with columns: ID, NAME, DEFAULT, CREATED. When no teams " +
+							"exist, prints \"No teams found.\" to stderr.",
+						Examples: []CommandExample{
+							{
+								Description: "List all teams in the org.",
+								Command:     "baseten org team list",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print just the team names.",
+							Command:     "baseten org team list --jq '.teams[].name'",
+						},
+					},
+				},
+			},
+		},
+		{
+			Name:        "user",
+			Summary:     "View users",
+			Description: "List and inspect the users in the organization.",
+			Children: []Command{
+				{
+					Name:        "describe",
+					Summary:     "Describe a user",
+					Description: "Describe a single user by ID. Pass 'me' for the authenticated user.",
+					Flags:       OrgUserDescribeFlags{},
+					Output: &CommandOutput[managementapi.UserInfo]{
+						TextDescription: "Field-per-line summary of the user.",
+						Examples: []CommandExample{
+							{
+								Description: "Describe the authenticated user.",
+								Command:     "baseten org user describe --user-id me",
+							},
+							{
+								Description: "Describe a user by ID.",
+								Command:     "baseten org user describe --user-id <user-id>",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print the user's email.",
+							Command:     "baseten org user describe --user-id me --jq '.email'",
+						},
+					},
+				},
+				{
+					Name:        "list",
+					Summary:     "List users",
+					Description: "List the users in the organization.",
+					Flags:       OrgUserListFlags{},
+					Output: &CommandOutput[OrgUserList]{
+						TextDescription: "Table with columns: USER ID, EMAIL, NAME. When no users " +
+							"exist, prints \"No users found.\" to stderr.",
+						Examples: []CommandExample{
+							{
+								Description: "List all users in the org.",
+								Command:     "baseten org user list",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print just the user emails.",
+							Command:     "baseten org user list --jq '.items[].email'",
+						},
+					},
+				},
+			},
+		},
 	},
+}
+
+// OrgUserList is the JSON output of `baseten org user list`: the users
+// aggregated across all pages.
+type OrgUserList struct {
+	Items []managementapi.UserInfo `json:"items"`
+}
+
+type OrgTeamListFlags struct {
+	CommandFlags
+}
+
+type OrgTeamDescribeFlags struct {
+	CommandFlags
+
+	TeamID string `flag:"team-id" desc:"Team ID (or name) to describe." required:"true"`
+}
+
+type OrgUserListFlags struct {
+	CommandFlags
+}
+
+type OrgUserDescribeFlags struct {
+	CommandFlags
+
+	UserID string `flag:"user-id" desc:"User ID to describe. Pass 'me' for the authenticated user." required:"true"`
 }
 
 type OrgAPIKeyListFlags struct {
