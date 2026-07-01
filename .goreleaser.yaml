@@ -59,7 +59,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/basetenlabs/baseten-cli"
-    description: "CLI for the Baseten Inference Platform"
+    description: "CLI for Baseten"
     license: MIT
     skip_upload: auto
     test: |
