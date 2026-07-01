@@ -265,7 +265,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 	if err != nil {
 		return err
 	}
-	user, err := cl.API().GetUsers(ctx.Context, "me")
+	user, err := cl.API().GetUsersMe(ctx.Context)
 	if err != nil {
 		return fmt.Errorf("validating credentials: %w", err)
 	}
@@ -320,7 +320,7 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *
 	if err != nil {
 		return err
 	}
-	user, err := cl.API().GetUsers(ctx.Context, "me")
+	user, err := cl.API().GetUsersMe(ctx.Context)
 	if err != nil {
 		return fmt.Errorf("validating API key: %w", err)
 	}

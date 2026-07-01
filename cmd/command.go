@@ -39,6 +39,7 @@ var Root = Command{
 		commandSSH,
 		commandTruss,
 		commandVersion,
+		commandWhoami,
 	},
 }
 
