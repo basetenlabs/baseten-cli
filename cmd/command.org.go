@@ -323,7 +323,7 @@ type OrgTeamListFlags struct {
 type OrgTeamDescribeFlags struct {
 	CommandFlags
 
-	TeamID string `flag:"team-id" desc:"Team ID (or name) to describe." required:"true"`
+	TeamID string `flag:"team-id" desc:"Team ID to describe." required:"true"`
 }
 
 type OrgUserListFlags struct {

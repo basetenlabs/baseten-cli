@@ -51,12 +51,7 @@ func commandOrgTeamDescribe(ctx *CommandContext, flags *cmd.OrgTeamDescribeFlags
 		return err
 	}
 
-	// Accept a team name or ID, consistent with --team elsewhere.
-	teamID, err := ResolveTeam(ctx, cl.API(), flags.TeamID)
-	if err != nil {
-		return err
-	}
-	team, err := cl.API().GetTeamsTeamId(ctx, teamID)
+	team, err := cl.API().GetTeamsTeamId(ctx, flags.TeamID)
 	if err != nil {
 		return fmt.Errorf("describe team %s: %w", flags.TeamID, err)
 	}

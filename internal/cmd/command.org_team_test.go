@@ -52,8 +52,7 @@ func Test_Org_Team_List_JSON(t *testing.T) {
 func Test_Org_Team_Describe_ByID(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	// ResolveTeam lists teams to map the input to an ID.
-	m.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []any{teamFixture("t1", "Engineering", true)}})
+	// --team-id is passed straight through; no team list lookup.
 	m.SetRoute("GET", "/v1/teams/t1", 200, teamFixture("t1", "Engineering", true))
 
 	h.Require.NoError(h.Execute("org", "team", "describe", "--team-id", "t1"))
@@ -64,20 +63,9 @@ func Test_Org_Team_Describe_ByID(t *testing.T) {
 	h.Require.Contains(out, "Default:")
 }
 
-func Test_Org_Team_Describe_ByName(t *testing.T) {
-	h := NewCommandHarness(t)
-	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []any{teamFixture("t1", "Engineering", false)}})
-	m.SetRoute("GET", "/v1/teams/t1", 200, teamFixture("t1", "Engineering", false))
-
-	h.Require.NoError(h.Execute("org", "team", "describe", "--team-id", "Engineering"))
-	h.Require.Contains(h.Stdout.String(), "t1")
-}
-
 func Test_Org_Team_Describe_JSON(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []any{teamFixture("t1", "Engineering", true)}})
 	m.SetRoute("GET", "/v1/teams/t1", 200, teamFixture("t1", "Engineering", true))
 
 	h.Require.NoError(h.Execute("org", "team", "describe", "--team-id", "t1", "--output", "json"))
