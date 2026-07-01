@@ -18,9 +18,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Generate a token scoped to homebrew-baseten
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.APP_HOMEBREW_UPDATER_CLIENT_ID }}
+          private-key: ${{ secrets.APP_HOMEBREW_UPDATER_PRIVATE_KEY }}
+          owner: basetenlabs
+          repositories: homebrew-baseten
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.app-token.outputs.token }}
