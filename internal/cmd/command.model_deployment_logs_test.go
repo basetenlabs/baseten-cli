@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,6 +34,16 @@ func logsResponse(logs ...map[string]any) map[string]any {
 		logs = []map[string]any{}
 	}
 	return map[string]any{"logs": logs}
+}
+
+// captureLogsQuery registers a GET logs route that records the request query
+// and responds with the given logs.
+func captureLogsQuery(api *MockManagementAPI, path string, gotQuery *url.Values, logs ...map[string]any) {
+	api.SetRouteFunc("GET", path, func(w http.ResponseWriter, r *http.Request) {
+		*gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(logsResponse(logs...))
+	})
 }
 
 func Test_Model_Deployment_Logs_TailWithStartRejected(t *testing.T) {
@@ -82,8 +93,8 @@ func Test_Model_Deployment_Logs_SinceOver7DaysRejected(t *testing.T) {
 
 func Test_Model_Deployment_Logs_FiltersSent(t *testing.T) {
 	h := NewCommandHarness(t)
-	api := h.MockManagementAPI()
-	api.SetRoute("POST", logsLogsPath, 200, logsResponse())
+	var gotQuery url.Values
+	captureLogsQuery(h.MockManagementAPI(), logsLogsPath, &gotQuery)
 	err := h.Execute("model", "deployment", "logs",
 		"--model-id", "m", "--deployment-id", "d",
 		"--min-level", "info",
@@ -93,25 +104,24 @@ func Test_Model_Deployment_Logs_FiltersSent(t *testing.T) {
 		"--replica", "g00r0",
 		"--request-id", "req-123")
 	h.Require.NoError(err)
-	req := api.FindCall("POST", logsLogsPath).BodyJSON(h.T)
 	// --min-level is uppercased before sending.
-	h.Require.Equal("INFO", req["min_level"])
-	h.Require.Equal([]any{"warn", "fail"}, req["includes"])
-	h.Require.Equal([]any{"healthz"}, req["excludes"])
-	h.Require.Equal(".*timeout", req["search_pattern"])
-	h.Require.Equal("g00r0", req["replica"])
-	h.Require.Equal("req-123", req["request_id"])
+	h.Require.Equal("INFO", gotQuery.Get("min_level"))
+	h.Require.Equal([]string{"warn", "fail"}, gotQuery["includes"])
+	h.Require.Equal([]string{"healthz"}, gotQuery["excludes"])
+	h.Require.Equal(".*timeout", gotQuery.Get("search_pattern"))
+	h.Require.Equal("g00r0", gotQuery.Get("replica"))
+	h.Require.Equal("req-123", gotQuery.Get("request_id"))
 }
 
 func Test_Model_Deployment_Logs_FiltersOmittedWhenUnset(t *testing.T) {
 	h := NewCommandHarness(t)
-	api := h.MockManagementAPI()
-	api.SetRoute("POST", logsLogsPath, 200, logsResponse())
+	var gotQuery url.Values
+	captureLogsQuery(h.MockManagementAPI(), logsLogsPath, &gotQuery)
 	err := h.Execute("model", "deployment", "logs", "--model-id", "m", "--deployment-id", "d")
 	h.Require.NoError(err)
-	req := api.FindCall("POST", logsLogsPath).BodyJSON(h.T)
-	for _, field := range []string{"min_level", "includes", "excludes", "search_pattern", "replica", "request_id"} {
-		h.Require.Nil(req[field], "expected %s to be omitted", field)
+	for _, field := range []string{"min_level", "includes", "excludes", "search_pattern", "replica", "request_id", "start_epoch_millis", "end_epoch_millis"} {
+		_, ok := gotQuery[field]
+		h.Require.False(ok, "expected %s to be omitted", field)
 	}
 }
 
@@ -137,7 +147,7 @@ func Test_Model_Deployment_Logs_OneShotText(t *testing.T) {
 	// local timezone, so format the expected string against time.Local.
 	logAt := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
 	ts := logAt.UnixNano()
-	h.MockManagementAPI().SetRoute("POST", logsLogsPath, 200, logsResponse(
+	h.MockManagementAPI().SetRoute("GET", logsLogsPath, 200, logsResponse(
 		map[string]any{"timestamp": strconv.FormatInt(ts, 10), "message": "hello", "replica": "r-1"},
 		map[string]any{"timestamp": strconv.FormatInt(ts+int64(time.Second), 10), "message": "world", "replica": nil},
 	))
@@ -151,7 +161,7 @@ func Test_Model_Deployment_Logs_OneShotText(t *testing.T) {
 
 func Test_Model_Deployment_Logs_OneShotJSON(t *testing.T) {
 	h := NewCommandHarness(t)
-	h.MockManagementAPI().SetRoute("POST", logsLogsPath, 200, logsResponse(
+	h.MockManagementAPI().SetRoute("GET", logsLogsPath, 200, logsResponse(
 		map[string]any{"timestamp": "1", "message": "hi", "replica": nil},
 	))
 	err := h.Execute("model", "deployment", "logs",
@@ -165,7 +175,7 @@ func Test_Model_Deployment_Logs_OneShotJSON(t *testing.T) {
 
 func Test_Model_Deployment_Logs_OneShotJSONL(t *testing.T) {
 	h := NewCommandHarness(t)
-	h.MockManagementAPI().SetRoute("POST", logsLogsPath, 200, logsResponse(
+	h.MockManagementAPI().SetRoute("GET", logsLogsPath, 200, logsResponse(
 		map[string]any{"timestamp": "1", "message": "a", "replica": nil},
 		map[string]any{"timestamp": "2", "message": "b", "replica": nil},
 	))
@@ -182,68 +192,61 @@ func Test_Model_Deployment_Logs_OneShotJSONL(t *testing.T) {
 
 func Test_Model_Deployment_Logs_SinceBoundsSent(t *testing.T) {
 	h := NewCommandHarness(t)
-	api := h.MockManagementAPI()
-	api.SetRoute("POST", logsLogsPath, 200, logsResponse())
+	var gotQuery url.Values
+	captureLogsQuery(h.MockManagementAPI(), logsLogsPath, &gotQuery)
 	fixed := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
 	h.Context = cmd.WithNow(h.Context, func() time.Time { return fixed })
 	err := h.Execute("model", "deployment", "logs",
 		"--model-id", "m", "--deployment-id", "d", "--since", "30m")
 	h.Require.NoError(err)
-	call := api.FindCall("POST", logsLogsPath)
-	h.Require.NotNil(call)
-	req := call.BodyJSON(h.T)
-	endMs := fixed.UnixMilli()
-	startMs := fixed.Add(-30 * time.Minute).UnixMilli()
-	h.Require.Equal(float64(startMs), req["start_epoch_millis"])
-	h.Require.Equal(float64(endMs), req["end_epoch_millis"])
+	h.Require.Equal(int(fixed.UnixMilli()), mustAtoi(t, gotQuery.Get("end_epoch_millis")))
+	h.Require.Equal(int(fixed.Add(-30*time.Minute).UnixMilli()), mustAtoi(t, gotQuery.Get("start_epoch_millis")))
 }
 
 func Test_Model_Deployment_Logs_SinceWithDaySuffix(t *testing.T) {
 	h := NewCommandHarness(t)
-	api := h.MockManagementAPI()
-	api.SetRoute("POST", logsLogsPath, 200, logsResponse())
+	var gotQuery url.Values
+	captureLogsQuery(h.MockManagementAPI(), logsLogsPath, &gotQuery)
 	fixed := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
 	h.Context = cmd.WithNow(h.Context, func() time.Time { return fixed })
 	err := h.Execute("model", "deployment", "logs",
 		"--model-id", "m", "--deployment-id", "d", "--since", "3d")
 	h.Require.NoError(err)
-	req := api.FindCall("POST", logsLogsPath).BodyJSON(h.T)
-	startMs := fixed.Add(-3 * 24 * time.Hour).UnixMilli()
-	h.Require.Equal(float64(startMs), req["start_epoch_millis"])
+	h.Require.Equal(int(fixed.Add(-3*24*time.Hour).UnixMilli()), mustAtoi(t, gotQuery.Get("start_epoch_millis")))
 }
 
 func Test_Model_Deployment_Logs_StartOnlyDefersEndToServer(t *testing.T) {
 	h := NewCommandHarness(t)
-	api := h.MockManagementAPI()
-	api.SetRoute("POST", logsLogsPath, 200, logsResponse())
+	var gotQuery url.Values
+	captureLogsQuery(h.MockManagementAPI(), logsLogsPath, &gotQuery)
 	start := time.Date(2026, 5, 13, 11, 0, 0, 0, time.Local)
 	err := h.Execute("model", "deployment", "logs",
 		"--model-id", "m", "--deployment-id", "d", "--start", "2026-05-13T11:00:00")
 	h.Require.NoError(err)
-	req := api.FindCall("POST", logsLogsPath).BodyJSON(h.T)
 	// Only --start is sent; end is left for the server to backfill.
-	h.Require.Equal(float64(start.UnixMilli()), req["start_epoch_millis"])
-	h.Require.Nil(req["end_epoch_millis"])
+	h.Require.Equal(int(start.UnixMilli()), mustAtoi(t, gotQuery.Get("start_epoch_millis")))
+	_, ok := gotQuery["end_epoch_millis"]
+	h.Require.False(ok)
 }
 
 func Test_Model_Deployment_Logs_EndOnlyDefersStartToServer(t *testing.T) {
 	h := NewCommandHarness(t)
-	api := h.MockManagementAPI()
-	api.SetRoute("POST", logsLogsPath, 200, logsResponse())
+	var gotQuery url.Values
+	captureLogsQuery(h.MockManagementAPI(), logsLogsPath, &gotQuery)
 	end := time.Date(2026, 5, 14, 12, 0, 0, 0, time.Local)
 	err := h.Execute("model", "deployment", "logs",
 		"--model-id", "m", "--deployment-id", "d", "--end", "2026-05-14T12:00:00")
 	h.Require.NoError(err)
-	req := api.FindCall("POST", logsLogsPath).BodyJSON(h.T)
 	// Only --end is sent; start is left for the server to backfill.
-	h.Require.Equal(float64(end.UnixMilli()), req["end_epoch_millis"])
-	h.Require.Nil(req["start_epoch_millis"])
+	h.Require.Equal(int(end.UnixMilli()), mustAtoi(t, gotQuery.Get("end_epoch_millis")))
+	_, ok := gotQuery["start_epoch_millis"]
+	h.Require.False(ok)
 }
 
 func Test_Model_Deployment_Logs_TailTerminatesOnStopStatus(t *testing.T) {
 	h := NewCommandHarness(t)
 	api := h.MockManagementAPI()
-	api.SetRoute("POST", logsLogsPath, 200, logsResponse(
+	api.SetRoute("GET", logsLogsPath, 200, logsResponse(
 		map[string]any{"timestamp": "1", "message": "build started", "replica": nil},
 	))
 	api.SetRoute("GET", logsDeployPath, 200, logsDeployment("BUILD_FAILED"))
@@ -258,7 +261,7 @@ func Test_Model_Deployment_Logs_TailTerminatesOnStopStatus(t *testing.T) {
 func Test_Model_Deployment_Logs_TailStopsOnUnknownStatus(t *testing.T) {
 	h := NewCommandHarness(t)
 	api := h.MockManagementAPI()
-	api.SetRoute("POST", logsLogsPath, 200, logsResponse(
+	api.SetRoute("GET", logsLogsPath, 200, logsResponse(
 		map[string]any{"timestamp": "1", "message": "alive", "replica": nil},
 	))
 	api.SetRoute("GET", logsDeployPath, 200, logsDeployment("SOME_NEW_STATE"))
@@ -274,7 +277,7 @@ func Test_Model_Deployment_Logs_TailDedupesAcrossPolls(t *testing.T) {
 	api := h.MockManagementAPI()
 	dup := map[string]any{"timestamp": "1", "message": "same", "replica": nil}
 	logsCalls := 0
-	api.SetRouteFunc("POST", logsLogsPath, func(w http.ResponseWriter, _ *http.Request) {
+	api.SetRouteFunc("GET", logsLogsPath, func(w http.ResponseWriter, _ *http.Request) {
 		logsCalls++
 		var payload map[string]any
 		if logsCalls == 1 {
@@ -308,7 +311,7 @@ func Test_Model_Deployment_Logs_TailDedupesAcrossPolls(t *testing.T) {
 func Test_Model_Deployment_Logs_TailJSONLStreaming(t *testing.T) {
 	h := NewCommandHarness(t)
 	api := h.MockManagementAPI()
-	api.SetRoute("POST", logsLogsPath, 200, logsResponse(
+	api.SetRoute("GET", logsLogsPath, 200, logsResponse(
 		map[string]any{"timestamp": "1", "message": "a", "replica": nil},
 	))
 	api.SetRoute("GET", logsDeployPath, 200, logsDeployment("BUILD_FAILED"))
@@ -325,7 +328,7 @@ func Test_Model_Deployment_Logs_TailJSONLStreaming(t *testing.T) {
 func Test_Model_Deployment_Logs_TailJSONArrayClosesOnExit(t *testing.T) {
 	h := NewCommandHarness(t)
 	api := h.MockManagementAPI()
-	api.SetRoute("POST", logsLogsPath, 200, logsResponse(
+	api.SetRoute("GET", logsLogsPath, 200, logsResponse(
 		map[string]any{"timestamp": "1", "message": "a", "replica": nil},
 	))
 	api.SetRoute("GET", logsDeployPath, 200, logsDeployment("BUILD_FAILED"))

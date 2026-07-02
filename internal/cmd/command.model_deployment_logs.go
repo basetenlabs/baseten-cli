@@ -24,6 +24,66 @@ func init() {
 }
 
 func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentLogsFlags) error {
+	api, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveModelRef(ctx, api.API(), flags.ModelRefFlags)
+	if err != nil {
+		return err
+	}
+
+	fetchLogs := func(q logQuery) (*managementapi.GetLogsResponse, error) {
+		return api.API().GetModelsDeploymentsLogs(ctx, ref.ID, flags.DeploymentID, deploymentLogParams(q))
+	}
+	fetchStatus := func() (*managementapi.Deployment, error) {
+		return api.API().GetModelsDeploymentsDeploymentId(ctx, ref.ID, flags.DeploymentID)
+	}
+	return runLogsCommand(ctx, &flags.LogFlags, fetchLogs, fetchStatus)
+}
+
+// logQuery is the transport-neutral set of log-query parameters shared by the
+// deployment and environment logs endpoints. Each command maps it onto its own
+// generated query-params type.
+type logQuery struct {
+	StartEpochMillis *int
+	EndEpochMillis   *int
+	MinLevel         *managementapi.LogLevel
+	Includes         *[]string
+	Excludes         *[]string
+	SearchPattern    *string
+	Replica          *string
+	RequestId        *string
+}
+
+// logFetcher fetches a page of logs for the given query.
+type logFetcher func(q logQuery) (*managementapi.GetLogsResponse, error)
+
+// statusFetcher resolves the deployment whose status gates a --tail loop. For a
+// deployment command it is the deployment itself; for an environment command it
+// is the environment's current deployment.
+type statusFetcher func() (*managementapi.Deployment, error)
+
+// deploymentLogParams maps a transport-neutral logQuery onto the deployment
+// logs GET query-params type.
+func deploymentLogParams(q logQuery) managementapi.GetV1ModelsModelIdDeploymentsDeploymentIdLogsParams {
+	return managementapi.GetV1ModelsModelIdDeploymentsDeploymentIdLogsParams{
+		StartEpochMillis: q.StartEpochMillis,
+		EndEpochMillis:   q.EndEpochMillis,
+		MinLevel:         q.MinLevel,
+		Includes:         q.Includes,
+		Excludes:         q.Excludes,
+		SearchPattern:    q.SearchPattern,
+		Replica:          q.Replica,
+		RequestId:        q.RequestId,
+	}
+}
+
+// runLogsCommand implements the shared logs command flow for both deployment and
+// environment logs. It validates the flags, resolves the time window and
+// filters, and either tails or fetches a single window via the supplied
+// fetchers. fetchStatus is only used by the --tail path.
+func runLogsCommand(ctx *CommandContext, flags *cmd.LogFlags, fetchLogs logFetcher, fetchStatus statusFetcher) error {
 	hasStart := !flags.Start.IsZero()
 	hasEnd := !flags.End.IsZero()
 	// Use Changed rather than the zero value so explicit --since 0 fails
@@ -38,22 +98,9 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 		return cmd.NewErrUsagef("--since cannot be combined with --start or --end")
 	}
 
-	api, err := ctx.NewManagementClient()
-	if err != nil {
-		return err
-	}
-	ref, err := ResolveModelRef(ctx, api.API(), flags.ModelRefFlags)
-	if err != nil {
-		return err
-	}
-
 	if flags.Tail {
-		res := TailDeploymentLogs(ctx, TailDeploymentLogsOptions{
-			API:          api.API(),
-			ModelID:      ref.ID,
-			DeploymentID: flags.DeploymentID,
-		})
-		if err := emitDeploymentLogs(ctx, res.Logs); err != nil {
+		res := tailLogs(ctx, tailLogsOptions{FetchLogs: fetchLogs, FetchStatus: fetchStatus})
+		if err := emitLogs(ctx, res.Logs); err != nil {
 			return err
 		}
 		if dep := res.FinalFetchedDeployment(); dep != nil {
@@ -64,7 +111,7 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 
 	// Resolve --start/--end/--since into epoch-millis bounds. Nil bounds mean
 	// "server default"; unset start/end/since pass nils.
-	var req managementapi.GetDeploymentLogsRequest
+	var q logQuery
 	if hasSince {
 		if flags.Since <= 0 {
 			return cmd.NewErrUsagef("--since must be a positive duration")
@@ -75,18 +122,18 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 		now := ctx.Now()
 		s := int(now.Add(-flags.Since).UnixMilli())
 		e := int(now.UnixMilli())
-		req.StartEpochMillis, req.EndEpochMillis = &s, &e
+		q.StartEpochMillis, q.EndEpochMillis = &s, &e
 	} else if hasStart || hasEnd {
 		// Send only the bounds given and leave the other nil so the server
 		// backfills it (missing end -> now, missing start -> 30m before end).
 		// Validate the window client-side only when both bounds are given.
 		if hasStart {
 			s := int(flags.Start.UnixMilli())
-			req.StartEpochMillis = &s
+			q.StartEpochMillis = &s
 		}
 		if hasEnd {
 			e := int(flags.End.UnixMilli())
-			req.EndEpochMillis = &e
+			q.EndEpochMillis = &e
 		}
 		if hasStart && hasEnd {
 			if !flags.Start.Before(flags.End) {
@@ -100,30 +147,30 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 
 	if flags.MinLevel != "" {
 		level := managementapi.LogLevel(strings.ToUpper(flags.MinLevel))
-		req.MinLevel = &level
+		q.MinLevel = &level
 	}
 	if len(flags.Includes) > 0 {
-		req.Includes = &flags.Includes
+		q.Includes = &flags.Includes
 	}
 	if len(flags.Excludes) > 0 {
-		req.Excludes = &flags.Excludes
+		q.Excludes = &flags.Excludes
 	}
 	if flags.SearchPattern != "" {
-		req.SearchPattern = &flags.SearchPattern
+		q.SearchPattern = &flags.SearchPattern
 	}
 	if flags.Replica != "" {
-		req.Replica = &flags.Replica
+		q.Replica = &flags.Replica
 	}
 	if flags.RequestID != "" {
-		req.RequestId = &flags.RequestID
+		q.RequestId = &flags.RequestID
 	}
 
-	resp, err := api.API().PostModelsDeploymentsLogs(ctx, ref.ID, flags.DeploymentID, req)
+	resp, err := fetchLogs(q)
 	if err != nil {
 		return err
 	}
 
-	return emitDeploymentLogs(ctx, func(yield func(*managementapi.Log, error) bool) {
+	return emitLogs(ctx, func(yield func(*managementapi.Log, error) bool) {
 		for i := range resp.Logs {
 			if !yield(&resp.Logs[i], nil) {
 				return
@@ -132,12 +179,11 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	})
 }
 
-// emitDeploymentLogs drains an iterator of log records onto stdout in the
-// caller-selected output mode. For ctx.JSON (both json and jsonl) it uses a
-// JSON array writer so jsonl streams one record per line and json buffers
-// into a single closed array. For text it formats each line via
-// FormatDeploymentLogLine.
-func emitDeploymentLogs(ctx *CommandContext, logs iter.Seq2[*managementapi.Log, error]) error {
+// emitLogs drains an iterator of log records onto stdout in the caller-selected
+// output mode. For ctx.JSON (both json and jsonl) it uses a JSON array writer so
+// jsonl streams one record per line and json buffers into a single closed
+// array. For text it formats each line via FormatDeploymentLogLine.
+func emitLogs(ctx *CommandContext, logs iter.Seq2[*managementapi.Log, error]) error {
 	if ctx.JSON {
 		w := ctx.NewJSONArrayWriter()
 		defer w.Close()
@@ -209,14 +255,48 @@ type TailDeploymentLogsResult struct {
 	FinalFetchedDeployment func() *managementapi.Deployment
 }
 
-// TailDeploymentLogs polls a deployment's logs and streams new records until
-// the status leaves the runnable set or the context is cancelled. The
-// runnable set is {BUILDING, DEPLOYING, LOADING_MODEL, UPDATING, WAKING_UP}
-// plus ACTIVE when StopOnActive is false (default). Any other status,
-// including unknown ones, stops the tail. Dedup is by (timestamp, message,
-// replica) across overlapping clock-skew windows. Clock-and-sleep behavior
-// is taken from ctx (overridable via WithNow / WithSleep for tests).
+// TailDeploymentLogs tails a specific deployment's logs. It is a thin adapter
+// over tailLogs that wires the deployment logs and describe endpoints.
 func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *TailDeploymentLogsResult {
+	return tailLogs(ctx, tailLogsOptions{
+		FetchLogs: func(q logQuery) (*managementapi.GetLogsResponse, error) {
+			return opts.API.GetModelsDeploymentsLogs(ctx, opts.ModelID, opts.DeploymentID, deploymentLogParams(q))
+		},
+		FetchStatus: func() (*managementapi.Deployment, error) {
+			return opts.API.GetModelsDeploymentsDeploymentId(ctx, opts.ModelID, opts.DeploymentID)
+		},
+		StopOnActive:  opts.StopOnActive,
+		WarmupTimeout: opts.WarmupTimeout,
+	})
+}
+
+// tailLogsOptions configures tailLogs, the transport-neutral tail loop shared by
+// the deployment and environment logs commands.
+type tailLogsOptions struct {
+	// FetchLogs fetches a poll window of logs. Required.
+	FetchLogs logFetcher
+	// FetchStatus resolves the deployment whose status gates the tail.
+	// Required.
+	FetchStatus statusFetcher
+
+	// StopOnActive stops the tail when the deployment reaches ACTIVE. By
+	// default ACTIVE is treated as a runnable state and tailing continues.
+	StopOnActive bool
+
+	// WarmupTimeout is how long to silently retry 404s from the logs API at
+	// the start of the tail, before any successful poll. Zero means no
+	// warmup retries.
+	WarmupTimeout time.Duration
+}
+
+// tailLogs polls logs and streams new records until the gating deployment's
+// status leaves the runnable set or the context is cancelled. The runnable set
+// is {BUILDING, DEPLOYING, LOADING_MODEL, UPDATING, WAKING_UP} plus ACTIVE when
+// StopOnActive is false (default). Any other status, including unknown ones,
+// stops the tail. Dedup is by (timestamp, message, replica) across overlapping
+// clock-skew windows. Clock-and-sleep behavior is taken from ctx (overridable
+// via WithNow / WithSleep for tests).
+func tailLogs(ctx *CommandContext, opts tailLogsOptions) *TailDeploymentLogsResult {
 	var finalFetched *managementapi.Deployment
 
 	seq := func(yield func(*managementapi.Log, error) bool) {
@@ -241,8 +321,7 @@ func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *Ta
 				startMs = &v
 			}
 			endMs := int(nowMs + deploymentLogClockSkewBuffer.Milliseconds())
-			resp, err := opts.API.PostModelsDeploymentsLogs(ctx, opts.ModelID, opts.DeploymentID,
-				managementapi.GetDeploymentLogsRequest{StartEpochMillis: startMs, EndEpochMillis: &endMs})
+			resp, err := opts.FetchLogs(logQuery{StartEpochMillis: startMs, EndEpochMillis: &endMs})
 			if err != nil {
 				// Brand-new deployments may 404 on the logs index for a few
 				// seconds after creation; retry quietly within the warmup
@@ -294,7 +373,7 @@ func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *Ta
 			// TODO: should the management logs API return current status so
 			// we can drop this extra round-trip per poll?
 			if len(seen) > 0 {
-				dep, err := opts.API.GetModelsDeploymentsDeploymentId(ctx, opts.ModelID, opts.DeploymentID)
+				dep, err := opts.FetchStatus()
 				if err != nil {
 					yield(nil, fmt.Errorf("fetch deployment status: %w", err))
 					return

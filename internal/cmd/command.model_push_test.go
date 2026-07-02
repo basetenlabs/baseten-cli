@@ -541,7 +541,7 @@ func Test_Model_Push_WaitFailure(t *testing.T) {
 func Test_Model_Push_TailFailure(t *testing.T) {
 	h := newModelPushHarness(t)
 	stubModelPushTimeAndSleep(h)
-	h.API.SetRoute("POST", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
+	h.API.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
 		"logs": []any{
 			map[string]any{"timestamp": "1", "message": "build started", "replica": nil},
 		},
@@ -566,7 +566,7 @@ func Test_Model_Push_TailFailure(t *testing.T) {
 func Test_Model_Push_TailWaitSuccess(t *testing.T) {
 	h := newModelPushHarness(t)
 	stubModelPushTimeAndSleep(h)
-	h.API.SetRoute("POST", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
+	h.API.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
 		"logs": []any{
 			map[string]any{"timestamp": "1", "message": "almost ready", "replica": nil},
 		},
@@ -591,7 +591,7 @@ func Test_Model_Push_TailWarmup404(t *testing.T) {
 	stubModelPushTimeAndSleep(h)
 
 	logsCall := 0
-	h.API.SetRouteFunc("POST", "/v1/models/model-123/deployments/deploy-456/logs", func(w http.ResponseWriter, _ *http.Request) {
+	h.API.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456/logs", func(w http.ResponseWriter, _ *http.Request) {
 		logsCall++
 		w.Header().Set("Content-Type", "application/json")
 		if logsCall <= 2 {

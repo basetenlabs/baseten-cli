@@ -87,6 +87,36 @@ var commandModelEnvironment = Command{
 				},
 			},
 		},
+		{
+			Name:    "logs",
+			Summary: "Stream or tail logs for an environment",
+			Description: "Fetch logs for a model environment, spanning every deployment that " +
+				"was active on the environment across the time range.\n\n" +
+				"By default returns logs from the server's default recent window. " +
+				"Use --start/--end or --since to scope the window (max 7 days). " +
+				"Use --tail to stream live logs until the environment's current " +
+				"deployment leaves a runnable state or you interrupt with Ctrl-C.\n\n" +
+				"For machine-readable streaming, prefer --output jsonl over --output json.",
+			Flags: ModelEnvironmentLogsFlags{},
+			Output: &CommandOutput[managementapi.Log]{
+				JSONArrayStreamed: true,
+				TextDescription:   "One line per log record: \"[YYYY-MM-DD HH:MM:SS]: (replica) message\".",
+				Examples: []CommandExample{
+					{
+						Description: "Print logs for the production environment over the last hour.",
+						Command:     "baseten model environment logs --model-id <model-id> --environment production --since 1h",
+					},
+					{
+						Description: "Tail live logs until the environment's current deployment leaves a runnable state.",
+						Command:     "baseten model environment logs --model-id <model-id> --environment production --tail",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Stream just the log messages as a JSONL stream.",
+					Command:     "baseten model environment logs --model-id <model-id> --environment production --output jsonl --jq '.message'",
+				},
+			},
+		},
 	},
 }
 
@@ -121,4 +151,11 @@ type ModelEnvironmentDeactivateFlags struct {
 	ModelEnvironmentFlags
 
 	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+}
+
+// ModelEnvironmentLogsFlags configures `baseten model environment logs`.
+type ModelEnvironmentLogsFlags struct {
+	CommandFlags
+	ModelEnvironmentFlags
+	LogFlags
 }
