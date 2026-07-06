@@ -21,9 +21,9 @@ const (
 	deploymentLogDedupRetention  = 30 * time.Minute
 )
 
-// errLogsHitLimit is yielded by paginateLogs after all logs are drained when
-// the --limit cap was reached. It is not a command failure: the caller turns it
-// into a stderr note and returns success. Other yielded errors (including the
+// errLogsHitLimit is yielded by paginateLogs immediately after emitting the
+// final line allowed by --limit. It is not a command failure: the caller turns
+// it into a stderr note and returns success. Other yielded errors (including the
 // single-millisecond-burst case) propagate as command failures.
 var errLogsHitLimit = errors.New("reached the log line limit")
 
@@ -189,8 +189,9 @@ func runLogsCommand(ctx *CommandContext, flags *cmd.LogFlags, fetchLogs logFetch
 		q.RequestId = &flags.RequestID
 	}
 
-	// paginateLogs signals why the stream ended via a sentinel error after all
-	// logs are drained; hitting the limit or a burst is a note, not a failure.
+	// paginateLogs signals why the stream ended via a sentinel error after the
+	// last line it emitted; hitting the limit is a note, any other error (e.g. a
+	// single-millisecond burst) is a command failure.
 	err := emitLogs(ctx, paginateLogs(q, startMs, endMs, flags.Limit, flags.PageSize, fetchLogs))
 	if errors.Is(err, errLogsHitLimit) {
 		ctx.Logf("Reached the --limit of %d log lines; older lines in the window were omitted. Increase --limit or use --limit 0 for no limit.\n", flags.Limit)
@@ -278,7 +279,7 @@ func paginateLogs(q logQuery, startMs, endMs, limit, pageSize int, fetchLogs log
 			// more lines than a page can carry; paging by millisecond cannot
 			// advance past it, so fail loudly rather than silently drop lines.
 			if newInPage == 0 {
-				yield(nil, fmt.Errorf("cannot page past a single millisecond holding more than %d log lines; narrow --start/--end/--since or add filters to reduce log density", pageSize))
+				yield(nil, fmt.Errorf("cannot page past a single millisecond holding at least %d log lines; narrow --start/--end/--since or add filters to reduce log density", pageSize))
 				return
 			}
 			if !oldestOK || oldestMs <= int64(startMs) {
