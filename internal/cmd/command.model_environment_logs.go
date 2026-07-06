@@ -20,10 +20,13 @@ func commandModelEnvironmentLogs(ctx *CommandContext, flags *cmd.ModelEnvironmen
 	}
 
 	fetchLogs := func(q logQuery) (*managementapi.GetLogsResponse, error) {
+		direction := managementapi.SortOrder_desc
 		return api.API().GetModelsEnvironmentsLogs(ctx, ref.ID, flags.Environment,
 			managementapi.GetV1ModelsModelIdEnvironmentsEnvNameLogsParams{
 				StartEpochMillis: q.StartEpochMillis,
 				EndEpochMillis:   q.EndEpochMillis,
+				Limit:            q.Limit,
+				Direction:        &direction,
 				MinLevel:         q.MinLevel,
 				Includes:         q.Includes,
 				Excludes:         q.Excludes,

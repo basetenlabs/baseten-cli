@@ -373,6 +373,38 @@ func (l *lifecycle) Logs(t *testing.T) {
 		require.False(t, contains(lines, e2eLogWarningWord))
 	})
 
+	// Backward pagination must return the same set as a single fetch. With a
+	// tiny --page-size the CLI is forced to walk several pages over the burst of
+	// uniquely-numbered lines; the result must match an unpaged fetch exactly,
+	// proving no line is lost or duplicated at a page seam.
+	t.Run("Pagination", func(t *testing.T) {
+		msgs := func(lines []logLine) []string {
+			out := make([]string, len(lines))
+			for i, ll := range lines {
+				out[i] = ll.Message
+			}
+			return out
+		}
+		// Wait until every pagination line is queryable so the two fetches below
+		// see a stable set rather than racing log propagation.
+		var full []logLine
+		require.Eventually(t, func() bool {
+			got, err := l.collectLogs(t, "--includes", e2ePageMarker, "--limit", "0")
+			if err != nil {
+				return false
+			}
+			full = got
+			return len(full) >= e2ePageTotalLineCount
+		}, 90*time.Second, 3*time.Second, "pagination lines never appeared")
+
+		paged, err := l.collectLogs(t, "--includes", e2ePageMarker, "--limit", "0", "--page-size", "7")
+		require.NoError(t, err)
+		// Same multiset as the single fetch, and enough lines that page-size 7
+		// spanned multiple requests.
+		require.Greater(t, len(full), 7)
+		require.ElementsMatch(t, msgs(full), msgs(paged))
+	})
+
 	// The environment logs path spans the versions active on the environment;
 	// production's current deployment is this model, so the same markers show
 	// up and filters apply identically.

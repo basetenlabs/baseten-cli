@@ -38,9 +38,15 @@ const (
 	e2eLogInfoWord    = "apple"
 	e2eLogWarningWord = "banana"
 	e2eLogErrorWord   = "cherry"
+
+	// e2ePageMarker tags the burst of lines the pagination sub-test filters to;
+	// e2ePageTotalLineCount must match the loop count in trussModelPy.
+	e2ePageMarker         = "baseten-e2e-pagination"
+	e2ePageTotalLineCount = 30
 )
 
 const trussModelPy = `import logging
+import time
 
 from fastapi.responses import StreamingResponse
 
@@ -51,6 +57,15 @@ class Model:
         _logger.info("baseten-e2e-log info apple")
         _logger.warning("baseten-e2e-log warning banana")
         _logger.error("baseten-e2e-log error cherry")
+        # Emit e2ePageTotalLineCount uniquely-numbered lines, spaced well past a
+        # millisecond apart so each lands in its own timestamp regardless of the
+        # logging pipeline's timestamp granularity; otherwise several lines could
+        # share one millisecond and a small --page-size would trip the
+        # single-millisecond-burst failure. The pagination sub-test filters to
+        # these with --includes and pages them with a tiny --page-size.
+        for i in range(30):
+            time.sleep(0.02)
+            _logger.info("baseten-e2e-pagination line %02d" % i)
 
     def predict(self, request):
         if request.get("style") == "streaming":
