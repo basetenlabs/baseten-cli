@@ -368,6 +368,7 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 		}
 		f := flags.Lookup(meta.Name)
 		if f != nil {
+			f.Hidden = meta.Hidden
 			if f.Annotations == nil {
 				f.Annotations = map[string][]string{}
 			}

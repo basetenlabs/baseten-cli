@@ -123,6 +123,7 @@ type CommandFlag struct {
 	Default   string
 	Enum      []string
 	Required  bool
+	Hidden    bool   // omitted from help output; still parsed and settable
 	Oneof     string // group name: exactly one flag in the group must be set
 	Type      reflect.Type
 	FieldName string // Go struct field name
@@ -154,6 +155,7 @@ func commandFlagFromField(field reflect.StructField) (CommandFlag, bool) {
 		Desc:      field.Tag.Get("desc"),
 		Default:   field.Tag.Get("default"),
 		Required:  field.Tag.Get("required") == "true",
+		Hidden:    field.Tag.Get("hidden") == "true",
 		Oneof:     field.Tag.Get("oneof"),
 		Type:      field.Type,
 		FieldName: field.Name,

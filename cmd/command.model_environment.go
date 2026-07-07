@@ -92,7 +92,7 @@ var commandModelEnvironment = Command{
 			Summary: "Stream or tail logs for an environment",
 			Description: "Fetch logs for a model environment, spanning every deployment that " +
 				"was active on the environment across the time range.\n\n" +
-				"By default returns logs from the server's default recent window. " +
+				"By default returns up to --limit lines from the last 30 minutes, newest first. " +
 				"Use --start/--end or --since to scope the window (max 7 days). " +
 				"Use --tail to stream live logs until the environment's current " +
 				"deployment leaves a runnable state or you interrupt with Ctrl-C.\n\n" +

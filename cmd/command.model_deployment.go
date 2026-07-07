@@ -200,7 +200,7 @@ var commandModelDeployment = Command{
 			Name:    "logs",
 			Summary: "Stream or tail logs for a deployment",
 			Description: "Fetch logs for a model deployment.\n\n" +
-				"By default returns logs from the server's default recent window. " +
+				"By default returns up to --limit lines from the last 30 minutes, newest first. " +
 				"Use --start/--end or --since to scope the window (max 7 days). " +
 				"Use --tail to stream live logs until the deployment leaves a " +
 				"runnable state or you interrupt with Ctrl-C.\n\n" +
