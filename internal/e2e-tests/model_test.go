@@ -277,9 +277,24 @@ type logLine struct {
 // returned (not fatal) so callers can retry while logs propagate.
 func (l *lifecycle) collectLogs(t *testing.T, extraArgs ...string) ([]logLine, error) {
 	t.Helper()
-	args := append([]string{"model", "deployment", "logs",
+	return l.collectLogsFrom(t, append([]string{"model", "deployment", "logs",
 		"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID,
-		"--since", "1h", "--output", "jsonl"}, extraArgs...)
+		"--since", "1h", "--output", "jsonl"}, extraArgs...)...)
+}
+
+// collectEnvLogs is collectLogs over the production environment path. The model
+// is pushed to production, so its current deployment is initialDeploymentID.
+func (l *lifecycle) collectEnvLogs(t *testing.T, extraArgs ...string) ([]logLine, error) {
+	t.Helper()
+	return l.collectLogsFrom(t, append([]string{"model", "environment", "logs",
+		"--model-id", l.modelID, "--environment", "production",
+		"--since", "1h", "--output", "jsonl"}, extraArgs...)...)
+}
+
+// collectLogsFrom runs a `... logs --output jsonl` command and parses each line.
+// CLI errors are returned (not fatal) so callers can retry while logs propagate.
+func (l *lifecycle) collectLogsFrom(t *testing.T, args ...string) ([]logLine, error) {
+	t.Helper()
 	out, _, err := cli(t, args...)
 	if err != nil {
 		return nil, err
@@ -356,6 +371,22 @@ func (l *lifecycle) Logs(t *testing.T) {
 		require.True(t, contains(lines, e2eLogInfoWord))
 		require.True(t, contains(lines, e2eLogErrorWord))
 		require.False(t, contains(lines, e2eLogWarningWord))
+	})
+
+	// The environment logs path spans the versions active on the environment;
+	// production's current deployment is this model, so the same markers show
+	// up and filters apply identically.
+	t.Run("Environment", func(t *testing.T) {
+		lines, err := l.collectEnvLogs(t)
+		require.NoError(t, err)
+		require.True(t, contains(lines, e2eLogInfoWord), "info line missing")
+		require.True(t, contains(lines, e2eLogWarningWord), "warning line missing")
+		require.True(t, contains(lines, e2eLogErrorWord), "error line missing")
+
+		filtered, err := l.collectEnvLogs(t, "--min-level", "error")
+		require.NoError(t, err)
+		require.False(t, contains(filtered, e2eLogInfoWord), "info should be filtered out")
+		require.True(t, contains(filtered, e2eLogErrorWord))
 	})
 }
 
