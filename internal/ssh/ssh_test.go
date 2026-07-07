@@ -73,6 +73,17 @@ func TestJWTCacheRoundTrip(t *testing.T) {
 	require.Equal(t, "proxy:443", c.ProxyAddress)
 }
 
+func TestJWTCachePath_EnvFormDistinctFromDeployment(t *testing.T) {
+	d := t.TempDir()
+	env := hostname{kind: workloadModel, id: "abc", env: "staging"}
+	dep := hostname{kind: workloadModel, id: "abc", deploymentID: "staging"}
+
+	// The env tag keeps an environment named like a deployment id from
+	// colliding with the deployment cache entry.
+	require.Contains(t, jwtCachePath(d, env), "model-abc-env-staging")
+	require.NotEqual(t, jwtCachePath(d, dep), jwtCachePath(d, env))
+}
+
 func TestLoadJWT_MissingReturnsFalse(t *testing.T) {
 	d := t.TempDir()
 	h := hostname{kind: workloadModel, id: "abc", deploymentID: "def"}

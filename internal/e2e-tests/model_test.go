@@ -566,12 +566,9 @@ func (l *lifecycle) SSH(t *testing.T) {
 
 	mustCLI(t, "ssh", "setup")
 
-	host := fmt.Sprintf("model-%s-%s.ssh.baseten.co", l.modelID, l.initialDeploymentID)
-
-	// The workload's sshd can lag behind the deployment going ACTIVE, so retry
-	// the connection until it succeeds or the deadline passes.
-	var modelPy string
-	require.Eventually(t, func() bool {
+	// runSSH connects with the system ssh client (which invokes the built binary
+	// for the sign/proxy steps) and cats the remote model.py.
+	runSSH := func(host string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		var stdout, stderr bytes.Buffer
@@ -580,14 +577,36 @@ func (l *lifecycle) SSH(t *testing.T) {
 			host, "cat", "/app/model/model.py")
 		c.Stdout, c.Stderr = &stdout, &stderr
 		if err := c.Run(); err != nil {
-			t.Logf("ssh connect attempt failed: %v\nstderr: %s", err, stderr.String())
+			return "", fmt.Errorf("%w\nstderr: %s", err, stderr.String())
+		}
+		return stdout.String(), nil
+	}
+
+	// Deployment form. The workload's sshd can lag behind the deployment going
+	// ACTIVE, so retry the first connection until it succeeds or the deadline
+	// passes.
+	deploymentHost := fmt.Sprintf("model-%s-%s.ssh.baseten.co", l.modelID, l.initialDeploymentID)
+	var modelPy string
+	require.Eventually(t, func() bool {
+		out, err := runSSH(deploymentHost)
+		if err != nil {
+			t.Logf("ssh connect attempt to %s failed: %v", deploymentHost, err)
 			return false
 		}
-		modelPy = stdout.String()
+		modelPy = out
 		return true
-	}, 3*time.Minute, 10*time.Second, "ssh connect to %s never succeeded", host)
-
+	}, 3*time.Minute, 10*time.Second, "ssh connect to %s never succeeded", deploymentHost)
 	require.Equal(t, trussModelPy, modelPy, "remote /app/model/model.py should match the pushed source")
+
+	// Environment form: <env>.model-<id> resolves the environment's current
+	// deployment (production points at initialDeploymentID) client-side in sign.
+	// The workload is already warm from the connection above, so connect directly
+	// without the retry loop.
+	environmentHost := fmt.Sprintf("production.model-%s.ssh.baseten.co", l.modelID)
+	envModelPy, err := runSSH(environmentHost)
+	require.NoError(t, err, "ssh connect to environment host %s", environmentHost)
+	require.Equal(t, trussModelPy, envModelPy,
+		"remote /app/model/model.py via the environment host should match the pushed source")
 }
 
 func (l *lifecycle) Redeploy(t *testing.T) {

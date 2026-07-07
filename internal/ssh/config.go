@@ -157,6 +157,10 @@ func buildBlock(keyPath, profile string) string {
 	lines := []string{markerStart}
 	lines = append(lines, match("training-job-*.ssh.baseten.co", "baseten")...)
 	lines = append(lines, match("model-*.ssh.baseten.co", "app")...)
+	// Env form <env>.model-<id>.ssh.baseten.co: the environment name is a
+	// leading label, so it needs its own pattern (disjoint from model-*, which
+	// only matches hostnames that start with model-).
+	lines = append(lines, match("*.model-*.ssh.baseten.co", "app")...)
 	lines = append(lines, markerEnd, "")
 	return strings.Join(lines, "\n")
 }

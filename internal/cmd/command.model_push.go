@@ -109,7 +109,8 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	if err != nil {
 		return err
 	}
-	if err := writeModelPushResult(ctx, created, prepareReq.Deployment.EnvironmentName); err != nil {
+	if err := writeModelPushResult(ctx, created, prepareReq.Deployment.EnvironmentName,
+		sshEnabledInConfig(prepareReq.Deployment.Config)); err != nil {
 		return err
 	}
 	// The watch loop runs until interrupted, so its exit is never a deployment
@@ -572,7 +573,7 @@ func modelPushURLs(ctx *CommandContext, created *managementapi.CreatedModelDeplo
 	return predictURL, logsURL, nil
 }
 
-func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedModelDeployment, environment *string) error {
+func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedModelDeployment, environment *string, sshEnabled bool) error {
 	predictURL, logsURL, err := modelPushURLs(ctx, created)
 	if err != nil {
 		return err
@@ -581,7 +582,7 @@ func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedMod
 	// Narrative goes first so a user piping JSON to a file or jq sees the
 	// human summary on stderr before the JSON object lands on stdout.
 	if ctx.JSON {
-		writeModelPushSummary(ctx.Logf, created, predictURL, logsURL, environment)
+		writeModelPushSummary(ctx.Logf, created, predictURL, logsURL, environment, sshEnabled)
 		ctx.OutputJSON(cmd.ModelPushResult{
 			Model:      created.Model,
 			Deployment: created.Deployment,
@@ -590,17 +591,53 @@ func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedMod
 		})
 		return nil
 	}
-	writeModelPushSummary(ctx.Outputf, created, predictURL, logsURL, environment)
+	writeModelPushSummary(ctx.Outputf, created, predictURL, logsURL, environment, sshEnabled)
 	return nil
 }
 
-func writeModelPushSummary(printf func(string, ...any), created *managementapi.CreatedModelDeployment, predictURL, logsURL string, environment *string) {
-	logsCmd := fmt.Sprintf("baseten model deployment logs --model-id %s --deployment-id %s",
-		created.Model.Id, created.Deployment.Id)
-	predictCmd := fmt.Sprintf("baseten model predict --model-id %s", created.Model.Id)
-	// When --wait/--tail observed a terminal-failure status, the upload
-	// itself succeeded but the deployment did not; say so rather than
-	// claiming success.
+// sshEnabledInConfig reports whether the pushed Truss config turns on remote
+// SSH (runtime.remote_ssh.enabled: true), so the push summary only advertises
+// SSH when the workload actually accepts it. config is the parsed config.yaml
+// map, whose nested maps yaml.v3 decodes as map[string]any.
+func sshEnabledInConfig(config map[string]any) bool {
+	runtime, ok := config["runtime"].(map[string]any)
+	if !ok {
+		return false
+	}
+	remoteSSH, ok := runtime["remote_ssh"].(map[string]any)
+	if !ok {
+		return false
+	}
+	enabled, _ := remoteSSH["enabled"].(bool)
+	return enabled
+}
+
+// writeModelPushSummary prints the post-push narrative: a facts card followed by
+// grouped, code-styled hints for logs, invocation, and (when the config enables
+// it) SSH. environment is the --environment target, if any; env-scoped hints are
+// tagged "(once deployed)" since the new deployment only becomes the
+// environment's live one after it finishes deploying.
+func writeModelPushSummary(
+	printf func(string, ...any),
+	created *managementapi.CreatedModelDeployment,
+	predictURL string,
+	logsURL string,
+	environment *string,
+	sshEnabled bool,
+) {
+	modelID, deploymentID := created.Model.Id, created.Deployment.Id
+
+	// Show the environment when the push targeted one, otherwise when the
+	// response associates the deployment with one.
+	envName := ""
+	if environment != nil {
+		envName = *environment
+	} else if created.Deployment.Environment != nil {
+		envName = *created.Deployment.Environment
+	}
+
+	// When --wait/--tail observed a terminal-failure status, the upload itself
+	// succeeded but the deployment did not; say so rather than claiming success.
 	switch created.Deployment.Status {
 	case managementapi.DeploymentStatus_ACTIVE,
 		managementapi.DeploymentStatus_BUILDING,
@@ -612,12 +649,85 @@ func writeModelPushSummary(printf func(string, ...any), created *managementapi.C
 		printf("⚠️  Model %s was pushed but the deployment did not become active (status: %s)\n",
 			created.Model.Name, created.Deployment.Status)
 	}
-	if environment != nil {
-		printf("Your Truss has been deployed into the %q environment. After it successfully deploys, it will become the next %q deployment of your model.\n",
-			*environment, *environment)
+
+	// Facts card: fixed labels left-padded to the widest shown label.
+	rows := [][2]string{
+		{"Model:", fmt.Sprintf("%s (%s)", created.Model.Name, modelID)},
+		{"Deployment:", deploymentID},
 	}
-	printf("🪵  View logs for your deployment at %s or %s\n", inlineCodeStyle.Render(logsURL), inlineCodeStyle.Render(logsCmd))
-	printf("🚀  Invoke your model at %s or %s\n", inlineCodeStyle.Render(predictURL), inlineCodeStyle.Render(predictCmd))
+	if envName != "" {
+		rows = append(rows, [2]string{"Environment:", envName})
+	}
+	labelWidth := 0
+	for _, r := range rows {
+		if len(r[0]) > labelWidth {
+			labelWidth = len(r[0])
+		}
+	}
+	printf("\n")
+	for _, r := range rows {
+		printf("  %-*s %s\n", labelWidth, r[0], r[1])
+	}
+
+	if environment != nil {
+		printf("\nYour Truss has been deployed into the %q environment. After it successfully deploys, "+
+			"it will become the next %q deployment of your model.\n", *environment, *environment)
+	}
+
+	// Each group is an emoji header followed by aligned rows: the code-styled
+	// values line up in a column two spaces past the group's longest label.
+	// Env-scoped rows are tagged "(once deployed)" since the new deployment only
+	// becomes the environment's live one after it finishes deploying.
+	type hint struct {
+		label string
+		value string
+		note  string
+	}
+	group := func(emoji, header string, hints []hint) {
+		printf("\n%s %s\n", emoji, header)
+		width := 0
+		for _, h := range hints {
+			if len(h.label) > width {
+				width = len(h.label)
+			}
+		}
+		width += 2
+		for _, h := range hints {
+			printf("   %-*s%s", width, h.label, inlineCodeStyle.Render(h.value))
+			if h.note != "" {
+				printf("  %s", h.note)
+			}
+			printf("\n")
+		}
+	}
+
+	logs := []hint{
+		{label: "deployment:", value: fmt.Sprintf(
+			"baseten model deployment logs --model-id %s --deployment-id %s", modelID, deploymentID)},
+	}
+	if envName != "" {
+		logs = append(logs, hint{label: "environment:", note: "(once deployed)", value: fmt.Sprintf(
+			"baseten model environment logs --model-id %s --environment %s", modelID, envName)})
+	}
+	logs = append(logs, hint{label: "app:", value: logsURL})
+	group("🪵", "View logs:", logs)
+
+	group("🚀", "Invoke your model:", []hint{
+		{label: "URL:", value: predictURL},
+		{label: "CLI:", value: fmt.Sprintf("baseten model predict --model-id %s", modelID)},
+	})
+
+	// SSH last, and only when the pushed config enabled it.
+	if sshEnabled {
+		ssh := []hint{
+			{label: "deployment:", value: fmt.Sprintf("ssh model-%s-%s.ssh.baseten.co", modelID, deploymentID)},
+		}
+		if envName != "" {
+			ssh = append(ssh, hint{label: "environment:", note: "(once deployed)", value: fmt.Sprintf(
+				"ssh %s.model-%s.ssh.baseten.co", envName, modelID)})
+		}
+		group("🔑", "SSH in:", ssh)
+	}
 }
 
 func formatBytes(n int64) string {

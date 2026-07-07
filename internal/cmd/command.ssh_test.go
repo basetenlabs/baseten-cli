@@ -125,6 +125,27 @@ func Test_SSH_Sign_ModelWithReplica(t *testing.T) {
 	h.Require.Contains(call.Body, `"replica_id":"r1"`)
 }
 
+func Test_SSH_Sign_ModelEnvironment(t *testing.T) {
+	h := NewCommandHarness(t)
+	sshEnv(t)
+	_, _, err := ssh.EnsureKeypair()
+	h.Require.NoError(err)
+
+	m := h.MockManagementAPI()
+	// The env form resolves the environment's current deployment, then signs
+	// against that deployment id.
+	m.SetRoute("GET", "/v1/models/m1/environments/staging", 200,
+		map[string]any{"current_deployment": map[string]any{"id": "d1"}})
+	m.SetRoute("POST", "/v1/models/m1/deployments/d1/ssh/sign", 200,
+		signResponse("tok", "127.0.0.1:9"))
+
+	h.Require.NoError(h.Execute("ssh", "sign", "staging.model-m1.ssh.baseten.co"))
+	h.Require.NotNil(m.FindCall("GET", "/v1/models/m1/environments/staging"))
+	sign := m.FindCall("POST", "/v1/models/m1/deployments/d1/ssh/sign")
+	h.Require.NotNil(sign)
+	h.Require.NotContains(sign.Body, `"replica_id"`)
+}
+
 func Test_SSH_Sign_Training(t *testing.T) {
 	h := NewCommandHarness(t)
 	sshEnv(t)

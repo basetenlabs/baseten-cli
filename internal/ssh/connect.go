@@ -47,7 +47,17 @@ func Sign(ctx context.Context, mgmt *client.ManagementClient, hostname string) (
 	var resp *managementapi.SignSSHCertificateResponse
 	switch h.kind {
 	case workloadModel:
-		resp, err = mgmt.API().PostModelsDeploymentsSshSign(ctx, h.id, h.deploymentID, body)
+		// Env form (<env>.model-<id>) carries no deployment id; resolve the
+		// environment's current deployment now so every connect targets
+		// whatever is live in that environment.
+		deploymentID := h.deploymentID
+		if h.env != "" {
+			deploymentID, err = resolveEnvDeployment(ctx, mgmt, h.id, h.env)
+			if err != nil {
+				return nil, err
+			}
+		}
+		resp, err = mgmt.API().PostModelsDeploymentsSshSign(ctx, h.id, deploymentID, body)
 	case workloadTraining:
 		projectID, perr := resolveTrainingProject(ctx, mgmt, h.id)
 		if perr != nil {
@@ -68,6 +78,19 @@ func Sign(ctx context.Context, mgmt *client.ManagementClient, hostname string) (
 		return nil, err
 	}
 	return resp, nil
+}
+
+// resolveEnvDeployment resolves a model environment to its current deployment
+// id, used by the env hostname form to target whatever deployment is live.
+func resolveEnvDeployment(ctx context.Context, mgmt *client.ManagementClient, modelID, env string) (string, error) {
+	resp, err := mgmt.API().GetModelsEnvironmentsEnvName(ctx, modelID, env)
+	if err != nil {
+		return "", fmt.Errorf("looking up environment %q for model %s: %w", env, modelID, err)
+	}
+	if resp.CurrentDeployment.Id == "" {
+		return "", fmt.Errorf("environment %q for model %s has no current deployment", env, modelID)
+	}
+	return resp.CurrentDeployment.Id, nil
 }
 
 // resolveTrainingProject looks up the project id owning a training job.
@@ -167,40 +190,46 @@ const (
 type hostname struct {
 	kind         workloadKind
 	id           string // model id or training job id
-	deploymentID string // models only
+	deploymentID string // models, deployment form only
+	env          string // models, env form only
 	replica      string // models: optional replica; training: node (required)
 }
 
-// parseHostname parses the first DNS label of an SSH hostname. The domain that
-// follows is env-specific and irrelevant here, since the REST target comes from
-// the resolved profile. Supported label forms:
+// parseHostname parses an SSH hostname into a workload target. The proxy domain
+// that follows the leading label(s) is env-specific and irrelevant here, since
+// the REST target comes from the resolved profile. Supported forms:
 //
 //	training-job-<jobID>-<node>
 //	model-<modelID>-<deploymentID>[-<replica>]
+//	<env>.model-<modelID>
+//
+// The env form puts the environment name in a leading label; its model id has
+// no deployment id, so sign resolves the environment's current deployment.
 func parseHostname(h string) (hostname, error) {
-	label := h
-	if i := strings.IndexByte(h, '.'); i != -1 {
-		label = h[:i]
-	}
+	labels := strings.Split(h, ".")
+	first := labels[0]
 	var hn hostname
 	var err error
 	switch {
-	case strings.HasPrefix(label, "training-job-"):
-		hn, err = parseTrainingHostname(h, label[len("training-job-"):])
-	case strings.HasPrefix(label, "model-"):
-		hn, err = parseModelHostname(h, label[len("model-"):])
+	case len(labels) >= 2 && strings.HasPrefix(labels[1], "model-"):
+		hn, err = parseModelEnvHostname(h, first, labels[1][len("model-"):])
+	case strings.HasPrefix(first, "training-job-"):
+		hn, err = parseTrainingHostname(h, first[len("training-job-"):])
+	case strings.HasPrefix(first, "model-"):
+		hn, err = parseModelHostname(h, first[len("model-"):])
 	default:
 		return hostname{}, fmt.Errorf(
-			"invalid ssh hostname %q: expected training-job-<job>-<node> or model-<model>-<deployment>[-<replica>]", h)
+			"invalid ssh hostname %q: expected training-job-<job>-<node>, "+
+				"model-<model>-<deployment>[-<replica>], or <env>.model-<model>", h)
 	}
 	if err != nil {
 		return hostname{}, err
 	}
 	// Defense in depth: these components are interpolated into the on-disk JWT
 	// cache path, so reject any that contain a path separator. (Dot-containing
-	// traversal like ".." is already stripped, since label ends at the first
-	// dot, but guard explicitly against separators that survive.)
-	for _, part := range []string{hn.id, hn.deploymentID, hn.replica} {
+	// traversal like ".." is already stripped, since labels split on dots, but
+	// guard explicitly against separators that survive.)
+	for _, part := range []string{hn.id, hn.deploymentID, hn.env, hn.replica} {
 		if strings.ContainsAny(part, `/\`) {
 			return hostname{}, fmt.Errorf(
 				"invalid ssh hostname %q: workload identifiers must not contain path separators", h)
@@ -224,6 +253,19 @@ func parseModelHostname(h, rest string) (hostname, error) {
 		hn.replica = parts[2]
 	}
 	return hn, nil
+}
+
+// parseModelEnvHostname parses the env form <env>.model-<id>. env is the
+// leading label; rest is the second label with "model-" stripped and holds
+// just the model id (no deployment id). Model ids contain no dashes.
+func parseModelEnvHostname(h, env, rest string) (hostname, error) {
+	if env == "" || rest == "" {
+		return hostname{}, fmt.Errorf("invalid ssh hostname %q: cannot parse environment and model ID", h)
+	}
+	if strings.Contains(rest, "-") {
+		return hostname{}, fmt.Errorf("invalid ssh hostname %q: env form takes a bare model ID with no deployment", h)
+	}
+	return hostname{kind: workloadModel, id: rest, env: env}, nil
 }
 
 // parseTrainingHostname parses the part after "training-job-". The node is the
