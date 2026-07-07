@@ -55,7 +55,10 @@ func commandSSHSetup(ctx *CommandContext, flags *cmd.SSHSetupFlags) error {
 	if profile != "" {
 		ctx.Logf("Connections use profile %q by default.\n", profile)
 	}
-	ctx.LogLine("Connect with: ssh model-<model-id>-<deployment-id>.ssh.baseten.co")
+	ctx.LogLine("Connect with:")
+	ctx.Logf("   deployment:    %s\n", inlineCodeStyle.Render("ssh model-<model-id>-<deployment-id>.ssh.baseten.co"))
+	ctx.Logf("   environment:   %s\n", inlineCodeStyle.Render("ssh <environment>.model-<model-id>.ssh.baseten.co"))
+	ctx.Logf("   training job:  %s\n", inlineCodeStyle.Render("ssh training-job-<job-id>-<node>.ssh.baseten.co"))
 	return nil
 }
 

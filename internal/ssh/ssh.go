@@ -112,6 +112,12 @@ func jwtCachePath(d string, h hostname) string {
 	if h.kind == workloadTraining {
 		parts[0] = "training"
 	}
+	// The env form carries no deployment id, so key on the environment instead
+	// (with an "env" tag so an env never collides with a deployment id). sign
+	// and proxy both parse the same hostname, so the keys stay consistent.
+	if h.env != "" {
+		parts = append(parts, "env", h.env)
+	}
 	if h.deploymentID != "" {
 		parts = append(parts, h.deploymentID)
 	}

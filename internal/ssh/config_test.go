@@ -27,6 +27,7 @@ func TestWriteConfig_FreshAppendBakesProfile(t *testing.T) {
 	require.Contains(t, content, markerEnd)
 	require.Contains(t, content, "Match host training-job-*.ssh.baseten.co")
 	require.Contains(t, content, "Match host model-*.ssh.baseten.co")
+	require.Contains(t, content, "Match host *.model-*.ssh.baseten.co")
 	require.Contains(t, content, "baseten ssh sign --default-profile=prod")
 	require.Contains(t, content, "baseten ssh proxy --default-profile=prod")
 	require.Contains(t, content, "IdentityFile /keys/id_ed25519")

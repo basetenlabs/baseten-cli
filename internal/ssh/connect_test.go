@@ -39,6 +39,21 @@ func TestParseHostname(t *testing.T) {
 			want: hostname{kind: workloadModel, id: "abc", deploymentID: "def"},
 		},
 		{
+			name: "model environment",
+			host: "staging.model-abc.ssh.baseten.co",
+			want: hostname{kind: workloadModel, id: "abc", env: "staging"},
+		},
+		{
+			name: "model environment with hyphen",
+			host: "my-env.model-abc.ssh.baseten.co",
+			want: hostname{kind: workloadModel, id: "abc", env: "my-env"},
+		},
+		{
+			name: "model environment without domain",
+			host: "staging.model-abc",
+			want: hostname{kind: workloadModel, id: "abc", env: "staging"},
+		},
+		{
 			name: "training job",
 			host: "training-job-job123-0.ssh.baseten.co",
 			want: hostname{kind: workloadTraining, id: "job123", replica: "0"},
@@ -57,6 +72,9 @@ func TestParseHostname(t *testing.T) {
 		{name: "training empty job id", host: "training-job--0", wantErr: true},
 		{name: "model component with forward slash", host: "model-a-b/c", wantErr: true},
 		{name: "model component with backslash", host: `model-a-b\c`, wantErr: true},
+		{name: "env form with deployment id", host: "staging.model-abc-def.ssh.baseten.co", wantErr: true},
+		{name: "env form empty model id", host: "staging.model-.ssh.baseten.co", wantErr: true},
+		{name: "env form empty env", host: ".model-abc.ssh.baseten.co", wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
