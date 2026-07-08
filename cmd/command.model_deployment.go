@@ -234,7 +234,7 @@ var commandModelDeployment = Command{
 				"with --start/--end or --since (max 7 days), which only apply to " +
 				"summary and series.",
 			Flags: ModelDeploymentMetricsFlags{},
-			Output: &CommandOutput[managementapi.GetDeploymentMetricsResponse]{
+			Output: &CommandOutput[managementapi.GetModelMetricsResponse]{
 				TextDescription: "For current/summary, a table with columns METRIC, one column per " +
 					"label dimension (e.g. QUANTILE, STAT), and VALUE; summary COUNTER values show " +
 					"\"total (rate/s)\". For series, a sparkline per metric label set with its " +
@@ -269,7 +269,8 @@ var commandModelDeployment = Command{
 // commands that act on a specific deployment.
 type ModelDeploymentIDFlags struct {
 	ModelRefFlags
-	DeploymentID string `flag:"deployment-id" desc:"ID of the deployment." required:"true"`
+	DeploymentID   string `flag:"deployment-id" desc:"ID of the deployment." oneof:"deployment-ref"`
+	DeploymentName string `flag:"deployment-name" desc:"Name of the deployment." oneof:"deployment-ref"`
 }
 
 // ModelDeploymentListFlags configures `baseten model deployment list`.

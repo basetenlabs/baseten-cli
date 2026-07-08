@@ -303,9 +303,10 @@ type ModelPredictFlags struct {
 	CommandFlags
 	ModelRefFlags
 
-	Environment  string `flag:"environment" desc:"Environment to target (e.g. production, development). Defaults to production. Mutually exclusive with --deployment-id and --regional."`
-	DeploymentID string `flag:"deployment-id" desc:"Specific deployment to target. Mutually exclusive with --environment and --regional."`
-	Regional     string `flag:"regional" desc:"Regional environment name; routes via the regional hostname. Mutually exclusive with --environment and --deployment-id."`
+	Environment    string `flag:"environment" desc:"Environment to target (e.g. production, development). Defaults to production. Mutually exclusive with --deployment-id, --deployment-name, and --regional."`
+	DeploymentID   string `flag:"deployment-id" desc:"Specific deployment to target. Mutually exclusive with --environment, --deployment-name, and --regional."`
+	DeploymentName string `flag:"deployment-name" desc:"Name of the deployment to target. Mutually exclusive with --environment, --deployment-id, and --regional."`
+	Regional       string `flag:"regional" desc:"Regional environment name; routes via the regional hostname. Mutually exclusive with --environment, --deployment-id, and --deployment-name."`
 
 	Data string `flag:"data" desc:"Inline JSON request body." oneof:"predict-input"`
 	File string `flag:"file" desc:"Path to a JSON file containing the request body. Use '-' for stdin." oneof:"predict-input"`

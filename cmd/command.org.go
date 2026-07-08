@@ -323,7 +323,8 @@ type OrgTeamListFlags struct {
 type OrgTeamDescribeFlags struct {
 	CommandFlags
 
-	TeamID string `flag:"team-id" desc:"Team ID to describe." required:"true"`
+	TeamID   string `flag:"team-id" desc:"Team ID to describe." oneof:"team-ref"`
+	TeamName string `flag:"team-name" desc:"Team name to describe." oneof:"team-ref"`
 }
 
 type OrgUserListFlags struct {
@@ -333,7 +334,8 @@ type OrgUserListFlags struct {
 type OrgUserDescribeFlags struct {
 	CommandFlags
 
-	UserID string `flag:"user-id" desc:"User ID to describe. Pass 'me' for the authenticated user." required:"true"`
+	UserID    string `flag:"user-id" desc:"User ID to describe. Pass 'me' for the authenticated user." oneof:"user-ref"`
+	UserEmail string `flag:"user-email" desc:"Email of the user to describe." oneof:"user-ref"`
 }
 
 type OrgAPIKeyListFlags struct {

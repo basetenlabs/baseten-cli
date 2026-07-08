@@ -54,27 +54,33 @@ func ResolveModelRef(
 }
 
 // findModelIDByName returns the ID of the unique model with the given name,
-// scoped to teamID when non-empty. Returns "" with nil error when no model
+// scoped to teamID when non-empty. The server filters by exact name, so this
+// matches at most one model per team; the org-wide route may still return the
+// same name from multiple teams. Returns "" with nil error when no model
 // matches. Returns an error when multiple models match (only possible when
 // teamID is empty, since (org, team, name) is unique server-side).
 func findModelIDByName(
 	ctx context.Context, api *managementapi.Client, name, teamID string,
 ) (string, error) {
-	models, err := listModels(ctx, api, teamID)
-	if err != nil {
-		return "", err
-	}
-	var matches []managementapi.Model
-	for _, m := range models {
-		if m.Name == name {
-			matches = append(matches, m)
+	var models []managementapi.Model
+	if teamID == "" {
+		resp, err := api.GetModels(ctx, managementapi.GetV1ModelsParams{Name: &name})
+		if err != nil {
+			return "", fmt.Errorf("list models: %w", err)
 		}
+		models = resp.Models
+	} else {
+		resp, err := api.GetTeamsModels(ctx, teamID, managementapi.GetV1TeamsTeamIdModelsParams{Name: &name})
+		if err != nil {
+			return "", fmt.Errorf("list models for team %s: %w", teamID, err)
+		}
+		models = resp.Models
 	}
-	switch len(matches) {
+	switch len(models) {
 	case 0:
 		return "", nil
 	case 1:
-		return matches[0].Id, nil
+		return models[0].Id, nil
 	default:
 		return "", fmt.Errorf("multiple models named %q across teams; pass --team to disambiguate", name)
 	}
@@ -86,13 +92,13 @@ func listModels(
 	ctx context.Context, api *managementapi.Client, teamID string,
 ) ([]managementapi.Model, error) {
 	if teamID == "" {
-		resp, err := api.GetModels(ctx)
+		resp, err := api.GetModels(ctx, managementapi.GetV1ModelsParams{})
 		if err != nil {
 			return nil, fmt.Errorf("list models: %w", err)
 		}
 		return resp.Models, nil
 	}
-	resp, err := api.GetTeamsModels(ctx, teamID)
+	resp, err := api.GetTeamsModels(ctx, teamID, managementapi.GetV1TeamsTeamIdModelsParams{})
 	if err != nil {
 		return nil, fmt.Errorf("list models for team %s: %w", teamID, err)
 	}

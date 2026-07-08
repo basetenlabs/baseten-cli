@@ -46,6 +46,9 @@ type lifecycle struct {
 	modelDir            string
 	modelID             string
 	initialDeploymentID string
+	// deploymentName is the initial deployment's server-assigned name, captured
+	// in the Deployment phase and reused by the name-based lookups.
+	deploymentName string
 }
 
 // newLifecycle runs the env-gate, materializes the truss source, performs the
@@ -94,6 +97,7 @@ func newLifecycle(t *testing.T) *lifecycle {
 	require.Equal(t, l.modelName, initial.Model.Name)
 	l.modelID = initial.Model.ID
 	l.initialDeploymentID = initial.Deployment.ID
+	l.deploymentName = initial.Deployment.Name
 	return l
 }
 
@@ -223,6 +227,19 @@ func (l *lifecycle) Deployment(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(out), &resp))
 		require.Equal(t, l.initialDeploymentID, resp.ID)
 		require.Equal(t, l.modelID, resp.ModelID)
+	})
+
+	t.Run("DescribeByName", func(t *testing.T) {
+		// Resolving both the model and the deployment by name (server-side
+		// ?name= filters) yields the same deployment as the IDs.
+		require.NotEmpty(t, l.deploymentName, "deployment missing name")
+		out := mustCLI(t, "model", "deployment", "describe",
+			"--model-name", l.modelName, "--deployment-name", l.deploymentName, "--output", "json")
+		var resp struct {
+			ID string `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, l.initialDeploymentID, resp.ID)
 	})
 
 	t.Run("Config_Text", func(t *testing.T) {
@@ -465,6 +482,18 @@ func (l *lifecycle) Environment(t *testing.T) {
 func (l *lifecycle) ModelPredict(t *testing.T) {
 	t.Run("Default", func(t *testing.T) {
 		out := mustCLI(t, "model", "predict", "--model-id", l.modelID, "--data", `{"x":1}`, "--output", "json")
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, map[string]any{"got request": map[string]any{"x": float64(1)}}, resp)
+	})
+
+	t.Run("ByDeploymentName", func(t *testing.T) {
+		// Targets the deployment by resolving both the model and the deployment
+		// by name (server-side ?name= filters).
+		require.NotEmpty(t, l.deploymentName, "deployment missing name")
+		out := mustCLI(t, "model", "predict",
+			"--model-name", l.modelName, "--deployment-name", l.deploymentName,
+			"--data", `{"x":1}`, "--output", "json")
 		var resp map[string]any
 		require.NoError(t, json.Unmarshal([]byte(out), &resp))
 		require.Equal(t, map[string]any{"got request": map[string]any{"x": float64(1)}}, resp)
