@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
 func init() {
@@ -17,7 +18,7 @@ func commandOrgTeamList(ctx *CommandContext, flags *cmd.OrgTeamListFlags) error 
 	if err != nil {
 		return err
 	}
-	teams, err := cl.API().GetTeams(ctx)
+	teams, err := cl.API().GetTeams(ctx, managementapi.GetV1TeamsParams{})
 	if err != nil {
 		return fmt.Errorf("listing teams: %w", err)
 	}
@@ -51,9 +52,23 @@ func commandOrgTeamDescribe(ctx *CommandContext, flags *cmd.OrgTeamDescribeFlags
 		return err
 	}
 
-	team, err := cl.API().GetTeamsTeamId(ctx, flags.TeamID)
-	if err != nil {
-		return fmt.Errorf("describe team %s: %w", flags.TeamID, err)
+	var team *managementapi.Team
+	if flags.TeamName != "" {
+		resp, err := cl.API().GetTeams(ctx, managementapi.GetV1TeamsParams{Name: &flags.TeamName})
+		if err != nil {
+			return fmt.Errorf("describe team %q: %w", flags.TeamName, err)
+		}
+		if len(resp.Teams) == 0 {
+			return fmt.Errorf("no team named %q", flags.TeamName)
+		} else if len(resp.Teams) > 1 {
+			return fmt.Errorf("multiple teams named %q; pass --team-id instead", flags.TeamName)
+		}
+		team = &resp.Teams[0]
+	} else {
+		team, err = cl.API().GetTeamsTeamId(ctx, flags.TeamID)
+		if err != nil {
+			return fmt.Errorf("describe team %s: %w", flags.TeamID, err)
+		}
 	}
 
 	if ctx.JSON {

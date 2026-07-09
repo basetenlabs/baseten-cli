@@ -63,6 +63,36 @@ func Test_Org_Team_Describe_ByID(t *testing.T) {
 	h.Require.Contains(out, "Default:")
 }
 
+func Test_Org_Team_Describe_ByName(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/teams", 200, map[string]any{
+		"teams": []any{teamFixture("t1", "Engineering", true)},
+	})
+
+	h.Require.NoError(h.Execute("org", "team", "describe", "--team-name", "Engineering"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "t1")
+	h.Require.Contains(out, "Engineering")
+	call := m.FindCall("GET", "/v1/teams")
+	h.Require.NotNil(call)
+	h.Require.Equal("Engineering", call.Query().Get("name"))
+}
+
+func Test_Org_Team_Describe_ByName_NotFound(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []any{}})
+
+	err := h.Execute("org", "team", "describe", "--team-name", "ghost")
+	h.Require.ErrorContains(err, `no team named "ghost"`)
+}
+
+func Test_Org_Team_Describe_IDAndName_Rejected(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("org", "team", "describe", "--team-id", "t1", "--team-name", "Engineering")
+	h.Require.Error(err)
+}
+
 func Test_Org_Team_Describe_JSON(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()

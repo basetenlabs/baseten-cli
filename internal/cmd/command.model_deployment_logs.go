@@ -36,16 +36,16 @@ func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, api.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, api.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
 	fetchLogs := func(q logQuery) (*managementapi.GetLogsResponse, error) {
-		return api.API().GetModelsDeploymentsLogs(ctx, ref.ID, flags.DeploymentID, deploymentLogParams(q))
+		return api.API().GetModelsDeploymentsLogs(ctx, ref.ModelID, ref.DeploymentID, deploymentLogParams(q))
 	}
 	fetchStatus := func() (*managementapi.Deployment, error) {
-		return api.API().GetModelsDeploymentsDeploymentId(ctx, ref.ID, flags.DeploymentID)
+		return api.API().GetModelsDeploymentsDeploymentId(ctx, ref.ModelID, ref.DeploymentID)
 	}
 	return runLogsCommand(ctx, &flags.LogFlags, fetchLogs, fetchStatus)
 }

@@ -17,7 +17,7 @@ func ResolveTeam(ctx context.Context, api *managementapi.Client, input string) (
 	if input == "" {
 		return "", nil
 	}
-	resp, err := api.GetTeams(ctx)
+	resp, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
 	if err != nil {
 		return "", fmt.Errorf("list teams: %w", err)
 	}

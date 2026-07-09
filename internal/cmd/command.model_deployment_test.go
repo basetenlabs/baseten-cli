@@ -90,6 +90,40 @@ func Test_Model_Deployment_Describe_MissingDeploymentID(t *testing.T) {
 	h.Require.Error(err)
 }
 
+func Test_Model_Deployment_Describe_ByName(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/models/m-1/deployments", 200,
+		map[string]any{"deployments": []any{depFixture("d-1", "first", "production", "ACTIVE")}})
+	m.SetRoute("GET", "/v1/models/m-1/deployments/d-1", 200,
+		depFixture("d-1", "first", "production", "ACTIVE"))
+
+	h.Require.NoError(h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-name", "first"))
+	h.Require.Contains(h.Stdout.String(), "d-1")
+	call := m.FindCall("GET", "/v1/models/m-1/deployments")
+	h.Require.NotNil(call)
+	h.Require.Equal("first", call.Query().Get("name"))
+	h.Require.NotNil(m.FindCall("GET", "/v1/models/m-1/deployments/d-1"))
+}
+
+func Test_Model_Deployment_Describe_ByName_NotFound(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments", 200,
+		map[string]any{"deployments": []any{}})
+
+	err := h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-name", "ghost")
+	h.Require.ErrorContains(err, `no deployment named "ghost"`)
+}
+
+func Test_Model_Deployment_Describe_IDAndName_Rejected(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--deployment-name", "first")
+	h.Require.Error(err)
+}
+
 func Test_Model_Deployment_Config_TextRaw(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments/d-1/config", 200,

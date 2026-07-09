@@ -232,6 +232,21 @@ type LogFlags struct {
 	RequestID     string   `flag:"request-id" desc:"Only return logs tagged with this inference request ID."`
 }
 
+// MetricsFlags is the shared metric-query flag set for `baseten model deployment
+// metrics` and `baseten model environment metrics`. Both commands accept the
+// same mode, window, and metric-selection flags; only the metric source differs.
+type MetricsFlags struct {
+	Mode string `flag:"mode" desc:"Aggregation mode. 'current' returns an instantaneous snapshot at now; 'summary' aggregates the whole window into one value per metric; 'series' returns evenly-spaced points across the window. --start/--end/--since are only meaningful for summary and series." enum:"current,summary,series" default:"current"`
+
+	Start time.Time     `flag:"start" desc:"Start of the metrics time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. If omitted, the server defaults the start to one hour before the end. Window must be at most 7 days."`
+	End   time.Time     `flag:"end" desc:"End of the metrics time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. If omitted, the server defaults the end to now. Window must be at most 7 days."`
+	Since time.Duration `flag:"since" desc:"Shortcut for a window from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
+
+	Metric []string `flag:"metric" desc:"Name of a metric to return; see https://docs.baseten.co/observability/export-metrics/supported-metrics for the available names. May be repeated. When omitted, a default set is returned."`
+
+	NoChart bool `flag:"no-chart" desc:"For --mode series, emit a per-step table instead of sparklines."`
+}
+
 // ModelPushFlags configures `baseten model push`.
 type ModelPushFlags struct {
 	CommandFlags
@@ -303,9 +318,10 @@ type ModelPredictFlags struct {
 	CommandFlags
 	ModelRefFlags
 
-	Environment  string `flag:"environment" desc:"Environment to target (e.g. production, development). Defaults to production. Mutually exclusive with --deployment-id and --regional."`
-	DeploymentID string `flag:"deployment-id" desc:"Specific deployment to target. Mutually exclusive with --environment and --regional."`
-	Regional     string `flag:"regional" desc:"Regional environment name; routes via the regional hostname. Mutually exclusive with --environment and --deployment-id."`
+	Environment    string `flag:"environment" desc:"Environment to target (e.g. production, development). Defaults to production. Mutually exclusive with --deployment-id, --deployment-name, and --regional."`
+	DeploymentID   string `flag:"deployment-id" desc:"Specific deployment to target. Mutually exclusive with --environment, --deployment-name, and --regional."`
+	DeploymentName string `flag:"deployment-name" desc:"Name of the deployment to target. Mutually exclusive with --environment, --deployment-id, and --regional."`
+	Regional       string `flag:"regional" desc:"Regional environment name; routes via the regional hostname. Mutually exclusive with --environment, --deployment-id, and --deployment-name."`
 
 	Data string `flag:"data" desc:"Inline JSON request body." oneof:"predict-input"`
 	File string `flag:"file" desc:"Path to a JSON file containing the request body. Use '-' for stdin." oneof:"predict-input"`

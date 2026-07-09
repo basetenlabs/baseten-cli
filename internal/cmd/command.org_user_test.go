@@ -101,6 +101,36 @@ func Test_Org_User_Describe_ByID(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "grace@acme.io")
 }
 
+func Test_Org_User_Describe_ByEmail(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/users", 200, map[string]any{
+		"items":      []any{userFixture("u9", "grace@acme.io", "Grace Hopper")},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	h.Require.NoError(h.Execute("org", "user", "describe", "--user-email", "grace@acme.io"))
+	h.Require.Contains(h.Stdout.String(), "grace@acme.io")
+	call := m.FindCall("GET", "/v1/users")
+	h.Require.NotNil(call)
+	h.Require.Equal("grace@acme.io", call.Query().Get("email"))
+}
+
+func Test_Org_User_Describe_ByEmail_NotFound(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/users", 200,
+		map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}})
+
+	err := h.Execute("org", "user", "describe", "--user-email", "ghost@acme.io")
+	h.Require.ErrorContains(err, `no user with email "ghost@acme.io"`)
+}
+
+func Test_Org_User_Describe_IDAndEmail_Rejected(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("org", "user", "describe", "--user-id", "u1", "--user-email", "ada@acme.io")
+	h.Require.Error(err)
+}
+
 func Test_Org_User_Describe_JSON(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/users/me", 200,

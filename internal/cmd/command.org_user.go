@@ -59,15 +59,29 @@ func commandOrgUserDescribe(ctx *CommandContext, flags *cmd.OrgUserDescribeFlags
 		return err
 	}
 
-	// "me" routes to the dedicated authenticated-user endpoint.
 	var user *managementapi.UserInfo
-	if flags.UserID == "me" {
+	if flags.UserEmail != "" {
+		resp, err := cl.API().GetUsers(ctx, managementapi.GetV1UsersParams{Email: &flags.UserEmail})
+		if err != nil {
+			return fmt.Errorf("describe user %q: %w", flags.UserEmail, err)
+		}
+		if len(resp.Items) == 0 {
+			return fmt.Errorf("no user with email %q", flags.UserEmail)
+		} else if len(resp.Items) > 1 {
+			return fmt.Errorf("multiple users with email %q", flags.UserEmail)
+		}
+		user = &resp.Items[0]
+	} else if flags.UserID == "me" {
+		// "me" routes to the dedicated authenticated-user endpoint.
 		user, err = cl.API().GetUsersMe(ctx)
+		if err != nil {
+			return fmt.Errorf("describe user %s: %w", flags.UserID, err)
+		}
 	} else {
 		user, err = cl.API().GetUsersUserId(ctx, flags.UserID)
-	}
-	if err != nil {
-		return fmt.Errorf("describe user %s: %w", flags.UserID, err)
+		if err != nil {
+			return fmt.Errorf("describe user %s: %w", flags.UserID, err)
+		}
 	}
 
 	if ctx.JSON {

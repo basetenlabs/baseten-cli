@@ -157,6 +157,7 @@ func (m *management) User(t *testing.T) {
 	meOut := mustCLI(t, "org", "user", "describe", "--user-id", "me", "--output", "json")
 	var me struct {
 		UserID string `json:"user_id"`
+		Email  string `json:"email"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(meOut), &me))
 	require.NotEmpty(t, me.UserID, "describe me missing user_id")
@@ -184,6 +185,15 @@ func (m *management) User(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(byIDOut), &byID))
 	require.Equal(t, me.UserID, byID.UserID)
+
+	// Describing by email (server-side ?email= filter) resolves the same user.
+	require.NotEmpty(t, me.Email, "describe me missing email")
+	byEmailOut := mustCLI(t, "org", "user", "describe", "--user-email", me.Email, "--output", "json")
+	var byEmail struct {
+		UserID string `json:"user_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(byEmailOut), &byEmail))
+	require.Equal(t, me.UserID, byEmail.UserID)
 }
 
 // Team lists teams and describes the default team by ID.
@@ -192,6 +202,7 @@ func (m *management) Team(t *testing.T) {
 	var list struct {
 		Teams []struct {
 			ID      string `json:"id"`
+			Name    string `json:"name"`
 			Default bool   `json:"default"`
 		} `json:"teams"`
 	}
@@ -199,19 +210,28 @@ func (m *management) Team(t *testing.T) {
 	require.NotEmpty(t, list.Teams, "team list is empty")
 
 	// Every org has a default team; describe it by ID.
-	teamID := list.Teams[0].ID
+	team := list.Teams[0]
 	for _, tm := range list.Teams {
 		if tm.Default {
-			teamID = tm.ID
+			team = tm
 			break
 		}
 	}
-	descOut := mustCLI(t, "org", "team", "describe", "--team-id", teamID, "--output", "json")
+	descOut := mustCLI(t, "org", "team", "describe", "--team-id", team.ID, "--output", "json")
 	var desc struct {
 		ID string `json:"id"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(descOut), &desc))
-	require.Equal(t, teamID, desc.ID)
+	require.Equal(t, team.ID, desc.ID)
+
+	// Describing by name (server-side ?name= filter) resolves the same team.
+	require.NotEmpty(t, team.Name, "team missing name")
+	byNameOut := mustCLI(t, "org", "team", "describe", "--team-name", team.Name, "--output", "json")
+	var byName struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(byNameOut), &byName))
+	require.Equal(t, team.ID, byName.ID)
 }
 
 // Whoami resolves the authenticated user.
