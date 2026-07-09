@@ -187,9 +187,11 @@ func readModelConfigYAML(dir string, deployment *managementapi.DeploymentArchive
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 
-	deployment.Config = map[string]any{}
 	if err := yaml.Unmarshal(raw, &deployment.Config); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	if deployment.Config == nil {
+		deployment.Config = map[string]any{}
 	}
 	// RawConfig is persisted verbatim and only surfaced back for display/download;
 	// the server never parses it into the build, so it keeps the original bytes
