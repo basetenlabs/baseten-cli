@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // TestE2EModelLifecycle pushes a fresh model, drives the management and
@@ -248,12 +249,21 @@ func (l *lifecycle) Deployment(t *testing.T) {
 		mustCLI(t, "model", "deployment", "download",
 			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--out-dir", outDir)
 
+		// The downloaded archive is the gathered truss: external_package_dirs is
+		// stripped and the external module is inlined under packages/. The config
+		// is re-marshalled server-side, so assert on structure, not exact bytes.
 		gotCfg, err := os.ReadFile(filepath.Join(outDir, "config.yaml"))
 		require.NoError(t, err)
-		require.Equal(t, fmt.Sprintf(trussConfigTmpl, l.modelName), string(gotCfg))
+		var cfgMap map[string]any
+		require.NoError(t, yaml.Unmarshal(gotCfg, &cfgMap))
+		require.Equal(t, l.modelName, cfgMap["model_name"])
+		require.NotContains(t, cfgMap, "external_package_dirs")
 		gotModel, err := os.ReadFile(filepath.Join(outDir, "model", "model.py"))
 		require.NoError(t, err)
 		require.Equal(t, trussModelPy, string(gotModel))
+		gotExt, err := os.ReadFile(filepath.Join(outDir, "packages", "e2e_ext.py"))
+		require.NoError(t, err)
+		require.Equal(t, e2eExternalModule, string(gotExt))
 	})
 
 	t.Run("Download_OutFile", func(t *testing.T) {
@@ -468,6 +478,13 @@ func (l *lifecycle) ModelPredict(t *testing.T) {
 		var resp map[string]any
 		require.NoError(t, json.Unmarshal([]byte(out), &resp))
 		require.Equal(t, map[string]any{"got request": map[string]any{"x": float64(1)}}, resp)
+	})
+
+	t.Run("ExternalPackage", func(t *testing.T) {
+		out := mustCLI(t, "model", "predict", "--model-id", l.modelID, "--data", `{"style":"external"}`, "--output", "json")
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, map[string]any{"external_const": e2eExternalConst}, resp)
 	})
 
 	t.Run("Streaming_Text", func(t *testing.T) {

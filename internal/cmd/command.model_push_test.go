@@ -290,7 +290,9 @@ func Test_Model_Push_TeamByName(t *testing.T) {
 
 // Verifies the asymmetry: --override-name and --no-build-cache mutate the API
 // `config` payload but NOT the archived config.yaml bytes. Also verifies
-// external_package_dirs are bundled under the configured directory.
+// external_package_dirs are bundled under the configured directory and
+// stripped from the config the server builds from, while raw_config keeps
+// the original on-disk bytes verbatim.
 func Test_Model_Push_OverridesAndExternalPackages(t *testing.T) {
 	h := newModelPushHarness(t)
 	dir := h.WriteModelDir("model_name: original\nexternal_package_dirs:\n  - extras\n")
@@ -311,12 +313,16 @@ func Test_Model_Push_OverridesAndExternalPackages(t *testing.T) {
 	h.Require.Equal("renamed", cfg["model_name"])
 	build := cfg["build"].(map[string]any)
 	h.Require.Equal(true, build["no_cache"])
+	// external_package_dirs is stripped from the parsed config: the server's
+	// truss validation would reject the now-nonexistent relative paths.
+	h.Require.NotContains(cfg, "external_package_dirs")
 	// raw_config is the on-disk bytes, NOT the mutated map.
 	h.Require.Equal("model_name: original\nexternal_package_dirs:\n  - extras\n", dep["raw_config"])
 
 	entries := h.UntarUploaded()
-	// Archived config.yaml is verbatim — no override leak.
-	h.Require.Equal("model_name: original\nexternal_package_dirs:\n  - extras\n", entries["config.yaml"])
+	// Archived config.yaml (what the build reads) has external_package_dirs
+	// stripped; the override-name rename only lands on the API-level config.
+	h.Require.Equal("model_name: original\n", entries["config.yaml"])
 	// External package dir contents bundled under the default "packages/".
 	h.Require.Equal("X = 1\n", entries["packages/util.py"])
 }

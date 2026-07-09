@@ -187,25 +187,37 @@ func readModelConfigYAML(dir string, deployment *managementapi.DeploymentArchive
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 
-	configMap := map[string]any{}
-	if err := yaml.Unmarshal(raw, &configMap); err != nil {
+	deployment.Config = map[string]any{}
+	if err := yaml.Unmarshal(raw, &deployment.Config); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
-	if configMap == nil {
-		configMap = map[string]any{}
-	}
-	deployment.Config = configMap
+	// RawConfig is persisted verbatim and only surfaced back for display/download;
+	// the server never parses it into the build, so it keeps the original bytes
+	// (comments and all), including external_package_dirs.
 	rawStr := string(raw)
 	deployment.RawConfig = &rawStr
 
-	if raw, ok := configMap["external_package_dirs"].([]any); ok {
-		for _, v := range raw {
+	if extDirs, ok := deployment.Config["external_package_dirs"].([]any); ok {
+		for _, v := range extDirs {
 			if s, ok := v.(string); ok {
 				buildOpts.ExternalPackageDirs = append(buildOpts.ExternalPackageDirs, s)
 			}
 		}
+		// The external package contents are inlined into the archive under
+		// bundled_packages_dir (mirroring the Python CLI's gather step), so the
+		// field must be dropped from the config the server builds from: its truss
+		// validation errors on external_package_dirs whose relative paths don't
+		// exist in the extracted archive. ConfigYAMLOverride replaces the archived
+		// config.yaml (the file the build actually reads); RawConfig above keeps
+		// the original bytes since the server never builds from it.
+		delete(deployment.Config, "external_package_dirs")
+		cleared, err := yaml.Marshal(deployment.Config)
+		if err != nil {
+			return fmt.Errorf("re-marshal %s after clearing external_package_dirs: %w", path, err)
+		}
+		buildOpts.ConfigYAMLOverride = cleared
 	}
-	if bundled, ok := configMap["bundled_packages_dir"].(string); ok && bundled != "" {
+	if bundled, ok := deployment.Config["bundled_packages_dir"].(string); ok && bundled != "" {
 		buildOpts.BundledPackagesDir = bundled
 	} else {
 		buildOpts.BundledPackagesDir = modelPushDefaultBundledPkgDir
