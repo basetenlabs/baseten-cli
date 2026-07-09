@@ -18,6 +18,10 @@ import (
 )
 
 // Minimal Truss source files baked into the test binary.
+// trussConfigTmpl is the lifecycle model's config. external_package_dirs points
+// at a sibling dir (see writeTruss) so the push exercises gather: its contents
+// are inlined into the archive's packages/ and the field is stripped from the
+// config the server builds from.
 const trussConfigTmpl = `model_name: %s
 python_version: py313
 resources:
@@ -27,7 +31,14 @@ resources:
 runtime:
   remote_ssh:
     enabled: true
+external_package_dirs:
+  - ../extpkg
 `
+
+// e2eExternalConst is exported by the external package module and echoed back
+// by the model's predict, proving the inlined packages/ dir is importable.
+const e2eExternalConst = "baseten-e2e-external-ok"
+const e2eExternalModule = "EXTERNAL_CONST = \"" + e2eExternalConst + "\"\n"
 
 // Marker tokens emitted by the test model's load() and asserted by the Logs
 // phase. The shared marker scopes queries to our lines; the per-level words
@@ -50,6 +61,9 @@ import time
 
 from fastapi.responses import StreamingResponse
 
+# Imported from the external package dir, inlined into packages/ on push.
+from e2e_ext import EXTERNAL_CONST
+
 _logger = logging.getLogger(__name__)
 
 class Model:
@@ -68,6 +82,8 @@ class Model:
             _logger.info("baseten-e2e-pagination line %02d" % i)
 
     def predict(self, request):
+        if request.get("style") == "external":
+            return {"external_const": EXTERNAL_CONST}
         if request.get("style") == "streaming":
             chunks = request.get("chunks", ["alpha", "beta", "gamma"])
             def gen():
@@ -158,14 +174,22 @@ func mustCLIStdin(t *testing.T, stdin string, args ...string) string {
 	return out
 }
 
-// writeTruss materializes the baked-in Truss source into a temp dir with
-// the given model name baked into config.yaml.
+// writeTruss materializes the baked-in Truss source and returns the truss dir.
+// The truss lives in a "truss" subdir alongside an "extpkg" sibling so
+// config.yaml's `external_package_dirs: [../extpkg]` resolves; the sibling
+// holds the module imported by model.py.
 func writeTruss(t *testing.T, modelName string) string {
 	t.Helper()
-	dir := t.TempDir()
+	parent := t.TempDir()
+
+	extDir := filepath.Join(parent, "extpkg")
+	require.NoError(t, os.MkdirAll(extDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(extDir, "e2e_ext.py"), []byte(e2eExternalModule), 0o644))
+
+	dir := filepath.Join(parent, "truss")
 	cfg := fmt.Sprintf(trussConfigTmpl, modelName)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "model"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "model", "model.py"), []byte(trussModelPy), 0o644))
 	return dir
 }

@@ -19,6 +19,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const watchConfigTmpl = `model_name: %s
+python_version: py313
+resources:
+  cpu: 50m
+  memory: 50Mi
+  use_gpu: false
+runtime:
+  remote_ssh:
+    enabled: true
+`
+
 // watchModelPyTmpl is a model whose predict response carries a version token
 // and the serving process PID. The watch test rewrites the token on disk and
 // asserts the running development deployment serves the new value, proving the
@@ -123,7 +134,7 @@ func newWatchTest(t *testing.T) *watchTest {
 		modelName: fmt.Sprintf("cli-e2e-watch-%s", randomSuffix(t)),
 		dir:       t.TempDir(),
 	}
-	cfg := fmt.Sprintf(trussConfigTmpl, w.modelName)
+	cfg := fmt.Sprintf(watchConfigTmpl, w.modelName)
 	require.NoError(t, os.WriteFile(filepath.Join(w.dir, "config.yaml"), []byte(cfg), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(w.dir, "model"), 0o755))
 	w.writeModelPy("v1")
