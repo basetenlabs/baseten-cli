@@ -582,7 +582,7 @@ func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedMod
 	// Narrative goes first so a user piping JSON to a file or jq sees the
 	// human summary on stderr before the JSON object lands on stdout.
 	if ctx.JSON {
-		writeModelPushSummary(ctx.Logf, created, predictURL, logsURL, environment, sshEnabled)
+		writeModelPushSummary(ctx.Logf, ctx.Stderr, created, predictURL, logsURL, environment, sshEnabled)
 		ctx.OutputJSON(cmd.ModelPushResult{
 			Model:      created.Model,
 			Deployment: created.Deployment,
@@ -591,7 +591,7 @@ func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedMod
 		})
 		return nil
 	}
-	writeModelPushSummary(ctx.Outputf, created, predictURL, logsURL, environment, sshEnabled)
+	writeModelPushSummary(ctx.Outputf, ctx.Stdout, created, predictURL, logsURL, environment, sshEnabled)
 	return nil
 }
 
@@ -619,6 +619,7 @@ func sshEnabledInConfig(config map[string]any) bool {
 // environment's live one after it finishes deploying.
 func writeModelPushSummary(
 	printf func(string, ...any),
+	w io.Writer,
 	created *managementapi.CreatedModelDeployment,
 	predictURL string,
 	logsURL string,
@@ -682,6 +683,9 @@ func writeModelPushSummary(
 		label string
 		value string
 		note  string
+		// rendered marks value as already styled (e.g. a hyperlink), so it is
+		// printed as-is rather than wrapped in inlineCodeStyle.
+		rendered bool
 	}
 	group := func(emoji, header string, hints []hint) {
 		printf("\n%s %s\n", emoji, header)
@@ -693,7 +697,11 @@ func writeModelPushSummary(
 		}
 		width += 2
 		for _, h := range hints {
-			printf("   %-*s%s", width, h.label, inlineCodeStyle.Render(h.value))
+			value := h.value
+			if !h.rendered {
+				value = inlineCodeStyle.Render(value)
+			}
+			printf("   %-*s%s", width, h.label, value)
 			if h.note != "" {
 				printf("  %s", h.note)
 			}
@@ -709,11 +717,11 @@ func writeModelPushSummary(
 		logs = append(logs, hint{label: "environment:", note: "(once deployed)", value: fmt.Sprintf(
 			"baseten model environment logs --model-id %s --environment %s", modelID, envName)})
 	}
-	logs = append(logs, hint{label: "app:", value: logsURL})
+	logs = append(logs, hint{label: "app:", value: hyperlink(w, logsURL), rendered: true})
 	group("🪵", "View logs:", logs)
 
 	group("🚀", "Invoke your model:", []hint{
-		{label: "URL:", value: predictURL},
+		{label: "URL:", value: hyperlink(w, predictURL), rendered: true},
 		{label: "CLI:", value: fmt.Sprintf("baseten model predict --model-id %s", modelID)},
 	})
 

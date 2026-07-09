@@ -206,7 +206,7 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 		if ctx.JSON {
 			ctx.OutputJSON(cmd.AuthStatusResult{RemoteURL: remoteURL, AuthType: string(auth.AuthTypeAPIKey)})
 		} else {
-			ctx.Outputf("Using API key from BASETEN_API_KEY\n  Remote: %s\n", remoteURL)
+			ctx.Outputf("Using API key from BASETEN_API_KEY\n  Remote: %s\n", hyperlink(ctx.Stdout, remoteURL))
 		}
 		return nil
 	}
@@ -227,7 +227,7 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 			AuthType:  string(profile.AuthType),
 		})
 	} else {
-		ctx.Outputf("%s\n  Remote: %s\n  Auth type: %s\n", profileName, profile.RemoteURL, profile.AuthType)
+		ctx.Outputf("%s\n  Remote: %s\n  Auth type: %s\n", profileName, hyperlink(ctx.Stdout, profile.RemoteURL), profile.AuthType)
 	}
 	return nil
 }
