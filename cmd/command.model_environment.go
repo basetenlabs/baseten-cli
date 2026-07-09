@@ -117,6 +117,44 @@ var commandModelEnvironment = Command{
 				},
 			},
 		},
+		{
+			Name:    "metrics",
+			Summary: "Fetch metrics for an environment",
+			Description: "Fetch metrics aggregated across every deployment that was active on the " +
+				"environment over the time range.\n\n" +
+				"--mode selects what you get back: a current snapshot, a windowed " +
+				"summary, or a series; see its flag help for details. Scope the window " +
+				"with --start/--end or --since (max 7 days), which only apply to " +
+				"summary and series. In series mode the window is split at each promotion " +
+				"so every point reflects the deployment(s) serving the environment at that time.",
+			Flags: ModelEnvironmentMetricsFlags{},
+			Output: &CommandOutput[managementapi.GetModelMetricsResponse]{
+				TextDescription: "For current/summary, a table with columns METRIC, one column per " +
+					"label dimension (e.g. QUANTILE, STAT), and VALUE; summary COUNTER values show " +
+					"\"total (rate/s)\". For series, a sparkline per metric label set with its " +
+					"min-max range and end value, or a per-step table under --no-chart.",
+				JSONDescription: "The metrics response: metric_descriptors, index-mapped metric_values, " +
+					"the resolved mode, and the returned window.",
+				Examples: []CommandExample{
+					{
+						Description: "Show a current snapshot of the default metrics for the production environment.",
+						Command:     "baseten model environment metrics --model-id <model-id> --environment production",
+					},
+					{
+						Description: "Summarize request volume and latency over the last hour.",
+						Command:     "baseten model environment metrics --model-id <model-id> --environment production --mode summary --since 1h --metric baseten_inference_requests_total --metric baseten_end_to_end_response_time_seconds",
+					},
+					{
+						Description: "Plot a series over the last 6 hours.",
+						Command:     "baseten model environment metrics --model-id <model-id> --environment production --mode series --since 6h",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the metric names returned.",
+					Command:     "baseten model environment metrics --model-id <model-id> --environment production --jq '.metric_descriptors[].name'",
+				},
+			},
+		},
 	},
 }
 
@@ -158,4 +196,11 @@ type ModelEnvironmentLogsFlags struct {
 	CommandFlags
 	ModelEnvironmentFlags
 	LogFlags
+}
+
+// ModelEnvironmentMetricsFlags configures `baseten model environment metrics`.
+type ModelEnvironmentMetricsFlags struct {
+	CommandFlags
+	ModelEnvironmentFlags
+	MetricsFlags
 }

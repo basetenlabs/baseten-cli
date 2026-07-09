@@ -17,6 +17,44 @@ func init() {
 }
 
 func commandModelDeploymentMetrics(ctx *CommandContext, flags *cmd.ModelDeploymentMetricsFlags) error {
+	api, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveDeploymentRef(ctx, api.API(), flags.ModelDeploymentIDFlags)
+	if err != nil {
+		return err
+	}
+	fetch := func(q metricsQuery) (*managementapi.GetModelMetricsResponse, error) {
+		return api.API().GetModelsDeploymentsMetrics(ctx, ref.ModelID, ref.DeploymentID,
+			managementapi.GetV1ModelsModelIdDeploymentsDeploymentIdMetricsParams{
+				Mode:             &q.Mode,
+				StartEpochMillis: q.StartEpochMillis,
+				EndEpochMillis:   q.EndEpochMillis,
+				Metrics:          q.Metrics,
+			})
+	}
+	return runMetricsCommand(ctx, &flags.MetricsFlags, fetch)
+}
+
+// metricsQuery is the transport-neutral set of metric-query parameters shared by
+// the deployment and environment metrics endpoints. Each command maps it onto
+// its own generated query-params type.
+type metricsQuery struct {
+	Mode             managementapi.ModelMetricMode
+	StartEpochMillis *int
+	EndEpochMillis   *int
+	Metrics          *[]string
+}
+
+// metricsFetcher fetches metrics for the given query.
+type metricsFetcher func(q metricsQuery) (*managementapi.GetModelMetricsResponse, error)
+
+// runMetricsCommand implements the shared metrics command flow for both
+// deployment and environment metrics. It validates the flags, resolves the mode
+// and time window into a metricsQuery, fetches via the supplied fetcher, and
+// renders the response.
+func runMetricsCommand(ctx *CommandContext, flags *cmd.MetricsFlags, fetch metricsFetcher) error {
 	mode := managementapi.ModelMetricMode(strings.ToUpper(flags.Mode))
 
 	hasStart := !flags.Start.IsZero()
@@ -32,16 +70,7 @@ func commandModelDeploymentMetrics(ctx *CommandContext, flags *cmd.ModelDeployme
 		return cmd.NewErrUsagef("--since cannot be combined with --start or --end")
 	}
 
-	api, err := ctx.NewManagementClient()
-	if err != nil {
-		return err
-	}
-	ref, err := ResolveDeploymentRef(ctx, api.API(), flags.ModelDeploymentIDFlags)
-	if err != nil {
-		return err
-	}
-
-	params := managementapi.GetV1ModelsModelIdDeploymentsDeploymentIdMetricsParams{Mode: &mode}
+	q := metricsQuery{Mode: mode}
 	if hasSince {
 		if flags.Since <= 0 {
 			return cmd.NewErrUsagef("--since must be a positive duration")
@@ -52,17 +81,17 @@ func commandModelDeploymentMetrics(ctx *CommandContext, flags *cmd.ModelDeployme
 		now := ctx.Now()
 		s := int(now.Add(-flags.Since).UnixMilli())
 		e := int(now.UnixMilli())
-		params.StartEpochMillis, params.EndEpochMillis = &s, &e
+		q.StartEpochMillis, q.EndEpochMillis = &s, &e
 	} else if hasStart || hasEnd {
 		// Send only the bounds given and leave the other nil so the server
 		// backfills it. Validate the window client-side only when both are given.
 		if hasStart {
 			s := int(flags.Start.UnixMilli())
-			params.StartEpochMillis = &s
+			q.StartEpochMillis = &s
 		}
 		if hasEnd {
 			e := int(flags.End.UnixMilli())
-			params.EndEpochMillis = &e
+			q.EndEpochMillis = &e
 		}
 		if hasStart && hasEnd {
 			if !flags.Start.Before(flags.End) {
@@ -74,10 +103,10 @@ func commandModelDeploymentMetrics(ctx *CommandContext, flags *cmd.ModelDeployme
 		}
 	}
 	if len(flags.Metric) > 0 {
-		params.Metrics = &flags.Metric
+		q.Metrics = &flags.Metric
 	}
 
-	resp, err := api.API().GetModelsDeploymentsMetrics(ctx, ref.ModelID, ref.DeploymentID, params)
+	resp, err := fetch(q)
 	if err != nil {
 		return err
 	}
