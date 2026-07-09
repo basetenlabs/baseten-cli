@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"archive/tar"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,6 +27,53 @@ func init() {
 	Register("model deployment promote", commandModelDeploymentPromote)
 }
 
+// DeploymentRef is the result of resolving [cmd.ModelDeploymentIDFlags]: a
+// resolved model ID paired with a resolved deployment ID.
+type DeploymentRef struct {
+	ModelID      string
+	DeploymentID string
+}
+
+// ResolveDeploymentRef resolves the model, then the deployment within it. When
+// --deployment-id is set it is used directly; when --deployment-name is set the
+// deployment is looked up by exact name within the model. Absent or ambiguous
+// name matches return an error.
+func ResolveDeploymentRef(
+	ctx context.Context, api *managementapi.Client, flags cmd.ModelDeploymentIDFlags,
+) (DeploymentRef, error) {
+	modelRef, err := ResolveModelRef(ctx, api, flags.ModelRefFlags)
+	if err != nil {
+		return DeploymentRef{}, err
+	}
+	if flags.DeploymentID != "" {
+		return DeploymentRef{ModelID: modelRef.ID, DeploymentID: flags.DeploymentID}, nil
+	}
+	deploymentID, err := findDeploymentIDByName(ctx, api, modelRef.ID, flags.DeploymentName)
+	if err != nil {
+		return DeploymentRef{}, err
+	}
+	return DeploymentRef{ModelID: modelRef.ID, DeploymentID: deploymentID}, nil
+}
+
+// findDeploymentIDByName returns the ID of the deployment with the given exact
+// name within a model. The server filters by exact name, so at most one
+// deployment matches; absent or (defensively) ambiguous matches return an error.
+func findDeploymentIDByName(
+	ctx context.Context, api *managementapi.Client, modelID, name string,
+) (string, error) {
+	resp, err := api.GetModelsDeployments(ctx, modelID,
+		managementapi.GetV1ModelsModelIdDeploymentsParams{Name: &name})
+	if err != nil {
+		return "", fmt.Errorf("list deployments for model %s: %w", modelID, err)
+	}
+	if len(resp.Deployments) == 0 {
+		return "", fmt.Errorf("no deployment named %q in model %s", name, modelID)
+	} else if len(resp.Deployments) > 1 {
+		return "", fmt.Errorf("multiple deployments named %q in model %s", name, modelID)
+	}
+	return resp.Deployments[0].Id, nil
+}
+
 func commandModelDeploymentList(ctx *CommandContext, flags *cmd.ModelDeploymentListFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -35,7 +83,8 @@ func commandModelDeploymentList(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	if err != nil {
 		return err
 	}
-	resp, err := cl.API().GetModelsDeployments(ctx, ref.ID)
+	resp, err := cl.API().GetModelsDeployments(ctx, ref.ID,
+		managementapi.GetV1ModelsModelIdDeploymentsParams{})
 	if err != nil {
 		return fmt.Errorf("list deployments for model %s: %w", ref.ID, err)
 	}
@@ -80,13 +129,13 @@ func commandModelDeploymentDescribe(ctx *CommandContext, flags *cmd.ModelDeploym
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
-	dep, err := cl.API().GetModelsDeploymentsDeploymentId(ctx, ref.ID, flags.DeploymentID)
+	dep, err := cl.API().GetModelsDeploymentsDeploymentId(ctx, ref.ModelID, ref.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("describe deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("describe deployment %s: %w", ref.DeploymentID, err)
 	}
 
 	if ctx.JSON {
@@ -113,14 +162,14 @@ func commandModelDeploymentConfig(ctx *CommandContext, flags *cmd.ModelDeploymen
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
-	resp, err := cl.API().GetModelsDeploymentsConfig(ctx, ref.ID, flags.DeploymentID,
+	resp, err := cl.API().GetModelsDeploymentsConfig(ctx, ref.ModelID, ref.DeploymentID,
 		managementapi.GetV1ModelsModelIdDeploymentsDeploymentIdConfigParams{})
 	if err != nil {
-		return fmt.Errorf("fetch deployment config for %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("fetch deployment config for %s: %w", ref.DeploymentID, err)
 	}
 
 	if ctx.JSON {
@@ -147,20 +196,20 @@ func commandModelDeploymentActivate(ctx *CommandContext, flags *cmd.ModelDeploym
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
-	resp, err := cl.API().PostModelsDeploymentsActivate(ctx, ref.ID, flags.DeploymentID)
+	resp, err := cl.API().PostModelsDeploymentsActivate(ctx, ref.ModelID, ref.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("activate deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("activate deployment %s: %w", ref.DeploymentID, err)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Activated deployment %s\n", flags.DeploymentID)
+	ctx.Logf("Activated deployment %s\n", ref.DeploymentID)
 	return nil
 }
 
@@ -169,27 +218,27 @@ func commandModelDeploymentDeactivate(ctx *CommandContext, flags *cmd.ModelDeplo
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
 	if !flags.Yes {
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Deactivate deployment %s?", flags.DeploymentID)); err != nil {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Deactivate deployment %s?", ref.DeploymentID)); err != nil {
 			return err
 		}
 	}
 
-	resp, err := cl.API().PostModelsDeploymentsDeactivate(ctx, ref.ID, flags.DeploymentID)
+	resp, err := cl.API().PostModelsDeploymentsDeactivate(ctx, ref.ModelID, ref.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("deactivate deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("deactivate deployment %s: %w", ref.DeploymentID, err)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Deactivated deployment %s\n", flags.DeploymentID)
+	ctx.Logf("Deactivated deployment %s\n", ref.DeploymentID)
 	return nil
 }
 
@@ -198,27 +247,27 @@ func commandModelDeploymentDelete(ctx *CommandContext, flags *cmd.ModelDeploymen
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
 	if !flags.Yes {
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete deployment %s? This cannot be undone.", flags.DeploymentID)); err != nil {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete deployment %s? This cannot be undone.", ref.DeploymentID)); err != nil {
 			return err
 		}
 	}
 
-	tombstone, err := cl.API().DeleteModelsDeployments(ctx, ref.ID, flags.DeploymentID)
+	tombstone, err := cl.API().DeleteModelsDeployments(ctx, ref.ModelID, ref.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("delete deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("delete deployment %s: %w", ref.DeploymentID, err)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(tombstone)
 		return nil
 	}
-	ctx.Logf("Deleted deployment %s\n", flags.DeploymentID)
+	ctx.Logf("Deleted deployment %s\n", ref.DeploymentID)
 	return nil
 }
 
@@ -247,15 +296,15 @@ func commandModelDeploymentDownload(ctx *CommandContext, flags *cmd.ModelDeploym
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
 	ctx.Logf("Fetching download URL...\n")
-	resp, err := cl.API().GetModelsDeploymentsDownload(ctx, ref.ID, flags.DeploymentID)
+	resp, err := cl.API().GetModelsDeploymentsDownload(ctx, ref.ModelID, ref.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("fetch download URL for deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("fetch download URL for deployment %s: %w", ref.DeploymentID, err)
 	}
 
 	ctx.Logf("Downloading truss...\n")
@@ -347,31 +396,31 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
 	if !flags.Yes {
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Promote deployment %s to environment %q?", flags.DeploymentID, flags.Environment)); err != nil {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Promote deployment %s to environment %q?", ref.DeploymentID, flags.Environment)); err != nil {
 			return err
 		}
 	}
 
 	preserve := !flags.OverrideEnvInstanceType
-	dep, err := cl.API().PostModelsEnvironmentsPromote(ctx, ref.ID, flags.Environment,
+	dep, err := cl.API().PostModelsEnvironmentsPromote(ctx, ref.ModelID, flags.Environment,
 		managementapi.PromoteToEnvironmentRequest{
-			DeploymentId:            flags.DeploymentID,
+			DeploymentId:            ref.DeploymentID,
 			PreserveEnvInstanceType: &preserve,
 		})
 	if err != nil {
-		return fmt.Errorf("promote deployment %s to environment %s: %w", flags.DeploymentID, flags.Environment, err)
+		return fmt.Errorf("promote deployment %s to environment %s: %w", ref.DeploymentID, flags.Environment, err)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(dep)
 		return nil
 	}
-	ctx.Logf("Promoted deployment %s to environment %s\n", flags.DeploymentID, flags.Environment)
+	ctx.Logf("Promoted deployment %s to environment %s\n", ref.DeploymentID, flags.Environment)
 	return nil
 }

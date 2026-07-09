@@ -123,6 +123,10 @@ func Test_Model_Describe_ByName(t *testing.T) {
 
 	h.Require.NoError(h.Execute("model", "describe", "--model-name", "alpha"))
 	h.Require.NotNil(m.FindCall("GET", "/v1/models/m-1"))
+	// The name filter is applied server-side via the ?name= query param.
+	listCall := m.FindCall("GET", "/v1/models")
+	h.Require.NotNil(listCall)
+	h.Require.Equal("alpha", listCall.Query().Get("name"))
 }
 
 func Test_Model_Describe_ByNameAmbiguous(t *testing.T) {
