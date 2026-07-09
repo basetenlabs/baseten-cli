@@ -139,6 +139,12 @@ func (r *Remote) PredictURL(modelID, deploymentID string, isDraft bool) string {
 	return base + "/deployment/" + deploymentID + "/predict"
 }
 
+// EnvironmentPredictURL returns the user-facing predict URL for a model
+// environment, whose stable name selects the live deployment via the path.
+func (r *Remote) EnvironmentPredictURL(modelID, environment string) string {
+	return r.scheme + "://model-" + modelID + "." + r.managementAPIHost + "/environments/" + environment + "/predict"
+}
+
 // LogsURL returns the user-facing logs URL printed in push output.
 func (r *Remote) LogsURL(modelID, deploymentID string) string {
 	return r.scheme + "://app." + r.baseHost + "/models/" + modelID + "/logs/" + deploymentID

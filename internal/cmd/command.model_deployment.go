@@ -142,6 +142,10 @@ func commandModelDeploymentDescribe(ctx *CommandContext, flags *cmd.ModelDeploym
 		ctx.OutputJSON(dep)
 		return nil
 	}
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return err
+	}
 	ctx.Outputf("ID:           %s\n", dep.Id)
 	ctx.Outputf("Name:         %s\n", dep.Name)
 	ctx.Outputf("Model:        %s\n", dep.ModelId)
@@ -153,6 +157,8 @@ func commandModelDeploymentDescribe(ctx *CommandContext, flags *cmd.ModelDeploym
 		ctx.Outputf("Instance:     %s\n", *dep.InstanceTypeName)
 	}
 	ctx.Outputf("Replicas:     %d\n", dep.ActiveReplicaCount)
+	ctx.Outputf("Invoke URL:   %s\n", hyperlink(ctx.Stdout, remote.PredictURL(dep.ModelId, dep.Id, dep.IsDevelopment)))
+	ctx.Outputf("Logs URL:     %s\n", hyperlink(ctx.Stdout, remote.LogsURL(dep.ModelId, dep.Id)))
 	ctx.Outputf("Created:      %s\n", dep.CreatedAt.UTC().Format(time.RFC3339))
 	return nil
 }

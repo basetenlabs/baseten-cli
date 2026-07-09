@@ -98,7 +98,7 @@ func commandModelAPIDescribe(ctx *CommandContext, flags *cmd.ModelAPIDescribeFla
 	ctx.Outputf("Context Length:  %d\n", m.ContextLength)
 	ctx.Outputf("Input Cost:      $%s / 1M tokens\n", modelAPICurrencyString(m.CostPerMillionInputTokens))
 	ctx.Outputf("Output Cost:     $%s / 1M tokens\n", modelAPICurrencyString(m.CostPerMillionOutputTokens))
-	ctx.Outputf("Invoke URL:      %s\n", m.InvokeUrl)
+	ctx.Outputf("Invoke URL:      %s\n", hyperlink(ctx.Stdout, m.InvokeUrl))
 	if len(m.RateLimits) > 0 {
 		ctx.Outputf("Rate Limits:     %s\n", modelAPIRateLimitsString(m.RateLimits))
 	}

@@ -69,6 +69,10 @@ func commandModelEnvironmentDescribe(ctx *CommandContext, flags *cmd.ModelEnviro
 		ctx.OutputJSON(env)
 		return nil
 	}
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return err
+	}
 	ctx.Outputf("Name:                %s\n", env.Name)
 	ctx.Outputf("Model:               %s\n", env.ModelId)
 	ctx.Outputf("Current Deployment:  %s\n", env.CurrentDeployment.Id)
@@ -76,6 +80,8 @@ func commandModelEnvironmentDescribe(ctx *CommandContext, flags *cmd.ModelEnviro
 	if env.CandidateDeployment != nil {
 		ctx.Outputf("Candidate Deployment: %s\n", env.CandidateDeployment.Id)
 	}
+	ctx.Outputf("Invoke URL:          %s\n", hyperlink(ctx.Stdout, remote.EnvironmentPredictURL(env.ModelId, env.Name)))
+	ctx.Outputf("Logs URL:            %s\n", hyperlink(ctx.Stdout, remote.LogsURL(env.ModelId, env.CurrentDeployment.Id)))
 	ctx.Outputf("Created:             %s\n", env.CreatedAt.UTC().Format(time.RFC3339))
 	return nil
 }
