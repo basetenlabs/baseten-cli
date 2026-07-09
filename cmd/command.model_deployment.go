@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"time"
-
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -353,14 +351,5 @@ type ModelDeploymentLogsFlags struct {
 type ModelDeploymentMetricsFlags struct {
 	CommandFlags
 	ModelDeploymentIDFlags
-
-	Mode string `flag:"mode" desc:"Aggregation mode. 'current' returns an instantaneous snapshot at now; 'summary' aggregates the whole window into one value per metric; 'series' returns evenly-spaced points across the window. --start/--end/--since are only meaningful for summary and series." enum:"current,summary,series" default:"current"`
-
-	Start time.Time     `flag:"start" desc:"Start of the metrics time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. If omitted, the server defaults the start to one hour before the end. Window must be at most 7 days."`
-	End   time.Time     `flag:"end" desc:"End of the metrics time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. If omitted, the server defaults the end to now. Window must be at most 7 days."`
-	Since time.Duration `flag:"since" desc:"Shortcut for a window from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
-
-	Metric []string `flag:"metric" desc:"Name of a metric to return; see https://docs.baseten.co/observability/export-metrics/supported-metrics for the available names. May be repeated. When omitted, a default set is returned."`
-
-	NoChart bool `flag:"no-chart" desc:"For --mode series, emit a per-step table instead of sparklines."`
+	MetricsFlags
 }

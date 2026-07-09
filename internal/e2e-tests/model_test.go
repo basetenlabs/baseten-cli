@@ -565,6 +565,19 @@ func (l *lifecycle) Metrics(t *testing.T) {
 		require.Equal(t, "SERIES", resp.Mode)
 		require.NotEmpty(t, resp.MetricDescriptors)
 	})
+
+	// The environment metrics path aggregates across the deployments active on
+	// the environment; production's current deployment is this model, so the
+	// same registered descriptor appears. Shape only, never a value.
+	t.Run("Environment", func(t *testing.T) {
+		out := mustCLI(t, "model", "environment", "metrics",
+			"--model-id", l.modelID, "--environment", "production", "--output", "json")
+		var resp metricsResp
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, "CURRENT", resp.Mode)
+		require.True(t, hasDescriptor(resp, "baseten_replicas_active"),
+			"baseten_replicas_active missing from current snapshot")
+	})
 }
 
 // SSH exercises the full `baseten ssh` flow against the live deployment: it
