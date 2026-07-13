@@ -21,6 +21,10 @@ brew trust basetenlabs/baseten
 
 # Install the CLI
 brew install baseten
+
+# Upgrade to the latest release
+brew update
+brew upgrade baseten
 ```
 
 ### Prebuilt binaries
@@ -35,19 +39,19 @@ Download the [latest release](https://github.com/basetenlabs/baseten-cli/release
 PowerShell:
 
     Invoke-WebRequest `
-      https://github.com/basetenlabs/baseten-cli/releases/download/v0.2.0/baseten_0.2.0_windows_amd64.zip `
+      https://github.com/basetenlabs/baseten-cli/releases/download/v0.3.0/baseten_0.3.0_windows_amd64.zip `
       -OutFile baseten.zip; Expand-Archive -Force baseten.zip .
 
 Then move `baseten.exe` to a directory on your `PATH`.
 
 #### macOS (arm64)
 
-    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.2.0/baseten_0.2.0_darwin_arm64.tar.gz \
+    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.3.0/baseten_0.3.0_darwin_arm64.tar.gz \
       | sudo tar xz -C /usr/local/bin baseten
 
 #### Linux (x64)
 
-    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.2.0/baseten_0.2.0_linux_amd64.tar.gz \
+    curl -sL https://github.com/basetenlabs/baseten-cli/releases/download/v0.3.0/baseten_0.3.0_linux_amd64.tar.gz \
       | sudo tar xz -C /usr/local/bin baseten
 
 </details>
