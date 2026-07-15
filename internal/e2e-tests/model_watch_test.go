@@ -25,9 +25,6 @@ resources:
   cpu: 50m
   memory: 50Mi
   use_gpu: false
-runtime:
-  remote_ssh:
-    enabled: true
 `
 
 // watchModelPyTmpl is a model whose predict response carries a version token
@@ -102,6 +99,40 @@ func TestE2EModelWatch(t *testing.T) {
 	require.Equal(t, pidV3, pidV4, "a hot reload should not restart the model process")
 
 	hot.stop(t)
+
+	// Phase 4: a full development re-push (not a watch patch) to the now-existing
+	// model. Unlike a watch patch, this goes through the create-deployment path,
+	// which for an existing model must resolve the development deployment's
+	// instance type. A regression there leaves the instance type unset and the
+	// build hangs in BUILDING indefinitely rather than failing, so --wait would
+	// poll forever: bound it with a deadline. On the bug the push errors at the
+	// deadline; when correct it builds and reaches ACTIVE well within it.
+	w.writeModelPy("v5")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	_, errOut, err := cliCtx(t, ctx, "model", "push", "--develop", "--wait", "--dir", w.dir, "--output", "json")
+	require.NoError(t, err,
+		"development re-push to an existing model should build and reach ACTIVE; "+
+			"a hang here means the existing-model development push did not resolve an instance type\nstderr:\n%s",
+		errOut)
+
+	// Confirm the re-pushed code is actually live: the development deployment now
+	// serves v5. The push reached ACTIVE above, so this settles quickly; a fresh
+	// deployment may still briefly return the not-ready 400 while it loads.
+	require.Eventually(t, func() bool {
+		out, errOut, err := cli(t, "model", "predict",
+			"--model-name", w.modelName, "--data", "{}", "--output", "json")
+		if err != nil {
+			require.Contains(t, errOut+out, notReadyPredictMarker,
+				"predict after re-push failed: %s", errOut)
+			return false
+		}
+		var r struct {
+			WatchVersion string `json:"watch_version"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &r))
+		return r.WatchVersion == "v5"
+	}, 60*time.Second, 2*time.Second, "re-pushed development deployment should serve watch_version v5")
 }
 
 // watchTest holds the state shared across a single watch run: the model under
