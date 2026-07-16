@@ -307,6 +307,36 @@ var commandOrg = Command{
 				},
 			},
 		},
+		{
+			Name:    "audit-logs",
+			Summary: "List audit-log entries",
+			Description: "List audit-log entries for the workspace, newest first.\n\n" +
+				"Returns up to --limit entries (default 20) across the full history by default. " +
+				"Use --start/--end or --since to scope the time window, and the filter flags " +
+				"(--event-type-group, --source, --user-id, --deployment-id, --environment, --search) " +
+				"to narrow results.\n\n" +
+				"For machine-readable streaming, prefer --output jsonl over --output json.",
+			Flags: OrgAuditLogsFlags{},
+			Output: &CommandOutput[managementapi.AuditLogEntry]{
+				JSONArrayStreamed: true,
+				TextDescription: "Table with columns: TIME, ACTOR, EVENT, SOURCE. When no entries " +
+					"match, prints \"No audit-log entries found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List the 20 most recent audit-log entries.",
+						Command:     "baseten org audit-logs",
+					},
+					{
+						Description: "List deploy and promote events from the UI over the last 7 days.",
+						Command:     "baseten org audit-logs --since 7d --event-type-group deployed --event-type-group promoted --source ui",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Stream each entry's event type as a JSONL stream.",
+					Command:     "baseten org audit-logs --output jsonl --jq '.event_type'",
+				},
+			},
+		},
 	},
 }
 
@@ -385,4 +415,36 @@ type OrgSecretDeleteFlags struct {
 
 	Name string `flag:"name" desc:"Name of the secret to delete." required:"true"`
 	Team string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team."`
+}
+
+// AuditLogFlags is the shared query flag set for `baseten org audit-logs` and
+// `baseten model audit-logs`. Both commands accept the same window, filter, and
+// paging flags; only the audit-log scope differs. Unlike the log-query flags,
+// there is no time-window default (the full history is queried) and no maximum
+// window: results are bounded by --limit.
+type AuditLogFlags struct {
+	Start time.Time     `flag:"start" desc:"Start of the time window. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. Defaults to the beginning of the audit-log history."`
+	End   time.Time     `flag:"end" desc:"End of the time window. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. Defaults to now."`
+	Since time.Duration `flag:"since" desc:"Shortcut for a window from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Mutually exclusive with --start and --end."`
+
+	Limit int `flag:"limit" desc:"Maximum number of entries to return, paging as needed. Use 0 for no limit (every entry in the window)." default:"20"`
+
+	// PageSize is the per-request fetch size while paging. Hidden; exists so
+	// tests can force multiple pages without a full page of entries.
+	PageSize int `flag:"page-size" hidden:"true" desc:"Entries fetched per backend request while paging." default:"200"`
+
+	Direction string `flag:"direction" desc:"Sort order by the time the action occurred: 'desc' (newest first) or 'asc' (oldest first)." enum:"asc,desc" default:"desc"`
+	Search    string `flag:"search" desc:"Case-insensitive substring matched against resource names and IDs in the entry."`
+
+	EventTypeGroups []string `flag:"event-type-group" desc:"Only return entries whose event type falls in one of these groups. May be repeated. One of: activated-deactivated, api-keys, autoscaling-settings, deleted, deployed, directory-group-management, environment-settings, gateway, instance-type-changed, promoted, replica-terminated, secrets, ssh, user-management, webhook-signing-secrets."`
+	Sources         []string `flag:"source" desc:"Only return entries issued from one of these surfaces. May be repeated. One of: ui, api, mcp, other."`
+	UserIDs         []string `flag:"user-id" desc:"Only return entries whose acting user is one of these IDs. May be repeated."`
+	DeploymentIDs   []string `flag:"deployment-id" desc:"Only return entries referencing one of these model deployment IDs. May be repeated."`
+	Environments    []string `flag:"environment" desc:"Only return entries for one of these environments. May be repeated."`
+}
+
+// OrgAuditLogsFlags configures `baseten org audit-logs`.
+type OrgAuditLogsFlags struct {
+	CommandFlags
+	AuditLogFlags
 }

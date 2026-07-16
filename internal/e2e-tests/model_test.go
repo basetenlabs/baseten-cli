@@ -34,6 +34,7 @@ func TestE2EModelLifecycle(t *testing.T) {
 	t.Run("Environment", l.Environment)
 	t.Run("ModelPredict", l.ModelPredict)
 	t.Run("Metrics", l.Metrics)
+	t.Run("AuditLogs", l.AuditLogs)
 	t.Run("SSH", l.SSH)
 	t.Run("Redeploy", l.Redeploy)
 	t.Run("Delete", l.Delete)
@@ -502,7 +503,7 @@ func (l *lifecycle) ModelPredict(t *testing.T) {
 		var resp map[string]any
 		require.NoError(t, json.Unmarshal([]byte(out), &resp))
 		require.Equal(t, map[string]any{"external_const": e2eExternalConst}, resp)
-  })
+	})
 
 	t.Run("ByDeploymentName", func(t *testing.T) {
 		// Targets the deployment by resolving both the model and the deployment
@@ -594,6 +595,87 @@ func (l *lifecycle) Metrics(t *testing.T) {
 		require.Equal(t, "CURRENT", resp.Mode)
 		require.True(t, hasDescriptor(resp, "baseten_replicas_active"),
 			"baseten_replicas_active missing from current snapshot")
+	})
+}
+
+// AuditLogs verifies the deploy performed in newLifecycle shows up in the audit
+// log, at both model and org scope.
+//
+// Audit entries are written synchronously to Postgres in the request
+// transaction and the REST endpoint reads from that same table, so the entry is
+// committed before `model push --wait` returned. The short poll only absorbs
+// trivial read jitter; do not stretch it to match the Logs phase, whose long
+// wait is for Loki, a genuinely lagging store.
+func (l *lifecycle) AuditLogs(t *testing.T) {
+	// event_data is the discriminated deploy payload; these fields are populated
+	// for a MODEL_DEPLOYED entry.
+	type auditEntry struct {
+		EventType string `json:"event_type"`
+		EventData struct {
+			ModelID      string `json:"model_id"`
+			ModelName    string `json:"model_name"`
+			DeploymentID string `json:"deployment_id"`
+		} `json:"event_data"`
+	}
+	// fetch runs the CLI and parses the JSON array; returns an error (rather
+	// than failing) so it is safe to call inside require.Eventually.
+	fetch := func(args ...string) ([]auditEntry, error) {
+		out, _, err := cli(t, args...)
+		if err != nil {
+			return nil, err
+		}
+		var entries []auditEntry
+		if err := json.Unmarshal([]byte(out), &entries); err != nil {
+			return nil, err
+		}
+		return entries, nil
+	}
+	// findDeploy returns the first MODEL_DEPLOYED entry, or nil if none is
+	// present, for asserting on its payload after the poll succeeds.
+	findDeploy := func(entries []auditEntry) *auditEntry {
+		for i := range entries {
+			if entries[i].EventType == "MODEL_DEPLOYED" {
+				return &entries[i]
+			}
+		}
+		return nil
+	}
+
+	// Model scope: the endpoint filters by model server-side. Assert the deploy
+	// payload references this model, not just that some deploy event exists.
+	t.Run("ModelScoped", func(t *testing.T) {
+		var deploy *auditEntry
+		require.Eventually(t, func() bool {
+			entries, err := fetch("model", "audit-logs", "--model-id", l.modelID, "--output", "json")
+			if err != nil {
+				return false
+			}
+			deploy = findDeploy(entries)
+			return deploy != nil
+		}, 10*time.Second, 1*time.Second, "MODEL_DEPLOYED audit entry never appeared for the model")
+		require.Equal(t, l.modelID, deploy.EventData.ModelID, "deploy entry should reference this model")
+		require.Equal(t, l.modelName, deploy.EventData.ModelName)
+	})
+
+	// Org scope with slice filters: --deployment-id (a []string query param) and
+	// --event-type-group (a named-element enum slice) must both round-trip to the
+	// backend as repeated query params. Asserting the entry's deployment_id
+	// equals the one we filtered on proves the filter was honored, not dropped or
+	// mis-encoded.
+	t.Run("OrgScopedFiltered", func(t *testing.T) {
+		var deploy *auditEntry
+		require.Eventually(t, func() bool {
+			entries, err := fetch("org", "audit-logs",
+				"--deployment-id", l.initialDeploymentID,
+				"--event-type-group", "deployed",
+				"--output", "json")
+			if err != nil {
+				return false
+			}
+			deploy = findDeploy(entries)
+			return deploy != nil
+		}, 10*time.Second, 1*time.Second, "MODEL_DEPLOYED audit entry never appeared at org scope for the deployment")
+		require.Equal(t, l.initialDeploymentID, deploy.EventData.DeploymentID, "filtered deploy entry should reference the requested deployment")
 	})
 }
 

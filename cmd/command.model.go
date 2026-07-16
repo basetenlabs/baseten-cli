@@ -185,6 +185,36 @@ var commandModel = Command{
 				},
 			},
 		},
+		{
+			Name:    "audit-logs",
+			Summary: "List audit-log entries for a model",
+			Description: "List audit-log entries scoped to a single model, newest first.\n\n" +
+				"Returns up to --limit entries (default 20) across the full history by default. " +
+				"Use --start/--end or --since to scope the time window, and the filter flags " +
+				"(--event-type-group, --source, --user-id, --deployment-id, --environment, --search) " +
+				"to narrow results within the model.\n\n" +
+				"For machine-readable streaming, prefer --output jsonl over --output json.",
+			Flags: ModelAuditLogsFlags{},
+			Output: &CommandOutput[managementapi.AuditLogEntry]{
+				JSONArrayStreamed: true,
+				TextDescription: "Table with columns: TIME, ACTOR, EVENT, SOURCE. When no entries " +
+					"match, prints \"No audit-log entries found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List the 20 most recent audit-log entries for a model.",
+						Command:     "baseten model audit-logs --model-id <model-id>",
+					},
+					{
+						Description: "List promote events for a model over the last 30 days.",
+						Command:     "baseten model audit-logs --model-name <name> --since 30d --event-type-group promoted",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Stream each entry's event type as a JSONL stream.",
+					Command:     "baseten model audit-logs --model-id <model-id> --output jsonl --jq '.event_type'",
+				},
+			},
+		},
 		commandModelDeployment,
 		commandModelEnvironment,
 	},
@@ -327,4 +357,12 @@ type ModelPredictFlags struct {
 	File string `flag:"file" desc:"Path to a JSON file containing the request body. Use '-' for stdin." oneof:"predict-input"`
 
 	Websocket bool `flag:"websocket" desc:"Use the WebSocket predict endpoint. Sends the body as one frame, reads one frame back, then closes. Not for multi-message or back-and-forth sessions."`
+}
+
+// ModelAuditLogsFlags configures `baseten model audit-logs`. It reuses the
+// shared AuditLogFlags, scoped to a single model via ModelRefFlags.
+type ModelAuditLogsFlags struct {
+	CommandFlags
+	ModelRefFlags
+	AuditLogFlags
 }

@@ -277,3 +277,28 @@ func Test_Model_Delete_NotFound(t *testing.T) {
 	err := h.Execute("model", "delete", "--model-name", "ghost", "--yes")
 	h.Require.ErrorContains(err, `no model named "ghost"`)
 }
+
+func Test_Model_AuditLogs_ByID(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/models/m-1/audit_logs", 200, auditLogsBody())
+
+	h.Require.NoError(h.Execute("model", "audit-logs", "--model-id", "m-1"))
+	call := m.FindCall("GET", "/v1/models/m-1/audit_logs")
+	h.Require.NotNil(call)
+	h.Require.Contains(h.Stdout.String(), "MODEL_DEPLOYED")
+}
+
+func Test_Model_AuditLogs_ByName(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/models", 200, map[string]any{
+		"models": []any{
+			map[string]any{"id": "m-1", "name": "alpha", "created_at": "2026-01-01T00:00:00Z", "deployments_count": 1},
+		},
+	})
+	m.SetRoute("GET", "/v1/models/m-1/audit_logs", 200, auditLogsBody())
+
+	h.Require.NoError(h.Execute("model", "audit-logs", "--model-name", "alpha"))
+	h.Require.NotNil(m.FindCall("GET", "/v1/models/m-1/audit_logs"))
+}
