@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"os/exec"
-
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/ssh"
 )
@@ -38,7 +36,7 @@ func commandSSHSetup(ctx *CommandContext, flags *cmd.SSHSetupFlags) error {
 
 	// The generated config invokes `baseten`; warn if it is not on the PATH,
 	// since the SSH connection will run it at connect time.
-	if _, err := exec.LookPath("baseten"); err != nil {
+	if _, err := ctx.Execer().LookPath("baseten"); err != nil {
 		ctx.LogLine("warning: `baseten` was not found on your PATH; SSH connections will fail until it is.")
 	}
 

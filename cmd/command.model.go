@@ -187,6 +187,7 @@ var commandModel = Command{
 		},
 		commandModelDeployment,
 		commandModelEnvironment,
+		commandModelImage,
 	},
 }
 
