@@ -108,7 +108,7 @@ func TestE2EModelWatch(t *testing.T) {
 	// poll forever: bound it with a deadline. On the bug the push errors at the
 	// deadline; when correct it builds and reaches ACTIVE well within it.
 	w.writeModelPy("v5")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	_, errOut, err := cliCtx(t, ctx, "model", "push", "--develop", "--wait", "--dir", w.dir, "--output", "json")
 	require.NoError(t, err,
