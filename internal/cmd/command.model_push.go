@@ -88,12 +88,18 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 		return nil
 	}
 
-	if err := uploadModelPushArchive(ctx, buildOpts, prepareResp); err != nil {
-		return err
+	// Model formats that are not built from an uploaded archive (for example,
+	// BIS-LLM) get no upload target back from prepare: prepare returns a null
+	// S3 key. In that case skip the S3 upload and go straight to the commit,
+	// which the server builds from the config alone.
+	if prepareResp.S3Key != nil {
+		if err := uploadModelPushArchive(ctx, buildOpts, prepareResp); err != nil {
+			return err
+		}
 	}
 
 	modelName := resolvedModelPushName(prepareReq)
-	created, err := commitModelPush(ctx, api.API(), existingModelID, teamID, modelName, *prepareResp.S3Key, prepareReq.Deployment, flags.DisableArchiveDownload)
+	created, err := commitModelPush(ctx, api.API(), existingModelID, teamID, modelName, prepareResp.S3Key, prepareReq.Deployment, flags.DisableArchiveDownload)
 	if err != nil {
 		return err
 	}
@@ -411,7 +417,8 @@ func (c *readCounter) Read(p []byte) (int, error) {
 func commitModelPush(
 	ctx context.Context,
 	api *managementapi.Client,
-	existingModelID, teamID, modelName, s3Key string,
+	existingModelID, teamID, modelName string,
+	s3Key *string,
 	deployment managementapi.DeploymentArchivePayload,
 	disableArchiveDownload bool,
 ) (*managementapi.CreatedModelDeployment, error) {
