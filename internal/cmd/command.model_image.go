@@ -159,10 +159,11 @@ func modelImageBuildContext(ctx *CommandContext, trussVersion, buildDir, dir str
 	return modelImageExec(ctx, c)
 }
 
-// modelImageExec logs the command line to stderr and runs c via the context's
-// Execer, which propagates a non-zero exit as an ErrSubprocess.
+// modelImageExec runs c via the context's Execer, which propagates a non-zero
+// exit as an ErrSubprocess. The command line is logged only in verbose mode
+// since passthrough docker args can carry secrets (e.g. --build-arg, --secret).
 func modelImageExec(ctx *CommandContext, c *exec.Cmd) error {
-	ctx.Logf("+ %s\n", strings.Join(c.Args, " "))
+	ctx.VerboseLogf("+ %s\n", strings.Join(c.Args, " "))
 	return ctx.Execer().Exec(c)
 }
 

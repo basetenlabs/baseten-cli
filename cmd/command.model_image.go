@@ -31,7 +31,7 @@ var commandModelImage = Command{
 			Flags:   ModelImageBuildFlags{},
 			Output: &CommandOutput[ModelImageBuildResult]{
 				TextDescription: "Build progress from truss and docker is streamed to stderr. On " +
-					"success a one-line summary is printed to stderr; no stdout output.",
+					"success a one-line summary is printed to stdout.",
 				JSONDescription: "Under --output json, stdout is the {image_id, tag} result. " +
 					"image_id is empty when it cannot be resolved (e.g. a custom buildx builder " +
 					"that does not write the iidfile).",
@@ -67,7 +67,7 @@ var commandModelImage = Command{
 			Flags: ModelImagePrepareFlags{},
 			Output: &CommandOutput[ModelImagePrepareResult]{
 				TextDescription: "Progress from truss is streamed to stderr. On success a one-line " +
-					"summary is printed to stderr; no stdout output.",
+					"summary is printed to stdout.",
 				JSONDescription: "Under --output json, stdout is the {build_dir, dockerfile} result " +
 					"with absolute paths.",
 				Examples: []CommandExample{

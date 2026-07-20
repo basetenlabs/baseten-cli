@@ -232,9 +232,10 @@ func Test_Model_Image_Build_Text(t *testing.T) {
 	h.Context = cmd.WithExecer(h.Context, fake)
 	modelDir := modelImageWriteDir(t, "model_name: test-model\n")
 
-	h.Require.NoError(h.Execute("model", "image", "build", "--dir", modelDir))
+	h.Require.NoError(h.Execute("model", "image", "build", "--dir", modelDir, "--verbose"))
 
 	h.Require.Contains(h.Stdout.String(), "Built image test-model:latest (sha256:test)")
+	// The command trace is gated behind --verbose.
 	h.Require.Contains(h.Stderr.String(), "+ uv tool run truss@latest")
 	h.Require.Contains(h.Stderr.String(), "+ docker build")
 }
