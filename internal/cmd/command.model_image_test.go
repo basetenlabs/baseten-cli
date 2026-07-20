@@ -184,6 +184,39 @@ func Test_Model_Image_Build_TrussVersion(t *testing.T) {
 	h.Require.Equal("truss@0.9.0", fake.call("uv").Args[3])
 }
 
+func Test_Model_Image_Build_NonRootByDefault(t *testing.T) {
+	h := NewCommandHarness(t)
+	fake := newModelImageFakeExecer("uv", "docker")
+	h.Context = cmd.WithExecer(h.Context, fake)
+	modelDir := modelImageWriteDir(t, "model_name: test-model\n")
+
+	h.Require.NoError(h.Execute("model", "image", "build", "--dir", modelDir))
+
+	h.Require.Contains(fake.call("uv").Env, "BT_USE_NON_ROOT_USER=true")
+}
+
+func Test_Model_Image_Build_RootUser(t *testing.T) {
+	h := NewCommandHarness(t)
+	fake := newModelImageFakeExecer("uv", "docker")
+	h.Context = cmd.WithExecer(h.Context, fake)
+	modelDir := modelImageWriteDir(t, "model_name: test-model\n")
+
+	h.Require.NoError(h.Execute("model", "image", "build", "--dir", modelDir, "--root-user"))
+
+	h.Require.NotContains(fake.call("uv").Env, "BT_USE_NON_ROOT_USER=true")
+}
+
+func Test_Model_Image_Build_CacheMountID(t *testing.T) {
+	h := NewCommandHarness(t)
+	fake := newModelImageFakeExecer("uv", "docker")
+	h.Context = cmd.WithExecer(h.Context, fake)
+	modelDir := modelImageWriteDir(t, "model_name: test-model\n")
+
+	h.Require.NoError(h.Execute("model", "image", "build", "--dir", modelDir, "--cache-mount-id", "myorg"))
+
+	h.Require.Contains(fake.call("uv").Env, "TRUSS_CACHE_MOUNT_ID=myorg")
+}
+
 func Test_Model_Image_Build_Passthrough(t *testing.T) {
 	h := NewCommandHarness(t)
 	fake := newModelImageFakeExecer("uv", "docker")

@@ -101,24 +101,21 @@ type ModelImagePrepareResult struct {
 // subcommands.
 type ModelImageCommonFlags struct {
 	CommandFlags
-
-	Dir string `flag:"dir" desc:"Model directory. Defaults to the current directory." default:"."`
-
-	TrussVersion string `flag:"truss-version" desc:"Truss version to run via uv, e.g. '0.9.0' or 'latest'." default:"latest"`
+	Dir          string `flag:"dir" desc:"Model directory." default:"."`
+	TrussVersion string `flag:"truss-version" desc:"Truss version to run via uv." default:"latest"`
+	RootUser     bool   `flag:"root-user" desc:"Run the image's container as root instead of the default non-root user."`
+	CacheMountID string `flag:"cache-mount-id" desc:"Enable a persistent apt/pip/uv build cache keyed by this id."`
 }
 
 // ModelImageBuildFlags configures `baseten model image build`.
 type ModelImageBuildFlags struct {
 	ModelImageCommonFlags
-
-	BuildDir string `flag:"build-dir" desc:"Directory to write the Docker build context into. Defaults to a temporary directory that is removed after the build."`
-
-	Tag string `flag:"tag" desc:"Image tag for 'docker build -t'. Defaults to '<model_name>:latest' from config.yaml."`
+	BuildDir string `flag:"build-dir" desc:"Directory for the Docker build context. Defaults to a temp dir removed after the build."`
+	Tag      string `flag:"tag" desc:"Image tag. Defaults to '<model_name>:latest' from config.yaml."`
 }
 
 // ModelImagePrepareFlags configures `baseten model image prepare`.
 type ModelImagePrepareFlags struct {
 	ModelImageCommonFlags
-
-	BuildDir string `flag:"build-dir" desc:"Directory to write the Docker build context into. Created if absent and kept after the command completes." required:"true"`
+	BuildDir string `flag:"build-dir" desc:"Directory for the Docker build context. Created if absent and kept." required:"true"`
 }

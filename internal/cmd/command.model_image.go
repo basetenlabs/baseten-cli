@@ -51,7 +51,7 @@ func commandModelImageBuild(ctx *CommandContext, flags *cmd.ModelImageBuildFlags
 		return fmt.Errorf("create build dir: %w", err)
 	}
 
-	if err := modelImageBuildContext(ctx, flags.TrussVersion, buildDir, flags.Dir); err != nil {
+	if err := modelImageBuildContext(ctx, &flags.ModelImageCommonFlags, buildDir); err != nil {
 		return err
 	}
 
@@ -113,7 +113,7 @@ func commandModelImagePrepare(ctx *CommandContext, flags *cmd.ModelImagePrepareF
 	if err := os.MkdirAll(flags.BuildDir, 0o755); err != nil {
 		return fmt.Errorf("create build dir: %w", err)
 	}
-	if err := modelImageBuildContext(ctx, flags.TrussVersion, flags.BuildDir, flags.Dir); err != nil {
+	if err := modelImageBuildContext(ctx, &flags.ModelImageCommonFlags, flags.BuildDir); err != nil {
 		return err
 	}
 
@@ -142,20 +142,29 @@ func modelImageRequireUV(ctx *CommandContext) error {
 	return nil
 }
 
-// modelImageBuildContext runs `uv tool run truss@<version> image build_context`,
-// which generates the Docker build context for dir into buildDir. Its output is
-// routed to stderr so our stdout stays clean for the result.
+// modelImageBuildContext runs `uv tool run truss@<version> image build-context`,
+// which generates the Docker build context for the model dir into buildDir. Its
+// output is routed to stderr so our stdout stays clean for the result.
 // TRUSS_NO_UPDATE_CHECK suppresses truss's update check and its associated
-// disk/network side effects.
-func modelImageBuildContext(ctx *CommandContext, trussVersion, buildDir, dir string) error {
+// disk/network side effects. BT_USE_NON_ROOT_USER defaults the image to a
+// non-root user (matching the backend) and is omitted when --root-user is set.
+func modelImageBuildContext(ctx *CommandContext, flags *cmd.ModelImageCommonFlags, buildDir string) error {
+	env := []string{"TRUSS_NO_UPDATE_CHECK=1"}
+	if !flags.RootUser {
+		env = append(env, "BT_USE_NON_ROOT_USER=true")
+	}
+	if flags.CacheMountID != "" {
+		env = append(env, "TRUSS_CACHE_MOUNT_ID="+flags.CacheMountID)
+	}
+
 	c := exec.CommandContext(ctx, "uv",
-		"tool", "run", "truss@"+trussVersion,
-		"image", "build-context", buildDir, dir,
+		"tool", "run", "truss@"+flags.TrussVersion,
+		"image", "build-context", buildDir, flags.Dir,
 	)
 	c.Stdin = ctx.Stdin
 	c.Stdout = ctx.Stderr
 	c.Stderr = ctx.Stderr
-	c.Env = append(os.Environ(), "TRUSS_NO_UPDATE_CHECK=1")
+	c.Env = append(os.Environ(), env...)
 	return modelImageExec(ctx, c)
 }
 
