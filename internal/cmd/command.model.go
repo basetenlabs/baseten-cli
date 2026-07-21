@@ -14,6 +14,7 @@ func init() {
 	Register("model list", commandModelList)
 	Register("model describe", commandModelDescribe)
 	Register("model delete", commandModelDelete)
+	Register("model audit-logs", commandModelAuditLogs)
 }
 
 // ModelRef is the result of resolving [cmd.ModelRefFlags] against the
@@ -219,4 +220,37 @@ func commandModelDelete(ctx *CommandContext, flags *cmd.ModelDeleteFlags) error 
 	}
 	ctx.Logf("Deleted model %s (%s)\n", model.Name, ref.ID)
 	return nil
+}
+
+func commandModelAuditLogs(ctx *CommandContext, flags *cmd.ModelAuditLogsFlags) error {
+	api, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveModelRef(ctx, api.API(), flags.ModelRefFlags)
+	if err != nil {
+		return err
+	}
+	fetch := func(q auditLogQuery) (*managementapi.ListAuditLogsResponse, error) {
+		return api.API().GetModelsAuditLogs(ctx, ref.ID, modelAuditLogParams(q))
+	}
+	return runAuditLogs(ctx, &flags.AuditLogFlags, fetch)
+}
+
+// modelAuditLogParams maps a transport-neutral auditLogQuery onto the
+// model-scoped audit-logs GET query-params type.
+func modelAuditLogParams(q auditLogQuery) managementapi.GetV1ModelsModelIdAuditLogsParams {
+	return managementapi.GetV1ModelsModelIdAuditLogsParams{
+		Cursor:           q.Cursor,
+		Limit:            q.Limit,
+		Direction:        q.Direction,
+		Search:           q.Search,
+		EventTypeGroups:  q.EventTypeGroups,
+		UserIds:          q.UserIds,
+		DeploymentIds:    q.DeploymentIds,
+		EnvironmentNames: q.EnvironmentNames,
+		Sources:          q.Sources,
+		StartEpochMillis: q.StartEpochMillis,
+		EndEpochMillis:   q.EndEpochMillis,
+	}
 }
