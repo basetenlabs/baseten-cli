@@ -3,10 +3,12 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -504,6 +506,50 @@ func (c *CommandContext) newS3APIClient(cfg aws.Config) transfermanager.S3APICli
 		return f(cfg)
 	}
 	return s3.NewFromConfig(cfg)
+}
+
+// Execer looks up and runs external commands. The default uses os/exec; tests
+// inject a fake via WithExecer to avoid spawning real processes.
+type Execer interface {
+	// LookPath reports whether name is an executable on PATH, like exec.LookPath.
+	LookPath(name string) (string, error)
+	// Exec runs cmd (already built via exec.CommandContext, so it carries the
+	// command context and wired stdio/env) and returns an [ErrSubprocess] on a
+	// non-zero exit so the inner exit code propagates.
+	Exec(cmd *exec.Cmd) error
+}
+
+// defaultExecer is the production [Execer] backed by os/exec.
+type defaultExecer struct{}
+
+func (defaultExecer) LookPath(name string) (string, error) { return exec.LookPath(name) }
+
+func (defaultExecer) Exec(cmd *exec.Cmd) error {
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return &ErrSubprocess{Err: err, Code: exitErr.ExitCode()}
+		}
+		return err
+	}
+	return nil
+}
+
+type execerKey struct{}
+
+// WithExecer returns a context that overrides the [Execer] used by
+// CommandContext to look up and run external commands. Intended for tests.
+func WithExecer(ctx context.Context, e Execer) context.Context {
+	return context.WithValue(ctx, execerKey{}, e)
+}
+
+// Execer returns the [Execer] used to run external commands, honoring any
+// override installed via [WithExecer].
+func (c *CommandContext) Execer() Execer {
+	if e, ok := c.Value(execerKey{}).(Execer); ok {
+		return e
+	}
+	return defaultExecer{}
 }
 
 // staticAuthClient is an HTTP client that sets a fixed Authorization header.
