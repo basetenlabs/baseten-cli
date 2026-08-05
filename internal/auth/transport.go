@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -92,6 +94,23 @@ func (s *Session) ProfileName() string { return s.profileName }
 // IsEphemeral reports whether the session uses credentials from BASETEN_API_KEY
 // rather than a stored profile.
 func (s *Session) IsEphemeral() bool { return s.ephemeralAPIKey != "" }
+
+// CacheIdentity returns a stable, filesystem-safe token for the resolved
+// credential, scoping on-disk caches so an entry written under one credential is
+// never read under another. Hashed to keep the profile name (an email by default)
+// and the API key out of file paths.
+func (s *Session) CacheIdentity() string {
+	switch {
+	case s.ephemeralAPIKey != "":
+		sum := sha256.Sum256([]byte(s.ephemeralAPIKey))
+		return "key-" + hex.EncodeToString(sum[:8])
+	case s.profileName != "":
+		sum := sha256.Sum256([]byte(s.profileName))
+		return "profile-" + hex.EncodeToString(sum[:8])
+	default:
+		return "anonymous"
+	}
+}
 
 // OAuthContext returns a context that carries an oauth2 HTTP client which
 // stamps the Baseten User-Agent on every request, layered over base.

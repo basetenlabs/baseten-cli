@@ -64,10 +64,11 @@ func TestJWTCacheRoundTrip(t *testing.T) {
 	d := t.TempDir()
 	h := hostname{kind: workloadModel, id: "abc", deploymentID: "def", replica: "7"}
 
-	require.NoError(t, saveJWT(d, h, "jwt-value", "proxy:443"))
-	requirePerm(t, jwtCachePath(d, h), 0o600)
+	require.NoError(t, saveJWT(d, "profile-abc123", h, "jwt-value", "proxy:443"))
+	requirePerm(t, jwtCachePath(d, "profile-abc123", h), 0o600)
+	requirePerm(t, filepath.Join(d, ".jwt-cache", "profile-abc123"), 0o700)
 
-	c, ok := loadJWT(d, h)
+	c, ok := loadJWT(d, "profile-abc123", h)
 	require.True(t, ok)
 	require.Equal(t, "jwt-value", c.JWT)
 	require.Equal(t, "proxy:443", c.ProxyAddress)
@@ -80,14 +81,46 @@ func TestJWTCachePath_EnvFormDistinctFromDeployment(t *testing.T) {
 
 	// The env tag keeps an environment named like a deployment id from
 	// colliding with the deployment cache entry.
-	require.Contains(t, jwtCachePath(d, env), "model-abc-env-staging")
-	require.NotEqual(t, jwtCachePath(d, dep), jwtCachePath(d, env))
+	require.Contains(t, jwtCachePath(d, "profile-abc123", env), "model-abc-env-staging")
+	require.NotEqual(t,
+		jwtCachePath(d, "profile-abc123", dep),
+		jwtCachePath(d, "profile-abc123", env))
+}
+
+func TestJWTCache_ScopedByCacheIdentity(t *testing.T) {
+	d := t.TempDir()
+	// Same workload id under two credentials: ids repeat across workspaces and
+	// remotes, so each credential must get its own entry rather than overwriting
+	// the token and proxy address cached for the other.
+	h := hostname{kind: workloadModel, id: "abc", deploymentID: "def"}
+
+	require.NoError(t, saveJWT(d, "profile-one", h, "one-jwt", "one-proxy:443"))
+	require.NoError(t, saveJWT(d, "key-two", h, "two-jwt", "two-proxy:443"))
+
+	one, ok := loadJWT(d, "profile-one", h)
+	require.True(t, ok)
+	require.Equal(t, "one-jwt", one.JWT)
+	require.Equal(t, "one-proxy:443", one.ProxyAddress)
+
+	two, ok := loadJWT(d, "key-two", h)
+	require.True(t, ok)
+	require.Equal(t, "two-jwt", two.JWT)
+	require.Equal(t, "two-proxy:443", two.ProxyAddress)
 }
 
 func TestLoadJWT_MissingReturnsFalse(t *testing.T) {
 	d := t.TempDir()
 	h := hostname{kind: workloadModel, id: "abc", deploymentID: "def"}
-	_, ok := loadJWT(d, h)
+	_, ok := loadJWT(d, "profile-abc123", h)
+	require.False(t, ok)
+}
+
+func TestLoadJWT_OtherCacheIdentityNotRead(t *testing.T) {
+	d := t.TempDir()
+	h := hostname{kind: workloadModel, id: "abc", deploymentID: "def"}
+	require.NoError(t, saveJWT(d, "profile-one", h, "one-jwt", "one-proxy:443"))
+
+	_, ok := loadJWT(d, "profile-two", h)
 	require.False(t, ok)
 }
 

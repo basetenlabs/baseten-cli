@@ -196,6 +196,25 @@ func Test_SSH_Proxy_NoCachedCredential(t *testing.T) {
 	h.Require.ErrorContains(err, "no cached SSH credential")
 }
 
+func Test_SSH_Proxy_IgnoresCacheFromOtherCredential(t *testing.T) {
+	h := NewCommandHarness(t)
+	sshEnv(t)
+	_, _, err := ssh.EnsureKeypair()
+	h.Require.NoError(err)
+
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m1/deployments/d1/ssh/sign", 200,
+		signResponse("tok", "127.0.0.1:9"))
+	h.Require.NoError(h.Execute("ssh", "sign", "model-m1-d1.ssh.baseten.co"))
+
+	// Workload ids repeat across workspaces and remotes, so the same hostname
+	// under a different credential must not pick up the token and proxy address
+	// cached for the first one.
+	t.Setenv("BASETEN_API_KEY", "other-key")
+	err = h.Execute("ssh", "proxy", "model-m1-d1.ssh.baseten.co")
+	h.Require.ErrorContains(err, "no cached SSH credential")
+}
+
 func Test_SSH_Proxy_RelaysUsingCachedCredential(t *testing.T) {
 	h := NewCommandHarness(t)
 	sshEnv(t)

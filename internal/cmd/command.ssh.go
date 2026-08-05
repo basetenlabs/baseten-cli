@@ -66,9 +66,13 @@ func commandSSHSign(ctx *CommandContext, flags *cmd.SSHSignFlags) error {
 	if err != nil {
 		return err
 	}
+	cacheIdentity, err := ctx.sshCacheIdentity()
+	if err != nil {
+		return err
+	}
 	// The signed cert and proxy authorization are written to disk by Sign; we
 	// deliberately do not surface them on stdout.
-	if _, err := ssh.Sign(ctx, cl, ctx.Args[0]); err != nil {
+	if _, err := ssh.Sign(ctx, cl, cacheIdentity, ctx.Args[0]); err != nil {
 		return err
 	}
 	if ctx.JSON {
@@ -79,5 +83,21 @@ func commandSSHSign(ctx *CommandContext, flags *cmd.SSHSignFlags) error {
 
 func commandSSHProxy(ctx *CommandContext, flags *cmd.SSHProxyFlags) error {
 	ctx.SetDefaultProfile(flags.DefaultProfile)
-	return ssh.Proxy(ctx, ctx.Args[0], ctx.Stdin, ctx.Stdout)
+	cacheIdentity, err := ctx.sshCacheIdentity()
+	if err != nil {
+		return err
+	}
+	return ssh.Proxy(ctx, cacheIdentity, ctx.Args[0], ctx.Stdin, ctx.Stdout)
+}
+
+// sshCacheIdentity scopes the JWT cache to the credential this invocation
+// resolves to. sign and proxy run as separate processes under one ssh connection,
+// inheriting the same flags and environment, so both arrive at the same value.
+// Must be called after SetDefaultProfile, which the session resolution reads.
+func (c *CommandContext) sshCacheIdentity() (string, error) {
+	session, err := c.authInfo.Session()
+	if err != nil {
+		return "", err
+	}
+	return session.CacheIdentity(), nil
 }

@@ -16,8 +16,13 @@ import (
 
 // Sign signs an SSH certificate for the workload named by hostname, writes the
 // cert next to the private key, and caches the JWT and proxy address for the
-// subsequent Proxy call.
-func Sign(ctx context.Context, mgmt *client.ManagementClient, hostname string) (*managementapi.SignSSHCertificateResponse, error) {
+// subsequent Proxy call. cacheIdentity scopes that cache entry to the credential
+// the JWT was issued under; Proxy must be passed the same value.
+func Sign(
+	ctx context.Context,
+	mgmt *client.ManagementClient,
+	cacheIdentity, hostname string,
+) (*managementapi.SignSSHCertificateResponse, error) {
 	h, err := parseHostname(hostname)
 	if err != nil {
 		return nil, err
@@ -74,7 +79,7 @@ func Sign(ctx context.Context, mgmt *client.ManagementClient, hostname string) (
 	if err := os.WriteFile(keyPath+"-cert.pub", []byte(resp.SshCertificate), 0o644); err != nil {
 		return nil, fmt.Errorf("writing ssh certificate: %w", err)
 	}
-	if err := saveJWT(d, h, resp.Jwt, resp.ProxyAddress); err != nil {
+	if err := saveJWT(d, cacheIdentity, h, resp.Jwt, resp.ProxyAddress); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -106,8 +111,14 @@ func resolveTrainingProject(ctx context.Context, mgmt *client.ManagementClient, 
 }
 
 // Proxy connects to the SSH proxy for the workload named by hostname using the
-// JWT cached by Sign, then relays between in and out until either side closes.
-func Proxy(ctx context.Context, hostname string, in io.Reader, out io.Writer) error {
+// JWT cached by Sign under cacheIdentity, then relays between in and out until
+// either side closes.
+func Proxy(
+	ctx context.Context,
+	cacheIdentity, hostname string,
+	in io.Reader,
+	out io.Writer,
+) error {
 	h, err := parseHostname(hostname)
 	if err != nil {
 		return err
@@ -116,7 +127,7 @@ func Proxy(ctx context.Context, hostname string, in io.Reader, out io.Writer) er
 	if err != nil {
 		return err
 	}
-	cache, ok := loadJWT(d, h)
+	cache, ok := loadJWT(d, cacheIdentity, h)
 	if !ok {
 		return fmt.Errorf("no cached SSH credential for %s; the signing step did not run", hostname)
 	}

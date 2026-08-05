@@ -107,7 +107,12 @@ type jwtCache struct {
 	ProxyAddress string `json:"proxy_address"`
 }
 
-func jwtCachePath(d string, h hostname) string {
+// jwtCachePath locates the cache entry for a workload under one credential.
+// Workload ids repeat across remotes and workspaces, so an unscoped key let a
+// sign under one credential overwrite the token and proxy address another
+// connection was about to read. cacheIdentity comes from
+// auth.Session.CacheIdentity and is already safe to use as a path segment.
+func jwtCachePath(d, cacheIdentity string, h hostname) string {
 	parts := []string{"model", h.id}
 	if h.kind == workloadTraining {
 		parts[0] = "training"
@@ -124,25 +129,25 @@ func jwtCachePath(d string, h hostname) string {
 	if h.replica != "" {
 		parts = append(parts, h.replica)
 	}
-	return filepath.Join(d, ".jwt-cache", strings.Join(parts, "-")+".json")
+	return filepath.Join(d, ".jwt-cache", cacheIdentity, strings.Join(parts, "-")+".json")
 }
 
-func saveJWT(d string, h hostname, jwt, proxyAddr string) error {
-	if err := os.MkdirAll(filepath.Join(d, ".jwt-cache"), 0o700); err != nil {
+func saveJWT(d, cacheIdentity string, h hostname, jwt, proxyAddr string) error {
+	if err := os.MkdirAll(filepath.Join(d, ".jwt-cache", cacheIdentity), 0o700); err != nil {
 		return fmt.Errorf("creating jwt cache directory: %w", err)
 	}
 	b, err := json.Marshal(jwtCache{JWT: jwt, ProxyAddress: proxyAddr})
 	if err != nil {
 		return fmt.Errorf("encoding jwt cache: %w", err)
 	}
-	if err := os.WriteFile(jwtCachePath(d, h), b, 0o600); err != nil {
+	if err := os.WriteFile(jwtCachePath(d, cacheIdentity, h), b, 0o600); err != nil {
 		return fmt.Errorf("writing jwt cache: %w", err)
 	}
 	return nil
 }
 
-func loadJWT(d string, h hostname) (jwtCache, bool) {
-	b, err := os.ReadFile(jwtCachePath(d, h))
+func loadJWT(d, cacheIdentity string, h hostname) (jwtCache, bool) {
+	b, err := os.ReadFile(jwtCachePath(d, cacheIdentity, h))
 	if err != nil {
 		return jwtCache{}, false
 	}
