@@ -10,6 +10,9 @@ func init() {
 }
 
 func commandModelEnvironmentLogs(ctx *CommandContext, flags *cmd.ModelEnvironmentLogsFlags) error {
+	if err := validateLogFlags(ctx, &flags.LogFlags); err != nil {
+		return err
+	}
 	api, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -38,12 +41,12 @@ func commandModelEnvironmentLogs(ctx *CommandContext, flags *cmd.ModelEnvironmen
 	// The tail stop condition tracks the environment's current deployment, so
 	// each status poll resolves the environment and reports its current
 	// deployment's status.
-	fetchStatus := func() (*managementapi.Deployment, error) {
+	fetchStatus := func() (*tailStatus, error) {
 		env, err := api.API().GetModelsEnvironmentsEnvName(ctx, ref.ID, flags.Environment)
 		if err != nil {
 			return nil, err
 		}
-		return &env.CurrentDeployment, nil
+		return deploymentTailStatus(env.CurrentDeployment, false), nil
 	}
 	return runLogsCommand(ctx, &flags.LogFlags, fetchLogs, fetchStatus)
 }
