@@ -506,6 +506,9 @@ func Test_Model_Push_WaitSuccess(t *testing.T) {
 
 	h.Require.Contains(h.Stderr.String(), "Status: BUILDING")
 	h.Require.Contains(h.Stderr.String(), "Status: ACTIVE")
+	// Summary up front, settled verdict at the end, both on stderr in JSON mode.
+	h.Require.Contains(h.Stderr.String(), "was successfully pushed")
+	h.Require.Contains(h.Stderr.String(), "is deployed and active")
 
 	var result map[string]any
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
@@ -534,6 +537,7 @@ func Test_Model_Push_WaitFailure(t *testing.T) {
 	h.Require.Error(err)
 	h.Require.Contains(err.Error(), "failed deployment status: BUILD_FAILED")
 	h.Require.NotZero(h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), "did not become active (status: BUILD_FAILED)")
 
 	var result map[string]any
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
@@ -559,6 +563,8 @@ func Test_Model_Push_TailFailure(t *testing.T) {
 	h.Require.Error(err)
 	h.Require.Contains(err.Error(), "failed deployment status: BUILD_FAILED")
 	h.Require.Contains(h.Stderr.String(), "build started")
+	// The settled verdict belongs to --wait; a bare --tail only gets the error.
+	h.Require.NotContains(h.Stderr.String(), "did not become active")
 
 	// JSON result is on stdout regardless of --tail.
 	var result map[string]any
@@ -660,6 +666,13 @@ func Test_Model_Push_WatchValidation(t *testing.T) {
 		h.Require.ErrorContains(err, "cannot be combined with --environment")
 	})
 
+	t.Run("watch_and_wait", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		err := h.Execute("model", "push", "--dir", dir, "--watch", "--wait")
+		h.Require.ErrorContains(err, "--watch cannot be combined with --wait")
+	})
+
 	t.Run("hot_reload_requires_watch", func(t *testing.T) {
 		h := newModelPushHarness(t)
 		dir := h.WriteModelDir(modelPushMinimalConfig)
@@ -689,7 +702,9 @@ func Test_Model_Push_Watch_ReadinessFailureNoJSON(t *testing.T) {
 }
 
 // push --watch pushes a development deployment then enters the patch loop; a
-// simulated Ctrl-C during the first sync ends it as an interrupt.
+// simulated Ctrl-C during the first sync ends it as an interrupt. The summary
+// precedes the loop, so its links are on stdout even though the run was
+// interrupted.
 func Test_Model_Push_Watch_EntersLoopThenInterrupt(t *testing.T) {
 	h := newModelPushHarness(t)
 	addPushWatchRoutes(h)
@@ -700,5 +715,5 @@ func Test_Model_Push_Watch_EntersLoopThenInterrupt(t *testing.T) {
 	h.Require.Error(err)
 	h.Require.Equal(130, h.ExitCode)
 	h.Require.NotNil(h.API.FindCall("POST", watchSyncPath))
-	h.Require.Zero(h.Stdout.Len(), "interrupt is not a clean completion")
+	h.Require.Contains(h.Stdout.String(), "was successfully pushed")
 }
