@@ -38,11 +38,13 @@ func commandModelEnvironmentList(ctx *CommandContext, flags *cmd.ModelEnvironmen
 	}
 	rows := make([][]string, 0, len(resp.Environments))
 	for _, e := range resp.Environments {
-		rows = append(rows, []string{
-			e.Name,
-			e.CurrentDeployment.Id,
-			string(e.CurrentDeployment.Status),
-		})
+		// The current deployment is null until something is promoted to the
+		// environment.
+		depID, depStatus := "-", "-"
+		if e.CurrentDeployment != nil {
+			depID, depStatus = e.CurrentDeployment.Id, string(e.CurrentDeployment.Status)
+		}
+		rows = append(rows, []string{e.Name, depID, depStatus})
 	}
 	ctx.OutputTable(TableOutput{
 		Headers: []string{"NAME", "CURRENT DEPLOYMENT", "STATUS"},
@@ -75,13 +77,19 @@ func commandModelEnvironmentDescribe(ctx *CommandContext, flags *cmd.ModelEnviro
 	}
 	ctx.Outputf("Name:                %s\n", env.Name)
 	ctx.Outputf("Model:               %s\n", env.ModelId)
-	ctx.Outputf("Current Deployment:  %s\n", env.CurrentDeployment.Id)
-	ctx.Outputf("Status:              %s\n", env.CurrentDeployment.Status)
+	// The current deployment is null until something is promoted to the
+	// environment.
+	if env.CurrentDeployment != nil {
+		ctx.Outputf("Current Deployment:  %s\n", env.CurrentDeployment.Id)
+		ctx.Outputf("Status:              %s\n", env.CurrentDeployment.Status)
+	}
 	if env.CandidateDeployment != nil {
 		ctx.Outputf("Candidate Deployment: %s\n", env.CandidateDeployment.Id)
 	}
 	ctx.Outputf("Invoke URL:          %s\n", hyperlink(ctx.Stdout, remote.EnvironmentPredictURL(env.ModelId, env.Name)))
-	ctx.Outputf("Logs URL:            %s\n", hyperlink(ctx.Stdout, remote.LogsURL(env.ModelId, env.CurrentDeployment.Id)))
+	if env.CurrentDeployment != nil {
+		ctx.Outputf("Logs URL:            %s\n", hyperlink(ctx.Stdout, remote.LogsURL(env.ModelId, env.CurrentDeployment.Id)))
+	}
 	ctx.Outputf("Created:             %s\n", env.CreatedAt.UTC().Format(time.RFC3339))
 	return nil
 }

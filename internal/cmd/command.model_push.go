@@ -549,8 +549,8 @@ func tailModelPushDeployment(
 		}
 		ctx.LogLine(FormatDeploymentLogLine(*log))
 	}
-	if dep := res.FinalFetchedDeployment(); dep != nil {
-		created.Deployment = *dep
+	if status := res.FinalFetchedStatus(); status != nil && status.Deployment != nil {
+		created.Deployment = *status.Deployment
 	}
 	return nil
 }

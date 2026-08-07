@@ -44,6 +44,18 @@ func Test_Model_Environment_Logs_TailWithStartRejected(t *testing.T) {
 	h.Require.Contains(err.Error(), "--tail cannot be combined")
 }
 
+func Test_Model_Environment_Logs_FlagsRejectedBeforeModelLookup(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	// --model-name needs a lookup to resolve, which must not run ahead of the
+	// flag check, or a flag mistake surfaces as a lookup failure instead.
+	err := h.Execute("model", "environment", "logs",
+		"--model-name", "alpha", "--environment", "production", "--tail", "--limit", "100")
+	h.Require.ErrorContains(err, "--tail cannot be combined")
+	h.Require.Empty(m.Calls())
+}
+
 func Test_Model_Environment_Logs_SinceWithStartRejected(t *testing.T) {
 	h := NewCommandHarness(t)
 	err := h.Execute("model", "environment", "logs",

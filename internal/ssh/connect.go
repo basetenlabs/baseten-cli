@@ -92,7 +92,7 @@ func resolveEnvDeployment(ctx context.Context, mgmt *client.ManagementClient, mo
 	if err != nil {
 		return "", fmt.Errorf("looking up environment %q for model %s: %w", env, modelID, err)
 	}
-	if resp.CurrentDeployment.Id == "" {
+	if resp.CurrentDeployment == nil {
 		return "", fmt.Errorf("environment %q for model %s has no current deployment", env, modelID)
 	}
 	return resp.CurrentDeployment.Id, nil
