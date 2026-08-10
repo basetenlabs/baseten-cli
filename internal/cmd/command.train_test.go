@@ -810,3 +810,31 @@ func Test_Train_Job_Download_MultipleArtifacts(t *testing.T) {
 		h.Require.NoError(err)
 	}
 }
+
+func Test_Train_Job_Download_UnsafeProjectName(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	job := trainJobFixture("job-1", "TRAINING_JOB_COMPLETED")
+	// The backend validates project names only against a reserved list, so one
+	// that would escape the download dir has to be handled here.
+	job["training_project"] = map[string]any{"id": "proj-1", "name": "../../escape"}
+	mockTrainJobSearch(m, job)
+	archive := trainArtifactTarGz(t, "train.py", "print('hi')")
+	m.SetRouteFunc("GET", "/artifact.tgz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archive)
+	})
+	m.SetRoute("GET", trainJobPath+"/download", 200, map[string]any{
+		"artifact_presigned_urls": []any{m.URL + "/artifact.tgz"},
+	})
+	dir := t.TempDir()
+
+	h.Require.NoError(h.Execute("train", "job", "download",
+		"--job-id", "job-1", "--dir", dir, "--no-extract"))
+	// The separators are flattened into the file name, so the write lands in
+	// dir rather than above it.
+	entries, err := os.ReadDir(dir)
+	h.Require.NoError(err)
+	h.Require.Len(entries, 1)
+	h.Require.False(entries[0].IsDir())
+	h.Require.Equal("..-..-escape-job-1.tgz", entries[0].Name())
+}

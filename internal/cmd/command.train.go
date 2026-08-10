@@ -723,7 +723,13 @@ func commandTrainJobDownload(ctx *CommandContext, flags *cmd.TrainJobDownloadFla
 
 	// The archive name follows the job, not the URL, whose path is an opaque
 	// storage key. A job with several artifacts gets each suffixed by index.
-	baseName := strings.ReplaceAll(fmt.Sprintf("%s-%s", ref.ProjectName, ref.JobID), " ", "-")
+	baseName := strings.NewReplacer(" ", "-", "/", "-", `\`, "-").Replace(
+		fmt.Sprintf("%s-%s", ref.ProjectName, ref.JobID))
+	// The backend accepts any project name, so fall back to the job ID, always a
+	// safe component, for a name that is not usable as one.
+	if !filepath.IsLocal(baseName) {
+		baseName = ref.JobID
+	}
 	result := cmd.TrainJobDownloadResult{JobID: ref.JobID}
 	for i, artifactURL := range resp.ArtifactPresignedUrls {
 		name := baseName
