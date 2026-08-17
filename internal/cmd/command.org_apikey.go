@@ -16,16 +16,18 @@ func init() {
 // Maps between the lowercase-kebab CLI form and the ALL_CAPS backend form.
 var (
 	apiKeyTypeToBackend = map[string]managementapi.APIKeyCategory{
-		"personal":                 managementapi.APIKeyCategory_PERSONAL,
-		"workspace-export-metrics": managementapi.APIKeyCategory_WORKSPACE_EXPORT_METRICS,
-		"workspace-invoke":         managementapi.APIKeyCategory_WORKSPACE_INVOKE,
-		"workspace-manage-all":     managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL,
+		"personal":                  managementapi.APIKeyCategory_PERSONAL,
+		"workspace-export-metrics":  managementapi.APIKeyCategory_WORKSPACE_EXPORT_METRICS,
+		"workspace-invoke":          managementapi.APIKeyCategory_WORKSPACE_INVOKE,
+		"workspace-manage-all":      managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL,
+		"workspace-manage-api-keys": managementapi.APIKeyCategory_WORKSPACE_MANAGE_API_KEYS,
 	}
 	apiKeyTypeFromBackend = map[managementapi.APIKeyCategory]string{
-		managementapi.APIKeyCategory_PERSONAL:                 "personal",
-		managementapi.APIKeyCategory_WORKSPACE_EXPORT_METRICS: "workspace-export-metrics",
-		managementapi.APIKeyCategory_WORKSPACE_INVOKE:         "workspace-invoke",
-		managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL:     "workspace-manage-all",
+		managementapi.APIKeyCategory_PERSONAL:                  "personal",
+		managementapi.APIKeyCategory_WORKSPACE_EXPORT_METRICS:  "workspace-export-metrics",
+		managementapi.APIKeyCategory_WORKSPACE_INVOKE:          "workspace-invoke",
+		managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL:      "workspace-manage-all",
+		managementapi.APIKeyCategory_WORKSPACE_MANAGE_API_KEYS: "workspace-manage-api-keys",
 	}
 )
 
@@ -59,7 +61,13 @@ func commandOrgAPIKeyList(ctx *CommandContext, _ *cmd.OrgAPIKeyListFlags) error 
 		if k.TeamName != nil {
 			team = *k.TeamName
 		}
-		rows = append(rows, []string{name, k.Prefix + "****", apiKeyTypeFromBackend[k.Type], team})
+		// A category the CLI does not know yet renders as its raw backend form
+		// rather than an empty cell.
+		keyType := apiKeyTypeFromBackend[k.Type]
+		if keyType == "" {
+			keyType = string(k.Type)
+		}
+		rows = append(rows, []string{name, k.Prefix + "****", keyType, team})
 	}
 	ctx.OutputTable(TableOutput{
 		Headers: []string{"NAME", "KEY", "TYPE", "TEAM"},

@@ -375,7 +375,7 @@ type OrgAPIKeyListFlags struct {
 type OrgAPIKeyCreateFlags struct {
 	CommandFlags
 
-	Type     string   `flag:"type" desc:"API key category." required:"true" enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all"`
+	Type     string   `flag:"type" desc:"API key category." required:"true" enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all,workspace-manage-api-keys"`
 	Name     string   `flag:"name" desc:"Optional human-readable name for the key."`
 	ModelIDs []string `flag:"model-id" desc:"Restrict the key to a specific model. May be repeated. Only valid with --type workspace-export-metrics or workspace-invoke."`
 	Team     string   `flag:"team" desc:"Team name or ID to create the key in. Defaults to the organization's default team."`
