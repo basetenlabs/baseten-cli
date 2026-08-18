@@ -75,30 +75,30 @@ var commandModelDeployment = Command{
 		},
 		{
 			Name:    "download",
-			Summary: "Download the Truss source for a deployment",
-			Description: "Download the Truss source for a model deployment as an uncompressed tar.\n\n" +
+			Summary: "Download the model source for a deployment",
+			Description: "Download the model source for a model deployment as an uncompressed tar.\n\n" +
 				"Exactly one of --out-file or --out-dir is required. --out-file writes the " +
 				"raw tar bytes; --out-dir extracts the tar into the directory. Use " +
 				"--overwrite to replace an existing file or write into a non-empty directory.",
 			Flags: ModelDeploymentDownloadFlags{},
 			Output: &CommandOutput[ModelDeploymentDownloadResult]{
-				TextDescription: "Writes the Truss to disk; prints progress and the final destination " +
+				TextDescription: "Writes the model source to disk; prints progress and the final destination " +
 					"path to stderr; no stdout output.",
 				JSONDescription: "On success, stdout is a JSON object with either out_file or out_dir " +
 					"set to the path written.",
 				Examples: []CommandExample{
 					{
-						Description: "Save the Truss as a tar file.",
-						Command:     "baseten model deployment download --model-id <model-id> --deployment-id <deployment-id> --out-file truss.tar",
+						Description: "Save the model source as a tar file.",
+						Command:     "baseten model deployment download --model-id <model-id> --deployment-id <deployment-id> --out-file model.tar",
 					},
 					{
-						Description: "Extract the Truss into a directory.",
-						Command:     "baseten model deployment download --model-id <model-id> --deployment-id <deployment-id> --out-dir ./truss",
+						Description: "Extract the model source into a directory.",
+						Command:     "baseten model deployment download --model-id <model-id> --deployment-id <deployment-id> --out-dir ./my-model",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print just the destination path.",
-					Command:     "baseten model deployment download --model-id <model-id> --deployment-id <deployment-id> --out-file truss.tar --jq '.out_file'",
+					Command:     "baseten model deployment download --model-id <model-id> --deployment-id <deployment-id> --out-file model.tar --jq '.out_file'",
 				},
 			},
 		},
@@ -316,8 +316,8 @@ type ModelDeploymentDownloadFlags struct {
 	CommandFlags
 	ModelDeploymentIDFlags
 
-	OutFile   string `flag:"out-file" desc:"Save the Truss as an uncompressed tar file at this path." oneof:"download-out"`
-	OutDir    string `flag:"out-dir" desc:"Extract the Truss tar into this directory." oneof:"download-out"`
+	OutFile   string `flag:"out-file" desc:"Save the model source as an uncompressed tar file at this path." oneof:"download-out"`
+	OutDir    string `flag:"out-dir" desc:"Extract the model source tar into this directory." oneof:"download-out"`
 	Overwrite bool   `flag:"overwrite" desc:"Allow overwriting an existing file or non-empty directory."`
 }
 
