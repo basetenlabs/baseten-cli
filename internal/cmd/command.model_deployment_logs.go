@@ -188,7 +188,7 @@ func runLogsCommand(ctx *CommandContext, flags *cmd.LogFlags, fetchLogs logFetch
 
 	if flags.Tail {
 		res := tailLogs(ctx, tailLogsOptions{FetchLogs: fetchLogs, FetchStatus: fetchStatus})
-		if err := emitLogs(ctx, res.Logs); err != nil {
+		if _, err := emitLogs(ctx, res.Logs); err != nil {
 			return err
 		}
 		if status := res.FinalFetchedStatus(); status != nil {
@@ -251,11 +251,13 @@ func runLogsCommand(ctx *CommandContext, flags *cmd.LogFlags, fetchLogs logFetch
 	// paginateLogs signals why the stream ended via a sentinel error after the
 	// last line it emitted; hitting the limit is a note, any other error (e.g. a
 	// single-millisecond burst) is a command failure.
-	err := emitLogs(ctx, paginateLogs(q, startMs, endMs, flags.Limit, flags.PageSize, fetchLogs))
+	emitted, err := emitLogs(ctx, paginateLogs(q, startMs, endMs, flags.Limit, flags.PageSize, fetchLogs))
 	if errors.Is(err, errLogsHitLimit) {
 		ctx.Logf("Reached the --limit of %d log lines; older lines in the window were omitted. Increase --limit or use --limit 0 for no limit.\n", flags.Limit)
 	} else if err != nil {
 		return err
+	} else if emitted == 0 && !ctx.JSON {
+		ctx.LogLine("No logs found.")
 	}
 	return nil
 }
@@ -364,25 +366,28 @@ func logTimestampMs(ts string) (int64, bool) {
 // output mode. For ctx.JSON (both json and jsonl) it uses a JSON array writer so
 // jsonl streams one record per line and json buffers into a single closed
 // array. For text it formats each line via FormatDeploymentLogLine.
-func emitLogs(ctx *CommandContext, logs iter.Seq2[*managementapi.Log, error]) error {
+func emitLogs(ctx *CommandContext, logs iter.Seq2[*managementapi.Log, error]) (int, error) {
+	emitted := 0
 	if ctx.JSON {
 		w := ctx.NewJSONArrayWriter()
 		defer w.Close()
 		for log, err := range logs {
 			if err != nil {
-				return err
+				return emitted, err
 			}
 			w.Write(log)
+			emitted++
 		}
-		return nil
+		return emitted, nil
 	}
 	for log, err := range logs {
 		if err != nil {
-			return err
+			return emitted, err
 		}
 		ctx.OutputLine(FormatDeploymentLogLine(*log))
+		emitted++
 	}
-	return nil
+	return emitted, nil
 }
 
 // FormatDeploymentLogLine renders a log record as
@@ -489,6 +494,7 @@ func tailLogs(ctx *CommandContext, opts tailLogsOptions) *TailDeploymentLogsResu
 			warmupDeadline = ctx.Now().Add(opts.WarmupTimeout)
 		}
 		warmedUp := false
+		firstPoll := true
 
 		for {
 			nowMs := ctx.Now().UnixMilli()
@@ -540,12 +546,16 @@ func tailLogs(ctx *CommandContext, opts tailLogsOptions) *TailDeploymentLogsResu
 			}
 			lastPollMs = nowMs
 
-			// Once any log has been seen, refresh status each poll so we can
-			// stop when the deployment leaves a runnable state. This is skipped
-			// until the first log is seen, similar to Truss.
+			// Refresh status once any log has been seen, so the tail ends when the
+			// deployment leaves a runnable state. Truss gates this on the first log
+			// alone; we also check on the very first poll, because a workload that
+			// stopped before the log window opened has no logs to trigger the check
+			// and would otherwise be tailed forever with nothing to show. Staying
+			// silent while a live workload produces nothing is intentional: that is
+			// what tailing is for, and it keeps the poll at one request.
 			// TODO: should the management logs API return current status so
 			// we can drop this extra round-trip per poll?
-			if len(seen) > 0 {
+			if firstPoll || len(seen) > 0 {
 				status, err := opts.FetchStatus()
 				if err != nil {
 					yield(nil, fmt.Errorf("fetch deployment status: %w", err))
@@ -556,6 +566,7 @@ func tailLogs(ctx *CommandContext, opts tailLogsOptions) *TailDeploymentLogsResu
 					return
 				}
 			}
+			firstPoll = false
 
 			if err := ctx.Sleep(deploymentLogPollInterval); err != nil {
 				yield(nil, err)

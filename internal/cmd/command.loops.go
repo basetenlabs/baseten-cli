@@ -430,6 +430,7 @@ func commandLoopsUsage(ctx *CommandContext, flags *cmd.LoopsUsageFlags) error {
 			out = append(out, row.Owner)
 		}
 		tableRows = append(tableRows, append(out,
+			row.BaseModel,
 			loopsFormatGPUCell(row.TrainerInstanceType, row.TrainerNodeCount, row.TrainerGPUs),
 			row.TrainerStatus,
 			loopsFormatGPUCell(row.SamplerInstanceType, row.SamplerNodeCount, row.SamplerGPUs),

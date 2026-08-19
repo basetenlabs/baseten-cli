@@ -392,6 +392,31 @@ func Test_Loops_Run_Logs_Trainer(t *testing.T) {
 	h.Require.Nil(m.FindCall("GET", loopsSamplerLogsPath))
 }
 
+func Test_Loops_Run_Logs_Empty(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", loopsRunPath, 200,
+		map[string]any{"run": loopsRunFixture("r-1", "ACTIVE", nil)})
+	m.SetRoute("GET", loopsTrainerLogsPath, 200, logsResponse())
+
+	h.Require.NoError(h.Execute("loops", "run", "logs", "--run-id", "r-1"))
+	h.Require.Empty(h.Stdout.String())
+	h.Require.Contains(h.Stderr.String(), "No logs found.")
+}
+
+func Test_Loops_Run_Logs_EmptyJSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", loopsRunPath, 200,
+		map[string]any{"run": loopsRunFixture("r-1", "ACTIVE", nil)})
+	m.SetRoute("GET", loopsTrainerLogsPath, 200, logsResponse())
+
+	// The empty array is already unambiguous, so the note is suppressed the same
+	// way the list commands suppress theirs.
+	h.Require.NoError(h.Execute("loops", "run", "logs", "--run-id", "r-1", "--output", "json"))
+	h.Require.NotContains(h.Stderr.String(), "No logs found.")
+}
+
 func Test_Loops_Run_Logs_Sampler(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
@@ -435,6 +460,23 @@ func Test_Loops_Run_Logs_Tail_StopsOnTerminalTrainerStatus(t *testing.T) {
 
 	h.Require.NoError(h.Execute("loops", "run", "logs", "--run-id", "r-1", "--tail"))
 	h.Require.Contains(h.Stdout.String(), "step 1")
+	h.Require.Contains(h.Stderr.String(), "Tailing stopped: deployment status STOPPED")
+}
+
+func Test_Loops_Run_Logs_Tail_StopsOnTerminalTrainerStatusWithoutLogs(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", loopsRunPath, 200,
+		map[string]any{"run": loopsRunFixture("r-1", "ACTIVE", nil)})
+	// A trainer that stopped before the log window opened returns nothing, so
+	// there is no log line to trigger the status check that ends the tail.
+	m.SetRoute("GET", loopsTrainerLogsPath, 200, logsResponse())
+	m.SetRoute("GET", loopsTrainerPath, 200, map[string]any{
+		"deployment": loopsDeploymentFixture("dep-1", "STOPPED", "H100", 8, 1, "2026-05-14T12:00:00Z", nil),
+	})
+	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, _ time.Duration) error { return nil })
+
+	h.Require.NoError(h.Execute("loops", "run", "logs", "--run-id", "r-1", "--tail"))
 	h.Require.Contains(h.Stderr.String(), "Tailing stopped: deployment status STOPPED")
 }
 
