@@ -304,28 +304,32 @@ var commandTrainJob = Command{
 		{
 			Name:    "download",
 			Summary: "Download a training job's artifacts",
-			Description: "Download the code archive that was uploaded with a training job.\n\n" +
-				"Writes into --dir either way: an extracted '<project>-<job-id>' directory, or " +
-				"'<project>-<job-id>.tgz' when you pass --no-extract.\n\n" +
+			Description: "Download the code archive that was uploaded with a training job as an " +
+				"uncompressed tar.\n\n" +
+				"Exactly one of --out-file or --out-dir is required. --out-file writes the " +
+				"raw tar bytes; --out-dir extracts the tar into the directory. Use " +
+				"--overwrite to replace an existing file or write into a non-empty directory.\n\n" +
 				"This is the job's input code, not its checkpoints; use " +
 				"'baseten train checkpoint files' for those.",
 			Flags: TrainJobDownloadFlags{},
 			Output: &CommandOutput[TrainJobDownloadResult]{
-				TextDescription: "The path written, to stderr.",
-				JSONDescription: "An object naming the job and the paths written.",
+				TextDescription: "Writes the artifact to disk; prints progress and the final destination " +
+					"path to stderr; no stdout output.",
+				JSONDescription: "On success, stdout is a JSON object naming the job, with either " +
+					"out_file or out_dir set to the path written.",
 				Examples: []CommandExample{
 					{
-						Description: "Download and extract a job's code into the current directory.",
-						Command:     "baseten train job download --job-id p7qr9qv",
+						Description: "Extract a job's code into a directory.",
+						Command:     "baseten train job download --job-id p7qr9qv --out-dir ./job-code",
 					},
 					{
-						Description: "Keep the archive instead of extracting it.",
-						Command:     "baseten train job download --job-id p7qr9qv --dir ./artifacts --no-extract",
+						Description: "Save the archive as a tar file instead of extracting it.",
+						Command:     "baseten train job download --job-id p7qr9qv --out-file job.tar",
 					},
 				},
 				JQExample: CommandExample{
-					Description: "Print the path written.",
-					Command:     "baseten train job download --job-id p7qr9qv --jq '.paths[0]'",
+					Description: "Print just the destination path.",
+					Command:     "baseten train job download --job-id p7qr9qv --out-file job.tar --jq '.out_file'",
 				},
 			},
 		},
@@ -542,16 +546,19 @@ type TrainJobDownloadFlags struct {
 	CommandFlags
 	TrainJobRefFlags
 
-	Dir       string `flag:"dir" desc:"Directory to write into. Created if missing." default:"."`
-	NoExtract bool   `flag:"no-extract" desc:"Keep the downloaded archive instead of extracting it."`
+	OutFile   string `flag:"out-file" desc:"Save the artifact as an uncompressed tar file at this path." oneof:"download-out"`
+	OutDir    string `flag:"out-dir" desc:"Extract the artifact tar into this directory." oneof:"download-out"`
+	Overwrite bool   `flag:"overwrite" desc:"Allow overwriting an existing file or non-empty directory."`
 }
 
 // TrainJobDownloadResult is the JSON output of `baseten train job download`.
 // The API returns presigned URLs rather than files, so the useful result is
-// what landed on disk, which has no generated equivalent.
+// what landed on disk, which has no generated equivalent. Exactly one of
+// OutFile or OutDir is set, matching whichever flag the caller passed.
 type TrainJobDownloadResult struct {
-	JobID string   `json:"job_id"`
-	Paths []string `json:"paths"`
+	JobID   string `json:"job_id"`
+	OutFile string `json:"out_file,omitempty"`
+	OutDir  string `json:"out_dir,omitempty"`
 }
 
 // TrainJobSessionDescribeFlags configures `baseten train job session describe`.

@@ -341,13 +341,13 @@ func Test_Train_Job_Session_Describe_None(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "No interactive sessions found.")
 }
 
-// trainArtifactTarGz builds a gzipped tar holding one file, standing in for a
-// job's uploaded code archive.
-func trainArtifactTarGz(t *testing.T, name, content string) []byte {
+// trainArtifactTar builds an uncompressed tar holding one file, standing in for
+// a job's uploaded code archive. Truss packs these with tarfile "w:" and names
+// them ".tgz" by convention, so the bytes are plain tar despite the name.
+func trainArtifactTar(t *testing.T, name, content string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
+	tw := tar.NewWriter(&buf)
 	if err := tw.WriteHeader(&tar.Header{
 		Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg,
 	}); err != nil {
@@ -359,51 +359,99 @@ func trainArtifactTarGz(t *testing.T, name, content string) []byte {
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
+	return buf.Bytes()
+}
+
+// trainArtifactTarGz is trainArtifactTar compressed, which the backend does not
+// currently produce but extraction tolerates.
+func trainArtifactTarGz(t *testing.T, name, content string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(trainArtifactTar(t, name, content)); err != nil {
+		t.Fatal(err)
+	}
 	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
 }
 
+// mockTrainArtifact serves archive at /artifact.tgz and points the job's
+// download endpoint at it.
+func mockTrainArtifact(m *MockManagementAPI, archive []byte) {
+	m.SetRouteFunc("GET", "/artifact.tgz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archive)
+	})
+	m.SetRoute("GET", trainJobPath+"/download", 200, map[string]any{
+		"artifact_presigned_urls": []any{m.URL + "/artifact.tgz"},
+	})
+}
+
 func Test_Train_Job_Download_Extracts(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_COMPLETED"))
-	archive := trainArtifactTarGz(t, "train.py", "print('hi')")
-	m.SetRouteFunc("GET", "/artifact.tgz", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(archive)
-	})
-	m.SetRoute("GET", trainJobPath+"/download", 200, map[string]any{
-		"artifact_presigned_urls": []any{m.URL + "/artifact.tgz"},
-	})
-	dir := t.TempDir()
+	mockTrainArtifact(m, trainArtifactTar(t, "train.py", "print('hi')"))
+	dir := filepath.Join(t.TempDir(), "out")
 
-	h.Require.NoError(h.Execute("train", "job", "download", "--job-id", "job-1", "--dir", dir))
-	extracted := filepath.Join(dir, "my-project-job-1", "train.py")
-	content, err := os.ReadFile(extracted)
+	h.Require.NoError(h.Execute("train", "job", "download", "--job-id", "job-1", "--out-dir", dir))
+	content, err := os.ReadFile(filepath.Join(dir, "train.py"))
 	h.Require.NoError(err)
 	h.Require.Equal("print('hi')", string(content))
-	h.Require.Contains(h.Stderr.String(), extracted[:len(dir)])
+	h.Require.Contains(h.Stderr.String(), "Extracted to "+dir)
 }
 
-func Test_Train_Job_Download_NoExtract(t *testing.T) {
+func Test_Train_Job_Download_ExtractsGzipped(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_COMPLETED"))
-	archive := trainArtifactTarGz(t, "train.py", "print('hi')")
-	m.SetRouteFunc("GET", "/artifact.tgz", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(archive)
-	})
-	m.SetRoute("GET", trainJobPath+"/download", 200, map[string]any{
-		"artifact_presigned_urls": []any{m.URL + "/artifact.tgz"},
-	})
-	dir := t.TempDir()
+	// Compression is detected from the bytes, so a compressed artifact extracts
+	// too even though nothing produces one today.
+	mockTrainArtifact(m, trainArtifactTarGz(t, "train.py", "print('hi')"))
+	dir := filepath.Join(t.TempDir(), "out")
+
+	h.Require.NoError(h.Execute("train", "job", "download", "--job-id", "job-1", "--out-dir", dir))
+	content, err := os.ReadFile(filepath.Join(dir, "train.py"))
+	h.Require.NoError(err)
+	h.Require.Equal("print('hi')", string(content))
+}
+
+func Test_Train_Job_Download_OutFile(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_COMPLETED"))
+	archive := trainArtifactTar(t, "train.py", "print('hi')")
+	mockTrainArtifact(m, archive)
+	out := filepath.Join(t.TempDir(), "job.tar")
 
 	h.Require.NoError(h.Execute("train", "job", "download",
-		"--job-id", "job-1", "--dir", dir, "--no-extract"))
-	written, err := os.ReadFile(filepath.Join(dir, "my-project-job-1.tgz"))
+		"--job-id", "job-1", "--out-file", out, "--output", "json"))
+	written, err := os.ReadFile(out)
 	h.Require.NoError(err)
 	h.Require.Equal(archive, written)
+	h.Require.Contains(h.Stdout.String(), `"out_file"`)
+}
+
+func Test_Train_Job_Download_RequiresOutFlag(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	// Matching `model deployment download`, the destination is never implied.
+	err := h.Execute("train", "job", "download", "--job-id", "job-1")
+	h.Require.ErrorContains(err, "out-dir")
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Train_Job_Download_NoOverwrite(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	out := filepath.Join(t.TempDir(), "job.tar")
+	h.Require.NoError(os.WriteFile(out, []byte("existing"), 0o644))
+
+	err := h.Execute("train", "job", "download", "--job-id", "job-1", "--out-file", out)
+	h.Require.ErrorContains(err, "pass --overwrite")
+	h.Require.Empty(m.Calls())
 }
 
 func Test_Train_Job_Download_NoArtifacts(t *testing.T) {
@@ -412,7 +460,8 @@ func Test_Train_Job_Download_NoArtifacts(t *testing.T) {
 	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_COMPLETED"))
 	m.SetRoute("GET", trainJobPath+"/download", 200, map[string]any{"artifact_presigned_urls": []any{}})
 
-	err := h.Execute("train", "job", "download", "--job-id", "job-1", "--dir", t.TempDir())
+	err := h.Execute("train", "job", "download",
+		"--job-id", "job-1", "--out-dir", filepath.Join(t.TempDir(), "out"))
 	h.Require.ErrorContains(err, "has no artifacts to download")
 }
 
@@ -710,6 +759,39 @@ func Test_Train_Capacity_Describe_NoTeams(t *testing.T) {
 	h.Require.NotContains(h.Stdout.String(), "TEAM")
 }
 
+func Test_Train_Capacity_Describe_TeamsWithoutOrgCapacity(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	// A team limit is enforced whether or not the org has its own capacity, so
+	// an org with none must still show the team table rather than reporting
+	// nothing configured.
+	m.SetRoute("GET", trainCapacityPath, 200, map[string]any{
+		"gpu_capacities": []any{},
+		"team_gpu_capacities": []any{map[string]any{
+			"team_id": "team-1", "team_name": "research",
+			"gpu_type": "H100", "limit": 32, "baseline": 4, "usage_count": 6,
+		}},
+	})
+
+	h.Require.NoError(h.Execute("train", "capacity", "describe"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "TEAM")
+	h.Require.Contains(out, "research")
+	h.Require.NotContains(h.Stderr.String(), "No training GPU capacity configured.")
+	// The separator between the two tables is not emitted when only one renders.
+	h.Require.False(strings.HasPrefix(out, "\n"))
+}
+
+func Test_Train_Capacity_Describe_Empty(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", trainCapacityPath, 200, map[string]any{"gpu_capacities": []any{}})
+
+	h.Require.NoError(h.Execute("train", "capacity", "describe"))
+	h.Require.Empty(h.Stdout.String())
+	h.Require.Contains(h.Stderr.String(), "No training GPU capacity configured.")
+}
+
 func Test_Train_Capacity_Update(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
@@ -764,6 +846,77 @@ func Test_Train_Job_Logs_Tail_StopsOnTerminalStatus(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "completed")
 }
 
+func Test_Train_Job_Logs_Empty(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_COMPLETED"))
+	m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse())
+
+	h.Require.NoError(h.Execute("train", "job", "logs", "--job-id", "job-1"))
+	h.Require.Empty(h.Stdout.String())
+	h.Require.Contains(h.Stderr.String(), "No logs found.")
+}
+
+func Test_Train_Job_Logs_Tail_StopsOnTerminalStatusWithoutLogs(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+	// A job that finished before the log window opened returns nothing, so there
+	// is no log line to trigger the status check that ends the tail.
+	m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse())
+	m.SetRoute("GET", trainJobPath, 200, map[string]any{
+		"training_job": trainJobFixture("job-1", "TRAINING_JOB_COMPLETED"),
+		"training_project": map[string]any{
+			"id": "proj-1", "name": "my-project",
+			"created_at": "2026-05-14T12:00:00Z", "updated_at": "2026-05-14T12:00:00Z",
+			"latest_job": nil,
+		},
+	})
+	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, _ time.Duration) error { return nil })
+
+	h.Require.NoError(h.Execute("train", "job", "logs", "--job-id", "job-1", "--tail"))
+	h.Require.Contains(h.Stderr.String(), "completed")
+}
+
+func Test_Train_Job_Logs_Tail_KeepsGoingWhileQueued(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_QUEUED"))
+	// A queued job has produced no logs yet, so the first-poll status check must
+	// not mistake "nothing to show" for "nothing left to show".
+	logsCalls := 0
+	m.SetRouteFunc("GET", trainJobPath+"/logs", func(w http.ResponseWriter, _ *http.Request) {
+		logsCalls++
+		payload := logsResponse()
+		if logsCalls > 1 {
+			payload = logsResponse(map[string]any{"timestamp": "1", "message": "step 1", "replica": nil})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	})
+	statusCalls := 0
+	m.SetRouteFunc("GET", trainJobPath, func(w http.ResponseWriter, _ *http.Request) {
+		statusCalls++
+		status := "TRAINING_JOB_QUEUED"
+		if statusCalls > 1 {
+			status = "TRAINING_JOB_COMPLETED"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"training_job": trainJobFixture("job-1", status),
+			"training_project": map[string]any{
+				"id": "proj-1", "name": "my-project",
+				"created_at": "2026-05-14T12:00:00Z", "updated_at": "2026-05-14T12:00:00Z",
+				"latest_job": nil,
+			},
+		})
+	})
+	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, _ time.Duration) error { return nil })
+
+	h.Require.NoError(h.Execute("train", "job", "logs", "--job-id", "job-1", "--tail"))
+	h.Require.Contains(h.Stdout.String(), "step 1")
+}
+
 func Test_Train_Job_Logs_Tail_StopsOnUnknownStatus(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
@@ -791,7 +944,7 @@ func Test_Train_Job_Download_MultipleArtifacts(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_COMPLETED"))
-	archive := trainArtifactTarGz(t, "train.py", "print('hi')")
+	archive := trainArtifactTar(t, "train.py", "print('hi')")
 	for _, path := range []string{"/artifact-1.tgz", "/artifact-2.tgz"} {
 		m.SetRouteFunc("GET", path, func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write(archive)
@@ -800,41 +953,12 @@ func Test_Train_Job_Download_MultipleArtifacts(t *testing.T) {
 	m.SetRoute("GET", trainJobPath+"/download", 200, map[string]any{
 		"artifact_presigned_urls": []any{m.URL + "/artifact-1.tgz", m.URL + "/artifact-2.tgz"},
 	})
-	dir := t.TempDir()
+	out := filepath.Join(t.TempDir(), "job.tar")
 
-	h.Require.NoError(h.Execute("train", "job", "download",
-		"--job-id", "job-1", "--dir", dir, "--no-extract"))
-	// Several artifacts are suffixed by index so they cannot overwrite each other.
-	for _, name := range []string{"my-project-job-1-1.tgz", "my-project-job-1-2.tgz"} {
-		_, err := os.Stat(filepath.Join(dir, name))
-		h.Require.NoError(err)
-	}
-}
-
-func Test_Train_Job_Download_UnsafeProjectName(t *testing.T) {
-	h := NewCommandHarness(t)
-	m := h.MockManagementAPI()
-	job := trainJobFixture("job-1", "TRAINING_JOB_COMPLETED")
-	// The backend validates project names only against a reserved list, so one
-	// that would escape the download dir has to be handled here.
-	job["training_project"] = map[string]any{"id": "proj-1", "name": "../../escape"}
-	mockTrainJobSearch(m, job)
-	archive := trainArtifactTarGz(t, "train.py", "print('hi')")
-	m.SetRouteFunc("GET", "/artifact.tgz", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(archive)
-	})
-	m.SetRoute("GET", trainJobPath+"/download", 200, map[string]any{
-		"artifact_presigned_urls": []any{m.URL + "/artifact.tgz"},
-	})
-	dir := t.TempDir()
-
-	h.Require.NoError(h.Execute("train", "job", "download",
-		"--job-id", "job-1", "--dir", dir, "--no-extract"))
-	// The separators are flattened into the file name, so the write lands in
-	// dir rather than above it.
-	entries, err := os.ReadDir(dir)
-	h.Require.NoError(err)
-	h.Require.Len(entries, 1)
-	h.Require.False(entries[0].IsDir())
-	h.Require.Equal("..-..-escape-job-1.tgz", entries[0].Name())
+	h.Require.NoError(h.Execute("train", "job", "download", "--job-id", "job-1", "--out-file", out))
+	// Only the first artifact is fetched, and the extras are called out rather
+	// than dropped silently.
+	h.Require.Contains(h.Stderr.String(), "has 2 artifacts; downloading the first")
+	h.Require.NotNil(m.FindCall("GET", "/artifact-1.tgz"))
+	h.Require.Nil(m.FindCall("GET", "/artifact-2.tgz"))
 }

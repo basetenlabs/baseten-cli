@@ -1,13 +1,8 @@
 package cmd
 
 import (
-	"compress/gzip"
 	"fmt"
-	"io"
 	"maps"
-	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -123,25 +118,30 @@ func commandTrainCapacityDescribe(ctx *CommandContext, flags *cmd.TrainCapacityD
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	if len(resp.GpuCapacities) == 0 {
+	// Team limits are enforced whether or not the org has its own capacity, so
+	// the two tables stand alone: neither absence hides the other.
+	hasTeamCapacities := resp.TeamGpuCapacities != nil && len(*resp.TeamGpuCapacities) > 0
+	if len(resp.GpuCapacities) == 0 && !hasTeamCapacities {
 		ctx.LogLine("No training GPU capacity configured.")
 		return nil
 	}
-	rows := make([][]string, 0, len(resp.GpuCapacities))
-	for _, capacity := range resp.GpuCapacities {
-		rows = append(rows, []string{
-			capacity.GpuType,
-			fmt.Sprint(capacity.UsageCount),
-			fmt.Sprint(capacity.Limit),
-			fmt.Sprint(capacity.Baseline),
+	if len(resp.GpuCapacities) > 0 {
+		rows := make([][]string, 0, len(resp.GpuCapacities))
+		for _, capacity := range resp.GpuCapacities {
+			rows = append(rows, []string{
+				capacity.GpuType,
+				fmt.Sprint(capacity.UsageCount),
+				fmt.Sprint(capacity.Limit),
+				fmt.Sprint(capacity.Baseline),
+			})
+		}
+		ctx.OutputTable(TableOutput{
+			Headers: []string{"GPU TYPE", "IN USE", "LIMIT", "BASELINE"},
+			Rows:    rows,
 		})
 	}
-	ctx.OutputTable(TableOutput{
-		Headers: []string{"GPU TYPE", "IN USE", "LIMIT", "BASELINE"},
-		Rows:    rows,
-	})
 
-	if resp.TeamGpuCapacities == nil || len(*resp.TeamGpuCapacities) == 0 {
+	if !hasTeamCapacities {
 		return nil
 	}
 	teamRows := make([][]string, 0, len(*resp.TeamGpuCapacities))
@@ -154,7 +154,9 @@ func commandTrainCapacityDescribe(ctx *CommandContext, flags *cmd.TrainCapacityD
 			fmt.Sprint(capacity.Baseline),
 		})
 	}
-	ctx.Outputf("\n")
+	if len(resp.GpuCapacities) > 0 {
+		ctx.Outputf("\n")
+	}
 	ctx.OutputTable(TableOutput{
 		Headers: []string{"TEAM", "GPU TYPE", "IN USE", "LIMIT", "BASELINE"},
 		Rows:    teamRows,
@@ -702,6 +704,9 @@ func commandTrainJobUpdate(ctx *CommandContext, flags *cmd.TrainJobUpdateFlags) 
 }
 
 func commandTrainJobDownload(ctx *CommandContext, flags *cmd.TrainJobDownloadFlags) error {
+	if err := checkDownloadOutTarget(flags.OutFile, flags.OutDir, flags.Overwrite); err != nil {
+		return err
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -717,93 +722,26 @@ func commandTrainJobDownload(ctx *CommandContext, flags *cmd.TrainJobDownloadFla
 	if len(resp.ArtifactPresignedUrls) == 0 {
 		return fmt.Errorf("training job %s has no artifacts to download", flags.JobID)
 	}
-	if err := os.MkdirAll(flags.Dir, 0o755); err != nil {
-		return fmt.Errorf("create download dir: %w", err)
+	// The API can report several artifacts per job, but server-side callers and
+	// truss alike download the first and ignore the rest, so say so rather than
+	// inventing a fan-out no other client has.
+	if len(resp.ArtifactPresignedUrls) > 1 {
+		ctx.Logf("Training job %s has %d artifacts; downloading the first.\n",
+			ref.JobID, len(resp.ArtifactPresignedUrls))
 	}
 
-	// The archive name follows the job, not the URL, whose path is an opaque
-	// storage key. A job with several artifacts gets each suffixed by index.
-	baseName := strings.NewReplacer(" ", "-", "/", "-", `\`, "-").Replace(
-		fmt.Sprintf("%s-%s", ref.ProjectName, ref.JobID))
-	// The backend accepts any project name, so fall back to the job ID, always a
-	// safe component, for a name that is not usable as one.
-	if !filepath.IsLocal(baseName) {
-		baseName = ref.JobID
+	ctx.Logf("Downloading artifact...\n")
+	if err := downloadTarArchive(ctx, resp.ArtifactPresignedUrls[0], "artifact", flags.OutFile, flags.OutDir); err != nil {
+		return err
 	}
-	result := cmd.TrainJobDownloadResult{JobID: ref.JobID}
-	for i, artifactURL := range resp.ArtifactPresignedUrls {
-		name := baseName
-		if len(resp.ArtifactPresignedUrls) > 1 {
-			name = fmt.Sprintf("%s-%d", baseName, i+1)
-		}
-		path, err := trainDownloadArtifact(ctx, artifactURL, flags.Dir, name, !flags.NoExtract)
-		if err != nil {
-			return err
-		}
-		result.Paths = append(result.Paths, path)
-	}
-
 	if ctx.JSON {
-		ctx.OutputJSON(result)
-		return nil
-	}
-	for _, path := range result.Paths {
-		ctx.Logf("Downloaded training job %s to %s\n", ref.JobID, path)
+		ctx.OutputJSON(cmd.TrainJobDownloadResult{
+			JobID:   ref.JobID,
+			OutFile: flags.OutFile,
+			OutDir:  flags.OutDir,
+		})
 	}
 	return nil
-}
-
-// trainDownloadArtifact fetches one presigned artifact into dir, either as
-// "<name>.tgz" or extracted into a "<name>" directory. It returns the absolute
-// path written.
-func trainDownloadArtifact(ctx *CommandContext, artifactURL, dir, name string, extract bool) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("build artifact request: %w", err)
-	}
-	// The URL is presigned, so it carries its own credentials and must not go
-	// through the authenticated management client.
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch artifact: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetch artifact: unexpected status %s", resp.Status)
-	}
-
-	if !extract {
-		path, err := filepath.Abs(filepath.Join(dir, name+".tgz"))
-		if err != nil {
-			return "", err
-		}
-		f, err := os.Create(path)
-		if err != nil {
-			return "", fmt.Errorf("create %s: %w", path, err)
-		}
-		defer f.Close()
-		if _, err := io.Copy(f, resp.Body); err != nil {
-			return "", fmt.Errorf("write %s: %w", path, err)
-		}
-		return path, nil
-	}
-
-	root, err := filepath.Abs(filepath.Join(dir, name))
-	if err != nil {
-		return "", err
-	}
-	gz, err := gzip.NewReader(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read artifact archive: %w", err)
-	}
-	defer gz.Close()
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return "", fmt.Errorf("create %s: %w", root, err)
-	}
-	if err := extractTar(gz, root); err != nil {
-		return "", fmt.Errorf("extract archive into %s: %w", root, err)
-	}
-	return root, nil
 }
 
 func commandTrainJobSessionDescribe(ctx *CommandContext, flags *cmd.TrainJobSessionDescribeFlags) error {
