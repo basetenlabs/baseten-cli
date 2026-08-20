@@ -43,8 +43,9 @@ type CommandContext struct {
 	// through the query before encoding. Leaves should not set this directly.
 	JQQuery *gojq.Query
 
-	verbose bool
-	jqErr   error
+	verbose      bool
+	jqErr        error
+	strictOutput bool
 
 	// authInfo lazily resolves the remote and auth session. Use the Remote and
 	// Session accessors; do not read its cached fields directly.
@@ -142,6 +143,16 @@ type TableOutput struct {
 // OutputTable writes a borderless table to stdout with bold headers. Header
 // styling auto-degrades when stdout is not a terminal.
 func (c *CommandContext) OutputTable(out TableOutput) {
+	if c.strictOutput {
+		// A short row is padded on the right by lipgloss, so every cell past the
+		// missing one silently renders under the wrong header.
+		for i, row := range out.Rows {
+			if len(row) != len(out.Headers) {
+				panic(fmt.Sprintf("table row %d has %d cells, want %d for headers %v",
+					i, len(row), len(out.Headers), out.Headers))
+			}
+		}
+	}
 	renderer := lipgloss.NewRenderer(c.Stdout)
 	rightAligned := make(map[int]bool, len(out.RightAlignedColumns))
 	for _, col := range out.RightAlignedColumns {

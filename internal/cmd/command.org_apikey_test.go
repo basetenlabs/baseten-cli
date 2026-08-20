@@ -28,6 +28,11 @@ func Test_Org_APIKey_List_Rows(t *testing.T) {
 				"prefix": "bsnt_xyz",
 				"type":   "WORKSPACE_INVOKE",
 			},
+			map[string]any{
+				"name":   "key-manager",
+				"prefix": "bsnt_mgr",
+				"type":   "WORKSPACE_MANAGE_API_KEYS",
+			},
 		},
 	})
 
@@ -41,6 +46,19 @@ func Test_Org_APIKey_List_Rows(t *testing.T) {
 	h.Require.Contains(out, "bsnt_abc****")
 	h.Require.Contains(out, "personal")
 	h.Require.Contains(out, "workspace-invoke")
+	h.Require.Contains(out, "workspace-manage-api-keys")
+}
+
+func Test_Org_APIKey_List_UnknownType(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/api_keys", 200, map[string]any{
+		"keys": []any{
+			map[string]any{"prefix": "bsnt_abc", "type": "WORKSPACE_SOMETHING_NEW"},
+		},
+	})
+
+	h.Require.NoError(h.Execute("org", "api-key", "list"))
+	h.Require.Contains(h.Stdout.String(), "WORKSPACE_SOMETHING_NEW")
 }
 
 func Test_Org_APIKey_Create_Personal(t *testing.T) {
@@ -56,6 +74,17 @@ func Test_Org_APIKey_Create_Personal(t *testing.T) {
 
 	h.Require.Equal("bsnt_secret_value\n", h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "Save this key now")
+}
+
+func Test_Org_APIKey_Create_WorkspaceManageAPIKeys(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/api_keys", 200, map[string]any{"api_key": "bsnt_val"})
+
+	h.Require.NoError(h.Execute("org", "api-key", "create", "--type", "workspace-manage-api-keys"))
+	call := m.FindCall("POST", "/v1/api_keys")
+	h.Require.NotNil(call)
+	h.Require.Contains(call.Body, `"type":"WORKSPACE_MANAGE_API_KEYS"`)
 }
 
 func Test_Org_APIKey_Create_ModelIDRequiresScopedType(t *testing.T) {

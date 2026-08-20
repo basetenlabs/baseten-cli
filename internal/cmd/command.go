@@ -61,6 +61,11 @@ type ExecuteOptions struct {
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ExitWithCode func(int)
+	// StrictOutputChecks panics on output that is malformed in a way a user
+	// would see but the code cannot detect for itself, such as a table row whose
+	// cell count does not match its headers. Tests set it; production renders
+	// whatever it was given rather than failing a command over its formatting.
+	StrictOutputChecks bool
 }
 
 func (o *ExecuteOptions) applyDefaults() {
@@ -201,6 +206,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				Stdout:       options.Stdout,
 				Stderr:       options.Stderr,
 				ExitWithCode: options.ExitWithCode,
+				strictOutput: options.StrictOutputChecks,
 				authInfo:     authInfo{profileFlag: cmdFlags.Profile},
 			}
 

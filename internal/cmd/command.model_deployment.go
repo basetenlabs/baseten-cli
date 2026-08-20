@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"archive/tar"
+	"bufio"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -277,25 +279,78 @@ func commandModelDeploymentDelete(ctx *CommandContext, flags *cmd.ModelDeploymen
 	return nil
 }
 
-func commandModelDeploymentDownload(ctx *CommandContext, flags *cmd.ModelDeploymentDownloadFlags) error {
-	outPath := flags.OutFile
+// checkDownloadOutTarget rejects an output location that is already occupied,
+// unless the caller passed --overwrite. Exactly one of outFile or outDir is set,
+// matching the --out-file/--out-dir pair the download commands share.
+func checkDownloadOutTarget(outFile, outDir string, overwrite bool) error {
+	outPath := outFile
 	if outPath == "" {
-		outPath = flags.OutDir
+		outPath = outDir
 	}
 	parent := filepath.Dir(outPath)
 	if st, err := os.Stat(parent); err != nil || !st.IsDir() {
 		return fmt.Errorf("parent directory does not exist: %s", parent)
 	}
-	if !flags.Overwrite {
-		if flags.OutFile != "" {
-			if _, err := os.Stat(flags.OutFile); err == nil {
-				return fmt.Errorf("file already exists: %s; pass --overwrite to replace it", flags.OutFile)
-			}
-		} else {
-			if entries, err := os.ReadDir(flags.OutDir); err == nil && len(entries) > 0 {
-				return fmt.Errorf("directory is not empty: %s; pass --overwrite to write into it", flags.OutDir)
-			}
+	if overwrite {
+		return nil
+	}
+	if outFile != "" {
+		if _, err := os.Stat(outFile); err == nil {
+			return fmt.Errorf("file already exists: %s; pass --overwrite to replace it", outFile)
 		}
+		return nil
+	}
+	if entries, err := os.ReadDir(outDir); err == nil && len(entries) > 0 {
+		return fmt.Errorf("directory is not empty: %s; pass --overwrite to write into it", outDir)
+	}
+	return nil
+}
+
+// downloadTarArchive fetches url and either saves the bytes verbatim to outFile
+// or extracts them into outDir, reporting where they landed. Exactly one of
+// outFile or outDir must be set. what names the archive in messages ("truss",
+// "artifact"). The URL is presigned, carrying its own credentials, so it goes
+// out on the plain client rather than the authenticated management one.
+func downloadTarArchive(ctx *CommandContext, url, what, outFile, outDir string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("build download request: %w", err)
+	}
+	httpResp, err := ctx.httpClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", what, err)
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		return fmt.Errorf("download %s: HTTP %d", what, httpResp.StatusCode)
+	}
+
+	if outFile != "" {
+		f, err := os.Create(outFile)
+		if err != nil {
+			return fmt.Errorf("create %s: %w", outFile, err)
+		}
+		defer f.Close()
+		if _, err := io.Copy(f, httpResp.Body); err != nil {
+			return fmt.Errorf("write %s: %w", outFile, err)
+		}
+		ctx.Logf("Saved to %s\n", outFile)
+		return nil
+	}
+
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", outDir, err)
+	}
+	if err := extractTar(httpResp.Body, outDir); err != nil {
+		return fmt.Errorf("extract %s into %s: %w", what, outDir, err)
+	}
+	ctx.Logf("Extracted to %s\n", outDir)
+	return nil
+}
+
+func commandModelDeploymentDownload(ctx *CommandContext, flags *cmd.ModelDeploymentDownloadFlags) error {
+	if err := checkDownloadOutTarget(flags.OutFile, flags.OutDir, flags.Overwrite); err != nil {
+		return err
 	}
 
 	cl, err := ctx.NewManagementClient()
@@ -313,52 +368,35 @@ func commandModelDeploymentDownload(ctx *CommandContext, flags *cmd.ModelDeploym
 		return fmt.Errorf("fetch download URL for deployment %s: %w", ref.DeploymentID, err)
 	}
 
-	ctx.Logf("Downloading truss...\n")
-	req, err := http.NewRequestWithContext(ctx, "GET", resp.DownloadUrl, nil)
-	if err != nil {
-		return fmt.Errorf("build download request: %w", err)
+	ctx.Logf("Downloading model source...\n")
+	if err := downloadTarArchive(ctx, resp.DownloadUrl, "model source", flags.OutFile, flags.OutDir); err != nil {
+		return err
 	}
-	httpResp, err := ctx.httpClient().Do(req)
-	if err != nil {
-		return fmt.Errorf("download truss: %w", err)
-	}
-	defer httpResp.Body.Close()
-	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		return fmt.Errorf("download truss: HTTP %d", httpResp.StatusCode)
-	}
-
-	if flags.OutFile != "" {
-		f, err := os.Create(flags.OutFile)
-		if err != nil {
-			return fmt.Errorf("create %s: %w", flags.OutFile, err)
-		}
-		defer f.Close()
-		if _, err := io.Copy(f, httpResp.Body); err != nil {
-			return fmt.Errorf("write %s: %w", flags.OutFile, err)
-		}
-		ctx.Logf("Saved to %s\n", flags.OutFile)
-		if ctx.JSON {
-			ctx.OutputJSON(cmd.ModelDeploymentDownloadResult{OutFile: flags.OutFile})
-		}
-		return nil
-	}
-
-	if err := os.MkdirAll(flags.OutDir, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", flags.OutDir, err)
-	}
-	if err := extractTar(httpResp.Body, flags.OutDir); err != nil {
-		return fmt.Errorf("extract truss into %s: %w", flags.OutDir, err)
-	}
-	ctx.Logf("Extracted to %s\n", flags.OutDir)
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.ModelDeploymentDownloadResult{OutDir: flags.OutDir})
+		ctx.OutputJSON(cmd.ModelDeploymentDownloadResult{OutFile: flags.OutFile, OutDir: flags.OutDir})
 	}
 	return nil
 }
 
-// extractTar extracts a tar stream into dir. Rejects entries with absolute
-// paths or ".." components to avoid path traversal.
+// extractTar extracts a tar stream into dir, transparently decompressing a
+// gzipped one. Rejects entries with absolute paths or ".." components to avoid
+// path traversal.
 func extractTar(r io.Reader, dir string) error {
+	// Truss packs both truss and training archives uncompressed and detects
+	// compression on the way back out, so trust the bytes rather than the file
+	// name a caller gave them. A tar header opens with the NUL-padded entry name,
+	// so the gzip magic cannot start a valid one.
+	br := bufio.NewReader(r)
+	if magic, err := br.Peek(2); err == nil && magic[0] == 0x1f && magic[1] == 0x8b {
+		gz, err := gzip.NewReader(br)
+		if err != nil {
+			return fmt.Errorf("read gzip archive: %w", err)
+		}
+		defer gz.Close()
+		r = gz
+	} else {
+		r = br
+	}
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
