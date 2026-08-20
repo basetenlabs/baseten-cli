@@ -38,6 +38,7 @@ var Root = Command{
 		commandModelAPI,
 		commandOrg,
 		commandSSH,
+		commandTrain,
 		commandTruss,
 		commandVersion,
 		commandWhoami,

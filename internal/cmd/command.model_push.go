@@ -44,6 +44,11 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 			return cmd.NewErrUsagef("--develop/--watch cannot be combined with --deployment-name")
 		}
 	}
+	// --watch enters its patch loop as soon as the deployment is created rather
+	// than blocking on it becoming active, so --wait has nothing to do there.
+	if flags.Watch && flags.Wait {
+		return cmd.NewErrUsagef("--watch cannot be combined with --wait")
+	}
 	if (flags.WatchHotReload || flags.WatchNoKeepalive) && !flags.Watch {
 		return cmd.NewErrUsagef("--watch-hot-reload and --watch-no-keepalive require --watch")
 	}
@@ -104,6 +109,25 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 		return err
 	}
 
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return err
+	}
+	predictURL := remote.PredictURL(created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment)
+	logsURL := remote.LogsURL(created.Model.Id, created.Deployment.Id)
+
+	// In JSON mode the human-readable output goes to stderr so stdout carries
+	// only the JSON object.
+	printf, w := ctx.Outputf, ctx.Stdout
+	if ctx.JSON {
+		printf, w = ctx.Logf, ctx.Stderr
+	}
+
+	// The summary lands before watch/tail/wait so its links are usable while the
+	// deployment is still building, rather than only once those have finished.
+	printModelPushSummary(printf, w, created, predictURL, logsURL,
+		prepareReq.Deployment.EnvironmentName, sshEnabledInConfig(prepareReq.Deployment.Config))
+
 	switch {
 	case flags.Watch:
 		err = watchModelPushDeployment(ctx, api.API(), created, flags)
@@ -111,17 +135,35 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 		err = tailModelPushDeployment(ctx, api.API(), created, flags.Wait)
 	case flags.Wait:
 		err = waitModelPushDeployment(ctx, api.API(), created)
+		// Only --wait sees the deployment settle, so only it reports how: a bare
+		// --tail streams past ACTIVE and ends on interrupt. The summary already
+		// announced the push; this says whether the deployment came up.
+		if err == nil {
+			if created.Deployment.Status == managementapi.DeploymentStatus_ACTIVE {
+				printf("\n✅ Model %s is deployed and active\n", created.Model.Name)
+			} else {
+				printf("\n⚠️  Model %s was pushed but the deployment did not become active (status: %s)\n",
+					created.Model.Name, created.Deployment.Status)
+			}
+		}
 	}
 	if err != nil {
 		return err
 	}
-	if err := writeModelPushResult(ctx, created, prepareReq.Deployment.EnvironmentName,
-		sshEnabledInConfig(prepareReq.Deployment.Config)); err != nil {
-		return err
+	// JSON stays last so the object carries the settled deployment status and a
+	// consumer piping stdout still gets exactly one object.
+	if ctx.JSON {
+		ctx.OutputJSON(cmd.ModelPushResult{
+			Model:      created.Model,
+			Deployment: created.Deployment,
+			PredictURL: predictURL,
+			LogsURL:    logsURL,
+		})
 	}
 	// The watch loop runs until interrupted, so its exit is never a deployment
 	// failure; only the one-shot tail/wait paths classify the settled status.
-	if !flags.Watch && (flags.Tail || flags.Wait) && created.Deployment.Status != managementapi.DeploymentStatus_ACTIVE {
+	if !flags.Watch && (flags.Tail || flags.Wait) &&
+		created.Deployment.Status != managementapi.DeploymentStatus_ACTIVE {
 		return fmt.Errorf("failed deployment status: %s", created.Deployment.Status)
 	}
 	return nil
@@ -583,39 +625,6 @@ func pollDeploymentUntilSettled(
 	}
 }
 
-// modelPushURLs computes the predict and logs URLs for a created deployment.
-func modelPushURLs(ctx *CommandContext, created *managementapi.CreatedModelDeployment) (predictURL, logsURL string, err error) {
-	remote, err := ctx.authInfo.Remote()
-	if err != nil {
-		return "", "", err
-	}
-	predictURL = remote.PredictURL(created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment)
-	logsURL = remote.LogsURL(created.Model.Id, created.Deployment.Id)
-	return predictURL, logsURL, nil
-}
-
-func writeModelPushResult(ctx *CommandContext, created *managementapi.CreatedModelDeployment, environment *string, sshEnabled bool) error {
-	predictURL, logsURL, err := modelPushURLs(ctx, created)
-	if err != nil {
-		return err
-	}
-
-	// Narrative goes first so a user piping JSON to a file or jq sees the
-	// human summary on stderr before the JSON object lands on stdout.
-	if ctx.JSON {
-		writeModelPushSummary(ctx.Logf, ctx.Stderr, created, predictURL, logsURL, environment, sshEnabled)
-		ctx.OutputJSON(cmd.ModelPushResult{
-			Model:      created.Model,
-			Deployment: created.Deployment,
-			PredictURL: predictURL,
-			LogsURL:    logsURL,
-		})
-		return nil
-	}
-	writeModelPushSummary(ctx.Outputf, ctx.Stdout, created, predictURL, logsURL, environment, sshEnabled)
-	return nil
-}
-
 // sshEnabledInConfig reports whether the pushed Truss config turns on remote
 // SSH (runtime.remote_ssh.enabled: true), so the push summary only advertises
 // SSH when the workload actually accepts it. config is the parsed config.yaml
@@ -633,12 +642,12 @@ func sshEnabledInConfig(config map[string]any) bool {
 	return enabled
 }
 
-// writeModelPushSummary prints the post-push narrative: a facts card followed by
+// printModelPushSummary prints the post-push narrative: a facts card followed by
 // grouped, code-styled hints for logs, invocation, and (when the config enables
 // it) SSH. environment is the --environment target, if any; env-scoped hints are
 // tagged "(once deployed)" since the new deployment only becomes the
 // environment's live one after it finishes deploying.
-func writeModelPushSummary(
+func printModelPushSummary(
 	printf func(string, ...any),
 	w io.Writer,
 	created *managementapi.CreatedModelDeployment,
@@ -658,19 +667,7 @@ func writeModelPushSummary(
 		envName = *created.Deployment.Environment
 	}
 
-	// When --wait/--tail observed a terminal-failure status, the upload itself
-	// succeeded but the deployment did not; say so rather than claiming success.
-	switch created.Deployment.Status {
-	case managementapi.DeploymentStatus_ACTIVE,
-		managementapi.DeploymentStatus_BUILDING,
-		managementapi.DeploymentStatus_DEPLOYING,
-		managementapi.DeploymentStatus_LOADING_MODEL,
-		managementapi.DeploymentStatus_UPDATING:
-		printf("✨ Model %s was successfully pushed ✨\n", created.Model.Name)
-	default:
-		printf("⚠️  Model %s was pushed but the deployment did not become active (status: %s)\n",
-			created.Model.Name, created.Deployment.Status)
-	}
+	printf("✨ Model %s was successfully pushed ✨\n", created.Model.Name)
 
 	// Facts card: fixed labels left-padded to the widest shown label.
 	rows := [][2]string{

@@ -63,6 +63,7 @@ func (h *CommandHarness) Execute(args ...string) error {
 			h.ExitCode = code
 			h.exited = true
 		},
+		StrictOutputChecks: true,
 	})
 	if err != nil && !h.exited {
 		h.ExitCode = 1
