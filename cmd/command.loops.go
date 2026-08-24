@@ -242,6 +242,36 @@ var commandLoopsCheckpoint = Command{
 				},
 			},
 		},
+		{
+			Name:    "deploy",
+			Summary: "Deploy Loops checkpoints",
+			Description: "Deploy checkpoints saved by a Loops run as a model served by vLLM.\n\n" +
+				"Name the checkpoints with --checkpoint (which needs --run-id, since names are " +
+				"scoped to a run) or with --checkpoint-id, or pass none of them to choose " +
+				"interactively. Requests then select a checkpoint by name through the model " +
+				"parameter, so one deployment serves them all.\n\n" +
+				"Pass --config for a repeatable deploy: it is a Python file defining a " +
+				"DeployCheckpointsConfig, so it is executed rather than read.",
+			Flags: LoopsCheckpointDeployFlags{},
+			Output: &CommandOutput[TrussDelegatedResult]{
+				JSONOutputUnimportant: true,
+				TextDescription: "The new model and deployment IDs with links to the deployment's logs, " +
+					"and how to name a checkpoint in a request. With --dry-run, the generated model " +
+					"config instead.",
+				JSONDescription: "Under --output json the text output goes to stderr and stdout is an empty " +
+					"object: this command reports nothing structured yet.",
+				Examples: []CommandExample{
+					{
+						Description: "Deploy two checkpoints of a run by name.",
+						Command:     "baseten loops checkpoint deploy --run-id <run-id> --checkpoint step-50 --checkpoint step-100",
+					},
+					{
+						Description: "Deploy a checkpoint by ID, choosing the rest interactively.",
+						Command:     "baseten loops checkpoint deploy --checkpoint-id <checkpoint-id>",
+					},
+				},
+			},
+		},
 	},
 }
 
@@ -373,4 +403,16 @@ type LoopsCheckpointFilesFlags struct {
 	CommandFlags
 
 	CheckpointID string `flag:"checkpoint-id" desc:"ID of the Loops checkpoint." required:"true"`
+}
+
+// LoopsCheckpointDeployFlags configures `baseten loops checkpoint deploy`.
+type LoopsCheckpointDeployFlags struct {
+	CommandFlags
+	TrussAuthFlags
+
+	RunID        string   `flag:"run-id" desc:"Loops run whose checkpoints are deployed."`
+	Checkpoint   []string `flag:"checkpoint" desc:"Name of a checkpoint to deploy, for example 'step-50'. Requires --run-id, since names are scoped to a run. Repeatable."`
+	CheckpointID []string `flag:"checkpoint-id" desc:"ID of a checkpoint to deploy. Repeatable."`
+	Config       string   `flag:"config" desc:"Python file defining a DeployCheckpointsConfig: which checkpoints deploy and the model that serves them."`
+	DryRun       bool     `flag:"dry-run" desc:"Print the generated model config without deploying anything."`
 }

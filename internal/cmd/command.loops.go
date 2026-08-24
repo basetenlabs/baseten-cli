@@ -19,6 +19,7 @@ func init() {
 	Register("loops usage", commandLoopsUsage)
 	Register("loops checkpoint list", commandLoopsCheckpointList)
 	Register("loops checkpoint files", commandLoopsCheckpointFiles)
+	Register("loops checkpoint deploy", commandLoopsCheckpointDeploy)
 }
 
 // loopsTrainerLiveStatuses are the trainer deployment statuses where the trainer
@@ -539,6 +540,25 @@ func commandLoopsCheckpointFiles(ctx *CommandContext, flags *cmd.LoopsCheckpoint
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "SIZE", "URL"}, Rows: rows})
 	return nil
+}
+
+// commandLoopsCheckpointDeploy delegates to the truss CLI: it is the only
+// command in this surface backed by GraphQL rather than REST, and its config
+// input is a Python file only truss can evaluate.
+func commandLoopsCheckpointDeploy(ctx *CommandContext, flags *cmd.LoopsCheckpointDeployFlags) error {
+	args := []string{"loops", "checkpoints", "deploy"}
+	args = trussArg(args, "run-id", flags.RunID)
+	args = trussArg(args, "checkpoints", strings.Join(flags.Checkpoint, ","))
+	args = trussArg(args, "checkpoint-ids", strings.Join(flags.CheckpointID, ","))
+	args = trussArg(args, "config", flags.Config)
+	args = trussBoolArg(args, "dry-run", flags.DryRun)
+
+	return trussRun(ctx, trussInvocation{
+		Flags:       flags.TrussFlags,
+		Args:        args,
+		ForwardAuth: !flags.TrussNoForwardAuth,
+		JSONResult:  true,
+	})
 }
 
 // loopsApplySamplerToRow fills in a usage row's sampler half.

@@ -101,8 +101,11 @@ type ModelImagePrepareResult struct {
 // subcommands.
 type ModelImageCommonFlags struct {
 	CommandFlags
+	// TrussFlags without credential forwarding: generating a build context runs
+	// entirely locally and calls no API.
+	TrussFlags
+
 	Dir          string `flag:"dir" desc:"Model directory." default:"."`
-	TrussVersion string `flag:"truss-version" desc:"Truss version to run via uv." default:"latest"`
 	RootUser     bool   `flag:"root-user" desc:"Run the image's container as root instead of the default non-root user."`
 	CacheMountID string `flag:"cache-mount-id" desc:"Enable a persistent apt/pip/uv build cache keyed by this id."`
 }
