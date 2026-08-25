@@ -63,7 +63,10 @@ func trussExtractFlags(flags *cmd.TrussAuthFlags, args []string) ([]string, erro
 			switch {
 			case f.Value.Type() == "bool":
 				value = "true"
-			case i+1 < len(args):
+			// A following flag is a missing value, not the value: no truss
+			// version or executable starts with a dash, and consuming one would
+			// silently drop an argument meant for truss.
+			case i+1 < len(args) && !strings.HasPrefix(args[i+1], "-"):
 				i++
 				value = args[i]
 			default:

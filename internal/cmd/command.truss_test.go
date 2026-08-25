@@ -116,6 +116,15 @@ func Test_Truss_FlagNeedingValueAtEnd(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "needs a value")
 }
 
+func Test_Truss_FlagNeedingValueFollowedByFlag(t *testing.T) {
+	h, _ := newTrussHarness(t)
+	// Consuming the next flag as the value would run truss@--help and swallow
+	// the argument meant for truss.
+	_ = h.Execute("truss", "push", "--truss-version", "--help")
+	h.Require.True(h.Exited())
+	h.Require.Contains(h.Stderr.String(), "needs a value")
+}
+
 func Test_Truss_Executable(t *testing.T) {
 	h, fake := newTrussHarness(t, ".venv/bin/truss")
 
@@ -153,6 +162,16 @@ func Test_Truss_EnvExecutableDefault(t *testing.T) {
 	h.T.Setenv("BASETEN_TRUSS_EXECUTABLE", "my-truss")
 
 	h.Require.NoError(h.Execute("truss", "push"))
+
+	h.Require.Equal("/fake/my-truss", fake.only(t).Args[0])
+}
+
+func Test_Truss_FlagOverridesOtherEnvDefault(t *testing.T) {
+	h, fake := newTrussHarness(t, "my-truss")
+	h.T.Setenv("BASETEN_TRUSS_VERSION", "0.18.26")
+
+	// A stored version default must not collide with an explicit executable.
+	h.Require.NoError(h.Execute("truss", "--truss-executable", "my-truss", "push"))
 
 	h.Require.Equal("/fake/my-truss", fake.only(t).Args[0])
 }

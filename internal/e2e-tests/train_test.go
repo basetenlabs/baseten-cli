@@ -250,10 +250,12 @@ func newTrainLifecycle(t *testing.T) *trainLifecycle {
 	// checkpoint sync both come from the running pod.
 	var status string
 	require.Eventually(t, func() bool {
-		job := tr.mustDescribeJob(t)
-		status = job.CurrentStatus
+		if current := tr.mustDescribeJob(t).CurrentStatus; current != status {
+			status = current
+			t.Logf("job status: %s", status)
+		}
 		return status == "TRAINING_JOB_RUNNING"
-	}, 10*time.Minute, 5*time.Second, "job never reached running; last status %s", &status)
+	}, 10*time.Minute, 5*time.Second, "job never reached running")
 	return tr
 }
 
@@ -538,7 +540,10 @@ func (tr *trainLifecycle) Stop(t *testing.T) {
 	// Stopping is asynchronous, so the status settles a moment later.
 	var status string
 	require.Eventually(t, func() bool {
-		status = tr.mustDescribeJob(t).CurrentStatus
+		if current := tr.mustDescribeJob(t).CurrentStatus; current != status {
+			status = current
+			t.Logf("job status: %s", status)
+		}
 		return status == "TRAINING_JOB_STOPPED"
-	}, 3*time.Minute, 5*time.Second, "job never reported stopped; last status %s", &status)
+	}, 3*time.Minute, 5*time.Second, "job never reported stopped")
 }

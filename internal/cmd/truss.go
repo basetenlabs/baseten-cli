@@ -68,13 +68,12 @@ func trussCommand(ctx *CommandContext, inv trussInvocation) (*exec.Cmd, error) {
 		}
 	}
 
-	version := inv.Flags.TrussVersion
-	if version == "" {
-		version = os.Getenv(trussVersionEnv)
-	}
-	executable := inv.Flags.TrussExecutable
-	if executable == "" {
-		executable = os.Getenv(trussExecutableEnv)
+	// Either flag suppresses both environment defaults, so a stored
+	// BASETEN_TRUSS_VERSION does not collide with an explicit
+	// --truss-executable and turn a valid invocation into a usage error.
+	version, executable := inv.Flags.TrussVersion, inv.Flags.TrussExecutable
+	if version == "" && executable == "" {
+		version, executable = os.Getenv(trussVersionEnv), os.Getenv(trussExecutableEnv)
 	}
 	if version != "" && executable != "" {
 		return nil, cmd.NewErrUsagef(
