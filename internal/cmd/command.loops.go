@@ -193,7 +193,9 @@ func commandLoopsRunDescribe(ctx *CommandContext, flags *cmd.LoopsRunDescribeFla
 		ctx.Outputf("Owner:       %s\n", *run.User.Email)
 	}
 	ctx.Outputf("Session:     %s\n", run.SessionId)
-	ctx.Outputf("Deployment:  %s\n", run.DeploymentId)
+	if run.DeploymentId != nil {
+		ctx.Outputf("Deployment:  %s\n", *run.DeploymentId)
+	}
 	ctx.Outputf("Base URL:    %s\n", hyperlink(ctx.Stdout, run.BaseUrl))
 	ctx.Outputf("Created:     %s\n", run.CreatedAt.UTC().Format(time.RFC3339))
 	if run.Sampler != nil {
@@ -275,7 +277,10 @@ func commandLoopsRunLogs(ctx *CommandContext, flags *cmd.LoopsRunLogsFlags) erro
 		return runLogsCommand(ctx, &logFlags, fetchLogs, fetchStatus)
 	}
 
-	deploymentID := run.Run.DeploymentId
+	if run.Run.DeploymentId == nil {
+		return fmt.Errorf("Loops run %s has no deployment yet, so it has no trainer logs", flags.RunID)
+	}
+	deploymentID := *run.Run.DeploymentId
 	fetchLogs := func(q logQuery) (*managementapi.GetLogsResponse, error) {
 		direction := managementapi.SortOrder_desc
 		return cl.API().GetLoopsDeploymentsLogs(ctx, deploymentID,
