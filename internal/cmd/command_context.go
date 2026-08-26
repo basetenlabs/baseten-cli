@@ -24,6 +24,7 @@ import (
 	"github.com/itchyny/gojq"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
+	"golang.org/x/term"
 )
 
 // CommandContext is passed to run functions.
@@ -307,17 +308,16 @@ func panicOnOutputError(_ any, err error) {
 
 const oauthClientID = "baseten-cli"
 
-// IsInteractive returns true if the context's stdin is a terminal.
+// IsInteractive returns true if the context's stdin is a terminal. It asks the
+// terminal driver rather than checking for a character device, because
+// /dev/null is a character device without being a terminal, and redirecting
+// stdin from it is how cron and CI usually run.
 func (c *CommandContext) IsInteractive() bool {
 	f, ok := c.Stdin.(*os.File)
 	if !ok {
 		return false
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(f.Fd()))
 }
 
 // ConfirmYesNo prompts the user with a yes/no question. Returns an ErrUsage

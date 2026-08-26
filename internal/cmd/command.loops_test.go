@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -369,6 +370,22 @@ func Test_Loops_Run_Deactivate_NoTTY_RequiresYes(t *testing.T) {
 	m := h.MockManagementAPI()
 
 	err := h.Execute("loops", "run", "deactivate", "--run-id", "r-1")
+	h.Require.ErrorContains(err, "stdin is not a terminal")
+	h.Require.Nil(m.FindCall("POST", "/v1/loops/runs/r-1/deactivate"))
+}
+
+func Test_Loops_Run_Deactivate_DevNullStdinRequiresYes(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	// `... < /dev/null`, as cron and CI run it. /dev/null is a character
+	// device, so this has to reach the --yes guard rather than trying to
+	// prompt and dying on /dev/tty.
+	f, err := os.Open(os.DevNull)
+	h.Require.NoError(err)
+	t.Cleanup(func() { _ = f.Close() })
+	h.StdinReader = f
+
+	err = h.Execute("loops", "run", "deactivate", "--run-id", "r-1")
 	h.Require.ErrorContains(err, "stdin is not a terminal")
 	h.Require.Nil(m.FindCall("POST", "/v1/loops/runs/r-1/deactivate"))
 }
