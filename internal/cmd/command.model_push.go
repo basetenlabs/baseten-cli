@@ -178,6 +178,7 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 		DryRun:          flags.DryRun,
 		DeploymentName:  flags.DeploymentName,
 		EnvironmentName: flags.Environment,
+		Region:          flags.Region,
 		// --watch implies --develop: both push a development deployment.
 		IsDevelopment:           flags.Develop || flags.Watch,
 		OverrideEnvInstanceType: flags.OverrideEnvInstanceType,

@@ -451,12 +451,14 @@ func Test_Model_Push_Validation(t *testing.T) {
 		h.Require.NoError(h.Execute("model", "push", "--dir", dir,
 			"--labels", `{"team":"ml","priority":1}`,
 			"--deploy-timeout", "30m",
+			"--region", "us-west-2",
 		))
 		prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 		h.Require.NotNil(prep)
 		dep := prep.BodyJSON(h.T)["deployment"].(map[string]any)
 		h.Require.Equal(map[string]any{"team": "ml", "priority": float64(1)}, dep["labels"])
 		h.Require.Equal(float64(30), dep["deploy_timeout_minutes"])
+		h.Require.Equal("us-west-2", dep["region"])
 	})
 }
 
