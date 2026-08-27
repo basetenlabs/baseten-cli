@@ -13,8 +13,113 @@ var commandTrain = Command{
 	Children: []Command{
 		commandTrainCapacity,
 		commandTrainCheckpoint,
+		commandTrainInit,
 		commandTrainJob,
 		commandTrainProject,
+		commandTrainPush,
+		commandTrainWorkstation,
+	},
+}
+
+// commandTrainInit scaffolds a training project. Delegated to truss, which owns
+// the project template and the example downloads.
+var commandTrainInit = Command{
+	Name:    "init",
+	Summary: "Scaffold a training project",
+	Description: "Create a training project directory, either empty from the built-in template " +
+		"or from one of the published training examples.\n\n" +
+		"This command needs no credentials: it only writes files, and the examples are " +
+		"downloaded from a public repository.",
+	Flags: TrainInitFlags{},
+	Output: &CommandOutput[TrussDelegatedResult]{
+		JSONOutputUnimportant: true,
+		TextDescription: "A line per directory created, naming where it was written. With " +
+			"--list-examples, the available example names, one per line.",
+		JSONDescription: "Under --output json the text output goes to stderr and stdout is an empty " +
+			"object: this command reports nothing structured yet.",
+		Examples: []CommandExample{
+			{
+				Description: "Scaffold an empty training project.",
+				Command:     "baseten train init --dir ./my-training",
+			},
+			{
+				Description: "List the available examples.",
+				Command:     "baseten train init --list-examples",
+			},
+			{
+				Description: "Download two examples into the current directory.",
+				Command:     "baseten train init --example sft-lora --example grpo",
+			},
+		},
+	},
+}
+
+// commandTrainPush runs a training job from a local config. Delegated to truss,
+// which evaluates the Python config and uploads the code archive.
+var commandTrainPush = Command{
+	Name:    "push",
+	Summary: "Run a training job from a local config",
+	Description: "Create and start a training job, uploading the config file's directory as the " +
+		"job's code.\n\n" +
+		"The config is a Python file that defines the training project and its job, so it " +
+		"is executed rather than read. The flags below override what it declares.\n\n" +
+		"Returns once the job is created. Follow it with " +
+		"'baseten train job logs --job-id <id> --tail'.",
+	Flags: TrainPushFlags{},
+	Output: &CommandOutput[TrussDelegatedResult]{
+		JSONOutputUnimportant: true,
+		TextDescription: "A confirmation that the job was created, with its ID, the commands to " +
+			"follow it, and a link to it in the Baseten UI.",
+		JSONDescription: "Under --output json the text output goes to stderr and stdout is an empty " +
+			"object: this command reports nothing structured yet.",
+		Examples: []CommandExample{
+			{
+				Description: "Run a training job from a config file.",
+				Command:     "baseten train push --config ./train.py",
+			},
+			{
+				Description: "Run a named job on eight H200s over spot capacity.",
+				Command:     "baseten train push --config ./train.py --job-name sweep-3 --accelerator H200:8 --spot",
+			},
+			{
+				Description: "Run a job that opens an interactive session if it fails.",
+				Command:     "baseten train push --config ./train.py --interactive on-failure --interactive-timeout 2h",
+			},
+		},
+	},
+}
+
+// commandTrainWorkstation groups the `baseten train workstation` subcommands.
+var commandTrainWorkstation = Command{
+	Name:    "workstation",
+	Summary: "Manage SSH workstations on training infrastructure",
+	Children: []Command{
+		{
+			Name:    "create",
+			Summary: "Create an SSH workstation",
+			Description: "Create an SSH workstation: a training job that holds GPUs for an " +
+				"interactive session instead of running a training script.\n\n" +
+				"Pass --node-count for a multi-node workstation, where each node has eight GPUs " +
+				"and SLURM is set up across them. Connect once the job is running.",
+			Flags: TrainWorkstationCreateFlags{},
+			Output: &CommandOutput[TrussDelegatedResult]{
+				JSONOutputUnimportant: true,
+				TextDescription: "A confirmation that the workstation was created, with the ssh host of " +
+					"each node and the commands to view its logs or stop it.",
+				JSONDescription: "Under --output json the text output goes to stderr and stdout is an empty " +
+					"object: this command reports nothing structured yet.",
+				Examples: []CommandExample{
+					{
+						Description: "Create a single-GPU workstation.",
+						Command:     "baseten train workstation create",
+					},
+					{
+						Description: "Create a four-node workstation with checkpoint storage.",
+						Command:     "baseten train workstation create --node-count 4 --enable-checkpointing --checkpoint-volume-size 512",
+					},
+				},
+			},
+		},
 	},
 }
 
@@ -121,6 +226,39 @@ var commandTrainCheckpoint = Command{
 				JQExample: CommandExample{
 					Description: "Print just the download URLs.",
 					Command:     "baseten train checkpoint files --job-id p7qr9qv --output jsonl --jq '.url'",
+				},
+			},
+		},
+		{
+			Name:    "deploy",
+			Summary: "Deploy a training job's checkpoints",
+			Description: "Deploy a training job's LoRA checkpoints as a model served by vLLM.\n\n" +
+				"Without --config, the checkpoints and the model that serves them are chosen " +
+				"interactively. Pass --config for a repeatable deploy: it is a Python file " +
+				"defining a DeployCheckpointsConfig, so it is executed rather than read.\n\n" +
+				"The generated model config is written to disk either way, so a deploy can be " +
+				"re-run or edited by hand afterward.",
+			Flags: TrainCheckpointDeployFlags{},
+			Output: &CommandOutput[TrussDelegatedResult]{
+				JSONOutputUnimportant: true,
+				TextDescription: "The new model and deployment IDs with links to the deployment's logs, " +
+					"the path the model config was written to, and an example request naming the " +
+					"deployed checkpoints. With --dry-run, only the config path.",
+				JSONDescription: "Under --output json the text output goes to stderr and stdout is an empty " +
+					"object: this command reports nothing structured yet.",
+				Examples: []CommandExample{
+					{
+						Description: "Deploy a job's checkpoints, choosing them interactively.",
+						Command:     "baseten train checkpoint deploy --job-id p7qr9qv",
+					},
+					{
+						Description: "Deploy the checkpoints a config file names.",
+						Command:     "baseten train checkpoint deploy --config ./deploy_checkpoints.py",
+					},
+					{
+						Description: "Generate the model config without deploying.",
+						Command:     "baseten train checkpoint deploy --job-id p7qr9qv --dry-run --config-out-dir ./generated",
+					},
 				},
 			},
 		},
@@ -467,6 +605,72 @@ type TrainCheckpointFilesFlags struct {
 	TrainJobRefFlags
 }
 
+// TrainCheckpointDeployFlags configures `baseten train checkpoint deploy`.
+// The job is optional here, unlike [TrainJobRefFlags], because a config file can
+// name the checkpoints on its own.
+type TrainCheckpointDeployFlags struct {
+	CommandFlags
+	TrussAuthFlags
+
+	JobID        string `flag:"job-id" desc:"Training job whose checkpoints are deployed. Required unless --config names them."`
+	Config       string `flag:"config" desc:"Python file defining a DeployCheckpointsConfig: which checkpoints deploy and the model that serves them."`
+	ConfigOutDir string `flag:"config-out-dir" desc:"Directory the generated model config is written to. Defaults to a directory under ./truss_configs."`
+	DryRun       bool   `flag:"dry-run" desc:"Write the generated model config without deploying anything."`
+}
+
+// TrainInitFlags configures `baseten train init`.
+type TrainInitFlags struct {
+	CommandFlags
+	// Scaffolding writes files and downloads public examples, so no credential
+	// is forwarded and TrussFlags is embedded rather than TrussAuthFlags.
+	TrussFlags
+
+	Dir          string   `flag:"dir" desc:"Directory to create. Defaults to ./truss-train-init for an empty project, or the current directory when examples are named."`
+	Example      []string `flag:"example" desc:"Name of a published training example to download instead of the empty template. Repeatable."`
+	ListExamples bool     `flag:"list-examples" desc:"List the available example names and exit."`
+}
+
+// TrainPushFlags configures `baseten train push`.
+type TrainPushFlags struct {
+	CommandFlags
+	TrussAuthFlags
+
+	Config string `flag:"config" desc:"Python file defining the training project and its job." required:"true"`
+
+	JobName string `flag:"job-name" desc:"Name for the training job. Defaults to a generated name."`
+	Team    string `flag:"team" desc:"Team name or ID that owns the training project."`
+
+	Accelerator string `flag:"accelerator" desc:"Accelerator type and count, for example 'H200:8'. Overrides the config."`
+	NodeCount   int    `flag:"node-count" desc:"Number of compute nodes. Overrides the config."`
+	Entrypoint  string `flag:"entrypoint" desc:"Command the job runs. Overrides the config."`
+	Priority    int    `flag:"priority" desc:"Queue priority. Higher values are dequeued first."`
+	Spot        bool   `flag:"spot" desc:"Run on interruptible spot capacity, overriding the config. Checkpointing your own progress is up to you."`
+
+	Interactive        string        `flag:"interactive" desc:"Start an interactive session on this trigger." enum:"on-startup,on-failure,on-demand"`
+	InteractiveTimeout time.Duration `flag:"interactive-timeout" desc:"How long an interactive session stays up, as a duration (e.g. '90m', '2h'). Rounded down to whole minutes; must be at least 1m."`
+}
+
+// TrainWorkstationCreateFlags configures `baseten train workstation create`.
+type TrainWorkstationCreateFlags struct {
+	CommandFlags
+	TrussAuthFlags
+
+	Accelerator string `flag:"accelerator" desc:"GPU accelerator type." default:"H100"`
+	GPUCount    int    `flag:"gpu-count" desc:"Number of GPUs on a single node, 1 to 8. Mutually exclusive with --node-count."`
+	NodeCount   int    `flag:"node-count" desc:"Number of eight-GPU nodes, 1 to 16. Mutually exclusive with --gpu-count."`
+	Image       string `flag:"image" desc:"Docker base image the workstation runs."`
+
+	Project string `flag:"project" desc:"Training project that owns the workstation. Defaults to 'workstation-<accelerator>'."`
+	Team    string `flag:"team" desc:"Team name or ID that owns the training project."`
+
+	Orchestrator string `flag:"orchestrator" desc:"Multi-node orchestrator set up across the nodes." enum:"slurm" default:"slurm"`
+
+	EnableCheckpointing  bool   `flag:"enable-checkpointing" desc:"Attach checkpoint storage to the workstation."`
+	CheckpointPath       string `flag:"checkpoint-path" desc:"Path inside the container where checkpoints are written."`
+	CheckpointVolumeSize int    `flag:"checkpoint-volume-size" desc:"Size of the checkpoint volume in GiB."`
+	CheckpointFromJob    string `flag:"checkpoint-from-job" desc:"Training job whose latest checkpoint the workstation starts from."`
+}
+
 // TrainJobListFlags configures `baseten train job list`.
 type TrainJobListFlags struct {
 	CommandFlags
@@ -498,7 +702,7 @@ type TrainLogFlags struct {
 
 	Start time.Time     `flag:"start" desc:"Start of the log time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. Default is 30 minutes before the end. Window must be at most 7 days."`
 	End   time.Time     `flag:"end" desc:"End of the log time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. Default is now. Window must be at most 7 days."`
-	Since time.Duration `flag:"since" desc:"Shortcut for fetching logs from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
+	Since time.Duration `flag:"since" desc:"Shortcut for fetching logs from a relative time ago until now. Accepts a duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
 
 	Limit int `flag:"limit" desc:"Maximum number of log lines to return, paging backward from the end of the window. Use 0 for no limit (every log line in the window). Not applicable with --tail." default:"5000"`
 
@@ -516,7 +720,7 @@ type TrainJobMetricsFlags struct {
 
 	Start time.Time     `flag:"start" desc:"Start of the sample window. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone."`
 	End   time.Time     `flag:"end" desc:"End of the sample window. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. Default is now."`
-	Since time.Duration `flag:"since" desc:"Shortcut for sampling from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Mutually exclusive with --start and --end."`
+	Since time.Duration `flag:"since" desc:"Shortcut for sampling from a relative time ago until now. Accepts a duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Mutually exclusive with --start and --end."`
 }
 
 // TrainJobStopFlags configures `baseten train job stop`.

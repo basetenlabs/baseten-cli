@@ -153,39 +153,45 @@ func (t *Transport) base() http.RoundTripper {
 }
 
 func (t *Transport) Do(req *http.Request) (*http.Response, error) {
+	token, err := t.Credential(req.Context())
+	if err != nil {
+		return nil, err
+	}
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+token)
+	return t.base().RoundTrip(req)
+}
+
+// Credential resolves the session's credential as a bearer token: an API key
+// verbatim, or an OAuth access token, refreshed and persisted when it has
+// expired. The backend accepts either kind under the Bearer scheme, which is
+// also the only shape the truss CLI's forwarded credential accepts.
+func (t *Transport) Credential(ctx context.Context) (string, error) {
 	if t.Session.ephemeralAPIKey != "" {
-		req = req.Clone(req.Context())
-		req.Header.Set("Authorization", "Api-Key "+t.Session.ephemeralAPIKey)
-		return t.base().RoundTrip(req)
+		return t.Session.ephemeralAPIKey, nil
 	}
 
 	if t.Session.profileName == "" {
-		return nil, fmt.Errorf("not logged in; run `baseten auth login` or set BASETEN_API_KEY")
+		return "", fmt.Errorf("not logged in; run `baseten auth login` or set BASETEN_API_KEY")
 	}
 
 	profileName := t.Session.profileName
 	profile, ok := t.Session.store.GetProfile(profileName)
 	if !ok {
-		return nil, fmt.Errorf("profile %q not found; run `baseten auth login`", profileName)
+		return "", fmt.Errorf("profile %q not found; run `baseten auth login`", profileName)
 	}
 
 	switch profile.AuthType {
 	case AuthTypeAPIKey:
-		apiKey, err := t.Session.store.GetAPIKey(profileName)
-		if err != nil {
-			return nil, err
-		}
-		req = req.Clone(req.Context())
-		req.Header.Set("Authorization", "Api-Key "+apiKey)
-		return t.base().RoundTrip(req)
+		return t.Session.store.GetAPIKey(profileName)
 
 	case AuthTypeOAuth:
 		if t.OAuthConfig == nil {
-			return nil, fmt.Errorf("OAuth credential requires OAuthConfig to be set on Transport")
+			return "", fmt.Errorf("OAuth credential requires OAuthConfig to be set on Transport")
 		}
 		cred, err := t.Session.store.GetOAuthCredential(profileName)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		token := &oauth2.Token{
 			AccessToken:  cred.AccessToken,
@@ -193,10 +199,10 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 			Expiry:       cred.Expiry,
 			TokenType:    "Bearer",
 		}
-		src := t.OAuthConfig.TokenSource(OAuthContext(req.Context(), t.base()), token)
+		src := t.OAuthConfig.TokenSource(OAuthContext(ctx, t.base()), token)
 		newToken, err := src.Token()
 		if err != nil {
-			return nil, fmt.Errorf("token expired and refresh failed: %w (run `baseten auth login` to re-authenticate)", err)
+			return "", fmt.Errorf("token expired and refresh failed: %w (run `baseten auth login` to re-authenticate)", err)
 		}
 		if newToken.AccessToken != cred.AccessToken {
 			updated := OAuthCredential{
@@ -205,14 +211,12 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 				Expiry:       newToken.Expiry,
 			}
 			if err := t.Session.store.SetOAuthProfile(profileName, profile.RemoteURL, updated, false, nil); err != nil {
-				return nil, fmt.Errorf("storing refreshed credential: %w", err)
+				return "", fmt.Errorf("storing refreshed credential: %w", err)
 			}
 		}
-		req = req.Clone(req.Context())
-		req.Header.Set("Authorization", "Bearer "+newToken.AccessToken)
-		return t.base().RoundTrip(req)
+		return newToken.AccessToken, nil
 
 	default:
-		return nil, fmt.Errorf("unknown auth type %q", profile.AuthType)
+		return "", fmt.Errorf("unknown auth type %q", profile.AuthType)
 	}
 }

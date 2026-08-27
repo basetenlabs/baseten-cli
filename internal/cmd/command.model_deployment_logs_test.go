@@ -572,6 +572,44 @@ func Test_Model_Deployment_Logs_TailDedupesAcrossPolls(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "next")
 }
 
+func Test_Model_Deployment_Logs_TailEmitsOldestFirstAcrossPolls(t *testing.T) {
+	h := NewCommandHarness(t)
+	api := h.MockManagementAPI()
+	line := func(ts int) map[string]any {
+		return map[string]any{"timestamp": strconv.Itoa(ts), "message": fmt.Sprintf("log-%d", ts), "replica": nil}
+	}
+	logsCalls := 0
+	api.SetRouteFunc("GET", logsLogsPath, func(w http.ResponseWriter, _ *http.Request) {
+		logsCalls++
+		// Both polls answer newest-first, as direction=desc requires. The
+		// second re-fetches log-3 from the overlapping skew window.
+		payload := logsResponse(line(3), line(2), line(1))
+		if logsCalls > 1 {
+			payload = logsResponse(line(5), line(4), line(3))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	})
+	depCalls := 0
+	api.SetRouteFunc("GET", logsDeployPath, func(w http.ResponseWriter, _ *http.Request) {
+		depCalls++
+		status := "ACTIVE"
+		if depCalls > 1 {
+			status = "BUILD_FAILED"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(logsDeployment(status))
+	})
+
+	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, _ time.Duration) error { return nil })
+	err := h.Execute("model", "deployment", "logs",
+		"--model-id", "m", "--deployment-id", "d", "--tail", "--output", "jsonl")
+	h.Require.NoError(err)
+	// Ascending within each batch and across the poll boundary, with the
+	// re-fetched log-3 deduped rather than replayed out of order.
+	h.Require.Equal([]string{"log-1", "log-2", "log-3", "log-4", "log-5"}, jsonlMessages(t, h.Stdout.String()))
+}
+
 func Test_Model_Deployment_Logs_TailJSONLStreaming(t *testing.T) {
 	h := NewCommandHarness(t)
 	api := h.MockManagementAPI()

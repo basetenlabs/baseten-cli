@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -273,7 +274,11 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			c.SilenceErrors = true
 			c.SilenceUsage = true
 			fmt.Fprintln(options.Stderr, ce)
-			if ce.ExitCode() == cmd.ExitUsage {
+			// A subprocess exit code is the child's, not ours. Delegated tools
+			// like truss exit 2 for their own validation errors, which collides
+			// with ExitUsage, so only dump usage for errors that originated here.
+			var subErr *ErrSubprocess
+			if ce.ExitCode() == cmd.ExitUsage && !errors.As(runErr, &subErr) {
 				_ = c.Usage()
 			}
 			ctx.ExitWithCode(int(ce.ExitCode()))
@@ -445,7 +450,7 @@ func (v *friendlyDurationValue) Set(s string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("invalid duration %q: expected a Go duration (e.g. 30m, 1h30m) or <N>d (e.g. 3d)", s)
+	return fmt.Errorf("invalid duration %q: expected a value like 30m, 1h30m, or 3d", s)
 }
 
 // applyOneofGroups wires `oneof:"<group>"`-tagged flags as mutually exclusive

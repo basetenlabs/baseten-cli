@@ -969,3 +969,31 @@ func Test_Loops_Checkpoint_Files_MissingCheckpointID(t *testing.T) {
 	err := h.Execute("loops", "checkpoint", "files")
 	h.Require.ErrorContains(err, "checkpoint-id")
 }
+
+func Test_Loops_Checkpoint_Deploy_ForwardsFlags(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("loops", "checkpoint", "deploy",
+		"--run-id", "run-1", "--checkpoint", "step-50", "--checkpoint", "step-100", "--dry-run"))
+
+	c := fake.only(t)
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "loops", "checkpoints", "deploy",
+		"--run-id", "run-1",
+		"--checkpoints", "step-50,step-100",
+		"--dry-run",
+	}, c.Args)
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_API_KEY=test-key")
+}
+
+func Test_Loops_Checkpoint_Deploy_CheckpointIDs(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("loops", "checkpoint", "deploy",
+		"--checkpoint-id", "cp-1", "--checkpoint-id", "cp-2"))
+
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "loops", "checkpoints", "deploy",
+		"--checkpoint-ids", "cp-1,cp-2",
+	}, fake.only(t).Args)
+}
