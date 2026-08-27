@@ -51,12 +51,7 @@ func BuildPatchPoint(ctx context.Context, opts BuildPatchPointOptions) (*managem
 	if opts.Dir == "" {
 		return nil, errors.New("deploymentpatch: Dir is required")
 	}
-	ignore, err := ResolveTrussIgnore(opts.Dir)
-	if err != nil {
-		return nil, err
-	}
-
-	contentHashes, err := walkContentHashes(ctx, opts.Dir, ignore)
+	contentHashes, err := walkContentHashes(ctx, opts.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -104,55 +99,53 @@ func fileContentHashHex(path string) (string, error) {
 // relative to dir (forward-slash) maps to its file digest (hex) or nil for a
 // directory. Directories (including empty ones) are retained to mirror Truss's
 // glob("**/*") path set; an ignored directory prunes its whole subtree.
-func walkContentHashes(ctx context.Context, dir string, ignore modelarchive.IgnoreFileFunc) (map[string]*string, error) {
+//
+// The enumeration is the archive walk, so a source tree the push would reject
+// is rejected here too, and the paths a patch talks about are the paths a push
+// would upload.
+func walkContentHashes(ctx context.Context, dir string) (map[string]*string, error) {
 	contentHashes := map[string]*string{}
-	walkErr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if p == dir {
+	err := modelarchive.WalkModelArchive(ctx, modelarchive.BuildModelArchiveOptions{
+		Dir: dir,
+		// Truss's path set is a glob over the tree rather than an archive
+		// listing, so directories are entries in their own right.
+		IncludeDirsInWalk: true,
+		IgnoreFileProcessor: func(_ context.Context, opts modelarchive.IgnoreFileProcessorOptions) (modelarchive.IgnoreFileFunc, error) {
+			return CompileTrussIgnore(opts.Contents), nil
+		},
+	}, func(f modelarchive.File) error {
+		switch {
+		case f.Info.IsDir():
+			contentHashes[f.ArchivePath] = nil
 			return nil
-		}
-
-		rel, err := filepath.Rel(dir, p)
-		if err != nil {
-			return err
-		}
-		relSlash := filepath.ToSlash(rel)
-
-		ignored, err := ignore(ctx, modelarchive.IgnoreFileOptions{RelPath: relSlash, Entry: d})
-		if err != nil {
-			return err
-		}
-		if ignored {
-			if d.IsDir() {
-				return filepath.SkipDir
+		case f.LinkTarget != "":
+			// Truss reaches a symlink through Path.is_file, which follows it,
+			// so a link to a file hashes the file's contents and a link to
+			// anything else (a directory, or nothing) is a null entry like a
+			// directory is.
+			target, err := os.Stat(f.SourcePath)
+			if errors.Is(err, fs.ErrNotExist) {
+				contentHashes[f.ArchivePath] = nil
+				return nil
 			}
-			return nil
+			if err != nil {
+				return fmt.Errorf("deploymentpatch: stat symlink target of %s: %w", f.SourcePath, err)
+			}
+			if !target.Mode().IsRegular() {
+				contentHashes[f.ArchivePath] = nil
+				return nil
+			}
 		}
 
-		if d.IsDir() {
-			contentHashes[relSlash] = nil
-			return nil
-		}
-		// Non-regular files (symlinks, devices, sockets) are not part of the
-		// archived tree, so they are skipped here too.
-		if !d.Type().IsRegular() {
-			return nil
-		}
-
-		hashHex, err := fileContentHashHex(p)
+		hashHex, err := fileContentHashHex(f.SourcePath)
 		if err != nil {
 			return err
 		}
-		contentHashes[relSlash] = &hashHex
+		contentHashes[f.ArchivePath] = &hashHex
 		return nil
 	})
-	if walkErr != nil {
-		return nil, walkErr
+	if err != nil {
+		return nil, err
 	}
 	return contentHashes, nil
 }

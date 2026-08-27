@@ -110,5 +110,20 @@
     },
     "name": "binary_file_content",
     "requirements": []
+  },
+  {
+    "config": "model_name: symlink-model\npython_version: py311\n",
+    "content_hashes": {
+      "config.yaml": "150a9d753f040571d24b3b45159a1a71caad1daeac5ee0f778a810b8bfd635ce",
+      "model": null,
+      "model/dangling.py": null,
+      "model/model.py": "3ceae248eacaf486357192011806a5bf7ebc58462f64e88fa1ddffd9be3cda4b",
+      "model/shared_dir": null,
+      "model/util.py": "ba31bad797c8b6c2e85c68a33dfb78cafd558c7d712c3d8904015506a01b9f9b",
+      "shared": null,
+      "shared/util.py": "ba31bad797c8b6c2e85c68a33dfb78cafd558c7d712c3d8904015506a01b9f9b"
+    },
+    "name": "symlinks_within_tree",
+    "requirements": []
   }
 ]
