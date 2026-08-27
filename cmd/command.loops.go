@@ -333,7 +333,7 @@ type LoopsLogFlags struct {
 
 	Start time.Time     `flag:"start" desc:"Start of the log time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. Default is 30 minutes before the end. Window must be at most 7 days."`
 	End   time.Time     `flag:"end" desc:"End of the log time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. Default is now. Window must be at most 7 days."`
-	Since time.Duration `flag:"since" desc:"Shortcut for fetching logs from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
+	Since time.Duration `flag:"since" desc:"Shortcut for fetching logs from a relative time ago until now. Accepts a duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
 
 	Limit int `flag:"limit" desc:"Maximum number of log lines to return, paging backward from the end of the window. Use 0 for no limit (every log line in the window). Not applicable with --tail." default:"5000"`
 
@@ -410,9 +410,9 @@ type LoopsCheckpointDeployFlags struct {
 	CommandFlags
 	TrussAuthFlags
 
-	RunID        string   `flag:"run-id" desc:"Loops run whose checkpoints are deployed."`
-	Checkpoint   []string `flag:"checkpoint" desc:"Name of a checkpoint to deploy, for example 'step-50'. Requires --run-id, since names are scoped to a run. Repeatable."`
-	CheckpointID []string `flag:"checkpoint-id" desc:"ID of a checkpoint to deploy. Repeatable."`
-	Config       string   `flag:"config" desc:"Python file defining a DeployCheckpointsConfig: which checkpoints deploy and the model that serves them."`
+	RunID        string   `flag:"run-id" desc:"Loops run whose checkpoints are deployed. Cannot be combined with --checkpoint-id."`
+	Checkpoint   []string `flag:"checkpoint" desc:"Name of a checkpoint to deploy, for example 'step-50'. Requires --run-id, since names are scoped to a run. Cannot be combined with --checkpoint-id or --config. Repeatable."`
+	CheckpointID []string `flag:"checkpoint-id" desc:"ID of a checkpoint to deploy. Cannot be combined with --run-id, --checkpoint, or --config. Repeatable."`
+	Config       string   `flag:"config" desc:"Python file defining a DeployCheckpointsConfig: which checkpoints deploy and the model that serves them. Cannot be combined with --checkpoint or --checkpoint-id."`
 	DryRun       bool     `flag:"dry-run" desc:"Print the generated model config without deploying anything."`
 }

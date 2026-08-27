@@ -994,6 +994,16 @@ func Test_Train_Push_ForwardsFlags(t *testing.T) {
 	}, fake.only(t).Args)
 }
 
+func Test_Train_Push_RejectsSubMinuteInteractiveTimeout(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	// A sub-minute value truncates to zero minutes, which would be forwarded as
+	// nothing at all and leave truss applying its own default.
+	err := h.Execute("train", "push", "--config", "./train.py", "--interactive-timeout", "45s")
+	h.Require.ErrorContains(err, "--interactive-timeout must be at least 1m")
+	h.Require.Empty(fake.calls)
+}
+
 func Test_Train_Push_OmitsUnsetFlags(t *testing.T) {
 	h, fake := newTrussHarness(t)
 

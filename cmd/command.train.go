@@ -647,7 +647,7 @@ type TrainPushFlags struct {
 	Spot        bool   `flag:"spot" desc:"Run on interruptible spot capacity, overriding the config. Checkpointing your own progress is up to you."`
 
 	Interactive        string        `flag:"interactive" desc:"Start an interactive session on this trigger." enum:"on-startup,on-failure,on-demand"`
-	InteractiveTimeout time.Duration `flag:"interactive-timeout" desc:"How long an interactive session stays up, as a Go duration (e.g. '90m', '2h'). Rounded down to whole minutes."`
+	InteractiveTimeout time.Duration `flag:"interactive-timeout" desc:"How long an interactive session stays up, as a duration (e.g. '90m', '2h'). Rounded down to whole minutes; must be at least 1m."`
 }
 
 // TrainWorkstationCreateFlags configures `baseten train workstation create`.
@@ -702,7 +702,7 @@ type TrainLogFlags struct {
 
 	Start time.Time     `flag:"start" desc:"Start of the log time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. Default is 30 minutes before the end. Window must be at most 7 days."`
 	End   time.Time     `flag:"end" desc:"End of the log time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. Default is now. Window must be at most 7 days."`
-	Since time.Duration `flag:"since" desc:"Shortcut for fetching logs from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
+	Since time.Duration `flag:"since" desc:"Shortcut for fetching logs from a relative time ago until now. Accepts a duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
 
 	Limit int `flag:"limit" desc:"Maximum number of log lines to return, paging backward from the end of the window. Use 0 for no limit (every log line in the window). Not applicable with --tail." default:"5000"`
 
@@ -720,7 +720,7 @@ type TrainJobMetricsFlags struct {
 
 	Start time.Time     `flag:"start" desc:"Start of the sample window. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone."`
 	End   time.Time     `flag:"end" desc:"End of the sample window. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. Default is now."`
-	Since time.Duration `flag:"since" desc:"Shortcut for sampling from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Mutually exclusive with --start and --end."`
+	Since time.Duration `flag:"since" desc:"Shortcut for sampling from a relative time ago until now. Accepts a duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Mutually exclusive with --start and --end."`
 }
 
 // TrainJobStopFlags configures `baseten train job stop`.

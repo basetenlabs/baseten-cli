@@ -944,6 +944,12 @@ func commandTrainProjectCacheDescribe(ctx *CommandContext, flags *cmd.TrainProje
 // refreshed by the child process, so a long tail would outlive it. The command's
 // output points at `baseten train job logs --tail` instead.
 func commandTrainPush(ctx *CommandContext, flags *cmd.TrainPushFlags) error {
+	// A sub-minute timeout truncates to zero, which trussIntArg drops as "not
+	// given": truss would silently apply its default instead of the request.
+	if d := flags.InteractiveTimeout; d != 0 && int(d.Minutes()) == 0 {
+		return cmd.NewErrUsagef("--interactive-timeout must be at least 1m")
+	}
+
 	args := []string{"train", "push", flags.Config}
 	args = trussArg(args, "job-name", flags.JobName)
 	args = trussArg(args, "team", flags.Team)

@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 type trussFakeExecer struct {
 	available map[string]bool
 	stdout    string
+	exitCode  int
 	calls     []*exec.Cmd
 }
 
@@ -43,6 +45,12 @@ func (f *trussFakeExecer) Exec(c *exec.Cmd) error {
 	if f.stdout != "" && c.Stdout != nil {
 		if _, err := fmt.Fprint(c.Stdout, f.stdout); err != nil {
 			return err
+		}
+	}
+	if f.exitCode != 0 {
+		return &cmd.ErrSubprocess{
+			Err:  errors.New("truss: bad arguments"),
+			Code: f.exitCode,
 		}
 	}
 	return nil
@@ -230,4 +238,26 @@ func Test_Truss_Delegated_TextPassesOutputThrough(t *testing.T) {
 	h.Require.NoError(h.Execute("train", "init", "--dir", "./out"))
 
 	h.Require.Equal("job created\n", h.Stdout.String())
+}
+
+func Test_Truss_ExitTwoDoesNotPrintUsage(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.exitCode = 2
+
+	// truss exits 2 for its own validation errors, which collides with the
+	// CLI's own usage exit code; the child's failure is not a usage error here.
+	h.Require.Error(h.Execute("truss", "no-such-command"))
+	h.Require.Equal(2, h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), "truss: bad arguments")
+	h.Require.NotContains(h.Stdout.String(), "Usage:")
+	h.Require.NotContains(h.Stderr.String(), "Usage:")
+}
+
+func Test_Truss_Delegated_ExitTwoKeepsJSONStdout(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.exitCode = 2
+
+	h.Require.Error(h.Execute("train", "init", "--dir", "./out", "--output", "json"))
+	h.Require.Equal(2, h.ExitCode)
+	h.Require.Empty(h.Stdout.String())
 }
