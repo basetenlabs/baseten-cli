@@ -73,7 +73,7 @@ func TestTransport_EphemeralAPIKeyWinsOverCurrentProfile(t *testing.T) {
 	resp, err := tr.Do(mustRequest(t, es.URL))
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, "Api-Key env-key", es.LastAuthHeader)
+	require.Equal(t, "Bearer env-key", es.LastAuthHeader)
 }
 
 func TestTransport_APIKeyInjected(t *testing.T) {
@@ -86,7 +86,7 @@ func TestTransport_APIKeyInjected(t *testing.T) {
 	resp, err := tr.Do(mustRequest(t, es.URL))
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, "Api-Key "+apiKeyA, es.LastAuthHeader)
+	require.Equal(t, "Bearer "+apiKeyA, es.LastAuthHeader)
 }
 
 func TestTransport_OAuthBearerInjected(t *testing.T) {

@@ -425,7 +425,7 @@ type OrgSecretDeleteFlags struct {
 type AuditLogFlags struct {
 	Start time.Time     `flag:"start" desc:"Start of the time window. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. Defaults to the beginning of the audit-log history."`
 	End   time.Time     `flag:"end" desc:"End of the time window. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. Defaults to now."`
-	Since time.Duration `flag:"since" desc:"Shortcut for a window from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Mutually exclusive with --start and --end."`
+	Since time.Duration `flag:"since" desc:"Shortcut for a window from a relative time ago until now. Accepts a duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Mutually exclusive with --start and --end."`
 
 	Limit int `flag:"limit" desc:"Maximum number of entries to return, paging as needed. Use 0 for no limit (every entry in the window)." default:"20"`
 

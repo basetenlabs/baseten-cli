@@ -962,3 +962,143 @@ func Test_Train_Job_Download_MultipleArtifacts(t *testing.T) {
 	h.Require.NotNil(m.FindCall("GET", "/artifact-1.tgz"))
 	h.Require.Nil(m.FindCall("GET", "/artifact-2.tgz"))
 }
+
+func Test_Train_Push_ForwardsFlags(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("train", "push",
+		"--config", "./train.py",
+		"--job-name", "sweep-3",
+		"--team", "research",
+		"--accelerator", "H200:8",
+		"--node-count", "2",
+		"--entrypoint", "./run.sh",
+		"--priority", "10",
+		"--spot",
+		"--interactive", "on-failure",
+		"--interactive-timeout", "90m",
+	))
+
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "train", "push", "./train.py",
+		"--job-name", "sweep-3",
+		"--team", "research",
+		"--accelerator", "H200:8",
+		"--node-count", "2",
+		"--entrypoint", "./run.sh",
+		"--priority", "10",
+		"--spot",
+		// Hyphenated here, underscored downstream, and a duration in whole minutes.
+		"--interactive", "on_failure",
+		"--interactive-timeout-minutes", "90",
+	}, fake.only(t).Args)
+}
+
+func Test_Train_Push_RejectsSubMinuteInteractiveTimeout(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	// A sub-minute value truncates to zero minutes, which would be forwarded as
+	// nothing at all and leave truss applying its own default.
+	err := h.Execute("train", "push", "--config", "./train.py", "--interactive-timeout", "45s")
+	h.Require.ErrorContains(err, "--interactive-timeout must be at least 1m")
+	h.Require.Empty(fake.calls)
+}
+
+func Test_Train_Push_OmitsUnsetFlags(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("train", "push", "--config", "./train.py"))
+
+	h.Require.Equal([]string{"uv", "tool", "run", "truss@latest", "train", "push", "./train.py"}, fake.only(t).Args)
+}
+
+func Test_Train_CheckpointDeploy_ForwardsFlags(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("train", "checkpoint", "deploy",
+		"--job-id", "job-1", "--config-out-dir", "./generated", "--dry-run"))
+
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "train", "deploy_checkpoints",
+		"--job-id", "job-1",
+		"--truss-config-output-dir", "./generated",
+		"--dry-run",
+	}, fake.only(t).Args)
+}
+
+func Test_Train_CheckpointDeploy_RequiresJobOrConfig(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	_ = h.Execute("train", "checkpoint", "deploy")
+	h.Require.True(h.Exited())
+	// Rejected before truss runs, so it never falls back to the latest job.
+	h.Require.Empty(fake.calls)
+	h.Require.Contains(h.Stderr.String(), "--job-id is required unless --config")
+}
+
+func Test_Train_CheckpointDeploy_ConfigWithoutJob(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("train", "checkpoint", "deploy", "--config", "./deploy.py"))
+
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "train", "deploy_checkpoints", "--config", "./deploy.py",
+	}, fake.only(t).Args)
+}
+
+func Test_Train_Init_ForwardsFlagsWithoutAuth(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("train", "init", "--dir", "./out", "--example", "sft-lora", "--example", "grpo"))
+
+	c := fake.only(t)
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "train", "init",
+		"--target-directory", "./out",
+		"--examples", "sft-lora,grpo",
+	}, c.Args)
+	// Scaffolding calls no API, so no credential is forwarded.
+	h.Require.NotContains(strings.Join(c.Env, " "), "BASETEN_TRUSS_AUTH_")
+}
+
+func Test_Train_Init_ListExamples(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("train", "init", "--list-examples"))
+
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "train", "init", "--list-examples",
+	}, fake.only(t).Args)
+}
+
+func Test_Train_WorkstationCreate_ForwardsFlags(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("train", "workstation", "create",
+		"--node-count", "4",
+		"--project", "my-workstation",
+		"--team", "research",
+		"--image", "myrepo/base:1",
+		"--enable-checkpointing",
+		"--checkpoint-path", "/checkpoints",
+		"--checkpoint-volume-size", "512",
+		"--checkpoint-from-job", "job-1",
+	))
+
+	c := fake.only(t)
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "train", "workstation",
+		// Defaulted rather than omitted, so the workstation shape is explicit.
+		"--accelerator", "H100",
+		"--node-count", "4",
+		"--image", "myrepo/base:1",
+		// The project is named, not identified, which is what truss's flag means.
+		"--project-id", "my-workstation",
+		"--team", "research",
+		"--orchestrator", "slurm",
+		"--enable-checkpointing",
+		"--checkpoint-path", "/checkpoints",
+		"--checkpoint-volume-size", "512",
+		"--checkpoint-from-job", "job-1",
+	}, c.Args)
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_API_KEY=test-key")
+}

@@ -39,6 +39,12 @@ jobs:
             exit 1
           fi
 
+      # The train e2e test pushes through truss, which the CLI runs with
+      # `uv tool run`.
+      - name: Install uv
+        if: matrix.os == 'ubuntu-latest'
+        uses: astral-sh/setup-uv@v5
+
       - name: E2E test
         if: matrix.os == 'ubuntu-latest'
         env:

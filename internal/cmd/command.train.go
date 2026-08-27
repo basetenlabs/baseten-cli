@@ -16,6 +16,8 @@ func init() {
 	Register("train capacity update", commandTrainCapacityUpdate)
 	Register("train checkpoint list", commandTrainCheckpointList)
 	Register("train checkpoint files", commandTrainCheckpointFiles)
+	Register("train checkpoint deploy", commandTrainCheckpointDeploy)
+	Register("train init", commandTrainInit)
 	Register("train job list", commandTrainJobList)
 	Register("train job describe", commandTrainJobDescribe)
 	Register("train job logs", commandTrainJobLogs)
@@ -27,6 +29,8 @@ func init() {
 	Register("train job session describe", commandTrainJobSessionDescribe)
 	Register("train project list", commandTrainProjectList)
 	Register("train project cache describe", commandTrainProjectCacheDescribe)
+	Register("train push", commandTrainPush)
+	Register("train workstation create", commandTrainWorkstationCreate)
 }
 
 // trainJobStatusPrefix is the prefix every training job status carries. The CLI
@@ -309,6 +313,48 @@ func commandTrainCheckpointFiles(ctx *CommandContext, flags *cmd.TrainCheckpoint
 		Rows:    rows,
 	})
 	return nil
+}
+
+// commandTrainCheckpointDeploy delegates to the truss CLI, which is the only
+// thing that can evaluate the Python config the deploy is described by.
+func commandTrainCheckpointDeploy(ctx *CommandContext, flags *cmd.TrainCheckpointDeployFlags) error {
+	// Given neither, the job would default to the most recently created one in
+	// any project the caller's teams can reach, as likely to be a colleague's
+	// as their own.
+	if flags.JobID == "" && flags.Config == "" {
+		return cmd.NewErrUsagef("--job-id is required unless --config names the checkpoints to deploy")
+	}
+
+	args := []string{"train", "deploy_checkpoints"}
+	args = trussArg(args, "job-id", flags.JobID)
+	args = trussArg(args, "config", flags.Config)
+	args = trussArg(args, "truss-config-output-dir", flags.ConfigOutDir)
+	args = trussBoolArg(args, "dry-run", flags.DryRun)
+
+	return trussRun(ctx, trussInvocation{
+		Flags:       flags.TrussFlags,
+		Args:        args,
+		ForwardAuth: !flags.TrussNoForwardAuth,
+		JSONResult:  true,
+	})
+}
+
+// commandTrainInit delegates to the truss CLI, which owns the project template
+// and the example downloads. It calls no API, so no credential is forwarded and
+// being logged out is not an error.
+func commandTrainInit(ctx *CommandContext, flags *cmd.TrainInitFlags) error {
+	args := []string{"train", "init"}
+	if flags.ListExamples {
+		args = append(args, "--list-examples")
+	}
+	args = trussArg(args, "target-directory", flags.Dir)
+	args = trussArg(args, "examples", strings.Join(flags.Example, ","))
+
+	return trussRun(ctx, trussInvocation{
+		Flags:      flags.TrussFlags,
+		Args:       args,
+		JSONResult: true,
+	})
 }
 
 func commandTrainJobList(ctx *CommandContext, flags *cmd.TrainJobListFlags) error {
@@ -888,4 +934,66 @@ func commandTrainProjectCacheDescribe(ctx *CommandContext, flags *cmd.TrainProje
 		Rows:    rows,
 	})
 	return nil
+}
+
+// commandTrainPush delegates to the truss CLI, which is the only thing that can
+// evaluate the Python config the job is defined by, and which archives and
+// uploads the config's directory as the job's code.
+//
+// truss's --tail is deliberately not offered: the forwarded credential cannot be
+// refreshed by the child process, so a long tail would outlive it. The command's
+// output points at `baseten train job logs --tail` instead.
+func commandTrainPush(ctx *CommandContext, flags *cmd.TrainPushFlags) error {
+	// A sub-minute timeout truncates to zero, which trussIntArg drops as "not
+	// given": truss would silently apply its default instead of the request.
+	if d := flags.InteractiveTimeout; d != 0 && int(d.Minutes()) == 0 {
+		return cmd.NewErrUsagef("--interactive-timeout must be at least 1m")
+	}
+
+	args := []string{"train", "push", flags.Config}
+	args = trussArg(args, "job-name", flags.JobName)
+	args = trussArg(args, "team", flags.Team)
+	args = trussArg(args, "accelerator", flags.Accelerator)
+	args = trussIntArg(args, "node-count", flags.NodeCount)
+	args = trussArg(args, "entrypoint", flags.Entrypoint)
+	args = trussIntArg(args, "priority", flags.Priority)
+	args = trussBoolArg(args, "spot", flags.Spot)
+	// Interactive triggers are hyphenated in this CLI and underscored downstream,
+	// like every other multi-word value.
+	args = trussArg(args, "interactive", strings.ReplaceAll(flags.Interactive, "-", "_"))
+	args = trussIntArg(args, "interactive-timeout-minutes", int(flags.InteractiveTimeout.Minutes()))
+
+	return trussRun(ctx, trussInvocation{
+		Flags:       flags.TrussFlags,
+		Args:        args,
+		ForwardAuth: !flags.TrussNoForwardAuth,
+		JSONResult:  true,
+	})
+}
+
+// commandTrainWorkstationCreate delegates to the truss CLI, which builds the
+// workstation's job spec and ships the SLURM setup scripts a multi-node
+// workstation needs.
+func commandTrainWorkstationCreate(ctx *CommandContext, flags *cmd.TrainWorkstationCreateFlags) error {
+	args := []string{"train", "workstation"}
+	args = trussArg(args, "accelerator", flags.Accelerator)
+	args = trussIntArg(args, "gpu-count", flags.GPUCount)
+	args = trussIntArg(args, "node-count", flags.NodeCount)
+	args = trussArg(args, "image", flags.Image)
+	// The workstation's project is named rather than identified: it is created
+	// when no project of that name exists yet.
+	args = trussArg(args, "project-id", flags.Project)
+	args = trussArg(args, "team", flags.Team)
+	args = trussArg(args, "orchestrator", flags.Orchestrator)
+	args = trussBoolArg(args, "enable-checkpointing", flags.EnableCheckpointing)
+	args = trussArg(args, "checkpoint-path", flags.CheckpointPath)
+	args = trussIntArg(args, "checkpoint-volume-size", flags.CheckpointVolumeSize)
+	args = trussArg(args, "checkpoint-from-job", flags.CheckpointFromJob)
+
+	return trussRun(ctx, trussInvocation{
+		Flags:       flags.TrussFlags,
+		Args:        args,
+		ForwardAuth: !flags.TrussNoForwardAuth,
+		JSONResult:  true,
+	})
 }

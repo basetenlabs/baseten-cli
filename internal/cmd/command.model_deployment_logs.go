@@ -529,11 +529,17 @@ func tailLogs(ctx *CommandContext, opts tailLogsOptions) *TailDeploymentLogsResu
 					delete(seen, k)
 				}
 			}
+			// Every log fetcher requests direction=desc, so a poll batch
+			// arrives newest-first while batches themselves arrive
+			// chronologically. Walk each batch backward so a followed stream
+			// is ascending throughout rather than descending within a batch
+			// and ascending across them.
+			//
 			// Poll windows overlap by deploymentLogClockSkewBuffer on each
 			// side to tolerate server/client clock skew, so the same record
 			// can reappear across polls; dedup by (timestamp, message,
 			// replica).
-			for i := range resp.Logs {
+			for i := len(resp.Logs) - 1; i >= 0; i-- {
 				log := resp.Logs[i]
 				key := logDedupKey(log)
 				if _, dup := seen[key]; dup {
