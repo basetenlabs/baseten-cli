@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -369,6 +370,22 @@ func Test_Loops_Run_Deactivate_NoTTY_RequiresYes(t *testing.T) {
 	m := h.MockManagementAPI()
 
 	err := h.Execute("loops", "run", "deactivate", "--run-id", "r-1")
+	h.Require.ErrorContains(err, "stdin is not a terminal")
+	h.Require.Nil(m.FindCall("POST", "/v1/loops/runs/r-1/deactivate"))
+}
+
+func Test_Loops_Run_Deactivate_DevNullStdinRequiresYes(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	// `... < /dev/null`, as cron and CI run it. /dev/null is a character
+	// device, so this has to reach the --yes guard rather than trying to
+	// prompt and dying on /dev/tty.
+	f, err := os.Open(os.DevNull)
+	h.Require.NoError(err)
+	t.Cleanup(func() { _ = f.Close() })
+	h.StdinReader = f
+
+	err = h.Execute("loops", "run", "deactivate", "--run-id", "r-1")
 	h.Require.ErrorContains(err, "stdin is not a terminal")
 	h.Require.Nil(m.FindCall("POST", "/v1/loops/runs/r-1/deactivate"))
 }
@@ -968,4 +985,32 @@ func Test_Loops_Checkpoint_Files_MissingCheckpointID(t *testing.T) {
 	h := NewCommandHarness(t)
 	err := h.Execute("loops", "checkpoint", "files")
 	h.Require.ErrorContains(err, "checkpoint-id")
+}
+
+func Test_Loops_Checkpoint_Deploy_ForwardsFlags(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("loops", "checkpoint", "deploy",
+		"--run-id", "run-1", "--checkpoint", "step-50", "--checkpoint", "step-100", "--dry-run"))
+
+	c := fake.only(t)
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "loops", "checkpoints", "deploy",
+		"--run-id", "run-1",
+		"--checkpoints", "step-50,step-100",
+		"--dry-run",
+	}, c.Args)
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_API_KEY=test-key")
+}
+
+func Test_Loops_Checkpoint_Deploy_CheckpointIDs(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("loops", "checkpoint", "deploy",
+		"--checkpoint-id", "cp-1", "--checkpoint-id", "cp-2"))
+
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "loops", "checkpoints", "deploy",
+		"--checkpoint-ids", "cp-1,cp-2",
+	}, fake.only(t).Args)
 }

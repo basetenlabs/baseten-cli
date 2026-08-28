@@ -1,6 +1,10 @@
 package cmd
 
-import "github.com/basetenlabs/baseten-go/client/managementapi"
+import (
+	"time"
+
+	"github.com/basetenlabs/baseten-go/client/managementapi"
+)
 
 var commandModelAPI = Command{
 	Name:    "model-api",
@@ -89,6 +93,48 @@ var commandModelAPI = Command{
 				},
 			},
 		},
+		{
+			Name:    "usage",
+			Summary: "Show Model APIs token usage in time buckets",
+			Description: "Show the workspace's Model APIs token usage as contiguous time buckets, " +
+				"oldest first, broken down by the dimensions passed to --group-by.\n\n" +
+				"Buckets with no usage are included, so the series has no gaps. Usage is retained " +
+				"for 92 days; buckets older than that come back empty. Every bucket in the window " +
+				"is fetched, paging as needed, until --limit buckets are collected.\n\n" +
+				"Usage is attributed to a user when the request was authenticated with a personal " +
+				"API key or an OAuth credential. Usage from workspace or other non-user-scoped " +
+				"credentials has no user.\n\n" +
+				"For machine-readable streaming, prefer --output jsonl over --output json.",
+			Flags: ModelAPIUsageFlags{},
+			Output: &CommandOutput[managementapi.ModelApisUsageBucket]{
+				JSONArrayStreamed: true,
+				TextDescription: "Table with a time column, one column per --group-by dimension, " +
+					"then REQUESTS, INPUT, CACHED, and OUTPUT token counts, followed by an ALL " +
+					"totals row. A bucket with no usage renders as a single \"(no usage)\" row. " +
+					"When no bucket in the window has any usage, prints \"No usage in the selected " +
+					"window.\" to stderr instead of a table.",
+				JSONDescription: "One record per time bucket: its start_time, end_time, and the " +
+					"per-dimension usage totals in results.",
+				Examples: []CommandExample{
+					{
+						Description: "Show daily usage per model over the last 7 days.",
+						Command:     "baseten model-api usage",
+					},
+					{
+						Description: "Show which users drove usage over the last 3 days.",
+						Command:     "baseten model-api usage --since 3d --group-by user",
+					},
+					{
+						Description: "Break hourly usage down by user and model for one model.",
+						Command:     "baseten model-api usage --since 12h --bucket-width 1h --group-by user --group-by model --model <name>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Stream each bucket's per-user output tokens as a JSONL stream.",
+					Command:     "baseten model-api usage --group-by user --output jsonl --jq '.results[] | {user_id, output_tokens}'",
+				},
+			},
+		},
 	},
 }
 
@@ -110,6 +156,29 @@ type ModelAPIListFlags struct {
 	CommandFlags
 
 	AddedOnly bool `flag:"added-only" desc:"Restrict to the Model APIs the workspace has added instead of the full visible catalog."`
+}
+
+// ModelAPIUsageFlags configures `baseten model-api usage`.
+type ModelAPIUsageFlags struct {
+	CommandFlags
+
+	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its bucket start. ISO 8601, local when no timezone is given."`
+	End   time.Time     `flag:"end" desc:"End of the range, exclusive. ISO 8601, local when no timezone is given. Defaults to now."`
+	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '30m', '3d'). Mutually exclusive with --start and --end."`
+
+	BucketWidth string   `flag:"bucket-width" desc:"Width of each time bucket. Also sets the default window: 7d for 1d, 24h for 1h, 60m for 1m." enum:"1m,1h,1d" default:"1d"`
+	GroupBy     []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated. One of: api-key, user, model. Defaults to model."`
+
+	APIKeyPrefixes []string `flag:"api-key-prefix" desc:"Only return usage for these API key prefixes. May be repeated."`
+	UserIDs        []string `flag:"user-id" desc:"Only return usage attributed to these user IDs. May be repeated."`
+	Models         []string `flag:"model" desc:"Only return usage for these models. May be repeated."`
+
+	Limit int `flag:"limit" desc:"Maximum number of time buckets, paging as needed. Rows per bucket depend on --group-by. 0 for no limit."`
+
+	// PageSize is the per-request fetch size while paging. Hidden; exists so
+	// tests can force multiple pages without a full page of buckets. Zero uses
+	// the backend's maximum for the bucket width.
+	PageSize int `flag:"page-size" hidden:"true" desc:"Time buckets fetched per backend request while paging."`
 }
 
 // ModelAPIPredictFlags configures `baseten model-api predict`.

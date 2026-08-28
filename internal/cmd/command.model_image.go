@@ -23,13 +23,6 @@ func init() {
 }
 
 func commandModelImageBuild(ctx *CommandContext, flags *cmd.ModelImageBuildFlags) error {
-	if err := modelImageRequireUV(ctx); err != nil {
-		return err
-	}
-	if _, err := ctx.Execer().LookPath("docker"); err != nil {
-		return cmd.NewErrUsagef("docker not found on PATH, required to build the image")
-	}
-
 	// Everything after `--` is forwarded verbatim to `docker build`; no
 	// positional arguments are allowed before it.
 	passthrough, err := modelImageDockerPassthroughArgs(ctx)
@@ -51,7 +44,16 @@ func commandModelImageBuild(ctx *CommandContext, flags *cmd.ModelImageBuildFlags
 		return fmt.Errorf("create build dir: %w", err)
 	}
 
-	if err := modelImageBuildContext(ctx, &flags.ModelImageCommonFlags, buildDir); err != nil {
+	// The truss command is built before docker is looked up so an unusable truss
+	// is reported first, in the order the steps run.
+	contextCmd, err := modelImageBuildContextCommand(ctx, &flags.ModelImageCommonFlags, buildDir)
+	if err != nil {
+		return err
+	}
+	if _, err := ctx.Execer().LookPath("docker"); err != nil {
+		return cmd.NewErrUsagef("docker not found on PATH, required to build the image")
+	}
+	if err := modelImageExec(ctx, contextCmd); err != nil {
 		return err
 	}
 
@@ -107,13 +109,14 @@ func commandModelImageBuild(ctx *CommandContext, flags *cmd.ModelImageBuildFlags
 }
 
 func commandModelImagePrepare(ctx *CommandContext, flags *cmd.ModelImagePrepareFlags) error {
-	if err := modelImageRequireUV(ctx); err != nil {
-		return err
-	}
 	if err := os.MkdirAll(flags.BuildDir, 0o755); err != nil {
 		return fmt.Errorf("create build dir: %w", err)
 	}
-	if err := modelImageBuildContext(ctx, &flags.ModelImageCommonFlags, flags.BuildDir); err != nil {
+	contextCmd, err := modelImageBuildContextCommand(ctx, &flags.ModelImageCommonFlags, flags.BuildDir)
+	if err != nil {
+		return err
+	}
+	if err := modelImageExec(ctx, contextCmd); err != nil {
 		return err
 	}
 
@@ -133,23 +136,15 @@ func commandModelImagePrepare(ctx *CommandContext, flags *cmd.ModelImagePrepareF
 	return nil
 }
 
-// modelImageRequireUV confirms the `uv` binary, required to run the truss CLI,
-// is on PATH.
-func modelImageRequireUV(ctx *CommandContext) error {
-	if _, err := ctx.Execer().LookPath("uv"); err != nil {
-		return cmd.NewErrUsagef("uv not found on PATH, required to run truss; install from https://docs.astral.sh/uv/")
-	}
-	return nil
-}
-
-// modelImageBuildContext runs `uv tool run truss@<version> image build-context`,
+// modelImageBuildContextCommand builds the `truss image build-context` command,
 // which generates the Docker build context for the model dir into buildDir. Its
-// output is routed to stderr so our stdout stays clean for the result.
-// TRUSS_NO_UPDATE_CHECK suppresses truss's update check and its associated
-// disk/network side effects. BT_USE_NON_ROOT_USER defaults the image to a
-// non-root user (matching the backend) and is omitted when --root-user is set.
-func modelImageBuildContext(ctx *CommandContext, flags *cmd.ModelImageCommonFlags, buildDir string) error {
-	env := []string{"TRUSS_NO_UPDATE_CHECK=1"}
+// output is routed to stderr so our stdout stays clean for the result. No
+// credential is forwarded: build-context runs entirely locally.
+//
+// BT_USE_NON_ROOT_USER defaults the image to a non-root user (matching the
+// backend) and is omitted when --root-user is set.
+func modelImageBuildContextCommand(ctx *CommandContext, flags *cmd.ModelImageCommonFlags, buildDir string) (*exec.Cmd, error) {
+	var env []string
 	if !flags.RootUser {
 		env = append(env, "BT_USE_NON_ROOT_USER=true")
 	}
@@ -157,15 +152,16 @@ func modelImageBuildContext(ctx *CommandContext, flags *cmd.ModelImageCommonFlag
 		env = append(env, "TRUSS_CACHE_MOUNT_ID="+flags.CacheMountID)
 	}
 
-	c := exec.CommandContext(ctx, "uv",
-		"tool", "run", "truss@"+flags.TrussVersion,
-		"image", "build-context", buildDir, flags.Dir,
-	)
-	c.Stdin = ctx.Stdin
+	c, err := trussCommand(ctx, trussInvocation{
+		Flags: flags.TrussFlags,
+		Args:  []string{"image", "build-context", buildDir, flags.Dir},
+		Env:   env,
+	})
+	if err != nil {
+		return nil, err
+	}
 	c.Stdout = ctx.Stderr
-	c.Stderr = ctx.Stderr
-	c.Env = append(os.Environ(), env...)
-	return modelImageExec(ctx, c)
+	return c, nil
 }
 
 // modelImageExec runs c via the context's Execer, which propagates a non-zero

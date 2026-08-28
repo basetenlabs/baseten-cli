@@ -19,6 +19,7 @@ func init() {
 	Register("loops usage", commandLoopsUsage)
 	Register("loops checkpoint list", commandLoopsCheckpointList)
 	Register("loops checkpoint files", commandLoopsCheckpointFiles)
+	Register("loops checkpoint deploy", commandLoopsCheckpointDeploy)
 }
 
 // loopsTrainerLiveStatuses are the trainer deployment statuses where the trainer
@@ -193,7 +194,9 @@ func commandLoopsRunDescribe(ctx *CommandContext, flags *cmd.LoopsRunDescribeFla
 		ctx.Outputf("Owner:       %s\n", *run.User.Email)
 	}
 	ctx.Outputf("Session:     %s\n", run.SessionId)
-	ctx.Outputf("Deployment:  %s\n", run.DeploymentId)
+	if run.DeploymentId != nil {
+		ctx.Outputf("Deployment:  %s\n", *run.DeploymentId)
+	}
 	ctx.Outputf("Base URL:    %s\n", hyperlink(ctx.Stdout, run.BaseUrl))
 	ctx.Outputf("Created:     %s\n", run.CreatedAt.UTC().Format(time.RFC3339))
 	if run.Sampler != nil {
@@ -275,7 +278,10 @@ func commandLoopsRunLogs(ctx *CommandContext, flags *cmd.LoopsRunLogsFlags) erro
 		return runLogsCommand(ctx, &logFlags, fetchLogs, fetchStatus)
 	}
 
-	deploymentID := run.Run.DeploymentId
+	if run.Run.DeploymentId == nil {
+		return fmt.Errorf("Loops run %s has no deployment yet, so it has no trainer logs", flags.RunID)
+	}
+	deploymentID := *run.Run.DeploymentId
 	fetchLogs := func(q logQuery) (*managementapi.GetLogsResponse, error) {
 		direction := managementapi.SortOrder_desc
 		return cl.API().GetLoopsDeploymentsLogs(ctx, deploymentID,
@@ -539,6 +545,25 @@ func commandLoopsCheckpointFiles(ctx *CommandContext, flags *cmd.LoopsCheckpoint
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "SIZE", "URL"}, Rows: rows})
 	return nil
+}
+
+// commandLoopsCheckpointDeploy delegates to the truss CLI: it is the only
+// command in this surface backed by GraphQL rather than REST, and its config
+// input is a Python file only truss can evaluate.
+func commandLoopsCheckpointDeploy(ctx *CommandContext, flags *cmd.LoopsCheckpointDeployFlags) error {
+	args := []string{"loops", "checkpoints", "deploy"}
+	args = trussArg(args, "run-id", flags.RunID)
+	args = trussArg(args, "checkpoints", strings.Join(flags.Checkpoint, ","))
+	args = trussArg(args, "checkpoint-ids", strings.Join(flags.CheckpointID, ","))
+	args = trussArg(args, "config", flags.Config)
+	args = trussBoolArg(args, "dry-run", flags.DryRun)
+
+	return trussRun(ctx, trussInvocation{
+		Flags:       flags.TrussFlags,
+		Args:        args,
+		ForwardAuth: !flags.TrussNoForwardAuth,
+		JSONResult:  true,
+	})
 }
 
 // loopsApplySamplerToRow fills in a usage row's sampler half.
