@@ -27,6 +27,35 @@ brew update
 brew upgrade baseten
 ```
 
+### Nix (macOS and Linux)
+
+This repository is a Nix flake. Run the CLI without installing anything:
+
+```bash
+nix run github:basetenlabs/baseten-cli -- --help
+```
+
+or install it into your profile:
+
+```bash
+nix profile install github:basetenlabs/baseten-cli
+```
+
+To install with [Home Manager](https://github.com/nix-community/home-manager),
+add the flake as an input and put the package in `home.packages`:
+
+```nix
+{
+  inputs.baseten-cli.url = "github:basetenlabs/baseten-cli";
+
+  # In your home-manager configuration (with `inputs` passed through):
+  # home.packages = [ inputs.baseten-cli.packages.${pkgs.system}.default ];
+}
+```
+
+The flake also exposes `overlays.default`, which adds the package as
+`pkgs.baseten`.
+
 ### Prebuilt binaries
 
 Download the [latest release](https://github.com/basetenlabs/baseten-cli/releases/latest) for Windows, macOS, or Linux, extract the archive, and place the `baseten` executable on your `PATH`.
