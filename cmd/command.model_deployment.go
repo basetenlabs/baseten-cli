@@ -161,7 +161,10 @@ var commandModelDeployment = Command{
 			Flags:       ModelDeploymentDescribeFlags{},
 			Output: &CommandOutput[managementapi.Deployment]{
 				TextDescription: "Field-per-line summary: ID, Name, Model, Environment (optional), " +
-					"Status, Instance (optional), Replicas, Created.",
+					"Status, Instance (optional), Replicas, Invoke URL, Logs URL, Created, " +
+					"Backpressure, and an indented Autoscaling block covering every setting " +
+					"'update-autoscaling' can change. Settings that are unset or inherited " +
+					"show as '-'.",
 				Examples: []CommandExample{
 					{
 						Description: "Describe a deployment by ID.",
@@ -259,6 +262,80 @@ var commandModelDeployment = Command{
 				},
 			},
 		},
+		{
+			Name:    "rename",
+			Summary: "Rename a deployment",
+			Description: "Change a deployment's name. The new name must be unique among the " +
+				"model's deployments and may contain only alphanumeric characters, hyphens, " +
+				"underscores, and periods.\n\n" +
+				"Run 'baseten model deployment describe' to see the current values.",
+			Flags: ModelDeploymentRenameFlags{},
+			Output: &CommandOutput[managementapi.Deployment]{
+				TextDescription: "On success, prints \"Renamed deployment <id> to <name>\" to stderr; no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Rename a deployment.",
+						Command:     "baseten model deployment rename --model-id <model-id> --deployment-id <deployment-id> --new-name canary",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the deployment's new name.",
+					Command:     "baseten model deployment rename --model-id <model-id> --deployment-id <deployment-id> --new-name canary --jq '.name'",
+				},
+			},
+		},
+		{
+			Name:    "update-autoscaling",
+			Summary: "Update autoscaling settings for a deployment",
+			Description: "Update a deployment's autoscaling settings.\n\n" +
+				"Only the flags you pass are changed; every other setting is left alone. " +
+				"Changes are applied asynchronously, so the response reports whether the " +
+				"request was accepted rather than the settled state.\n\n" +
+				"Run 'baseten model deployment describe' to see the current values.",
+			Flags: ModelDeploymentUpdateAutoscalingFlags{},
+			Output: &CommandOutput[managementapi.UpdateAutoscalingSettingsResponse]{
+				TextDescription: "The status of the request followed by the server's message.",
+				Examples: []CommandExample{
+					{
+						Description: "Raise a deployment's replica bounds.",
+						Command:     "baseten model deployment update-autoscaling --model-id <model-id> --deployment-id <deployment-id> --min-replica 2 --max-replica 10",
+					},
+					{
+						Description: "Shorten the scale-down delay, leaving every other setting unchanged.",
+						Command:     "baseten model deployment update-autoscaling --model-id <model-id> --deployment-id <deployment-id> --scale-down-delay 60",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the status.",
+					Command:     "baseten model deployment update-autoscaling --model-id <model-id> --deployment-id <deployment-id> --min-replica 2 --jq '.status'",
+				},
+			},
+		},
+		{
+			Name:    "update-request-backpressure",
+			Summary: "Update request backpressure settings for a deployment",
+			Description: "Set the policy applied when a deployment's request queue is full. " +
+				"Pass --policy null to clear an existing policy and fall back to the default.\n\n" +
+				"Run 'baseten model deployment describe' to see the current values.",
+			Flags: ModelDeploymentUpdateRequestBackpressureFlags{},
+			Output: &CommandOutput[managementapi.RequestBackpressureSettings]{
+				TextDescription: "The resulting policy, or \"none\" when no policy is set.",
+				Examples: []CommandExample{
+					{
+						Description: "Reject requests once the queue is full.",
+						Command:     "baseten model deployment update-request-backpressure --model-id <model-id> --deployment-id <deployment-id> --policy reject-on-full",
+					},
+					{
+						Description: "Clear the policy.",
+						Command:     "baseten model deployment update-request-backpressure --model-id <model-id> --deployment-id <deployment-id> --policy null",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the resulting policy.",
+					Command:     "baseten model deployment update-request-backpressure --model-id <model-id> --deployment-id <deployment-id> --policy reject-on-full --jq '.policy'",
+				},
+			},
+		},
 		commandModelDeploymentReplica,
 	},
 }
@@ -269,6 +346,32 @@ type ModelDeploymentIDFlags struct {
 	ModelRefFlags
 	DeploymentID   string `flag:"deployment-id" desc:"ID of the deployment." oneof:"deployment-ref"`
 	DeploymentName string `flag:"deployment-name" desc:"Name of the deployment." oneof:"deployment-ref"`
+}
+
+// ModelDeploymentRenameFlags configures `baseten model deployment rename`.
+// The new name is --new-name rather than --name, which already identifies the
+// deployment being renamed.
+type ModelDeploymentRenameFlags struct {
+	CommandFlags
+	ModelDeploymentIDFlags
+
+	NewName string `flag:"new-name" desc:"New name for the deployment, unique among the model's deployments. Only alphanumeric characters, hyphens, underscores, and periods are allowed." required:"true"`
+}
+
+// ModelDeploymentUpdateAutoscalingFlags configures
+// `baseten model deployment update-autoscaling`.
+type ModelDeploymentUpdateAutoscalingFlags struct {
+	CommandFlags
+	ModelDeploymentIDFlags
+	AutoscalingSettingsFlags
+}
+
+// ModelDeploymentUpdateRequestBackpressureFlags configures
+// `baseten model deployment update-request-backpressure`.
+type ModelDeploymentUpdateRequestBackpressureFlags struct {
+	CommandFlags
+	ModelDeploymentIDFlags
+	RequestBackpressureFlags
 }
 
 // ModelDeploymentListFlags configures `baseten model deployment list`.

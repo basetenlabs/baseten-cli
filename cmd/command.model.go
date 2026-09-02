@@ -239,6 +239,30 @@ type ModelRefFlags struct {
 	Team      string `flag:"team" desc:"Team name or ID. Only valid with --model-name."`
 }
 
+// AutoscalingSettingsFlags is the shared autoscaling flag set for
+// `baseten model deployment update-autoscaling` and its environment twin. Each
+// field is a pointer because the settings endpoints patch only what the request
+// body carries: a nil field means the flag was never passed, so that setting is
+// left unchanged rather than reset.
+type AutoscalingSettingsFlags struct {
+	MinReplica                  OptionalFlag[int] `flag:"min-replica" desc:"Minimum number of replicas."`
+	MaxReplica                  OptionalFlag[int] `flag:"max-replica" desc:"Maximum number of replicas."`
+	AutoscalingWindow           OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds."`
+	ScaleDownDelay              OptionalFlag[int] `flag:"scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds."`
+	ConcurrencyTarget           OptionalFlag[int] `flag:"concurrency-target" desc:"Number of requests per replica before scaling up."`
+	TargetUtilizationPercentage OptionalFlag[int] `flag:"target-utilization-percentage" desc:"Target utilization percentage for scaling up and down."`
+	TargetInFlightTokens        OptionalFlag[int] `flag:"target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only."`
+	MaxScaleDownRate            OptionalFlag[int] `flag:"max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window."`
+}
+
+// RequestBackpressureFlags is the shared policy flag for
+// `baseten model deployment update-request-backpressure` and its environment
+// twin. Passing null clears an existing policy, which the API treats as
+// distinct from omitting the field.
+type RequestBackpressureFlags struct {
+	Policy OptionalFlag[string] `flag:"policy" desc:"Backpressure policy to apply. Pass null to clear an existing policy." enum:"queue-on-full,reject-on-full" nullable:"true" required:"true"`
+}
+
 // LogFlags is the shared log-query flag set for `baseten model deployment logs`
 // and `baseten model environment logs`. Both commands accept the same window,
 // filter, and tail flags; only the log source differs.

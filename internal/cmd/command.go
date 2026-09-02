@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -344,7 +345,13 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 	for _, meta := range metas {
 		desc := meta.Desc
 		if len(meta.Enum) > 0 {
-			desc += " {" + strings.Join(meta.Enum, ",") + "}"
+			// A nullable flag accepts null on top of its enum, so show it as a
+			// choice rather than leaving callers to read the description.
+			values := meta.Enum
+			if meta.Nullable {
+				values = append(slices.Clone(values), cmd.NullFlagValue)
+			}
+			desc += " {" + strings.Join(values, ",") + "}"
 		}
 
 		ptr := val.FieldByName(meta.FieldName).Addr().Interface()
@@ -365,7 +372,24 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 		case *bool:
 			flags.BoolVarP(ptr, meta.Name, meta.Short, meta.Default == "true", desc)
 		case *[]string:
-			flags.StringArrayVarP(ptr, meta.Name, meta.Short, nil, desc)
+			if len(meta.Enum) > 0 {
+				flags.VarP(&enumSliceValue{value: ptr, allowed: meta.Enum}, meta.Name, meta.Short, desc)
+			} else {
+				flags.StringArrayVarP(ptr, meta.Name, meta.Short, nil, desc)
+			}
+		case *cmd.OptionalFlag[int]:
+			flags.VarP(newOptionalFlagValue(ptr, "int", meta, parseFlagInt), meta.Name, meta.Short, desc)
+		case *cmd.OptionalFlag[bool]:
+			// Deliberately no NoOptDefVal, so a bare --flag is an error rather
+			// than an implicit true. These are settings a caller turns off as
+			// often as on, and `--rolling-deploy=false` is a poor way to spell
+			// that. The note is appended here rather than written into each
+			// description because it holds for every flag of this type, and
+			// because plain bool flags elsewhere in the CLI do take no value.
+			flags.VarP(newOptionalFlagValue(ptr, "bool", meta, strconv.ParseBool),
+				meta.Name, meta.Short, desc+" Takes an explicit value. {true,false}")
+		case *cmd.OptionalFlag[string]:
+			flags.VarP(newOptionalFlagValue(ptr, "string", meta, enumStringParser(meta.Enum)), meta.Name, meta.Short, desc)
 		case *time.Time:
 			flags.VarP(&friendlyTimeValue{value: ptr}, meta.Name, meta.Short, desc)
 		case *time.Duration:
@@ -389,6 +413,104 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 			}
 		}
 	}
+}
+
+// optionalFlagValue binds a [cmd.OptionalFlag] to pflag. Only parsing varies by
+// type, so parse is supplied per type and the rest is shared. On a flag tagged
+// nullable, the literal 'null' is intercepted before parsing, so no parser has
+// to know about it.
+type optionalFlagValue[T any] struct {
+	flag     *cmd.OptionalFlag[T]
+	typeName string
+	nullable bool
+	parse    func(string) (T, error)
+}
+
+func newOptionalFlagValue[T any](
+	flag *cmd.OptionalFlag[T], typeName string, meta cmd.CommandFlag, parse func(string) (T, error),
+) *optionalFlagValue[T] {
+	return &optionalFlagValue[T]{
+		flag:     flag,
+		typeName: typeName,
+		nullable: meta.Nullable,
+		parse:    parse,
+	}
+}
+
+func (v *optionalFlagValue[T]) String() string {
+	if !v.flag.IsSet() {
+		return ""
+	}
+	if v.flag.IsNull() {
+		return cmd.NullFlagValue
+	}
+	return fmt.Sprint(*v.flag.Pointer())
+}
+
+func (v *optionalFlagValue[T]) Type() string { return v.typeName }
+
+func (v *optionalFlagValue[T]) Set(s string) error {
+	// Only a flag that opted in treats null specially. On any other flag it is
+	// just input: a plain string flag may legitimately be given "null".
+	if v.nullable && s == cmd.NullFlagValue {
+		v.flag.SetNull()
+		return nil
+	}
+	parsed, err := v.parse(s)
+	if err != nil {
+		return err
+	}
+	v.flag.SetValue(parsed)
+	return nil
+}
+
+func parseFlagInt(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer %q", s)
+	}
+	return n, nil
+}
+
+// enumStringParser returns a parser constrained to allowed, or an unconstrained
+// one when the flag declares no enum.
+func enumStringParser(allowed []string) func(string) (string, error) {
+	return func(s string) (string, error) {
+		if len(allowed) > 0 && !slices.Contains(allowed, s) {
+			return "", fmt.Errorf("must be one of: %s", strings.Join(allowed, ", "))
+		}
+		return s, nil
+	}
+}
+
+// enumSliceValue implements pflag.Value for a repeatable, comma-separated
+// enum-constrained list. Repeating the flag appends, so
+// `--weekdays MONDAY,TUESDAY` and `--weekdays MONDAY --weekdays TUESDAY` agree.
+type enumSliceValue struct {
+	value   *[]string
+	allowed []string
+	changed bool
+}
+
+func (v *enumSliceValue) String() string { return strings.Join(*v.value, ",") }
+
+func (v *enumSliceValue) Type() string { return "strings" }
+
+func (v *enumSliceValue) Set(s string) error {
+	parsed := strings.Split(s, ",")
+	for _, item := range parsed {
+		if !slices.Contains(v.allowed, item) {
+			return fmt.Errorf("%q must be one of: %s", item, strings.Join(v.allowed, ", "))
+		}
+	}
+	// The first Set discards any default so a caller's list replaces it rather
+	// than extending it.
+	if !v.changed {
+		*v.value = nil
+		v.changed = true
+	}
+	*v.value = append(*v.value, parsed...)
+	return nil
 }
 
 // friendlyTimeValue implements pflag.Value for a time.Time accepting a few
@@ -416,6 +538,10 @@ func (v *friendlyTimeValue) Set(s string) error {
 		time.RFC3339,
 		"2006-01-02T15:04:05",
 		"2006-01-02 15:04:05",
+		// Minute precision, which is what the autoscaling schedule flags ask
+		// for: a schedule window has no use for seconds.
+		"2006-01-02T15:04",
+		"2006-01-02 15:04",
 		"2006-01-02",
 	} {
 		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
@@ -423,7 +549,7 @@ func (v *friendlyTimeValue) Set(s string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("invalid time %q: expected ISO 8601 (e.g. 2026-05-14, 2026-05-14T12:00:00, 2026-05-14T12:00:00Z)", s)
+	return fmt.Errorf("invalid time %q: expected ISO 8601 (e.g. 2026-05-14, 2026-05-14T12:00, 2026-05-14T12:00:00, 2026-05-14T12:00:00Z)", s)
 }
 
 // friendlyDurationValue implements pflag.Value for a time.Duration that also
