@@ -438,9 +438,10 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 
 // outputFormatFromArgs returns the --output value read straight out of argv,
 // for the failures cobra rejects before it finishes parsing flags. Returns ""
-// when the invocation names no format, which includes a typo'd value: a bad
-// --output is reported on stderr only, since there is no telling what the
-// caller meant by it.
+// when the invocation names no format, a typo'd value included, since there
+// is no telling what the caller meant by it. --jq counts as json only if no
+// --output follows. Shorthands combined into one arg (-vojson) are not
+// recognized.
 func outputFormatFromArgs(args []string) string {
 	format := ""
 	for i, arg := range args {
@@ -451,12 +452,9 @@ func outputFormatFromArgs(args []string) string {
 			}
 		case strings.HasPrefix(arg, "--output="):
 			return strings.TrimPrefix(arg, "--output=")
-		// Shorthand with an attached value, as pflag accepts it: -o=json, -ojson.
 		case strings.HasPrefix(arg, "-o"):
 			return strings.TrimPrefix(strings.TrimPrefix(arg, "-o"), "=")
-		case arg == "--jq" || arg == "-q" || strings.HasPrefix(arg, "--jq=") || strings.HasPrefix(arg, "-q="):
-			// --jq resolves to json when the invocation sets no format of its
-			// own, so record it and keep scanning for an explicit --output.
+		case arg == "--jq" || strings.HasPrefix(arg, "--jq=") || strings.HasPrefix(arg, "-q"):
 			format = "json"
 		}
 	}
