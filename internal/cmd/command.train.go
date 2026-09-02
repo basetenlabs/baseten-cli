@@ -736,7 +736,7 @@ func commandTrainJobUpdate(ctx *CommandContext, flags *cmd.TrainJobUpdateFlags) 
 		return err
 	}
 	resp, err := cl.API().PatchTrainingProjectsJobs(ctx, ref.ProjectID, ref.JobID,
-		managementapi.UpdateTrainingJobRequest{Priority: flags.Priority})
+		managementapi.UpdateTrainingJobRequest{Priority: &flags.Priority})
 	if err != nil {
 		return fmt.Errorf("update training job %s: %w", flags.JobID, err)
 	}
