@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -253,4 +254,19 @@ func modelAuditLogParams(q auditLogQuery) managementapi.GetV1ModelsModelIdAuditL
 		StartEpochMillis: q.StartEpochMillis,
 		EndEpochMillis:   q.EndEpochMillis,
 	}
+}
+
+// enumToAPIValue converts a lowercase-kebab CLI enum value to the ALL_CAPS form
+// the API uses. The mapping is mechanical, so a value added to a flag's enum
+// tag needs no change here.
+func enumToAPIValue(value string) string {
+	return strings.ToUpper(strings.ReplaceAll(value, "-", "_"))
+}
+
+// enumFromAPIValue is the inverse of [enumToAPIValue]. The settings commands
+// use it when displaying an enum a flag also accepts, so a value read out of
+// describe can be passed straight back in. Read-only enums such as deployment
+// status are left as the API spells them.
+func enumFromAPIValue(value string) string {
+	return strings.ToLower(strings.ReplaceAll(value, "_", "-"))
 }
