@@ -541,10 +541,13 @@ func Test_Model_Push_WaitFailure(t *testing.T) {
 	h.Require.NotZero(h.ExitCode)
 	h.Require.Contains(h.Stderr.String(), "did not become active (status: BUILD_FAILED)")
 
+	// The result carries the failed status, so it stands as the only document
+	// on stdout: no error envelope follows it.
 	var result map[string]any
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
 	dep, _ := result["deployment"].(map[string]any)
 	h.Require.Equal("BUILD_FAILED", dep["status"])
+	h.Require.NotContains(result, "error")
 }
 
 // --tail without --wait stops only on terminal-failure statuses; logs go
@@ -695,7 +698,9 @@ func Test_Model_Push_Watch_ReadinessFailureNoJSON(t *testing.T) {
 	err := h.Execute("model", "push", "--dir", dir, "--watch", "--output", "json")
 	h.Require.Error(err)
 	h.Require.Contains(h.Stderr.String(), "not ready")
-	h.Require.Zero(h.Stdout.Len(), "no JSON result on a failed watch")
+	// A failed watch produces no push result, so the error envelope stands
+	// alone on stdout.
+	h.Require.Contains(decodeJSONErrorEnvelope(h.CommandHarness).Message, "not ready")
 
 	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 	h.Require.NotNil(prep)

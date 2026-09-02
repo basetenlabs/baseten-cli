@@ -166,6 +166,9 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	// failure; only the one-shot tail/wait paths classify the settled status.
 	if !flags.Watch && (flags.Tail || flags.Wait) &&
 		created.Deployment.Status != managementapi.DeploymentStatus_ACTIVE {
+		// The object above already carries the failed status, so it stands as
+		// the single document on stdout.
+		ctx.SuppressJSONError()
 		return fmt.Errorf("failed deployment status: %s", created.Deployment.Status)
 	}
 	return nil

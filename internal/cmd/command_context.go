@@ -44,9 +44,10 @@ type CommandContext struct {
 	// through the query before encoding. Leaves should not set this directly.
 	JQQuery *gojq.Query
 
-	verbose      bool
-	jqErr        error
-	strictOutput bool
+	verbose           bool
+	jqErr             error
+	strictOutput      bool
+	suppressJSONError bool
 
 	// authInfo lazily resolves the remote and auth session. Use the Remote and
 	// Session accessors; do not read its cached fields directly.
@@ -119,6 +120,42 @@ func (c *CommandContext) encodeJSON(v any) {
 		enc.SetIndent("", "  ")
 	}
 	panicOnOutputError(0, enc.Encode(v))
+}
+
+// SuppressJSONError declares that the JSON already written to stdout reports
+// the failure the command is about to return, so the framework must not
+// append an error envelope after it. Call it before returning an error from a
+// command whose payload encodes its own verdict, keeping stdout a single JSON
+// document under --output json.
+func (c *CommandContext) SuppressJSONError() {
+	c.suppressJSONError = true
+}
+
+// writeJSONError appends the error envelope for a failed command to stdout.
+// Does nothing unless the output format is json or jsonl: under text output
+// the stderr message is the whole report.
+//
+// The envelope bypasses [CommandContext.JQQuery], since a --jq expression is
+// written against the command's payload and would drop or mangle the error.
+// It is a document of its own rather than a wrapper on whatever preceded it,
+// so it ends up as the last JSON document on stdout. Streamed commands
+// terminate their array via the writer's deferred Close before this runs.
+//
+// A subprocess failure is the one failure the framework exempts on its own.
+// The exit code belongs to the child, and so does stdout: [ErrSubprocess]
+// commands hand the child's stream through untouched, and it is not
+// guaranteed to be JSON at all. A command can also opt out for itself via
+// [SuppressJSONError].
+func (c *CommandContext) writeJSONError(ce cmd.CommandError, runErr error) {
+	var subErr *ErrSubprocess
+	if !c.JSON || c.suppressJSONError || errors.As(runErr, &subErr) {
+		return
+	}
+	jsonErr := apiErrorFields(runErr)
+	jsonErr.Message = ce.Error()
+	jsonErr.Type = cmd.ErrorTypeName(ce)
+	jsonErr.ExitCode = ce.ExitCode()
+	c.encodeJSON(cmd.JSONErrorEnvelope{Error: jsonErr})
 }
 
 // NewJSONArrayWriter returns a writer that outputs a JSON array
