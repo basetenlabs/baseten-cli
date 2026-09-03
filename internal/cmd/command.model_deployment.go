@@ -27,6 +27,9 @@ func init() {
 	Register("model deployment delete", commandModelDeploymentDelete)
 	Register("model deployment download", commandModelDeploymentDownload)
 	Register("model deployment promote", commandModelDeploymentPromote)
+	Register("model deployment rename", commandModelDeploymentRename)
+	Register("model deployment update-autoscaling", commandModelDeploymentUpdateAutoscaling)
+	Register("model deployment update-request-backpressure", commandModelDeploymentUpdateRequestBackpressure)
 }
 
 // DeploymentRef is the result of resolving [cmd.ModelDeploymentIDFlags]: a
@@ -162,7 +165,46 @@ func commandModelDeploymentDescribe(ctx *CommandContext, flags *cmd.ModelDeploym
 	ctx.Outputf("Invoke URL:   %s\n", hyperlink(ctx.Stdout, remote.PredictURL(dep.ModelId, dep.Id, dep.IsDevelopment)))
 	ctx.Outputf("Logs URL:     %s\n", hyperlink(ctx.Stdout, remote.LogsURL(dep.ModelId, dep.Id)))
 	ctx.Outputf("Created:      %s\n", dep.CreatedAt.UTC().Format(time.RFC3339))
+	ctx.Outputf("Backpressure: %s\n", backpressurePolicyText(dep.RequestBackpressureSettings.Policy))
+	// Null until the model finishes deploying.
+	if dep.AutoscalingSettings != nil {
+		outputAutoscalingSettings(ctx, *dep.AutoscalingSettings)
+	}
 	return nil
+}
+
+// outputAutoscalingSettings prints the autoscaling block for deployment and
+// environment describe, so every setting update-autoscaling can change is
+// visible without reaching for JSON. Shared with environment describe.
+func outputAutoscalingSettings(ctx *CommandContext, settings managementapi.AutoscalingSettings) {
+	ctx.Outputf("Autoscaling:\n")
+	ctx.Outputf("  Min Replicas:            %d\n", settings.MinReplica)
+	ctx.Outputf("  Max Replicas:            %d\n", settings.MaxReplica)
+	ctx.Outputf("  Concurrency Target:      %d\n", settings.ConcurrencyTarget)
+	ctx.Outputf("  Autoscaling Window:      %s\n", describeSettingText(settings.AutoscalingWindow, "%ds"))
+	ctx.Outputf("  Scale Down Delay:        %s\n", describeSettingText(settings.ScaleDownDelay, "%ds"))
+	ctx.Outputf("  Target Utilization:      %s\n", describeSettingText(settings.TargetUtilizationPercentage, "%d%%"))
+	ctx.Outputf("  Target In-Flight Tokens: %s\n", describeSettingText(settings.TargetInFlightTokens, "%d"))
+	ctx.Outputf("  Max Scale Down Rate:     %s\n", describeSettingText(settings.MaxScaleDownRate, "%d%%"))
+}
+
+// describeSettingText renders a settings value for describe output. A nil field
+// is inherited or unset rather than zero, so it reads as a dash instead of a
+// misleading 0 or false.
+func describeSettingText[T any](value *T, format string) string {
+	if value == nil {
+		return "-"
+	}
+	return fmt.Sprintf(format, *value)
+}
+
+// describeEnumText renders an enum the flags also accept, in the spelling those
+// flags take.
+func describeEnumText[T ~string](value *T) string {
+	if value == nil {
+		return "-"
+	}
+	return enumFromAPIValue(string(*value))
 }
 
 func commandModelDeploymentConfig(ctx *CommandContext, flags *cmd.ModelDeploymentConfigFlags) error {
@@ -467,4 +509,126 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	}
 	ctx.Logf("Promoted deployment %s to environment %s\n", ref.DeploymentID, flags.Environment)
 	return nil
+}
+
+func commandModelDeploymentRename(ctx *CommandContext, flags *cmd.ModelDeploymentRenameFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
+	if err != nil {
+		return err
+	}
+	dep, err := cl.API().PatchModelsDeployments(ctx, ref.ModelID, ref.DeploymentID,
+		managementapi.UpdateDeploymentRequest{Name: &flags.NewName})
+	if err != nil {
+		return fmt.Errorf("rename deployment %s: %w", ref.DeploymentID, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(dep)
+		return nil
+	}
+	ctx.Logf("Renamed deployment %s to %s\n", ref.DeploymentID, dep.Name)
+	return nil
+}
+
+func commandModelDeploymentUpdateAutoscaling(
+	ctx *CommandContext, flags *cmd.ModelDeploymentUpdateAutoscalingFlags,
+) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
+	if err != nil {
+		return err
+	}
+	resp, err := cl.API().PatchModelsDeploymentsAutoscalingSettings(
+		ctx, ref.ModelID, ref.DeploymentID, autoscalingSettingsFromFlags(flags.AutoscalingSettingsFlags))
+	if err != nil {
+		return fmt.Errorf("update autoscaling settings for deployment %s: %w", ref.DeploymentID, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(resp)
+		return nil
+	}
+	ctx.Logf("%s: %s\n", resp.Status, resp.Message)
+	return nil
+}
+
+func commandModelDeploymentUpdateRequestBackpressure(
+	ctx *CommandContext, flags *cmd.ModelDeploymentUpdateRequestBackpressureFlags,
+) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
+	if err != nil {
+		return err
+	}
+	settings, err := cl.API().PatchModelsDeploymentsRequestBackpressureSettings(
+		ctx, ref.ModelID, ref.DeploymentID, requestBackpressureFromFlags(flags.RequestBackpressureFlags))
+	if err != nil {
+		return fmt.Errorf("update request backpressure settings for deployment %s: %w", ref.DeploymentID, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(settings)
+		return nil
+	}
+	ctx.Logf("Request backpressure policy: %s\n", backpressurePolicyText(settings.Policy))
+	return nil
+}
+
+// autoscalingSettingsFromFlags maps the shared autoscaling flags onto the
+// request body. A flag that was never passed stays nil and is omitted, so the
+// PATCH leaves that setting alone.
+//
+// None of these fields accepts null today, because the API reads null and
+// omitted alike as "unchanged". When one becomes null-distinct it is generated
+// as Optional[int], and the assignment below stops compiling until this mapping
+// and the flag's nullable tag are updated together.
+func autoscalingSettingsFromFlags(
+	flags cmd.AutoscalingSettingsFlags,
+) managementapi.UpdateAutoscalingSettings {
+	return managementapi.UpdateAutoscalingSettings{
+		MinReplica:                  flags.MinReplica.Pointer(),
+		MaxReplica:                  flags.MaxReplica.Pointer(),
+		AutoscalingWindow:           flags.AutoscalingWindow.Pointer(),
+		ScaleDownDelay:              flags.ScaleDownDelay.Pointer(),
+		ConcurrencyTarget:           flags.ConcurrencyTarget.Pointer(),
+		TargetUtilizationPercentage: flags.TargetUtilizationPercentage.Pointer(),
+		TargetInFlightTokens:        flags.TargetInFlightTokens.Pointer(),
+		MaxScaleDownRate:            flags.MaxScaleDownRate.Pointer(),
+	}
+}
+
+// requestBackpressureFromFlags maps --policy onto the request body. The policy
+// is null-distinct, so null clears an existing policy rather than leaving it
+// unchanged, which is why the field is an Optional and not a pointer.
+func requestBackpressureFromFlags(
+	flags cmd.RequestBackpressureFlags,
+) managementapi.UpdateRequestBackpressureSettings {
+	if flags.Policy.IsNull() {
+		return managementapi.UpdateRequestBackpressureSettings{
+			Policy: managementapi.NewOptional[managementapi.RequestBackpressurePolicy](nil),
+		}
+	}
+	policy := managementapi.RequestBackpressurePolicy(enumToAPIValue(*flags.Policy.Pointer()))
+	return managementapi.UpdateRequestBackpressureSettings{
+		Policy: managementapi.NewOptional(&policy),
+	}
+}
+
+// backpressurePolicyText renders a policy for text output, where a cleared
+// policy reads better as "none" than as an empty field.
+func backpressurePolicyText(policy *managementapi.RequestBackpressurePolicy) string {
+	if policy == nil {
+		return "none"
+	}
+	return enumFromAPIValue(string(*policy))
 }

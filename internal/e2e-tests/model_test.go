@@ -36,6 +36,9 @@ func TestE2EModelLifecycle(t *testing.T) {
 	t.Run("Metrics", l.Metrics)
 	t.Run("AuditLogs", l.AuditLogs)
 	t.Run("SSH", l.SSH)
+	t.Run("DeploymentSettings", l.DeploymentSettings)
+	t.Run("EnvironmentSettings", l.EnvironmentSettings)
+	t.Run("AutoscalingSchedule", l.AutoscalingSchedule)
 	t.Run("Redeploy", l.Redeploy)
 	t.Run("Delete", l.Delete)
 }

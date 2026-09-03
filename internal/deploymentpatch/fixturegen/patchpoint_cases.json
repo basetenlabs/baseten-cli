@@ -72,5 +72,18 @@
     "binary_files": {
       "model/weights.bin": "AAECAwQF/v38+/r5"
     }
+  },
+  {
+    "name": "symlinks_within_tree",
+    "files": {
+      "config.yaml": "model_name: symlink-model\npython_version: py311\n",
+      "model/model.py": "x = 1\n",
+      "shared/util.py": "y = 2\n"
+    },
+    "symlinks": {
+      "model/util.py": "../shared/util.py",
+      "model/shared_dir": "../shared",
+      "model/dangling.py": "nowhere.py"
+    }
   }
 ]

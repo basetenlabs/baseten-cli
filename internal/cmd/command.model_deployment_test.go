@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -351,6 +352,116 @@ func Test_Model_Deployment_Download_OutDir(t *testing.T) {
 	model, err := os.ReadFile(filepath.Join(outDir, "model", "model.py"))
 	h.Require.NoError(err)
 	h.Require.Equal("print('hi')\n", string(model))
+}
+
+func Test_Model_Deployment_Describe_ShowsSettings(t *testing.T) {
+	h := NewCommandHarness(t)
+	dep := depFixture("d-1", "first", "production", "ACTIVE")
+	dep["autoscaling_settings"] = map[string]any{
+		"min_replica": 1, "max_replica": 5, "concurrency_target": 2,
+		"autoscaling_window": 600, "max_scale_down_rate": nil,
+	}
+	dep["request_backpressure_settings"] = map[string]any{"policy": nil}
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments/d-1", 200, dep)
+
+	h.Require.NoError(h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-id", "d-1"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Backpressure: none")
+	h.Require.Contains(out, "Autoscaling:")
+	h.Require.Contains(out, "Min Replicas:            1")
+	h.Require.Contains(out, "Autoscaling Window:      600s")
+	h.Require.Contains(out, "Max Scale Down Rate:     -")
+}
+
+func Test_Model_Deployment_Rename(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("PATCH", "/v1/models/m-1/deployments/d-1", 200,
+		depFixture("d-1", "canary", "", "ACTIVE"))
+
+	h.Require.NoError(h.Execute("model", "deployment", "rename",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--new-name", "canary"))
+	h.Require.Contains(h.Stderr.String(), "Renamed deployment d-1 to canary")
+	body := h.MockManagementAPI().FindCall("PATCH", "/v1/models/m-1/deployments/d-1").BodyJSON(h.T)
+	h.Require.Equal("canary", body["name"])
+}
+
+// Only the flags that were passed reach the request body. Anything else would
+// overwrite settings the caller never mentioned.
+func Test_Model_Deployment_UpdateAutoscaling_OmitsUnsetFlags(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("PATCH", "/v1/models/m-1/deployments/d-1/autoscaling_settings", 200,
+		map[string]any{"status": "ACCEPTED", "message": "Update accepted"})
+
+	h.Require.NoError(h.Execute("model", "deployment", "update-autoscaling",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--min-replica", "2"))
+	h.Require.Contains(h.Stderr.String(), "ACCEPTED: Update accepted")
+
+	body := h.MockManagementAPI().FindCall(
+		"PATCH", "/v1/models/m-1/deployments/d-1/autoscaling_settings").BodyJSON(h.T)
+	h.Require.Len(body, 1)
+	h.Require.Equal(float64(2), body["min_replica"])
+}
+
+// Zero is a real replica count, so it has to survive as a value rather than
+// being treated as "unset" the way a plain int would be.
+func Test_Model_Deployment_UpdateAutoscaling_ZeroIsSent(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("PATCH", "/v1/models/m-1/deployments/d-1/autoscaling_settings", 200,
+		map[string]any{"status": "ACCEPTED", "message": "Update accepted"})
+
+	h.Require.NoError(h.Execute("model", "deployment", "update-autoscaling",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--min-replica", "0"))
+
+	body := h.MockManagementAPI().FindCall(
+		"PATCH", "/v1/models/m-1/deployments/d-1/autoscaling_settings").BodyJSON(h.T)
+	h.Require.Equal(float64(0), body["min_replica"])
+}
+
+func Test_Model_Deployment_UpdateAutoscaling_RejectsNull(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("model", "deployment", "update-autoscaling",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--min-replica", "null")
+	h.Require.Error(err)
+}
+
+func Test_Model_Deployment_UpdateRequestBackpressure_SetsPolicy(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute(
+		"PATCH", "/v1/models/m-1/deployments/d-1/request_backpressure_settings", 200,
+		map[string]any{"policy": "REJECT_ON_FULL"})
+
+	h.Require.NoError(h.Execute("model", "deployment", "update-request-backpressure",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--policy", "reject-on-full"))
+	h.Require.Contains(h.Stderr.String(), "Request backpressure policy: reject-on-full")
+
+	body := h.MockManagementAPI().FindCall(
+		"PATCH", "/v1/models/m-1/deployments/d-1/request_backpressure_settings").BodyJSON(h.T)
+	h.Require.Equal("REJECT_ON_FULL", body["policy"])
+}
+
+// Clearing the policy has to send an explicit null. Omitting the field would
+// read as "leave unchanged", so the policy would survive.
+func Test_Model_Deployment_UpdateRequestBackpressure_NullClearsPolicy(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute(
+		"PATCH", "/v1/models/m-1/deployments/d-1/request_backpressure_settings", 200,
+		map[string]any{"policy": nil})
+
+	h.Require.NoError(h.Execute("model", "deployment", "update-request-backpressure",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--policy", "null"))
+	h.Require.Contains(h.Stderr.String(), "Request backpressure policy: none")
+
+	call := h.MockManagementAPI().FindCall(
+		"PATCH", "/v1/models/m-1/deployments/d-1/request_backpressure_settings")
+	h.Require.Equal(`{"policy":null}`, strings.TrimSpace(call.Body))
+}
+
+func Test_Model_Deployment_UpdateRequestBackpressure_RejectsUnknownPolicy(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("model", "deployment", "update-request-backpressure",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--policy", "REJECT_ON_FULL")
+	h.Require.Error(err)
 }
 
 func buildTar(t *testing.T, files map[string]string) []byte {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/basetenlabs/baseten-go/client/managementapi"
@@ -18,6 +19,7 @@ type sourceManifest struct {
 	Files       map[string]string `json:"files"`
 	BinaryFiles map[string]string `json:"binary_files"`
 	EmptyDirs   []string          `json:"empty_dirs"`
+	Symlinks    map[string]string `json:"symlinks"`
 }
 
 // patchPointCase is one input manifest from fixturegen/patchpoint_cases.json.
@@ -51,6 +53,7 @@ func TestBuildPatchPointGoldenParity(t *testing.T) {
 		require.Equal(t, c.Name, want.Name, "patchpoint cases/golden ordering mismatch")
 
 		t.Run(c.Name, func(t *testing.T) {
+			skipCaseWithoutSymlinks(t, c.sourceManifest)
 			dir := t.TempDir()
 			materialize(t, dir, c.sourceManifest)
 
@@ -98,6 +101,7 @@ func TestBuildPatchOpsGoldenParity(t *testing.T) {
 		require.Equal(t, c.Name, want.Name, "patchop cases/golden ordering mismatch")
 
 		t.Run(c.Name, func(t *testing.T) {
+			skipCaseWithoutSymlinks(t, c.Prev, c.Next)
 			prevDir := t.TempDir()
 			nextDir := t.TempDir()
 			materialize(t, prevDir, c.Prev)
@@ -180,6 +184,42 @@ func materialize(t *testing.T, dir string, m sourceManifest) {
 	}
 	for _, rel := range m.EmptyDirs {
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.FromSlash(rel)), 0o755))
+	}
+	for rel, target := range m.Symlinks {
+		full := filepath.Join(dir, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(t, os.Symlink(filepath.FromSlash(target), full))
+	}
+}
+
+// symlinksSupported reports whether this process can create a symlink at all.
+// On Windows that depends on the account's privileges and on developer mode
+// rather than on the OS alone, so it is probed once rather than assumed.
+var symlinksSupported = sync.OnceValue(func() bool {
+	dir, err := os.MkdirTemp("", "symlink-probe")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(dir)
+	return os.Symlink("target", filepath.Join(dir, "probe")) == nil
+})
+
+func skipWithoutSymlinks(t *testing.T) {
+	t.Helper()
+	if !symlinksSupported() {
+		t.Skip("this process cannot create symlinks")
+	}
+}
+
+// skipCaseWithoutSymlinks skips a case whose manifests cannot be materialized
+// here, leaving the symlink-free cases to run everywhere.
+func skipCaseWithoutSymlinks(t *testing.T, manifests ...sourceManifest) {
+	t.Helper()
+	for _, m := range manifests {
+		if len(m.Symlinks) > 0 {
+			skipWithoutSymlinks(t)
+			return
+		}
 	}
 }
 

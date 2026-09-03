@@ -242,6 +242,36 @@ var commandLoopsCheckpoint = Command{
 				},
 			},
 		},
+		{
+			Name:    "deploy",
+			Summary: "Deploy Loops checkpoints",
+			Description: "Deploy checkpoints saved by a Loops run as a model served by vLLM.\n\n" +
+				"Name the checkpoints with --checkpoint (which needs --run-id, since names are " +
+				"scoped to a run) or with --checkpoint-id, or pass none of them to choose " +
+				"interactively. Requests then select a checkpoint by name through the model " +
+				"parameter, so one deployment serves them all.\n\n" +
+				"Pass --config for a repeatable deploy: it is a Python file defining a " +
+				"DeployCheckpointsConfig, so it is executed rather than read.",
+			Flags: LoopsCheckpointDeployFlags{},
+			Output: &CommandOutput[TrussDelegatedResult]{
+				JSONOutputUnimportant: true,
+				TextDescription: "The new model and deployment IDs with links to the deployment's logs, " +
+					"and how to name a checkpoint in a request. With --dry-run, the generated model " +
+					"config instead.",
+				JSONDescription: "Under --output json the text output goes to stderr and stdout is an empty " +
+					"object: this command reports nothing structured yet.",
+				Examples: []CommandExample{
+					{
+						Description: "Deploy two checkpoints of a run by name.",
+						Command:     "baseten loops checkpoint deploy --run-id <run-id> --checkpoint step-50 --checkpoint step-100",
+					},
+					{
+						Description: "Deploy a checkpoint by ID, choosing the rest interactively.",
+						Command:     "baseten loops checkpoint deploy --checkpoint-id <checkpoint-id>",
+					},
+				},
+			},
+		},
 	},
 }
 
@@ -303,7 +333,7 @@ type LoopsLogFlags struct {
 
 	Start time.Time     `flag:"start" desc:"Start of the log time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. Default is 30 minutes before the end. Window must be at most 7 days."`
 	End   time.Time     `flag:"end" desc:"End of the log time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. Default is now. Window must be at most 7 days."`
-	Since time.Duration `flag:"since" desc:"Shortcut for fetching logs from a relative time ago until now. Accepts a Go duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
+	Since time.Duration `flag:"since" desc:"Shortcut for fetching logs from a relative time ago until now. Accepts a duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
 
 	Limit int `flag:"limit" desc:"Maximum number of log lines to return, paging backward from the end of the window. Use 0 for no limit (every log line in the window). Not applicable with --tail." default:"5000"`
 
@@ -373,4 +403,16 @@ type LoopsCheckpointFilesFlags struct {
 	CommandFlags
 
 	CheckpointID string `flag:"checkpoint-id" desc:"ID of the Loops checkpoint." required:"true"`
+}
+
+// LoopsCheckpointDeployFlags configures `baseten loops checkpoint deploy`.
+type LoopsCheckpointDeployFlags struct {
+	CommandFlags
+	TrussAuthFlags
+
+	RunID        string   `flag:"run-id" desc:"Loops run whose checkpoints are deployed. Cannot be combined with --checkpoint-id."`
+	Checkpoint   []string `flag:"checkpoint" desc:"Name of a checkpoint to deploy, for example 'step-50'. Requires --run-id, since names are scoped to a run. Cannot be combined with --checkpoint-id or --config. Repeatable."`
+	CheckpointID []string `flag:"checkpoint-id" desc:"ID of a checkpoint to deploy. Cannot be combined with --run-id, --checkpoint, or --config. Repeatable."`
+	Config       string   `flag:"config" desc:"Python file defining a DeployCheckpointsConfig: which checkpoints deploy and the model that serves them. Cannot be combined with --checkpoint or --checkpoint-id."`
+	DryRun       bool     `flag:"dry-run" desc:"Print the generated model config without deploying anything."`
 }

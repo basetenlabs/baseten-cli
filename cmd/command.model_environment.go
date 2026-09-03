@@ -54,7 +54,10 @@ var commandModelEnvironment = Command{
 			Flags:       ModelEnvironmentDescribeFlags{},
 			Output: &CommandOutput[managementapi.Environment]{
 				TextDescription: "Field-per-line summary: Name, Model, Current Deployment, Status, " +
-					"Candidate Deployment (optional), Created.",
+					"Candidate Deployment (optional), Invoke URL, Logs URL, Created, " +
+					"Backpressure, indented Autoscaling and Promotion blocks covering every " +
+					"setting the update commands can change, and one line per autoscaling " +
+					"schedule. Settings that are unset or inherited show as '-'.",
 				Examples: []CommandExample{
 					{
 						Description: "Describe the production environment of a model.",
@@ -155,7 +158,120 @@ var commandModelEnvironment = Command{
 				},
 			},
 		},
+		{
+			Name:    "update-autoscaling",
+			Summary: "Update autoscaling settings for an environment",
+			Description: "Update an environment's autoscaling settings, which apply to whichever " +
+				"deployment currently serves it.\n\n" +
+				"Only the flags you pass are changed; every other setting is left alone.\n\n" +
+				"Run 'baseten model environment describe' to see the current values.",
+			Flags: ModelEnvironmentUpdateAutoscalingFlags{},
+			Output: &CommandOutput[managementapi.UpdateEnvironmentResponse]{
+				TextDescription: "On success, prints \"Updated autoscaling settings for environment <name>\" to stderr; no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Raise the production environment's replica bounds.",
+						Command:     "baseten model environment update-autoscaling --model-id <model-id> --environment production --min-replica 2 --max-replica 10",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the environment's resulting minimum replica count.",
+					Command:     "baseten model environment update-autoscaling --model-id <model-id> --environment production --min-replica 2 --jq '.environment.autoscaling_settings.min_replica'",
+				},
+			},
+		},
+		{
+			Name:    "update-promotion",
+			Summary: "Update promotion settings for an environment",
+			Description: "Update how deployments are promoted into an environment: whether to " +
+				"redeploy, whether to roll out gradually and with what rolling deploy " +
+				"config, what to do with the outgoing deployment, and whether to ramp up " +
+				"traffic.\n\n" +
+				"Only the flags you pass are changed; every other setting is left alone.\n\n" +
+				"Run 'baseten model environment describe' to see the current values.",
+			Flags: ModelEnvironmentUpdatePromotionFlags{},
+			Output: &CommandOutput[managementapi.UpdateEnvironmentResponse]{
+				TextDescription: "On success, prints \"Updated promotion settings for environment <name>\" to stderr; no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Turn on rolling deploys and scale the outgoing deployment to zero.",
+						Command:     "baseten model environment update-promotion --model-id <model-id> --environment production --rolling-deploy true --promotion-cleanup-strategy scale-to-zero",
+					},
+					{
+						Description: "Slow the rollout by lowering the surge percentage.",
+						Command:     "baseten model environment update-promotion --model-id <model-id> --environment production --max-surge-percent 10",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the resulting cleanup strategy.",
+					Command:     "baseten model environment update-promotion --model-id <model-id> --environment production --rolling-deploy true --jq '.environment.promotion_settings.promotion_cleanup_strategy'",
+				},
+			},
+		},
+		{
+			Name:    "update-request-backpressure",
+			Summary: "Update request backpressure settings for an environment",
+			Description: "Set the policy applied when the environment's request queue is full. " +
+				"Pass --policy null to clear an existing policy and fall back to the default.\n\n" +
+				"Run 'baseten model environment describe' to see the current values.",
+			Flags: ModelEnvironmentUpdateRequestBackpressureFlags{},
+			Output: &CommandOutput[managementapi.UpdateEnvironmentResponse]{
+				TextDescription: "The resulting policy, or \"none\" when no policy is set.",
+				Examples: []CommandExample{
+					{
+						Description: "Reject requests once the queue is full.",
+						Command:     "baseten model environment update-request-backpressure --model-id <model-id> --environment production --policy reject-on-full",
+					},
+					{
+						Description: "Clear the policy.",
+						Command:     "baseten model environment update-request-backpressure --model-id <model-id> --environment production --policy null",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the resulting policy.",
+					Command:     "baseten model environment update-request-backpressure --model-id <model-id> --environment production --policy reject-on-full --jq '.environment.request_backpressure_settings.policy'",
+				},
+			},
+		},
+		commandModelEnvironmentAutoscalingSchedule,
 	},
+}
+
+// ModelEnvironmentUpdateAutoscalingFlags configures
+// `baseten model environment update-autoscaling`.
+type ModelEnvironmentUpdateAutoscalingFlags struct {
+	CommandFlags
+	ModelEnvironmentFlags
+	AutoscalingSettingsFlags
+}
+
+// ModelEnvironmentUpdateRequestBackpressureFlags configures
+// `baseten model environment update-request-backpressure`.
+type ModelEnvironmentUpdateRequestBackpressureFlags struct {
+	CommandFlags
+	ModelEnvironmentFlags
+	RequestBackpressureFlags
+}
+
+// ModelEnvironmentUpdatePromotionFlags configures
+// `baseten model environment update-promotion`. The rolling deploy config is
+// flattened into these flags; its nesting in the API exists only to group the
+// fields.
+type ModelEnvironmentUpdatePromotionFlags struct {
+	CommandFlags
+	ModelEnvironmentFlags
+
+	RedeployOnPromotion      OptionalFlag[bool]   `flag:"redeploy-on-promotion" desc:"Whether to deploy on all promotions. Enabling this allows model code to safely handle environment-specific logic: when a deployment is promoted, a new deployment is created with a copy of the image."`
+	RollingDeploy            OptionalFlag[bool]   `flag:"rolling-deploy" desc:"Whether the environment should rely on rolling deploy orchestration."`
+	PromotionCleanupStrategy OptionalFlag[string] `flag:"promotion-cleanup-strategy" desc:"The cleanup strategy to use after a promotion completes." enum:"keep,scale-to-zero,deactivate"`
+	RampUpWhilePromoting     OptionalFlag[bool]   `flag:"ramp-up-while-promoting" desc:"Whether to ramp up traffic while promoting."`
+	RampUpDurationSeconds    OptionalFlag[int]    `flag:"ramp-up-duration-seconds" desc:"Duration of the ramp up, in seconds."`
+
+	RollingDeployStrategy    OptionalFlag[string] `flag:"rolling-deploy-strategy" desc:"The rolling deploy strategy to use for promotions." enum:"replica"`
+	MaxSurgePercent          OptionalFlag[int]    `flag:"max-surge-percent" desc:"The maximum surge percentage for rolling deploys."`
+	MaxUnavailablePercent    OptionalFlag[int]    `flag:"max-unavailable-percent" desc:"The maximum unavailable percentage for rolling deploys."`
+	StabilizationTimeSeconds OptionalFlag[int]    `flag:"stabilization-time-seconds" desc:"The stabilization time for rolling deploys, in seconds."`
+	ReplicaOverheadPercent   OptionalFlag[int]    `flag:"replica-overhead-percent" desc:"The replica overhead percentage for rolling deploys."`
 }
 
 // ModelEnvironmentFlags identifies an environment of a model by name.
