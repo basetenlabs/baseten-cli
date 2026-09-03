@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.21
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
-	github.com/basetenlabs/baseten-go v0.2.1-0.20260902122144-e30c99eda507
+	github.com/basetenlabs/baseten-go v0.2.1-0.20260903212600-17ee138bad80
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -21,6 +21,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/invopop/jsonschema v0.14.0
 	github.com/itchyny/gojq v0.12.18
+	github.com/klauspost/compress v1.20.0
 	github.com/muesli/mango-cobra v1.2.0
 	github.com/muesli/roff v0.1.0
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
