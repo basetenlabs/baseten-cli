@@ -324,8 +324,13 @@ func (l *lifecycle) AutoscalingSchedule(t *testing.T) {
 
 	t.Run("Reshape", func(t *testing.T) {
 		before := findSchedule(t, l.listSchedules(t), renamedName)
-		// Well past now, since the API rejects a one-time window in the past.
+		// Well past now, since the API rejects a one-time window in the past, and
+		// on a Monday, since the API also rejects a one-time window that
+		// intersects a recurring one and CreateSecond adds a Saturday schedule.
 		startAt := time.Now().Add(30 * 24 * time.Hour).Truncate(time.Minute)
+		for startAt.Weekday() != time.Monday {
+			startAt = startAt.AddDate(0, 0, 1)
+		}
 		endAt := startAt.Add(2 * time.Hour)
 		layout := "2006-01-02T15:04"
 
