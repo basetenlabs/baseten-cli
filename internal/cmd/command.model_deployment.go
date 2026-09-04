@@ -259,7 +259,11 @@ func commandModelDeploymentActivate(ctx *CommandContext, flags *cmd.ModelDeploym
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Activated deployment %s\n", ref.DeploymentID)
+	if resp.NoOp != nil && *resp.NoOp {
+		ctx.Logf("Deployment %s was already active; nothing to do\n", ref.DeploymentID)
+	} else {
+		ctx.Logf("Activated deployment %s\n", ref.DeploymentID)
+	}
 	return nil
 }
 
@@ -288,7 +292,11 @@ func commandModelDeploymentDeactivate(ctx *CommandContext, flags *cmd.ModelDeplo
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Deactivated deployment %s\n", ref.DeploymentID)
+	if resp.NoOp != nil && *resp.NoOp {
+		ctx.Logf("Deployment %s was already inactive; nothing to do\n", ref.DeploymentID)
+	} else {
+		ctx.Logf("Deactivated deployment %s\n", ref.DeploymentID)
+	}
 	return nil
 }
 
