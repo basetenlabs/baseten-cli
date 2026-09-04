@@ -136,6 +136,25 @@ var commandOrg = Command{
 			},
 		},
 		{
+			Name:        "describe",
+			Summary:     "Describe the organization",
+			Description: "Describe the caller's organization, including the OIDC workload-identity configuration and the AWS AssumeRole trust-policy inputs.",
+			Flags:       OrgDescribeFlags{},
+			Output: &CommandOutput[OrgInfo]{
+				TextDescription: "Field-per-line summary: org ID, teams, OIDC issuer, audience, workload types, subject claim format, and the AWS AssumeRole role ARN and external ID (or that the method is not enabled).",
+				Examples: []CommandExample{
+					{
+						Description: "Describe the organization.",
+						Command:     "baseten org describe",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the AWS external ID.",
+					Command:     "baseten org describe --jq '.aws_assume_role.external_id'",
+				},
+			},
+		},
+		{
 			Name:    "secret",
 			Summary: "Manage secrets",
 			Children: []Command{
@@ -355,6 +374,26 @@ type OrgTeamDescribeFlags struct {
 
 	TeamID   string `flag:"team-id" desc:"Team ID to describe." oneof:"team-ref"`
 	TeamName string `flag:"team-name" desc:"Team name to describe." oneof:"team-ref"`
+}
+
+// OrgDescribeFlags configures `baseten org describe`.
+type OrgDescribeFlags struct {
+	CommandFlags
+}
+
+// OrgInfo is the response of GET /v1/organizations/me. AwsAssumeRole is null
+// while AWS AssumeRole is not enabled for the organization.
+type OrgInfo struct {
+	OrgID         string            `json:"org_id"`
+	Name          *string           `json:"name"`
+	CreatedAt     string            `json:"created_at"`
+	AwsAssumeRole *OrgAwsAssumeRole `json:"aws_assume_role"`
+}
+
+// OrgAwsAssumeRole holds the AWS AssumeRole trust-policy inputs.
+type OrgAwsAssumeRole struct {
+	BasetenRoleArn string `json:"baseten_role_arn"`
+	ExternalID     string `json:"external_id"`
 }
 
 type OrgUserListFlags struct {
