@@ -180,7 +180,11 @@ func commandModelEnvironmentActivate(ctx *CommandContext, flags *cmd.ModelEnviro
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Activated environment %s\n", flags.Environment)
+	if resp.NoOp != nil && *resp.NoOp {
+		ctx.Logf("Environment %s was already active; nothing to do\n", flags.Environment)
+	} else {
+		ctx.Logf("Activated environment %s\n", flags.Environment)
+	}
 	return nil
 }
 
@@ -209,7 +213,11 @@ func commandModelEnvironmentDeactivate(ctx *CommandContext, flags *cmd.ModelEnvi
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Deactivated environment %s\n", flags.Environment)
+	if resp.NoOp != nil && *resp.NoOp {
+		ctx.Logf("Environment %s was already inactive; nothing to do\n", flags.Environment)
+	} else {
+		ctx.Logf("Deactivated environment %s\n", flags.Environment)
+	}
 	return nil
 }
 

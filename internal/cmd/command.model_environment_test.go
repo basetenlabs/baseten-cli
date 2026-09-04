@@ -133,6 +133,17 @@ func Test_Model_Environment_Activate(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Activated environment production")
 }
 
+func Test_Model_Environment_Activate_NoOp(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/environments/production/activate", 200,
+		map[string]any{"success": true, "no_op": true})
+
+	h.Require.NoError(h.Execute("model", "environment", "activate",
+		"--model-id", "m-1", "--environment", "production"))
+	h.Require.Contains(h.Stderr.String(), "Environment production was already active; nothing to do")
+}
+
 func Test_Model_Environment_Deactivate_Yes(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
@@ -143,6 +154,17 @@ func Test_Model_Environment_Deactivate_Yes(t *testing.T) {
 		"--model-id", "m-1", "--environment", "production", "--yes"))
 	h.Require.NotNil(m.FindCall("POST", "/v1/models/m-1/environments/production/deactivate"))
 	h.Require.Contains(h.Stderr.String(), "Deactivated environment production")
+}
+
+func Test_Model_Environment_Deactivate_NoOp(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/environments/production/deactivate", 200,
+		map[string]any{"success": true, "no_op": true})
+
+	h.Require.NoError(h.Execute("model", "environment", "deactivate",
+		"--model-id", "m-1", "--environment", "production", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "Environment production was already inactive; nothing to do")
 }
 
 func Test_Model_Environment_Deactivate_NoTTY_RequiresYes(t *testing.T) {

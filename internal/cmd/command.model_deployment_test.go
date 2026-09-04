@@ -169,6 +169,17 @@ func Test_Model_Deployment_Activate(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Activated deployment d-1")
 }
 
+func Test_Model_Deployment_Activate_NoOp(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/deployments/d-1/activate", 200,
+		map[string]any{"success": true, "no_op": true})
+
+	h.Require.NoError(h.Execute("model", "deployment", "activate",
+		"--model-id", "m-1", "--deployment-id", "d-1"))
+	h.Require.Contains(h.Stderr.String(), "Deployment d-1 was already active; nothing to do")
+}
+
 func Test_Model_Deployment_Deactivate_Yes(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
@@ -179,6 +190,17 @@ func Test_Model_Deployment_Deactivate_Yes(t *testing.T) {
 		"--model-id", "m-1", "--deployment-id", "d-1", "--yes"))
 	h.Require.NotNil(m.FindCall("POST", "/v1/models/m-1/deployments/d-1/deactivate"))
 	h.Require.Contains(h.Stderr.String(), "Deactivated deployment d-1")
+}
+
+func Test_Model_Deployment_Deactivate_NoOp(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/deployments/d-1/deactivate", 200,
+		map[string]any{"success": true, "no_op": true})
+
+	h.Require.NoError(h.Execute("model", "deployment", "deactivate",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "Deployment d-1 was already inactive; nothing to do")
 }
 
 func Test_Model_Deployment_Deactivate_NoTTY_RequiresYes(t *testing.T) {
