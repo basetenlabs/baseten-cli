@@ -68,3 +68,22 @@ func Test_Org_Describe_JSON_IsTheResponseType(t *testing.T) {
 	h.Require.Contains(out, `"org_id": "abcd1234"`)
 	h.Require.Contains(out, `"external_id": "baseten-2fdd8a01c4c34e6bb92a2b96fca29b70"`)
 }
+
+func Test_Org_Describe_Text_NoTeams(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200,
+		orgInfoFixture(assumeRoleFixture()))
+	h.MockManagementAPI().SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []any{}})
+
+	h.Require.NoError(h.Execute("org", "describe"))
+	h.Require.Contains(h.Stdout.String(), "Teams:                (none)")
+}
+
+func Test_Org_Describe_JQ_AssumeRoleNotEnabled(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200,
+		orgInfoFixture(nil))
+
+	h.Require.NoError(h.Execute("org", "describe", "--jq", ".aws_assume_role.external_id"))
+	h.Require.Equal("null\n", h.Stdout.String())
+}

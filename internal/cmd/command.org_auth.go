@@ -43,6 +43,9 @@ func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error 
 	if info.Name != nil && *info.Name != "" {
 		ctx.Outputf("Name:                 %s\n", *info.Name)
 	}
+	if len(teams.Teams) == 0 {
+		ctx.Outputf("Teams:                (none)\n")
+	}
 	for i, t := range teams.Teams {
 		label := "Teams:               "
 		if i > 0 {
