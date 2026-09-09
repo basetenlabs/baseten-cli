@@ -22,6 +22,7 @@ var billingEarliest = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 func init() {
 	Register("org billing usage", commandOrgBillingUsage)
 	Register("org audit-logs", commandOrgAuditLogs)
+	Register("org describe", commandOrgDescribe)
 }
 
 func commandOrgBillingUsage(ctx *CommandContext, flags *cmd.OrgBillingUsageFlags) error {
@@ -496,4 +497,62 @@ func auditEnumValues[T ~string](flagName string, values, allowed []string) ([]T,
 		out = append(out, T(strings.ToUpper(strings.ReplaceAll(v, "-", "_"))))
 	}
 	return out, nil
+}
+
+const (
+	oidcIssuer             = "https://oidc.baseten.co"
+	oidcAudience           = "oidc.baseten.co"
+	oidcWorkloadTypes      = "model_container, model_build"
+	oidcSubjectClaimFormat = "v=1:org=<org_id>:team=<team_id>:model=<model_id>:" +
+		"deployment=<deployment_id>:environment=<environment>:type=<workload_type>"
+)
+
+func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	info, err := cl.API().GetOrganizationsMe(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching organization info: %w", err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(info)
+		return nil
+	}
+
+	teams, err := cl.API().GetTeams(ctx, managementapi.GetV1TeamsParams{})
+	if err != nil {
+		return fmt.Errorf("listing teams: %w", err)
+	}
+
+	ctx.Outputf("Org ID:               %s\n", info.OrgId)
+	if info.Name != nil && *info.Name != "" {
+		ctx.Outputf("Name:                 %s\n", *info.Name)
+	}
+	if len(teams.Teams) == 0 {
+		ctx.Outputf("Teams:                (none)\n")
+	}
+	for i, t := range teams.Teams {
+		label := "Teams:               "
+		if i > 0 {
+			label = "                     "
+		}
+		ctx.Outputf("%s %s (%s)\n", label, t.Id, t.Name)
+	}
+	ctx.Outputf("OIDC Settings:\n")
+	ctx.Outputf("  Issuer:               %s\n", oidcIssuer)
+	ctx.Outputf("  Audience:             %s\n", oidcAudience)
+	ctx.Outputf("  Workload Types:       %s\n", oidcWorkloadTypes)
+	ctx.Outputf("  Subject Claim Format: %s\n", oidcSubjectClaimFormat)
+	// The server nulls aws_assume_role while the method is not enabled.
+	if info.AwsAssumeRole == nil {
+		ctx.Outputf("AWS AssumeRole:       not enabled (contact Baseten support to enable it)\n")
+		return nil
+	}
+	ctx.Outputf("AWS AssumeRole:\n")
+	ctx.Outputf("  Baseten Role ARN:     %s\n", info.AwsAssumeRole.BasetenRoleArn)
+	ctx.Outputf("  AWS External ID:      %s\n", info.AwsAssumeRole.ExternalId)
+	return nil
 }
