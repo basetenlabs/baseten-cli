@@ -308,11 +308,14 @@ func Test_Volume_Ls_MalformedRef(t *testing.T) {
 }
 
 func Test_Volume_Ls_UntaggedDigest(t *testing.T) {
-	// A digest has one spelling, and it is the one every response carries, so
-	// the shorter form is refused rather than quietly accepted.
+	// A digest is accepted with or without its algorithm prefix and reaches
+	// the read as it was written, since the service resolves either.
 	h := NewCommandHarness(t)
-	err := h.Execute("volume", "ls", "bdn:weights/llama@a1b2c3d4e5f6")
-	h.Require.ErrorContains(err, `digest "a1b2c3d4e5f6" must begin "b3:"`)
+	fake := withVolumeTransfer(t, h)
+	h.Require.NoError(h.Execute("volume", "ls", "bdn:weights/llama@a1b2c3d4e5f6"))
+	h.Require.Equal("a1b2c3d4e5f6", fake.ManifestOptions.Ref.Digest)
+	// What comes back is the version the read resolved to, spelled whole.
+	h.Require.Contains(h.Stdout.String(), "config/")
 }
 
 func Test_Volume_Ls_LegacyScheme(t *testing.T) {
@@ -629,12 +632,39 @@ func Test_Volume_Push_JSON(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "could not move head")
 }
 
+func Test_Volume_Push_RefTag(t *testing.T) {
+	// A tag on the ref is taken off and applied to what the push publishes,
+	// which is what --tag does, so the volume itself is what gets pushed to.
+	h := NewCommandHarness(t)
+	fake := withVolumeTransfer(t, h)
+
+	h.Require.NoError(h.Execute("volume", "push", t.TempDir(), "bdn:weights/llama:prod"))
+	h.Require.Equal("bdn:weights/llama", fake.PushOptions.Ref.String())
+	h.Require.Equal([]string{"prod"}, fake.PushOptions.Tags)
+}
+
+func Test_Volume_Push_RefTagAndFlag(t *testing.T) {
+	// Both spellings write, so naming a tag each way applies two tags rather
+	// than one of them winning.
+	h := NewCommandHarness(t)
+	fake := withVolumeTransfer(t, h)
+
+	h.Require.NoError(h.Execute("volume", "push", t.TempDir(), "bdn:weights/llama:prod",
+		"--tag", "v2", "--tag", "latest"))
+	h.Require.Equal("bdn:weights/llama", fake.PushOptions.Ref.String())
+	h.Require.Equal([]string{"v2", "latest", "prod"}, fake.PushOptions.Tags)
+}
+
 func Test_Volume_Push_RefSelectsAVersion(t *testing.T) {
 	h := NewCommandHarness(t)
 	withVolumeTransfer(t, h)
 
-	err := h.Execute("volume", "push", t.TempDir(), "bdn:weights/llama:prod")
-	h.Require.ErrorContains(err, "apply tags with --tag")
+	// A digest names a version that already exists, which a push cannot
+	// publish onto, and a path names less than a whole tree.
+	err := h.Execute("volume", "push", t.TempDir(), "bdn:weights/llama@b3:a1b2c3d4e5f6")
+	h.Require.ErrorContains(err, "names a point")
+	err = h.Execute("volume", "push", t.TempDir(), "bdn:weights/llama:prod/config")
+	h.Require.ErrorContains(err, "names a path")
 }
 
 func Test_Volume_Pull(t *testing.T) {

@@ -9,11 +9,10 @@ import (
 // volumeRefGrammar documents the address every command in this group takes.
 // Appended to each command's description, since the ref is the argument and
 // what a command accepts of it is what distinguishes these commands.
-const volumeRefGrammar = "A ref is 'bdn:<namespace>/<volume>', optionally with a ':<tag>' or " +
-	"'@b3:<digest>' version selector and a trailing path, as in " +
-	"'bdn:weights/llama:prod/config/model.json'. The 'bdn:' prefix is required. " +
-	"With no selector, the version the volume's head points at is used. A digest is written " +
-	"the way every response spells one, 'b3:' and at least 12 hexadecimal characters."
+const volumeRefGrammar = "A ref is 'bdn:<namespace>/<volume>', with an optional ':<tag>' or " +
+	"'@<digest>' selector and trailing path, as in 'bdn:weights/llama:prod/config/model.json'. " +
+	"The 'bdn:' is required; with no selector, the volume's head is used. A digest may be " +
+	"written with or without its 'b3:' prefix, and shortened to 12 or more hex characters."
 
 var commandVolume = Command{
 	Name:    "volume",
@@ -148,8 +147,8 @@ var commandVolume = Command{
 				"pushing a tree that mostly matches an existing version transfers only what differs.\n\n" +
 				"Nothing is visible until the whole tree has been uploaded, so an interrupted push " +
 				"publishes nothing, and what it did upload is not wasted.\n\n" +
-				"The ref must name a volume: a version selector or a path is an error, and --tag is " +
-				"how a tag is applied.\n\n" + volumeRefGrammar,
+				"The ref may name a volume or a tag to apply to the new version, which is the same as " +
+				"passing that tag to --tag. A digest or a path is an error.\n\n" + volumeRefGrammar,
 			ArgsUsage: "DIR REF",
 			ExactArgs: 2,
 			Flags:     VolumePushFlags{},
@@ -328,7 +327,7 @@ type VolumePushFlags struct {
 	CommandFlags
 	VolumeTransferFlags
 
-	Tags []string `flag:"tag" desc:"Tag to apply to the new version at commit. May be repeated. This is the only place a tag is written rather than read."`
+	Tags []string `flag:"tag" desc:"Tag to apply to the new version at commit. May be repeated, and adds to a tag written on REF. Push is the only command where a tag is written rather than read."`
 
 	SourceURI string `flag:"source-uri" desc:"Where the tree came from, for example 'hf://<repo>@<revision>'. Defaults to a file URI for DIR and is part of the version's digest, so a fixed value keeps the same tree at one version across directories."`
 

@@ -137,6 +137,26 @@ func (v *volumeLifecycle) digestPrefix(hexChars int) string {
 	return v.digest[:len("b3:")+hexChars]
 }
 
+// untaggedDigest drops the algorithm, which is optional on input everywhere a
+// digest is read even though nothing renders one without it.
+func (v *volumeLifecycle) untaggedDigest() string {
+	return strings.TrimPrefix(v.digest, "b3:")
+}
+
+// versionSelectors is every way of naming the one version Push published. All
+// six resolve upstream, so a command that takes a version has to answer the
+// same for each, which is what makes them worth running the whole set through.
+func (v *volumeLifecycle) versionSelectors() []string {
+	return []string{
+		":" + v.tag,
+		":head",
+		"@" + v.digest,
+		"@" + v.digestPrefix(12),
+		"@" + v.untaggedDigest(),
+		"@" + v.untaggedDigest()[:12],
+	}
+}
+
 // writeVolumeTree materializes the source tree and returns its directory.
 func writeVolumeTree(t *testing.T) string {
 	t.Helper()
@@ -274,7 +294,7 @@ func (v *volumeLifecycle) Inventory(t *testing.T) {
 	// answer with the digest the push published, and with the same ref. A bare
 	// volume ref is absent on purpose: that names the volume, which the
 	// sub-test above covers.
-	for _, selector := range []string{":" + v.tag, ":head", "@" + v.digest, "@" + v.digestPrefix(12)} {
+	for _, selector := range v.versionSelectors() {
 		t.Run("StatVersionBy"+selector, func(t *testing.T) {
 			out := mustCLI(t, "volume", "stat", v.ref+selector, "--output", "json")
 			var resp struct {
@@ -316,7 +336,7 @@ func (v *volumeLifecycle) Entries(t *testing.T) {
 
 	// Every way of naming the same version lists the same tree, which is the
 	// resolution the volume service does rather than anything local.
-	for _, selector := range []string{":" + v.tag, ":head", "@" + v.digest, "@" + v.digestPrefix(12)} {
+	for _, selector := range v.versionSelectors() {
 		t.Run("ChildrenOfTheVersionBy"+selector, func(t *testing.T) {
 			out := mustCLI(t, "volume", "ls", v.ref+selector, "--output", "json")
 			list := parseVolumeEntryList(t, out)
@@ -403,9 +423,10 @@ func (v *volumeLifecycle) Entries(t *testing.T) {
 		require.Contains(t, stderr, "no entry at /nope.json")
 	})
 
-	// Both addressing forms of the same file, since a selector and a path
-	// compose and the path is what cannery does not parse itself.
-	for _, selector := range []string{"", ":" + v.tag, "@" + v.digestPrefix(12)} {
+	// Every addressing form of the same file, since a selector and a path
+	// compose and the path is what cannery does not parse itself. The bare
+	// volume is in the list as well, which the version selectors are not.
+	for _, selector := range append([]string{""}, v.versionSelectors()...) {
 		t.Run("CatOneFileBy"+selector, func(t *testing.T) {
 			// Exactly the bytes and nothing else, which is what makes it
 			// pipeable.
@@ -477,6 +498,22 @@ func (v *volumeLifecycle) Pull(t *testing.T) {
 			"why.md": e2eVolumeFiles["nested/notes/why.md"],
 		}, readVolumeTree(t, destDir))
 	})
+
+	t.Run("ByShorthandDigest", func(t *testing.T) {
+		destDir := filepath.Join(t.TempDir(), "pull")
+		// A digest written the short way, which is the form a shorthand
+		// rendering prints and the only one a pull has not been given yet.
+		out := mustCLI(t, "volume", "pull", v.ref+"@"+v.untaggedDigest()[:12], destDir,
+			"--include", "tokenizer.json", "--output", "json")
+		var result volumePullResult
+		require.NoError(t, json.Unmarshal([]byte(out), &result))
+		// Whichever way it was addressed, the version it resolved to is
+		// reported whole.
+		require.Equal(t, v.versionRef, result.VersionRef)
+		require.Equal(t, map[string]string{
+			"tokenizer.json": e2eVolumeFiles["tokenizer.json"],
+		}, readVolumeTree(t, destDir))
+	})
 }
 
 func (v *volumeLifecycle) Repush(t *testing.T) {
@@ -484,12 +521,14 @@ func (v *volumeLifecycle) Repush(t *testing.T) {
 
 	// The same tree from the same directory, so the source URI the library
 	// derives is the same too and this is the identical version rather than a
-	// new one that happens to hold the same files.
-	out := mustCLI(t, "volume", "push", v.sourceDir, v.ref, "--output", "json")
+	// new one that happens to hold the same files. The tag is written on the
+	// ref rather than passed to --tag, which is the other way to ask for one.
+	out := mustCLI(t, "volume", "push", v.sourceDir, v.ref+":"+v.tag+"-again", "--output", "json")
 	var result volumePushResult
 	require.NoError(t, json.Unmarshal([]byte(out), &result))
 
 	require.Equal(t, v.versionRef, result.VersionRef)
+	require.Equal(t, []string{v.tag + "-again"}, result.TagsApplied)
 	// Nothing had to move, because head already pointed here.
 	require.False(t, result.HeadUpdated)
 	// The volume already holds every chunk, so none is uploaded as new: they
@@ -511,56 +550,60 @@ func (v *volumeLifecycle) Repush(t *testing.T) {
 
 func (v *volumeLifecycle) Delete(t *testing.T) {
 	require.NotEmpty(t, v.digest, "Push did not record a digest")
-	// Addressed by the ref the reads reported, not one rebuilt here.
-	versionRef := v.versionRef
 
-	t.Run("Version", func(t *testing.T) {
-		out := mustCLI(t, "volume", "rm", "--yes", versionRef, "--output", "json")
-		var result struct {
-			Digest      string `json:"digest"`
-			VersionRef  string `json:"version_ref"`
-			Lifecycle   string `json:"lifecycle"`
-			DeleteAfter string `json:"delete_after"`
-		}
-		require.NoError(t, json.Unmarshal([]byte(out), &result))
-		require.Equal(t, v.digest, result.Digest)
-		require.Equal(t, v.versionRef, result.VersionRef)
-		require.Equal(t, "TOMBSTONED", result.Lifecycle)
-		require.NotEmpty(t, result.DeleteAfter)
-	})
+	// A mutating route resolves a selector the way a read does, so each round
+	// runs against both spellings: the ref the reads reported, and the short
+	// bare digest a shorthand rendering prints. Each round ends where it
+	// started, which is what lets the next one run and leaves one live version
+	// for the whole-volume delete below.
+	for _, addressed := range []struct{ name, ref string }{
+		{name: "AsReported", ref: v.versionRef},
+		{name: "ByShorthandDigest", ref: v.ref + "@" + v.untaggedDigest()[:12]},
+	} {
+		t.Run("Version"+addressed.name, func(t *testing.T) {
+			var result struct {
+				Digest      string `json:"digest"`
+				VersionRef  string `json:"version_ref"`
+				Lifecycle   string `json:"lifecycle"`
+				DeleteAfter string `json:"delete_after"`
+			}
+			out := mustCLI(t, "volume", "rm", "--yes", addressed.ref, "--output", "json")
+			require.NoError(t, json.Unmarshal([]byte(out), &result))
+			require.Equal(t, v.digest, result.Digest)
+			// However it was addressed, what comes back names the version whole.
+			require.Equal(t, v.versionRef, result.VersionRef)
+			require.Equal(t, "TOMBSTONED", result.Lifecycle)
+			require.NotEmpty(t, result.DeleteAfter)
 
-	t.Run("TombstonedIsHiddenUnlessAsked", func(t *testing.T) {
-		type versionList struct {
-			Versions []struct {
-				Digest    string `json:"digest"`
-				Lifecycle string `json:"lifecycle"`
-			} `json:"versions"`
-		}
-		var hidden versionList
-		require.NoError(t, json.Unmarshal(
-			[]byte(mustCLI(t, "volume", "versions", v.ref, "--output", "json")), &hidden))
-		require.Empty(t, hidden.Versions)
+			t.Run("TombstonedIsHiddenUnlessAsked", func(t *testing.T) {
+				type versionList struct {
+					Versions []struct {
+						Digest    string `json:"digest"`
+						Lifecycle string `json:"lifecycle"`
+					} `json:"versions"`
+				}
+				var hidden versionList
+				require.NoError(t, json.Unmarshal(
+					[]byte(mustCLI(t, "volume", "versions", v.ref, "--output", "json")), &hidden))
+				require.Empty(t, hidden.Versions)
 
-		var shown versionList
-		require.NoError(t, json.Unmarshal(
-			[]byte(mustCLI(t, "volume", "versions", v.ref, "--include-tombstoned", "--output", "json")),
-			&shown))
-		require.Len(t, shown.Versions, 1)
-		require.Equal(t, "TOMBSTONED", shown.Versions[0].Lifecycle)
-	})
+				var shown versionList
+				require.NoError(t, json.Unmarshal(
+					[]byte(mustCLI(t, "volume", "versions", v.ref, "--include-tombstoned", "--output", "json")),
+					&shown))
+				require.Len(t, shown.Versions, 1)
+				require.Equal(t, "TOMBSTONED", shown.Versions[0].Lifecycle)
+			})
 
-	t.Run("Restore", func(t *testing.T) {
-		out := mustCLI(t, "volume", "restore", versionRef, "--output", "json")
-		var result struct {
-			Digest     string `json:"digest"`
-			VersionRef string `json:"version_ref"`
-			Lifecycle  string `json:"lifecycle"`
-		}
-		require.NoError(t, json.Unmarshal([]byte(out), &result))
-		require.Equal(t, v.digest, result.Digest)
-		require.Equal(t, v.versionRef, result.VersionRef)
-		require.Equal(t, "ALIVE", result.Lifecycle)
-	})
+			t.Run("Restore", func(t *testing.T) {
+				out := mustCLI(t, "volume", "restore", addressed.ref, "--output", "json")
+				require.NoError(t, json.Unmarshal([]byte(out), &result))
+				require.Equal(t, v.digest, result.Digest)
+				require.Equal(t, v.versionRef, result.VersionRef)
+				require.Equal(t, "ALIVE", result.Lifecycle)
+			})
+		})
+	}
 
 	t.Run("WholeVolume", func(t *testing.T) {
 		out := mustCLI(t, "volume", "rm", "--recursive", "--yes", v.ref, "--output", "json")

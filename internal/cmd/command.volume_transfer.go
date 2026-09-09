@@ -90,11 +90,21 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 	if err != nil {
 		return err
 	}
-	if ref.Level() != client.VolumeRefLevelVolume {
+	// A tag is the one selector a push can honor, since a push writes tags
+	// rather than reading them. A digest or a path names something a new
+	// version cannot be.
+	if ref.Volume == "" || ref.Digest != "" || ref.Path != "" {
 		return cmd.NewErrUsagef(
-			"ref %s names more than the volume, and a push publishes a whole tree as a new "+
-				"version; write 'bdn:%s/%s', and apply tags with --tag",
-			ref, ref.Namespace, ref.Volume)
+			"ref %s names a %s, and a push publishes a whole tree as a new version of a volume; "+
+				"write 'bdn:%s/%s', optionally with a tag to apply to what it publishes",
+			ref, ref.Level(), ref.Namespace, ref.Volume)
+	}
+	// Taken off the ref and applied like any other tag, so writing one here
+	// and passing --tag as well applies both.
+	tags := flags.Tags
+	if ref.Tag != "" {
+		tags = append(append([]string(nil), tags...), ref.Tag)
+		ref.Tag = ""
 	}
 	transfer, err := ctx.NewVolumeTransfer()
 	if err != nil {
@@ -106,7 +116,7 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 		Ref:       ref,
 		SourceDir: dir,
 		SourceURI: flags.SourceURI,
-		Tags:      flags.Tags,
+		Tags:      tags,
 		Hasher:    volumeHasher,
 		// Supplied so the push can read the volume's previous version and
 		// skip uploading content it already holds.
