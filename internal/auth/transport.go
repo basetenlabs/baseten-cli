@@ -153,6 +153,12 @@ func (t *Transport) base() http.RoundTripper {
 }
 
 func (t *Transport) Do(req *http.Request) (*http.Response, error) {
+	// A request that already carries a credential keeps it: volume transfers
+	// authenticate to the volume service with a capability token over this
+	// same client, and the API key would not be read there.
+	if req.Header.Get("Authorization") != "" {
+		return t.base().RoundTrip(req)
+	}
 	token, err := t.Credential(req.Context())
 	if err != nil {
 		return nil, err

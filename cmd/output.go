@@ -28,6 +28,33 @@ type CommandOutputSpec interface {
 	// meaningful JSON stdout payload (so --jq is not useful and no JQ example
 	// is required).
 	JSONOutputUnimportantBool() bool
+	// JSONAlternativeList returns the stdout shapes the command produces
+	// besides JSONOutputType, each with the input that selects it. Empty for a
+	// command with one fixed shape, which is nearly all of them.
+	JSONAlternativeList() []CommandOutputAlternative
+}
+
+// CommandOutputAlternative is one of the several stdout shapes a command can
+// produce, together with the input that selects it.
+//
+// A command needs these when what it was asked for decides the shape of the
+// answer rather than only its contents: `volume ls` returns namespaces,
+// volumes, or file entries depending on how much of a ref it was given, and
+// those are three different objects, not one object with optional fields.
+// Declaring them keeps --help-output honest about all of them; use
+// [JSONAlternativeFor] to build one.
+type CommandOutputAlternative struct {
+	// When completes "when the ...", naming the input that produces this
+	// shape: "ref names a namespace", "ref carries a path".
+	When string
+	// Type is the Go type of the payload, as [CommandOutput.JSONOutputType] is
+	// for the primary shape.
+	Type reflect.Type
+}
+
+// JSONAlternativeFor builds a [CommandOutputAlternative] for T.
+func JSONAlternativeFor[T any](when string) CommandOutputAlternative {
+	return CommandOutputAlternative{When: when, Type: reflect.TypeFor[T]()}
 }
 
 // CommandOutput declaratively documents a leaf command's output. JSONT is the
@@ -39,6 +66,9 @@ type CommandOutput[JSONT any] struct {
 	// JSONDescription is optional prose describing the --output json shape
 	// beyond what the JSON schema already conveys (e.g. how status fields
 	// behave, what --dry-run emits). Free-form.
+	//
+	// A command declaring JSONAlternatives says here when JSONT itself
+	// applies, since only the alternatives carry that with them.
 	JSONDescription string
 	// Examples documents how to invoke the command. At least one required.
 	Examples []CommandExample
@@ -56,6 +86,10 @@ type CommandOutput[JSONT any] struct {
 	// stderr). Such a command is exempt from the JQExample requirement, and
 	// --help-output omits the JSON schema block for it.
 	JSONOutputUnimportant bool
+	// JSONAlternatives declares the stdout shapes this command produces
+	// besides JSONT, for a command whose answer changes shape with its input.
+	// See [CommandOutputAlternative].
+	JSONAlternatives []CommandOutputAlternative
 }
 
 // JSONAny is the JSONT for leaf commands whose stdout JSON is valid JSON but
@@ -84,4 +118,7 @@ func (o *CommandOutput[JSONT]) JQ() CommandExample            { return o.JQExamp
 func (o *CommandOutput[JSONT]) JSONArrayStreamedBool() bool   { return o.JSONArrayStreamed }
 func (o *CommandOutput[JSONT]) JSONOutputUnimportantBool() bool {
 	return o.JSONOutputUnimportant
+}
+func (o *CommandOutput[JSONT]) JSONAlternativeList() []CommandOutputAlternative {
+	return o.JSONAlternatives
 }

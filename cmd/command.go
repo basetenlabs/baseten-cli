@@ -41,6 +41,7 @@ var Root = Command{
 		commandTrain,
 		commandTruss,
 		commandVersion,
+		commandVolume,
 		commandWhoami,
 	},
 }
