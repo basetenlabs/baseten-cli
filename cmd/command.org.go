@@ -140,7 +140,7 @@ var commandOrg = Command{
 			Summary:     "Describe the organization",
 			Description: "Describe the caller's organization, including the OIDC workload-identity configuration and the AWS AssumeRole trust-policy inputs.",
 			Flags:       OrgDescribeFlags{},
-			Output: &CommandOutput[OrgInfo]{
+			Output: &CommandOutput[managementapi.OrganizationInfo]{
 				TextDescription: "Field-per-line summary: org ID, teams, OIDC issuer, audience, workload types, subject claim format, and the AWS AssumeRole role ARN and external ID (or that the method is not enabled).",
 				Examples: []CommandExample{
 					{
@@ -379,21 +379,6 @@ type OrgTeamDescribeFlags struct {
 // OrgDescribeFlags configures `baseten org describe`.
 type OrgDescribeFlags struct {
 	CommandFlags
-}
-
-// OrgInfo is the response of GET /v1/organizations/me. AwsAssumeRole is null
-// while AWS AssumeRole is not enabled for the organization.
-type OrgInfo struct {
-	OrgID         string            `json:"org_id"`
-	Name          *string           `json:"name"`
-	CreatedAt     string            `json:"created_at"`
-	AwsAssumeRole *OrgAwsAssumeRole `json:"aws_assume_role"`
-}
-
-// OrgAwsAssumeRole holds the AWS AssumeRole trust-policy inputs.
-type OrgAwsAssumeRole struct {
-	BasetenRoleArn string `json:"baseten_role_arn"`
-	ExternalID     string `json:"external_id"`
 }
 
 type OrgUserListFlags struct {

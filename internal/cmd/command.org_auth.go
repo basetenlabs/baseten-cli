@@ -1,11 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
@@ -23,46 +19,14 @@ const (
 		"deployment=<deployment_id>:environment=<environment>:type=<workload_type>"
 )
 
-// getOrganizationInfo fetches GET /v1/organizations/me raw. Swap for the
-// generated client method once the endpoint is available in baseten-go.
-func getOrganizationInfo(ctx *CommandContext, api *managementapi.Client) (*cmd.OrgInfo, error) {
-	url := strings.TrimRight(api.BaseURL, "/") + "/v1/organizations/me"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	for key, vals := range api.Headers {
-		for _, val := range vals {
-			req.Header.Add(key, val)
-		}
-	}
-	resp, err := api.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching organization info: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading organization info: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, &managementapi.ResponseError{StatusCode: resp.StatusCode, Body: string(body)}
-	}
-	var info cmd.OrgInfo
-	if err := json.Unmarshal(body, &info); err != nil {
-		return nil, fmt.Errorf("decoding organization info: %w", err)
-	}
-	return &info, nil
-}
-
 func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	info, err := getOrganizationInfo(ctx, cl.API())
+	info, err := cl.API().GetOrganizationsMe(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetching organization info: %w", err)
 	}
 
 	if ctx.JSON {
@@ -75,7 +39,7 @@ func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error 
 		return fmt.Errorf("listing teams: %w", err)
 	}
 
-	ctx.Outputf("Org ID:               %s\n", info.OrgID)
+	ctx.Outputf("Org ID:               %s\n", info.OrgId)
 	if info.Name != nil && *info.Name != "" {
 		ctx.Outputf("Name:                 %s\n", *info.Name)
 	}
@@ -96,6 +60,6 @@ func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error 
 		return nil
 	}
 	ctx.Outputf("Baseten Role ARN:     %s\n", info.AwsAssumeRole.BasetenRoleArn)
-	ctx.Outputf("AWS External ID:      %s\n", info.AwsAssumeRole.ExternalID)
+	ctx.Outputf("AWS External ID:      %s\n", info.AwsAssumeRole.ExternalId)
 	return nil
 }
