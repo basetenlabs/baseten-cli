@@ -157,8 +157,8 @@ var commandOrg = Command{
 		{
 			Name:    "regions",
 			Summary: "List available deployment regions",
-			Description: "List the regions the organization can deploy models in, with the slug " +
-				"each one is selected by.\n\n" +
+			Description: "List the regions the organization can deploy models in.\n\n" +
+				"Pass a region's slug to 'baseten model push --region'.\n\n" +
 				"Pass --team to list the regions available to one team instead, which may be a " +
 				"subset of the organization's.",
 			Flags: OrgRegionsFlags{},

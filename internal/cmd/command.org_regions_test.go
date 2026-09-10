@@ -29,6 +29,8 @@ func Test_Org_Regions_SortedBySlug(t *testing.T) {
 	h.Require.Contains(out, "SLUG")
 	h.Require.Contains(out, "NAME")
 	h.Require.Contains(out, "US West (Oregon)")
+	h.Require.Contains(out, "eu-central-1")
+	h.Require.Contains(out, "us-west-2")
 	h.Require.Less(strings.Index(out, "eu-central-1"), strings.Index(out, "us-west-2"))
 }
 
