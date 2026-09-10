@@ -421,16 +421,24 @@ var commandTrainJob = Command{
 		},
 		{
 			Name:    "update",
-			Summary: "Update a training job's queue priority",
-			Description: "Update a queued training job's priority. Higher values are dequeued first.\n\n" +
-				"Only jobs in the PENDING state can have their priority changed.",
+			Summary: "Update a queued training job's priority or capacity",
+			Description: "Update a queued training job's queue priority, its availability model, or both. " +
+				"Higher priorities are dequeued first, and the availability model selects the capacity " +
+				"the job is admitted under, so a job waiting on full dedicated capacity can be moved to " +
+				"spot without resubmitting.\n\n" +
+				"Only jobs in the PENDING state can be updated. Pass at least one of --priority or " +
+				"--availability-model.",
 			Flags: TrainJobUpdateFlags{},
 			Output: &CommandOutput[managementapi.UpdateTrainingJobResponse]{
-				TextDescription: "On success, prints the job's ID and new priority to stderr; no stdout output.",
+				TextDescription: "On success, prints the job's ID and what changed to stderr; no stdout output.",
 				Examples: []CommandExample{
 					{
 						Description: "Raise a queued job's priority.",
 						Command:     "baseten train job update --job-id p7qr9qv --priority 10",
+					},
+					{
+						Description: "Move a queued job onto spot capacity so it can dequeue sooner.",
+						Command:     "baseten train job update --job-id p7qr9qv --availability-model spot",
 					},
 				},
 				JQExample: CommandExample{
@@ -742,7 +750,8 @@ type TrainJobUpdateFlags struct {
 	CommandFlags
 	TrainJobRefFlags
 
-	Priority int `flag:"priority" desc:"New queue priority. Higher values are dequeued first." required:"true"`
+	Priority          int    `flag:"priority" desc:"New queue priority. Higher values are dequeued first."`
+	AvailabilityModel string `flag:"availability-model" desc:"New capacity guarantee. 'dedicated' runs on on-demand capacity that is not preempted; 'spot' runs on interruptible capacity that may be preempted, and checkpointing your own progress is up to you." enum:"dedicated,spot"`
 }
 
 // TrainJobDownloadFlags configures `baseten train job download`.
