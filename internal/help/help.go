@@ -31,7 +31,19 @@ const (
 	minSpace = 10
 	shortPad = 2
 	longPad  = 4
+	// maxTermWidth is the width help renders at when stdout is not a terminal,
+	// and the cap on a terminal's own width.
+	maxTermWidth = 120
+	// exampleIndent is the width styleExample prefixes to a continuation line
+	// (one following a line ending in a backslash or pipe).
+	exampleIndent = 2
 )
+
+// exampleCodeblockPadding is the horizontal padding render applies to the
+// examples codeblock, read from the styles rather than assumed.
+var exampleCodeblockPadding = sync.OnceValue(func() int {
+	return makeStyles(mustColorscheme(fang.AnsiColorScheme)).Codeblock.Base.GetHorizontalPadding()
+})
 
 var termWidth = sync.OnceValue(func() int {
 	if s := os.Getenv("__FANG_TEST_WIDTH"); s != "" {
@@ -40,9 +52,9 @@ var termWidth = sync.OnceValue(func() int {
 	}
 	w, _, err := term.GetSize(os.Stdout.Fd())
 	if err != nil {
-		return 120
+		return maxTermWidth
 	}
-	return min(w, 120)
+	return min(w, maxTermWidth)
 })
 
 // render writes the help text for a cobra command. exampleText is the raw

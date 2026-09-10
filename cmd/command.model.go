@@ -312,7 +312,7 @@ type ModelPushFlags struct {
 
 	DryRun bool `flag:"dry-run" desc:"Validate the push and request upload credentials without uploading or creating anything."`
 
-	Environment    string `flag:"environment" desc:"Stable environment to push to."`
+	Environment    string `flag:"environment" desc:"Stable environment to push to. Run 'baseten model environment list' to see a model's environments."`
 	DeploymentName string `flag:"deployment-name" desc:"Human-readable name for the new deployment."`
 	Region         string `flag:"region" desc:"Slug of the region to deploy the model in. Defaults to a region Baseten selects."`
 
@@ -374,12 +374,12 @@ type ModelPredictFlags struct {
 	CommandFlags
 	ModelRefFlags
 
-	Environment    string `flag:"environment" desc:"Environment to target (e.g. production, development). Defaults to production. Mutually exclusive with --deployment-id, --deployment-name, and --regional."`
+	Environment    string `flag:"environment" desc:"Environment to target (e.g. production, development). Defaults to production. Mutually exclusive with --deployment-id, --deployment-name, and --regional. Run 'baseten model environment list' to see a model's environments."`
 	DeploymentID   string `flag:"deployment-id" desc:"Specific deployment to target. Mutually exclusive with --environment, --deployment-name, and --regional."`
 	DeploymentName string `flag:"deployment-name" desc:"Name of the deployment to target. Mutually exclusive with --environment, --deployment-id, and --regional."`
 	Regional       string `flag:"regional" desc:"Regional environment name; routes via the regional hostname. Mutually exclusive with --environment, --deployment-id, and --deployment-name."`
 
-	Data string `flag:"data" desc:"Inline JSON request body." oneof:"predict-input"`
+	Data string `flag:"data" desc:"Inline JSON request body. The shape is the deployed model's own input schema; see https://docs.baseten.co/inference/calling-your-model." oneof:"predict-input"`
 	File string `flag:"file" desc:"Path to a JSON file containing the request body. Use '-' for stdin." oneof:"predict-input"`
 
 	Websocket bool `flag:"websocket" desc:"Use the WebSocket predict endpoint. Sends the body as one frame, reads one frame back, then closes. Not for multi-message or back-and-forth sessions."`

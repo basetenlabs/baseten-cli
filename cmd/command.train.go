@@ -594,7 +594,7 @@ type TrainCapacityDescribeFlags struct {
 type TrainCapacityUpdateFlags struct {
 	CommandFlags
 
-	Team    string `flag:"team" desc:"Team name or ID whose limit changes." required:"true"`
+	Team    string `flag:"team" desc:"Team name or ID whose limit changes. Run 'baseten org team list' to see teams." required:"true"`
 	GPUType string `flag:"gpu-type" desc:"GPU type the limit applies to (for example H100)." required:"true"`
 	MaxGPUs int    `flag:"max-gpus" desc:"Maximum concurrent GPUs of this type the team may use." required:"true"`
 }
@@ -621,7 +621,7 @@ type TrainCheckpointDeployFlags struct {
 	TrussAuthFlags
 
 	JobID        string `flag:"job-id" desc:"Training job whose checkpoints are deployed. Required unless --config names them."`
-	Config       string `flag:"config" desc:"Python file defining a DeployCheckpointsConfig: which checkpoints deploy and the model that serves them."`
+	Config       string `flag:"config" desc:"Python file defining a DeployCheckpointsConfig: which checkpoints deploy and the model that serves them. The type is documented at https://docs.baseten.co/reference/sdk/training#deploycheckpointsconfig."`
 	ConfigOutDir string `flag:"config-out-dir" desc:"Directory the generated model config is written to. Defaults to a directory under ./truss_configs."`
 	DryRun       bool   `flag:"dry-run" desc:"Write the generated model config without deploying anything."`
 }
@@ -646,9 +646,9 @@ type TrainPushFlags struct {
 	Config string `flag:"config" desc:"Python file defining the training project and its job." required:"true"`
 
 	JobName string `flag:"job-name" desc:"Name for the training job. Defaults to a generated name."`
-	Team    string `flag:"team" desc:"Team name or ID that owns the training project."`
+	Team    string `flag:"team" desc:"Team name or ID that owns the training project. Run 'baseten org team list' to see teams."`
 
-	Accelerator string `flag:"accelerator" desc:"Accelerator type and count, for example 'H200:8'. Overrides the config."`
+	Accelerator string `flag:"accelerator" desc:"Accelerator type and count, for example 'H200:8'. Overrides the config. Supported hardware is documented at https://docs.baseten.co/training/concepts/basics."`
 	NodeCount   int    `flag:"node-count" desc:"Number of compute nodes. Overrides the config."`
 	Entrypoint  string `flag:"entrypoint" desc:"Command the job runs. Overrides the config."`
 	Priority    int    `flag:"priority" desc:"Queue priority. Higher values are dequeued first."`
@@ -669,7 +669,7 @@ type TrainWorkstationCreateFlags struct {
 	Image       string `flag:"image" desc:"Docker base image the workstation runs."`
 
 	Project string `flag:"project" desc:"Training project that owns the workstation. Defaults to 'workstation-<accelerator>'."`
-	Team    string `flag:"team" desc:"Team name or ID that owns the training project."`
+	Team    string `flag:"team" desc:"Team name or ID that owns the training project. Run 'baseten org team list' to see teams."`
 
 	Orchestrator string `flag:"orchestrator" desc:"Multi-node orchestrator set up across the nodes." enum:"slurm" default:"slurm"`
 

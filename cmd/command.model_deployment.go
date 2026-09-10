@@ -106,7 +106,10 @@ var commandModelDeployment = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print just the destination path.",
-					Command:     "baseten model deployment download --model-id <model-id> --deployment-id <deployment-id> --out-file model.tar --jq '.out_file'",
+					CommandLines: []string{
+						"baseten model deployment download --model-id <model-id> --deployment-id <deployment-id>",
+						"--out-file model.tar --jq '.out_file'",
+					},
 				},
 			},
 		},
@@ -130,7 +133,10 @@ var commandModelDeployment = Command{
 					},
 					{
 						Description: "Promote to a non-production environment using the deployment's own instance type.",
-						Command:     "baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id> --environment staging --override-env-instance-type --yes",
+						CommandLines: []string{
+							"baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id>",
+							"--environment staging --override-env-instance-type --yes",
+						},
 					},
 				},
 				JQExample: CommandExample{
@@ -233,7 +239,10 @@ var commandModelDeployment = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Stream just the log messages as a JSONL stream.",
-					Command:     "baseten model deployment logs --model-id <model-id> --deployment-id <deployment-id> --output jsonl --jq '.message'",
+					CommandLines: []string{
+						"baseten model deployment logs --model-id <model-id> --deployment-id <deployment-id>",
+						"--output jsonl --jq '.message'",
+					},
 				},
 			},
 		},
@@ -260,7 +269,11 @@ var commandModelDeployment = Command{
 					},
 					{
 						Description: "Summarize request volume and latency over the last hour.",
-						Command:     "baseten model deployment metrics --model-id <model-id> --deployment-id <deployment-id> --mode summary --since 1h --metric baseten_inference_requests_total --metric baseten_end_to_end_response_time_seconds",
+						CommandLines: []string{
+							"baseten model deployment metrics --model-id <model-id> --deployment-id <deployment-id>",
+							"--mode summary --since 1h --metric baseten_inference_requests_total",
+							"--metric baseten_end_to_end_response_time_seconds",
+						},
 					},
 					{
 						Description: "Plot a series over the last 6 hours.",
@@ -269,7 +282,10 @@ var commandModelDeployment = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print the metric names returned.",
-					Command:     "baseten model deployment metrics --model-id <model-id> --deployment-id <deployment-id> --jq '.metric_descriptors[].name'",
+					CommandLines: []string{
+						"baseten model deployment metrics --model-id <model-id> --deployment-id <deployment-id>",
+						"--jq '.metric_descriptors[].name'",
+					},
 				},
 			},
 		},
@@ -291,7 +307,10 @@ var commandModelDeployment = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print the deployment's new name.",
-					Command:     "baseten model deployment rename --model-id <model-id> --deployment-id <deployment-id> --new-name canary --jq '.name'",
+					CommandLines: []string{
+						"baseten model deployment rename --model-id <model-id> --deployment-id <deployment-id>",
+						"--new-name canary --jq '.name'",
+					},
 				},
 			},
 		},
@@ -302,23 +321,34 @@ var commandModelDeployment = Command{
 				"Only the flags you pass are changed; every other setting is left alone. " +
 				"Changes are applied asynchronously, so the response reports whether the " +
 				"request was accepted rather than the settled state.\n\n" +
-				"Run 'baseten model deployment describe' to see the current values.",
+				"Run 'baseten model deployment describe' to see the current values. How the " +
+				"settings drive scaling is documented at " +
+				"https://docs.baseten.co/deployment/autoscaling/overview.",
 			Flags: ModelDeploymentUpdateAutoscalingFlags{},
 			Output: &CommandOutput[managementapi.UpdateAutoscalingSettingsResponse]{
 				TextDescription: "The status of the request followed by the server's message.",
 				Examples: []CommandExample{
 					{
 						Description: "Raise a deployment's replica bounds.",
-						Command:     "baseten model deployment update-autoscaling --model-id <model-id> --deployment-id <deployment-id> --min-replica 2 --max-replica 10",
+						CommandLines: []string{
+							"baseten model deployment update-autoscaling --model-id <model-id> --deployment-id <deployment-id>",
+							"--min-replica 2 --max-replica 10",
+						},
 					},
 					{
 						Description: "Shorten the scale-down delay, leaving every other setting unchanged.",
-						Command:     "baseten model deployment update-autoscaling --model-id <model-id> --deployment-id <deployment-id> --scale-down-delay 60",
+						CommandLines: []string{
+							"baseten model deployment update-autoscaling --model-id <model-id> --deployment-id <deployment-id>",
+							"--scale-down-delay 60",
+						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print just the status.",
-					Command:     "baseten model deployment update-autoscaling --model-id <model-id> --deployment-id <deployment-id> --min-replica 2 --jq '.status'",
+					CommandLines: []string{
+						"baseten model deployment update-autoscaling --model-id <model-id> --deployment-id <deployment-id>",
+						"--min-replica 2 --jq '.status'",
+					},
 				},
 			},
 		},
@@ -334,16 +364,25 @@ var commandModelDeployment = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Reject requests once the queue is full.",
-						Command:     "baseten model deployment update-request-backpressure --model-id <model-id> --deployment-id <deployment-id> --policy reject-on-full",
+						CommandLines: []string{
+							"baseten model deployment update-request-backpressure --model-id <model-id>",
+							"--deployment-id <deployment-id> --policy reject-on-full",
+						},
 					},
 					{
 						Description: "Clear the policy.",
-						Command:     "baseten model deployment update-request-backpressure --model-id <model-id> --deployment-id <deployment-id> --policy null",
+						CommandLines: []string{
+							"baseten model deployment update-request-backpressure --model-id <model-id>",
+							"--deployment-id <deployment-id> --policy null",
+						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the resulting policy.",
-					Command:     "baseten model deployment update-request-backpressure --model-id <model-id> --deployment-id <deployment-id> --policy reject-on-full --jq '.policy'",
+					CommandLines: []string{
+						"baseten model deployment update-request-backpressure --model-id <model-id>",
+						"--deployment-id <deployment-id> --policy reject-on-full --jq '.policy'",
+					},
 				},
 			},
 		},
