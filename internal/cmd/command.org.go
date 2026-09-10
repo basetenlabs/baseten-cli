@@ -514,32 +514,14 @@ func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error 
 		return nil
 	}
 
-	teams, err := cl.API().GetTeams(ctx, managementapi.GetV1TeamsParams{})
-	if err != nil {
-		return fmt.Errorf("listing teams: %w", err)
-	}
-
 	ctx.Outputf("Org ID:               %s\n", info.OrgId)
 	if info.Name != nil && *info.Name != "" {
 		ctx.Outputf("Name:                 %s\n", *info.Name)
 	}
-	if len(teams.Teams) == 0 {
-		ctx.Outputf("Teams:                (none)\n")
+	if info.AwsAssumeRole != nil {
+		ctx.Outputf("AWS AssumeRole:\n")
+		ctx.Outputf("  Baseten Role ARN:     %s\n", info.AwsAssumeRole.BasetenRoleArn)
+		ctx.Outputf("  AWS External ID:      %s\n", info.AwsAssumeRole.ExternalId)
 	}
-	for i, t := range teams.Teams {
-		label := "Teams:               "
-		if i > 0 {
-			label = "                     "
-		}
-		ctx.Outputf("%s %s (%s)\n", label, t.Id, t.Name)
-	}
-	// The server nulls aws_assume_role while the method is not enabled.
-	if info.AwsAssumeRole == nil {
-		ctx.Outputf("AWS AssumeRole:       not enabled (contact Baseten support to enable it)\n")
-		return nil
-	}
-	ctx.Outputf("AWS AssumeRole:\n")
-	ctx.Outputf("  Baseten Role ARN:     %s\n", info.AwsAssumeRole.BasetenRoleArn)
-	ctx.Outputf("  AWS External ID:      %s\n", info.AwsAssumeRole.ExternalId)
 	return nil
 }

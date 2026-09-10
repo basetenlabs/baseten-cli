@@ -233,26 +233,16 @@ func assumeRoleFixture() map[string]any {
 	}
 }
 
-func teamsFixture() map[string]any {
-	return map[string]any{"teams": []any{
-		map[string]any{
-			"id": "t1", "name": "my-team", "default": true,
-			"created_at": "2026-01-01T00:00:00Z",
-		},
-	}}
-}
-
 func Test_Org_Describe_Text(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200,
 		orgInfoFixture(assumeRoleFixture()))
-	h.MockManagementAPI().SetRoute("GET", "/v1/teams", 200, teamsFixture())
 
 	h.Require.NoError(h.Execute("org", "describe"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Org ID:               abcd1234")
 	h.Require.Contains(out, "Name:                 my-org")
-	h.Require.Contains(out, "t1 (my-team)")
+	h.Require.NotContains(out, "Teams")
 	h.Require.NotContains(out, "OIDC")
 	h.Require.Contains(out, "AWS AssumeRole:\n  Baseten Role ARN:     arn:aws:iam::337139236424:role/baseten-customer-access")
 	h.Require.Contains(out, "AWS External ID:      baseten-2fdd8a01c4c34e6bb92a2b96fca29b70")
@@ -262,12 +252,11 @@ func Test_Org_Describe_Text_AssumeRoleNotEnabled(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200,
 		orgInfoFixture(nil))
-	h.MockManagementAPI().SetRoute("GET", "/v1/teams", 200, teamsFixture())
 
 	h.Require.NoError(h.Execute("org", "describe"))
 	out := h.Stdout.String()
-	h.Require.Contains(out, "AWS AssumeRole:       not enabled")
-	h.Require.NotContains(out, "Baseten Role ARN")
+	h.Require.Contains(out, "Org ID:               abcd1234")
+	h.Require.NotContains(out, "AWS")
 }
 
 func Test_Org_Describe_JSON_IsTheResponseType(t *testing.T) {
@@ -279,16 +268,6 @@ func Test_Org_Describe_JSON_IsTheResponseType(t *testing.T) {
 	out := h.Stdout.String()
 	h.Require.Contains(out, `"org_id": "abcd1234"`)
 	h.Require.Contains(out, `"external_id": "baseten-2fdd8a01c4c34e6bb92a2b96fca29b70"`)
-}
-
-func Test_Org_Describe_Text_NoTeams(t *testing.T) {
-	h := NewCommandHarness(t)
-	h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200,
-		orgInfoFixture(assumeRoleFixture()))
-	h.MockManagementAPI().SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []any{}})
-
-	h.Require.NoError(h.Execute("org", "describe"))
-	h.Require.Contains(h.Stdout.String(), "Teams:                (none)")
 }
 
 func Test_Org_Describe_JQ_AssumeRoleNotEnabled(t *testing.T) {

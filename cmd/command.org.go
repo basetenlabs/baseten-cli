@@ -136,13 +136,12 @@ var commandOrg = Command{
 			},
 		},
 		{
-			Name:    "describe",
-			Summary: "Describe the organization",
-			Description: "Describe the caller's organization, including its teams and AWS AssumeRole trust-policy inputs.\n\n" +
-				"For OIDC workload identity configuration, see https://docs.baseten.co/organization/oidc.",
-			Flags: OrgDescribeFlags{},
+			Name:        "describe",
+			Summary:     "Describe the organization",
+			Description: "Describe the caller's organization.",
+			Flags:       OrgDescribeFlags{},
 			Output: &CommandOutput[managementapi.OrganizationInfo]{
-				TextDescription: "Field-per-line summary: org ID, name (when set), teams, and the AWS AssumeRole role ARN and external ID (or that the method is not enabled).",
+				TextDescription: "Field-per-line summary: org ID, name (when set), and the AWS AssumeRole role ARN and external ID (if enabled).",
 				Examples: []CommandExample{
 					{
 						Description: "Describe the organization.",
@@ -150,8 +149,8 @@ var commandOrg = Command{
 					},
 				},
 				JQExample: CommandExample{
-					Description: "Print just the AWS external ID.",
-					Command:     "baseten org describe --jq '.aws_assume_role.external_id'",
+					Description: "Print just the organization ID.",
+					Command:     "baseten org describe --jq '.org_id'",
 				},
 			},
 		},
