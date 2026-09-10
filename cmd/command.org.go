@@ -155,6 +155,33 @@ var commandOrg = Command{
 			},
 		},
 		{
+			Name:    "regions",
+			Summary: "List available deployment regions",
+			Description: "List the regions the organization can deploy models in, with the slug " +
+				"each one is selected by.\n\n" +
+				"Pass --team to list the regions available to one team instead, which may be a " +
+				"subset of the organization's.",
+			Flags: OrgRegionsFlags{},
+			Output: &CommandOutput[managementapi.Regions]{
+				TextDescription: "Table with columns: SLUG, NAME. When the organization has no " +
+					"regions, prints \"No regions found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List the organization's regions.",
+						Command:     "baseten org regions",
+					},
+					{
+						Description: "List one team's regions.",
+						Command:     "baseten org regions --team <team>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the region slugs.",
+					Command:     "baseten org regions --jq '.regions[].slug'",
+				},
+			},
+		},
+		{
 			Name:    "secret",
 			Summary: "Manage secrets",
 			Children: []Command{
@@ -418,6 +445,12 @@ type OrgBillingUsageFlags struct {
 	Since time.Duration `flag:"since" desc:"Relative window ending now (e.g. 24h, 7d). Used when neither --start nor --end is given. Maximum 31d. Mutually exclusive with --start/--end."`
 	Start time.Time     `flag:"start" desc:"Start of the window. Accepts ISO 8601 (e.g. '2026-05-01', '2026-05-01T12:00:00Z'); values without a timezone are interpreted in the local timezone. Requires --end. Mutually exclusive with --since."`
 	End   time.Time     `flag:"end" desc:"End of the window. Accepts ISO 8601; values without a timezone are interpreted in the local timezone. Requires --start. Mutually exclusive with --since."`
+}
+
+type OrgRegionsFlags struct {
+	CommandFlags
+
+	Team string `flag:"team" desc:"List the regions available to this team by name or ID, instead of the organization's. Run 'baseten org team list' to see teams."`
 }
 
 type OrgSecretListFlags struct {
