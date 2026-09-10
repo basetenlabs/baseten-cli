@@ -158,6 +158,34 @@ func TestJSONErrorBadOutputValueWritesStderrOnly(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "must be one of")
 }
 
+// A parse error is rejected before flags are bound, so the format is read
+// from argv. It has to agree with pflag on repeats and on --.
+func TestJSONErrorParseErrorFormatFollowsLastOutputFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantJSON bool
+	}{
+		{"last wins, json then none", []string{"--output", "json", "--output", "none"}, false},
+		{"last wins, none then json", []string{"--output", "none", "--output", "json"}, true},
+		{"last wins with equals form", []string{"--output=json", "-o", "text"}, false},
+		{"output after -- is not a flag", []string{"--output", "json", "--", "--output", "none"}, true},
+		{"jq implies json", []string{"--jq", ".dedicated_usage"}, true},
+		{"jq does not override an output flag", []string{"--output", "none", "--jq", ".dedicated_usage"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			h.Require.Error(h.Execute(append([]string{"org", "billing", "usage", "--bogus"}, tc.args...)...))
+			h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
+			if tc.wantJSON {
+				h.Require.Contains(decodeJSONErrorEnvelope(h).Message, "unknown flag: --bogus")
+			} else {
+				h.Require.Empty(h.Stdout.String())
+			}
+		})
+	}
+}
+
 func TestJSONErrorRootHelpDocumentsEnvelope(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.Require.NoError(h.Execute("--help-output"))

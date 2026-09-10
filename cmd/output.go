@@ -1,6 +1,9 @@
 package cmd
 
-import "reflect"
+import (
+	"reflect"
+	"strings"
+)
 
 // CommandOutputSpec is the type-erased view of a leaf command's [CommandOutput].
 // Every leaf [Command] must declare an Output value implementing this interface
@@ -68,12 +71,28 @@ type JSONAny = map[string]any
 // --help-output renders it as "output shape is undefined".
 type JSONUndefined struct{}
 
-// CommandExample documents one usage of a command.
+// CommandExample documents one usage of a command. Exactly one of Command or
+// CommandLines carries the invocation.
 type CommandExample struct {
 	// Description is a one-line "what this does" preceding the command.
 	Description string
 	// Command is a literal shell line beginning with "baseten ...".
 	Command string
+	// CommandLines is Command split over multiple lines for an invocation too
+	// long to render on one. Help joins them with a trailing backslash and
+	// indents the continuations, so write each line without either. Break at
+	// argument boundaries the reader would choose, never inside a quoted
+	// argument.
+	CommandLines []string
+}
+
+// CommandString returns the example as a single shell line, whichever field
+// it was declared in. Empty when the example is unset.
+func (e CommandExample) CommandString() string {
+	if len(e.CommandLines) > 0 {
+		return strings.Join(e.CommandLines, " ")
+	}
+	return e.Command
 }
 
 func (*CommandOutput[JSONT]) JSONOutputType() reflect.Type    { return reflect.TypeFor[JSONT]() }

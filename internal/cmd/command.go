@@ -312,22 +312,33 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 }
 
 // validateOutput panics if a leaf command's Output is malformed: missing
-// examples, or a JQExample whose Command doesn't actually invoke --jq.
-// Leaves with DisableFlagParsing, or whose JSON output is marked unimportant,
-// are exempt from the JQExample requirement since --jq is not honored (or not
-// useful) for them.
+// examples, an example declaring both Command and CommandLines, or a
+// JQExample that doesn't actually invoke --jq. Leaves with
+// DisableFlagParsing, or whose JSON output is marked unimportant, are exempt
+// from the JQExample requirement since --jq is not honored (or not useful)
+// for them.
 func validateOutput(path string, def cmd.Command) {
 	if len(def.Output.ExampleList()) == 0 {
 		panic(fmt.Sprintf("command %q Output requires at least one example", path))
 	}
+	for _, ex := range append(def.Output.ExampleList(), def.Output.JQ()) {
+		if ex.Command != "" && len(ex.CommandLines) > 0 {
+			panic(fmt.Sprintf("command %q example %q declares both Command and CommandLines", path, ex.Description))
+		}
+	}
+	for _, line := range help.OverlongExampleLines(def.Output) {
+		panic(fmt.Sprintf("command %q example line would render truncated in help; shorten it, or "+
+			"for a command split it with CommandLines: %q", path, line))
+	}
 	if def.DisableFlagParsing || def.Output.JSONOutputUnimportantBool() {
 		return
 	}
-	if def.Output.JQ().Command == "" {
+	jq := def.Output.JQ().CommandString()
+	if jq == "" {
 		panic(fmt.Sprintf("command %q Output requires a JQExample", path))
 	}
-	if !strings.Contains(def.Output.JQ().Command, "--jq") {
-		panic(fmt.Sprintf("command %q JQExample.Command must invoke --jq, got %q", path, def.Output.JQ().Command))
+	if !strings.Contains(jq, "--jq") {
+		panic(fmt.Sprintf("command %q JQExample must invoke --jq, got %q", path, jq))
 	}
 }
 
@@ -437,26 +448,40 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 }
 
 // outputFormatFromArgs returns the --output value read straight out of argv,
-// for the failures cobra rejects before it finishes parsing flags. Returns ""
-// when the invocation names no format, a typo'd value included, since there
-// is no telling what the caller meant by it. --jq counts as json only if no
-// --output follows. Shorthands combined into one arg (-vojson) are not
-// recognized.
+// for the failures cobra rejects before it finishes parsing flags. Repeats
+// follow pflag: the last value wins, and nothing after a bare -- is a flag.
+// Returns "" when the invocation names no format. A typo'd value comes back
+// as written, and so matches neither json nor jsonl: the failure gets no
+// envelope, since there is no telling what the caller meant by it. --jq counts
+// as json only when no --output appears at all. Shorthands combined into one
+// arg (-vojson) are not recognized.
 func outputFormatFromArgs(args []string) string {
-	format := ""
-	for i, arg := range args {
+	format, sawOutput, sawJQ := "", false, false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
 		switch {
 		case arg == "--output" || arg == "-o":
+			sawOutput = true
+			// A trailing --output with no value is the parse error cobra is
+			// already reporting; it names no format.
+			format = ""
 			if i+1 < len(args) {
-				return args[i+1]
+				format = args[i+1]
+				i++
 			}
 		case strings.HasPrefix(arg, "--output="):
-			return strings.TrimPrefix(arg, "--output=")
+			sawOutput, format = true, strings.TrimPrefix(arg, "--output=")
 		case strings.HasPrefix(arg, "-o"):
-			return strings.TrimPrefix(strings.TrimPrefix(arg, "-o"), "=")
+			sawOutput, format = true, strings.TrimPrefix(strings.TrimPrefix(arg, "-o"), "=")
 		case arg == "--jq" || strings.HasPrefix(arg, "--jq=") || strings.HasPrefix(arg, "-q"):
-			format = "json"
+			sawJQ = true
 		}
+	}
+	if !sawOutput && sawJQ {
+		return "json"
 	}
 	return format
 }

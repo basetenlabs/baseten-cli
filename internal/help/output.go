@@ -16,27 +16,60 @@ import (
 
 // composeExamples produces the newline-joined example block for a leaf's
 // help. Examples come first (each prefixed with a `# Description` line),
-// followed by JQExample. Returns "" for non-leaves or for leaves with no
-// declared examples (e.g. DisableFlagParsing commands).
+// followed by JQExample. An example declaring CommandLines is emitted over
+// those lines, joined by a trailing backslash so it stays pasteable.
+// Returns "" for non-leaves or for leaves with no declared examples (e.g.
+// DisableFlagParsing commands).
 func composeExamples(spec cmd.CommandOutputSpec) string {
 	if spec == nil {
 		return ""
 	}
 	var lines []string
 	add := func(ex cmd.CommandExample) {
-		if ex.Command == "" {
+		if ex.CommandString() == "" {
 			return
 		}
 		if ex.Description != "" {
 			lines = append(lines, "# "+ex.Description)
 		}
-		lines = append(lines, ex.Command)
+		if len(ex.CommandLines) == 0 {
+			lines = append(lines, ex.Command)
+			return
+		}
+		for i, line := range ex.CommandLines {
+			if i < len(ex.CommandLines)-1 {
+				line += " \\"
+			}
+			lines = append(lines, line)
+		}
 	}
 	for _, ex := range spec.ExampleList() {
 		add(ex)
 	}
 	add(spec.JQ())
 	return strings.Join(lines, "\n")
+}
+
+// OverlongExampleLines returns the composed example lines of spec that render
+// truncated, descriptions included. The budget is the non-terminal width; a
+// narrower terminal truncates sooner and no author can target every width.
+func OverlongExampleLines(spec cmd.CommandOutputSpec) []string {
+	// Mirrors render: the codeblock is capped at the terminal width less one
+	// padding, and its content at the block width less another.
+	limit := maxTermWidth - 2*exampleCodeblockPadding()
+	var overlong []string
+	var indented bool
+	for _, line := range strings.Split(composeExamples(spec), "\n") {
+		width := len(line)
+		if indented {
+			width += exampleIndent
+		}
+		if line != "" && width > limit {
+			overlong = append(overlong, line)
+		}
+		indented = strings.HasSuffix(line, "\\") || strings.HasSuffix(line, "|")
+	}
+	return overlong
 }
 
 // renderOutputSection produces the Output section appended to --help when
