@@ -38,7 +38,7 @@ var commandModelAPI = Command{
 				"Pass --added-only to restrict to just the Model APIs the workspace has added.",
 			Flags: ModelAPIListFlags{},
 			Output: &CommandOutput[ModelAPIList]{
-				TextDescription: "Table with columns: NAME, CONTEXT, $/1M IN, $/1M OUT, ADDED. " +
+				TextDescription: "Table with columns: NAME, CONTEXT, $/1M IN, $/1M OUT, RELEASED. " +
 					"When no Model APIs match, prints \"No Model APIs found.\" to stderr.",
 				Examples: []CommandExample{
 					{

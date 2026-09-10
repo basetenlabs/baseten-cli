@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -44,13 +45,69 @@ func Test_ModelApi_List_Rows(t *testing.T) {
 	h.Require.Contains(out, "CONTEXT")
 	h.Require.Contains(out, "$/1M IN")
 	h.Require.Contains(out, "$/1M OUT")
+	h.Require.Contains(out, "RELEASED")
 	h.Require.Contains(out, "llama-3")
 	h.Require.Contains(out, "8192")
 	h.Require.Contains(out, "0.5")
 	h.Require.Contains(out, "1.5")
+	h.Require.Contains(out, "2025-01-01")
 	// Display name and family were dropped from the list table.
 	h.Require.NotContains(out, "DISPLAY NAME")
 	h.Require.NotContains(out, "Llama 3")
+	// The added flag column was replaced by RELEASED.
+	h.Require.NotContains(out, "ADDED")
+}
+
+func Test_ModelApi_List_SortsUsedThenAddedThenCatalog(t *testing.T) {
+	usedNewest := modelAPIFixture("used-newest", "Used Newest", "fam")
+	usedNewest["org_details"] = map[string]any{
+		"added_at": "2025-01-01T00:00:00Z", "last_used_at": "2026-05-01T00:00:00Z",
+	}
+	usedOlder := modelAPIFixture("used-older", "Used Older", "fam")
+	usedOlder["org_details"] = map[string]any{
+		"added_at": "2025-01-01T00:00:00Z", "last_used_at": "2026-01-01T00:00:00Z",
+	}
+	addedUnused := modelAPIFixture("added-never-used", "Added Never Used", "fam")
+	addedUnused["org_details"] = map[string]any{"added_at": "2025-01-01T00:00:00Z"}
+	catalogNew := modelAPIFixture("catalog-new", "Catalog New", "fam")
+	catalogNew["release_date"] = "2026-03-01"
+	catalogOld := modelAPIFixture("catalog-old", "Catalog Old", "fam")
+	catalogOld["release_date"] = "2024-03-01"
+
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis", 200, map[string]any{
+		"items":      []any{catalogOld, addedUnused, catalogNew, usedOlder, usedNewest},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	h.Require.NoError(h.Execute("model-api", "list"))
+	out := h.Stdout.String()
+	want := []string{"used-newest", "used-older", "added-never-used", "catalog-new", "catalog-old"}
+	positions := make([]int, len(want))
+	for i, name := range want {
+		positions[i] = strings.Index(out, name)
+		h.Require.NotEqual(-1, positions[i], "%s missing from table", name)
+	}
+	h.Require.IsIncreasing(positions)
+}
+
+func Test_ModelApi_List_JSONKeepsBackendOrder(t *testing.T) {
+	usedNewest := modelAPIFixture("used-newest", "Used Newest", "fam")
+	usedNewest["org_details"] = map[string]any{
+		"added_at": "2025-01-01T00:00:00Z", "last_used_at": "2026-05-01T00:00:00Z",
+	}
+	catalogOld := modelAPIFixture("catalog-old", "Catalog Old", "fam")
+
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis", 200, map[string]any{
+		"items":      []any{catalogOld, usedNewest},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	// Sorting is presentation only, so JSON stays in the order the backend sent.
+	h.Require.NoError(h.Execute("model-api", "list", "--output", "json"))
+	out := h.Stdout.String()
+	h.Require.Less(strings.Index(out, "catalog-old"), strings.Index(out, "used-newest"))
 }
 
 func Test_ModelApi_List_JSON(t *testing.T) {
@@ -130,6 +187,23 @@ func Test_ModelApi_Describe_Text(t *testing.T) {
 	h.Require.Contains(out, "8192")
 	h.Require.Contains(out, "$0.5 / 1M tokens")
 	h.Require.Contains(out, "100 per minute (requests)")
+}
+
+func Test_ModelApi_Describe_TextOrgDetails(t *testing.T) {
+	h := NewCommandHarness(t)
+	fixture := modelAPIFixture("llama-3", "Llama 3", "llama")
+	fixture["org_details"] = map[string]any{
+		"added_at": "2025-02-03T04:05:06Z", "last_used_at": "2026-02-03T04:05:06Z",
+	}
+	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis/llama-3", 200, fixture)
+
+	h.Require.NoError(h.Execute("model-api", "describe", "--model", "llama-3"))
+	out := h.Stdout.String()
+	// added_at is when the workspace first invoked the Model API, so it reads as
+	// first use rather than an explicit add.
+	h.Require.Contains(out, "First Used:      2025-02-03T04:05:06Z")
+	h.Require.Contains(out, "Last Used:       2026-02-03T04:05:06Z")
+	h.Require.NotContains(out, "Added:")
 }
 
 func Test_ModelApi_Describe_JSON(t *testing.T) {
