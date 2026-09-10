@@ -169,7 +169,8 @@ var commandModelDeployment = Command{
 			Flags:       ModelDeploymentDescribeFlags{},
 			Output: &CommandOutput[managementapi.Deployment]{
 				TextDescription: "Field-per-line summary: ID, Name, Model, Environment (optional), " +
-					"Status, Instance (optional), Replicas, Invoke URL, Logs URL, Created, " +
+					"Status, Instance (optional), Region (only when the deployment is pinned to " +
+					"a region), Replicas, Invoke URL, Logs URL, Created, " +
 					"Backpressure, and an indented Autoscaling block covering every setting " +
 					"'update-autoscaling' can change. Settings that are unset or inherited " +
 					"show as '-'.",
@@ -192,7 +193,9 @@ var commandModelDeployment = Command{
 			Flags:       ModelDeploymentListFlags{},
 			Output: &CommandOutput[managementapi.Deployments]{
 				TextDescription: "Table with columns: ID, NAME, ENVIRONMENT, STATUS, INSTANCE, " +
-					"REPLICAS, CREATED. When no deployments exist, prints \"No deployments found.\" to stderr.",
+					"REGION (only when a deployment is pinned to a region, where unpinned ones " +
+					"read as global), REPLICAS, CREATED. When no deployments exist, prints " +
+					"\"No deployments found.\" to stderr.",
 				Examples: []CommandExample{
 					{
 						Description: "List all deployments of a model.",
