@@ -220,7 +220,90 @@ func Test_Train_Job_Update(t *testing.T) {
 	h.Require.NoError(h.Execute("train", "job", "update", "--job-id", "job-1", "--priority", "10"))
 	body := m.FindCall("PATCH", trainJobPath).BodyJSON(t)
 	h.Require.Equal(float64(10), body["priority"])
+	h.Require.NotContains(body, "availability_model")
 	h.Require.Contains(h.Stderr.String(), "priority to 10")
+}
+
+func Test_Train_Job_Update_AvailabilityModel(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_PENDING"))
+	m.SetRoute("PATCH", trainJobPath, 200, map[string]any{
+		"training_job": trainJobFixture("job-1", "TRAINING_JOB_PENDING"),
+	})
+
+	h.Require.NoError(h.Execute("train", "job", "update", "--job-id", "job-1",
+		"--availability-model", "spot"))
+	body := m.FindCall("PATCH", trainJobPath).BodyJSON(t)
+	h.Require.Equal("spot", body["availability_model"])
+	// Priority is omitted entirely rather than sent as 0, which would be a real change.
+	h.Require.NotContains(body, "priority")
+	h.Require.Contains(h.Stderr.String(), "availability model to spot")
+}
+
+func Test_Train_Job_Update_PriorityAndAvailabilityModel(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_PENDING"))
+	m.SetRoute("PATCH", trainJobPath, 200, map[string]any{
+		"training_job": trainJobFixture("job-1", "TRAINING_JOB_PENDING"),
+	})
+
+	h.Require.NoError(h.Execute("train", "job", "update", "--job-id", "job-1",
+		"--priority", "7", "--availability-model", "dedicated"))
+	body := m.FindCall("PATCH", trainJobPath).BodyJSON(t)
+	h.Require.Equal(float64(7), body["priority"])
+	h.Require.Equal("dedicated", body["availability_model"])
+	h.Require.Contains(h.Stderr.String(), "priority to 7")
+	h.Require.Contains(h.Stderr.String(), "availability model to dedicated")
+}
+
+func Test_Train_Job_Update_ZeroPriorityIsSent(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_PENDING"))
+	m.SetRoute("PATCH", trainJobPath, 200, map[string]any{
+		"training_job": trainJobFixture("job-1", "TRAINING_JOB_PENDING"),
+	})
+
+	// 0 is a valid priority, so an explicit --priority 0 must reach the API
+	// instead of being mistaken for an unset flag.
+	h.Require.NoError(h.Execute("train", "job", "update", "--job-id", "job-1", "--priority", "0"))
+	body := m.FindCall("PATCH", trainJobPath).BodyJSON(t)
+	h.Require.Equal(float64(0), body["priority"])
+}
+
+func Test_Train_Job_Update_NoFieldsIsUsageError(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_PENDING"))
+
+	err := h.Execute("train", "job", "update", "--job-id", "job-1")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "at least one of --priority or --availability-model")
+	h.Require.Nil(m.FindCall("PATCH", trainJobPath))
+}
+
+func Test_Train_Job_Update_NoFieldsReportsUsageErrorBeforeClientSetup(t *testing.T) {
+	h := NewCommandHarness(t)
+	// A malformed remote makes building the management client fail outright. A
+	// malformed invocation should still report what is wrong with the invocation
+	// rather than the config error hit on the way there.
+	t.Setenv("BASETEN_REMOTE_URL", "://bogus")
+
+	err := h.Execute("train", "job", "update", "--job-id", "job-1")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "at least one of --priority or --availability-model")
+	h.Require.NotContains(err.Error(), "invalid remote URL")
+}
+
+func Test_Train_Job_Update_RejectsUnknownAvailabilityModel(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI()
+
+	err := h.Execute("train", "job", "update", "--job-id", "job-1",
+		"--availability-model", "bogus")
+	h.Require.Error(err)
 }
 
 func Test_Train_Job_Logs(t *testing.T) {

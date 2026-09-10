@@ -10,12 +10,16 @@ var commandModelDeployment = Command{
 	Summary: "Manage deployments of a model",
 	Children: []Command{
 		{
-			Name:        "activate",
-			Summary:     "Activate a deployment",
-			Description: "Activate a model deployment.",
-			Flags:       ModelDeploymentActivateFlags{},
+			Name:    "activate",
+			Summary: "Activate a deployment",
+			Description: "Activate a model deployment.\n\n" +
+				"Activation is idempotent: activating a deployment that is already active " +
+				"does nothing and still succeeds.",
+			Flags: ModelDeploymentActivateFlags{},
 			Output: &CommandOutput[managementapi.ActivateResponse]{
-				TextDescription: "On success, prints \"Activated deployment <id>\" to stderr; no stdout output.",
+				TextDescription: "On success, prints \"Activated deployment <id>\" to stderr, or " +
+					"\"Deployment <id> was already active; nothing to do\" when nothing changed; " +
+					"no stdout output.",
 				Examples: []CommandExample{
 					{
 						Description: "Activate a deployment.",
@@ -57,10 +61,14 @@ var commandModelDeployment = Command{
 			Summary: "Deactivate a deployment",
 			Description: "Deactivate a model deployment.\n\n" +
 				"Prompts for yes/no confirmation. Pass --yes to skip the prompt. When " +
-				"stdin is not a terminal, --yes is required.",
+				"stdin is not a terminal, --yes is required.\n\n" +
+				"Deactivation is idempotent: deactivating a deployment that is already " +
+				"inactive does nothing and still succeeds.",
 			Flags: ModelDeploymentDeactivateFlags{},
 			Output: &CommandOutput[managementapi.DeactivateResponse]{
-				TextDescription: "On success, prints \"Deactivated deployment <id>\" to stderr; no stdout output.",
+				TextDescription: "On success, prints \"Deactivated deployment <id>\" to stderr, or " +
+					"\"Deployment <id> was already inactive; nothing to do\" when nothing changed; " +
+					"no stdout output.",
 				Examples: []CommandExample{
 					{
 						Description: "Deactivate a deployment without the confirmation prompt.",
@@ -161,7 +169,8 @@ var commandModelDeployment = Command{
 			Flags:       ModelDeploymentDescribeFlags{},
 			Output: &CommandOutput[managementapi.Deployment]{
 				TextDescription: "Field-per-line summary: ID, Name, Model, Environment (optional), " +
-					"Status, Instance (optional), Replicas, Invoke URL, Logs URL, Created, " +
+					"Status, Instance (optional), Region (only when the deployment is pinned to " +
+					"a region), Replicas, Invoke URL, Logs URL, Created, " +
 					"Backpressure, and an indented Autoscaling block covering every setting " +
 					"'update-autoscaling' can change. Settings that are unset or inherited " +
 					"show as '-'.",
@@ -184,7 +193,9 @@ var commandModelDeployment = Command{
 			Flags:       ModelDeploymentListFlags{},
 			Output: &CommandOutput[managementapi.Deployments]{
 				TextDescription: "Table with columns: ID, NAME, ENVIRONMENT, STATUS, INSTANCE, " +
-					"REPLICAS, CREATED. When no deployments exist, prints \"No deployments found.\" to stderr.",
+					"REGION (only when a deployment is pinned to a region, where unpinned ones " +
+					"read as global), REPLICAS, CREATED. When no deployments exist, prints " +
+					"\"No deployments found.\" to stderr.",
 				Examples: []CommandExample{
 					{
 						Description: "List all deployments of a model.",

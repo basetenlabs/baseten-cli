@@ -136,6 +136,25 @@ var commandOrg = Command{
 			},
 		},
 		{
+			Name:        "describe",
+			Summary:     "Describe the organization",
+			Description: "Describe the caller's organization.",
+			Flags:       OrgDescribeFlags{},
+			Output: &CommandOutput[managementapi.OrganizationInfo]{
+				TextDescription: "Field-per-line summary: org ID, name (when set), and the AWS AssumeRole role ARN and external ID (if enabled).",
+				Examples: []CommandExample{
+					{
+						Description: "Describe the organization.",
+						Command:     "baseten org describe",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the organization ID.",
+					Command:     "baseten org describe --jq '.org_id'",
+				},
+			},
+		},
+		{
 			Name:    "secret",
 			Summary: "Manage secrets",
 			Children: []Command{
@@ -355,6 +374,11 @@ type OrgTeamDescribeFlags struct {
 
 	TeamID   string `flag:"team-id" desc:"Team ID to describe." oneof:"team-ref"`
 	TeamName string `flag:"team-name" desc:"Team name to describe." oneof:"team-ref"`
+}
+
+// OrgDescribeFlags configures `baseten org describe`.
+type OrgDescribeFlags struct {
+	CommandFlags
 }
 
 type OrgUserListFlags struct {

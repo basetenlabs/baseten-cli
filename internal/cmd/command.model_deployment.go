@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -102,6 +103,11 @@ func commandModelDeploymentList(ctx *CommandContext, flags *cmd.ModelDeploymentL
 		ctx.LogLine("No deployments found.")
 		return nil
 	}
+	// Pinning a region is opt-in, so the column stays out until some deployment
+	// carries one, and the unpinned ones then read as global beside it.
+	showRegion := slices.ContainsFunc(resp.Deployments, func(d managementapi.Deployment) bool {
+		return d.Region != nil
+	})
 	rows := make([][]string, 0, len(resp.Deployments))
 	for _, d := range resp.Deployments {
 		env := ""
@@ -112,20 +118,26 @@ func commandModelDeploymentList(ctx *CommandContext, flags *cmd.ModelDeploymentL
 		if d.InstanceTypeName != nil {
 			instance = *d.InstanceTypeName
 		}
-		rows = append(rows, []string{
-			d.Id,
-			d.Name,
-			env,
-			string(d.Status),
-			instance,
+		row := []string{d.Id, d.Name, env, string(d.Status), instance}
+		if showRegion {
+			if d.Region != nil {
+				row = append(row, d.Region.Slug)
+			} else {
+				row = append(row, "global")
+			}
+		}
+		row = append(row,
 			fmt.Sprintf("%d", d.ActiveReplicaCount),
 			d.CreatedAt.UTC().Format(time.RFC3339),
-		})
+		)
+		rows = append(rows, row)
 	}
-	ctx.OutputTable(TableOutput{
-		Headers: []string{"ID", "NAME", "ENVIRONMENT", "STATUS", "INSTANCE", "REPLICAS", "CREATED"},
-		Rows:    rows,
-	})
+	headers := []string{"ID", "NAME", "ENVIRONMENT", "STATUS", "INSTANCE"}
+	if showRegion {
+		headers = append(headers, "REGION")
+	}
+	headers = append(headers, "REPLICAS", "CREATED")
+	ctx.OutputTable(TableOutput{Headers: headers, Rows: rows})
 	return nil
 }
 
@@ -161,8 +173,14 @@ func commandModelDeploymentDescribe(ctx *CommandContext, flags *cmd.ModelDeploym
 	if dep.InstanceTypeName != nil {
 		ctx.Outputf("Instance:     %s\n", *dep.InstanceTypeName)
 	}
+	regionSlug := ""
+	if dep.Region != nil {
+		regionSlug = dep.Region.Slug
+		ctx.Outputf("Region:       %s\n", regionSlug)
+	}
 	ctx.Outputf("Replicas:     %d\n", dep.ActiveReplicaCount)
-	ctx.Outputf("Invoke URL:   %s\n", hyperlink(ctx.Stdout, remote.PredictURL(dep.ModelId, dep.Id, dep.IsDevelopment)))
+	ctx.Outputf("Invoke URL:   %s\n", hyperlink(ctx.Stdout,
+		remote.PredictURL(dep.ModelId, dep.Id, dep.IsDevelopment, regionSlug)))
 	ctx.Outputf("Logs URL:     %s\n", hyperlink(ctx.Stdout, remote.LogsURL(dep.ModelId, dep.Id)))
 	ctx.Outputf("Created:      %s\n", dep.CreatedAt.UTC().Format(time.RFC3339))
 	ctx.Outputf("Backpressure: %s\n", backpressurePolicyText(dep.RequestBackpressureSettings.Policy))
@@ -259,7 +277,11 @@ func commandModelDeploymentActivate(ctx *CommandContext, flags *cmd.ModelDeploym
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Activated deployment %s\n", ref.DeploymentID)
+	if resp.NoOp != nil && *resp.NoOp {
+		ctx.Logf("Deployment %s was already active; nothing to do\n", ref.DeploymentID)
+	} else {
+		ctx.Logf("Activated deployment %s\n", ref.DeploymentID)
+	}
 	return nil
 }
 
@@ -288,7 +310,11 @@ func commandModelDeploymentDeactivate(ctx *CommandContext, flags *cmd.ModelDeplo
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Deactivated deployment %s\n", ref.DeploymentID)
+	if resp.NoOp != nil && *resp.NoOp {
+		ctx.Logf("Deployment %s was already inactive; nothing to do\n", ref.DeploymentID)
+	} else {
+		ctx.Logf("Deactivated deployment %s\n", ref.DeploymentID)
+	}
 	return nil
 }
 
