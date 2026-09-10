@@ -7,6 +7,7 @@
 - Every leaf (no `Children`) must declare an `Output` (`*CommandOutput[T]`) with `TextDescription`, at least one `Examples` entry, and a `JQExample` that includes `--jq`. Use `JSONAny` for free-shape JSON, `JSONUndefined` for raw passthrough; set `JSONArrayStreamed: true` for commands that emit a stream of records.
 - Use `ctx.Output*` for stdout, `ctx.Log*` (or `VerboseLog*` behind `--verbose`) for stderr; never mix the two. `--output` controls stdout only.
 - Return typed errors (`cmd.NewErrUsage`/`NewErrAuth`/...) so the framework maps them to the right exit code. New exit codes go in `Command.Errors` via `ErrorDescOf[*ErrFoo]()`.
+- Under `--output json`/`jsonl` the framework writes a `cmd.JSONErrorEnvelope` to stdout for a failed command, in addition to the stderr message. Call `ctx.SuppressJSONError()` before returning if the payload already written reports the failure itself.
 - Before prompting, check `ctx.IsInteractive()` and fail fast otherwise: the CLI never prompts in non-TTY contexts.
 - Internal (`internal/cmd/`): runner registered in `init()` via `Register("parent child", runner)`; path and flag type must match.
 - Parents (commands with subcommands) are not executable: no run function, no `Flags`.

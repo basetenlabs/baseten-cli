@@ -101,12 +101,30 @@ func Execute(ctx context.Context, options ExecuteOptions) error {
 	for _, child := range cmd.Root.Children {
 		root.AddCommand(buildCommand(child, "", &options))
 	}
-	return help.Execute(ctx, root, help.Options{
+	err := help.Execute(ctx, root, help.Options{
 		Args:    options.Args,
 		Version: Version,
 		Signals: []os.Signal{os.Interrupt, syscall.SIGTERM},
 		Tree:    cmd.Root,
 	})
+	if err == nil {
+		return nil
+	}
+
+	// The invocation was rejected before any runner ran: an unparseable flag,
+	// an unknown subcommand, or the wrong argument count. Cobra has already
+	// printed the message to stderr, but the failure never passed through a
+	// leaf's error handling, so classify it here as the usage error it is and
+	// give it the same exit code and envelope a leaf would produce.
+	ce := cmd.NewErrUsage(err)
+	format := outputFormatFromArgs(options.Args)
+	(&CommandContext{
+		Stdout:      options.Stdout,
+		JSON:        format == "json" || format == "jsonl",
+		JSONCompact: format == "jsonl",
+	}).writeJSONError(ce, err)
+	options.ExitWithCode(int(ce.ExitCode()))
+	return err
 }
 
 func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *cobra.Command {
@@ -265,9 +283,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			// generic failure. Gated on the context, not the error's identity:
 			// only an actual interrupt should be treated this way.
 			if ctx.Err() != nil {
-				fmt.Fprintln(options.Stderr, "Canceled.")
-				ctx.ExitWithCode(int(cmd.ExitInterrupted))
-				return nil
+				runErr = cmd.NewErrInterrupted(errors.New("Canceled."))
 			}
 
 			// Render the error and set exit code.
@@ -275,12 +291,17 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			c.SilenceErrors = true
 			c.SilenceUsage = true
 			fmt.Fprintln(options.Stderr, ce)
+			ctx.writeJSONError(ce, runErr)
 			// A subprocess exit code is the child's, not ours. Delegated tools
 			// like truss exit 2 for their own validation errors, which collides
 			// with ExitUsage, so only dump usage for errors that originated here.
 			var subErr *ErrSubprocess
 			if ce.ExitCode() == cmd.ExitUsage && !errors.As(runErr, &subErr) {
-				_ = c.Usage()
+				// Rendered through UsageString rather than Usage, which writes
+				// to cobra's out writer: that is stdout here, where the usage
+				// text would corrupt the error envelope and any payload
+				// already emitted.
+				fmt.Fprint(options.Stderr, c.UsageString())
 			}
 			ctx.ExitWithCode(int(ce.ExitCode()))
 			return nil
@@ -413,6 +434,31 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 			}
 		}
 	}
+}
+
+// outputFormatFromArgs returns the --output value read straight out of argv,
+// for the failures cobra rejects before it finishes parsing flags. Returns ""
+// when the invocation names no format, a typo'd value included, since there
+// is no telling what the caller meant by it. --jq counts as json only if no
+// --output follows. Shorthands combined into one arg (-vojson) are not
+// recognized.
+func outputFormatFromArgs(args []string) string {
+	format := ""
+	for i, arg := range args {
+		switch {
+		case arg == "--output" || arg == "-o":
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		case strings.HasPrefix(arg, "--output="):
+			return strings.TrimPrefix(arg, "--output=")
+		case strings.HasPrefix(arg, "-o"):
+			return strings.TrimPrefix(strings.TrimPrefix(arg, "-o"), "=")
+		case arg == "--jq" || strings.HasPrefix(arg, "--jq=") || strings.HasPrefix(arg, "-q"):
+			format = "json"
+		}
+	}
+	return format
 }
 
 // optionalFlagValue binds a [cmd.OptionalFlag] to pflag. Only parsing varies by

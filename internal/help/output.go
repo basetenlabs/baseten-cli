@@ -78,6 +78,17 @@ func renderRootOutput(styles fang.Styles) string {
 	for _, e := range cmd.StandardErrors() {
 		b.WriteString(formatErrorLine(e))
 	}
+	b.WriteString(styles.Title.Render("json errors"))
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().PaddingLeft(longPad).Width(termWidth()).Render(
+		"Under --output json or jsonl, a failed command writes an object matching the schema " +
+			"below to stdout as the last JSON document there, on top of the plain message " +
+			"always written to stderr. The type field matches the names above. The api_ fields " +
+			"appear only for a failed API call. A command whose payload already reports the " +
+			"failure, or that delegates to another tool, writes none."))
+	b.WriteString("\n")
+	b.WriteString(renderCodeblock(jsonSchemaForType(reflect.TypeFor[cmd.JSONErrorEnvelope]()), styles))
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -126,17 +137,21 @@ func renderLeafJSON(def cmd.Command, styles fang.Styles) string {
 		b.WriteString("\n")
 	}
 
-	body := jsonSchemaBlock(def.Output)
+	b.WriteString(renderCodeblock(jsonSchemaBlock(def.Output), styles))
+	b.WriteString("\n")
+	return b.String()
+}
+
+// renderCodeblock renders body as a codeblock sized to its widest line, up to
+// the terminal width.
+func renderCodeblock(body string, styles fang.Styles) string {
 	padding := styles.Codeblock.Base.GetHorizontalPadding()
 	blockWidth := 0
 	for _, line := range strings.Split(body, "\n") {
 		blockWidth = max(blockWidth, lipgloss.Width(line))
 	}
 	blockWidth = min(termWidth()-padding, blockWidth+padding)
-	blockStyle := styles.Codeblock.Base.Width(blockWidth)
-	b.WriteString(blockStyle.Render(body))
-	b.WriteString("\n")
-	return b.String()
+	return styles.Codeblock.Base.Width(blockWidth).Render(body)
 }
 
 func jsonSchemaBlock(spec cmd.CommandOutputSpec) string {
@@ -150,6 +165,15 @@ func jsonSchemaBlock(spec cmd.CommandOutputSpec) string {
 		return "undefined (raw passthrough, not guaranteed JSON)"
 	}
 
+	pretty := jsonSchemaForType(typ)
+	if spec.JSONArrayStreamedBool() {
+		return "Streamed: --output json wraps records in an array, --output jsonl emits one per line.\nRecord schema:\n" + pretty
+	}
+	return pretty
+}
+
+// jsonSchemaForType renders typ as a pretty-printed JSON schema.
+func jsonSchemaForType(typ reflect.Type) string {
 	schema := (&jsonschema.Reflector{
 		Anonymous:                 true,
 		DoNotReference:            true,
@@ -165,9 +189,6 @@ func jsonSchemaBlock(spec cmd.CommandOutputSpec) string {
 	pretty, err := prettyJSONSchema(raw)
 	if err != nil {
 		return fmt.Sprintf("(schema render error: %v)", err)
-	}
-	if spec.JSONArrayStreamedBool() {
-		return "Streamed: --output json wraps records in an array, --output jsonl emits one per line.\nRecord schema:\n" + pretty
 	}
 	return pretty
 }
