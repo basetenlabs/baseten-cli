@@ -90,7 +90,12 @@ func commandModelEnvironmentDescribe(ctx *CommandContext, flags *cmd.ModelEnviro
 	if env.CandidateDeployment != nil {
 		ctx.Outputf("Candidate Deployment: %s\n", env.CandidateDeployment.Id)
 	}
-	ctx.Outputf("Invoke URL:          %s\n", hyperlink(ctx.Stdout, remote.EnvironmentPredictURL(env.ModelId, env.Name)))
+	regionSlug := ""
+	if env.CurrentDeployment != nil && env.CurrentDeployment.Region != nil {
+		regionSlug = env.CurrentDeployment.Region.Slug
+	}
+	ctx.Outputf("Invoke URL:          %s\n", hyperlink(ctx.Stdout,
+		remote.EnvironmentPredictURL(env.ModelId, env.Name, regionSlug)))
 	if env.CurrentDeployment != nil {
 		ctx.Outputf("Logs URL:            %s\n", hyperlink(ctx.Stdout, remote.LogsURL(env.ModelId, env.CurrentDeployment.Id)))
 	}

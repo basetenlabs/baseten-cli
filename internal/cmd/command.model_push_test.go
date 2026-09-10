@@ -660,6 +660,29 @@ func Test_Model_Push_Develop_SetsIsDevelopment(t *testing.T) {
 	h.Require.Equal(true, dep["is_development"])
 }
 
+// A push into a region reports the per-region invoke URL, since the plain host
+// resolves to the model's default workload plane rather than the pinned one.
+func Test_Model_Push_Region(t *testing.T) {
+	h := newModelPushHarness(t)
+	h.API.SetRoute("POST", "/v1/models", 200, map[string]any{
+		"model": map[string]any{
+			"id": "model-123", "name": "test-model", "created_at": "2026-01-01T00:00:00Z",
+			"deployments_count": 1, "instance_type_name": "1x2",
+		},
+		"deployment": map[string]any{
+			"id": "deploy-456", "model_id": "model-123", "name": "v1",
+			"created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z",
+			"is_development": false, "status": "BUILDING",
+			"region": map[string]any{"slug": "us", "display_name": "United States"},
+		},
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--region", "us"))
+
+	h.Require.Contains(h.Stdout.String(), "model-model-123-region-us.")
+}
+
 func Test_Model_Push_WatchValidation(t *testing.T) {
 	t.Run("watch_and_environment", func(t *testing.T) {
 		h := newModelPushHarness(t)

@@ -115,7 +115,12 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	if err != nil {
 		return err
 	}
-	predictURL := remote.PredictURL(created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment)
+	regionSlug := ""
+	if created.Deployment.Region != nil {
+		regionSlug = created.Deployment.Region.Slug
+	}
+	predictURL := remote.PredictURL(
+		created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment, regionSlug)
 	logsURL := remote.LogsURL(created.Model.Id, created.Deployment.Id)
 
 	// In JSON mode the human-readable output goes to stderr so stdout carries
