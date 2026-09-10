@@ -499,14 +499,6 @@ func auditEnumValues[T ~string](flagName string, values, allowed []string) ([]T,
 	return out, nil
 }
 
-const (
-	oidcIssuer             = "https://oidc.baseten.co"
-	oidcAudience           = "oidc.baseten.co"
-	oidcWorkloadTypes      = "model_container, model_build"
-	oidcSubjectClaimFormat = "v=1:org=<org_id>:team=<team_id>:model=<model_id>:" +
-		"deployment=<deployment_id>:environment=<environment>:type=<workload_type>"
-)
-
 func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -541,11 +533,6 @@ func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error 
 		}
 		ctx.Outputf("%s %s (%s)\n", label, t.Id, t.Name)
 	}
-	ctx.Outputf("OIDC Settings:\n")
-	ctx.Outputf("  Issuer:               %s\n", oidcIssuer)
-	ctx.Outputf("  Audience:             %s\n", oidcAudience)
-	ctx.Outputf("  Workload Types:       %s\n", oidcWorkloadTypes)
-	ctx.Outputf("  Subject Claim Format: %s\n", oidcSubjectClaimFormat)
 	// The server nulls aws_assume_role while the method is not enabled.
 	if info.AwsAssumeRole == nil {
 		ctx.Outputf("AWS AssumeRole:       not enabled (contact Baseten support to enable it)\n")

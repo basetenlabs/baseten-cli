@@ -136,12 +136,13 @@ var commandOrg = Command{
 			},
 		},
 		{
-			Name:        "describe",
-			Summary:     "Describe the organization",
-			Description: "Describe the caller's organization, including the OIDC workload-identity configuration and the AWS AssumeRole trust-policy inputs.",
-			Flags:       OrgDescribeFlags{},
+			Name:    "describe",
+			Summary: "Describe the organization",
+			Description: "Describe the caller's organization, including its teams and AWS AssumeRole trust-policy inputs.\n\n" +
+				"For OIDC workload identity configuration, see https://docs.baseten.co/organization/oidc.",
+			Flags: OrgDescribeFlags{},
 			Output: &CommandOutput[managementapi.OrganizationInfo]{
-				TextDescription: "Field-per-line summary: org ID, teams, OIDC issuer, audience, workload types, subject claim format, and the AWS AssumeRole role ARN and external ID (or that the method is not enabled).",
+				TextDescription: "Field-per-line summary: org ID, name (when set), teams, and the AWS AssumeRole role ARN and external ID (or that the method is not enabled).",
 				Examples: []CommandExample{
 					{
 						Description: "Describe the organization.",

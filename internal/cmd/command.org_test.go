@@ -253,8 +253,7 @@ func Test_Org_Describe_Text(t *testing.T) {
 	h.Require.Contains(out, "Org ID:               abcd1234")
 	h.Require.Contains(out, "Name:                 my-org")
 	h.Require.Contains(out, "t1 (my-team)")
-	h.Require.Contains(out, "OIDC Settings:\n  Issuer:               https://oidc.baseten.co")
-	h.Require.Contains(out, "Subject Claim Format: v=1:org=<org_id>")
+	h.Require.NotContains(out, "OIDC")
 	h.Require.Contains(out, "AWS AssumeRole:\n  Baseten Role ARN:     arn:aws:iam::337139236424:role/baseten-customer-access")
 	h.Require.Contains(out, "AWS External ID:      baseten-2fdd8a01c4c34e6bb92a2b96fca29b70")
 }
