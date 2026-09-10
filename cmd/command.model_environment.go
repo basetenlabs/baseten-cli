@@ -153,7 +153,11 @@ var commandModelEnvironment = Command{
 					},
 					{
 						Description: "Summarize request volume and latency over the last hour.",
-						Command:     "baseten model environment metrics --model-id <model-id> --environment production --mode summary --since 1h --metric baseten_inference_requests_total --metric baseten_end_to_end_response_time_seconds",
+						CommandLines: []string{
+							"baseten model environment metrics --model-id <model-id> --environment production",
+							"--mode summary --since 1h --metric baseten_inference_requests_total",
+							"--metric baseten_end_to_end_response_time_seconds",
+						},
 					},
 					{
 						Description: "Plot a series over the last 6 hours.",
@@ -162,7 +166,10 @@ var commandModelEnvironment = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print the metric names returned.",
-					Command:     "baseten model environment metrics --model-id <model-id> --environment production --jq '.metric_descriptors[].name'",
+					CommandLines: []string{
+						"baseten model environment metrics --model-id <model-id> --environment production",
+						"--jq '.metric_descriptors[].name'",
+					},
 				},
 			},
 		},
@@ -172,19 +179,27 @@ var commandModelEnvironment = Command{
 			Description: "Update an environment's autoscaling settings, which apply to whichever " +
 				"deployment currently serves it.\n\n" +
 				"Only the flags you pass are changed; every other setting is left alone.\n\n" +
-				"Run 'baseten model environment describe' to see the current values.",
+				"Run 'baseten model environment describe' to see the current values. How the " +
+				"settings drive scaling is documented at " +
+				"https://docs.baseten.co/deployment/autoscaling/overview.",
 			Flags: ModelEnvironmentUpdateAutoscalingFlags{},
 			Output: &CommandOutput[managementapi.UpdateEnvironmentResponse]{
 				TextDescription: "On success, prints \"Updated autoscaling settings for environment <name>\" to stderr; no stdout output.",
 				Examples: []CommandExample{
 					{
 						Description: "Raise the production environment's replica bounds.",
-						Command:     "baseten model environment update-autoscaling --model-id <model-id> --environment production --min-replica 2 --max-replica 10",
+						CommandLines: []string{
+							"baseten model environment update-autoscaling --model-id <model-id> --environment production",
+							"--min-replica 2 --max-replica 10",
+						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the environment's resulting minimum replica count.",
-					Command:     "baseten model environment update-autoscaling --model-id <model-id> --environment production --min-replica 2 --jq '.environment.autoscaling_settings.min_replica'",
+					CommandLines: []string{
+						"baseten model environment update-autoscaling --model-id <model-id> --environment production",
+						"--min-replica 2 --jq '.environment.autoscaling_settings.min_replica'",
+					},
 				},
 			},
 		},
@@ -203,7 +218,10 @@ var commandModelEnvironment = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Turn on rolling deploys and scale the outgoing deployment to zero.",
-						Command:     "baseten model environment update-promotion --model-id <model-id> --environment production --rolling-deploy true --promotion-cleanup-strategy scale-to-zero",
+						CommandLines: []string{
+							"baseten model environment update-promotion --model-id <model-id> --environment production",
+							"--rolling-deploy true --promotion-cleanup-strategy scale-to-zero",
+						},
 					},
 					{
 						Description: "Slow the rollout by lowering the surge percentage.",
@@ -212,7 +230,11 @@ var commandModelEnvironment = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print the resulting cleanup strategy.",
-					Command:     "baseten model environment update-promotion --model-id <model-id> --environment production --rolling-deploy true --jq '.environment.promotion_settings.promotion_cleanup_strategy'",
+					CommandLines: []string{
+						"baseten model environment update-promotion --model-id <model-id> --environment production",
+						"--rolling-deploy true",
+						"--jq '.environment.promotion_settings.promotion_cleanup_strategy'",
+					},
 				},
 			},
 		},
@@ -228,16 +250,26 @@ var commandModelEnvironment = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Reject requests once the queue is full.",
-						Command:     "baseten model environment update-request-backpressure --model-id <model-id> --environment production --policy reject-on-full",
+						CommandLines: []string{
+							"baseten model environment update-request-backpressure --model-id <model-id>",
+							"--environment production --policy reject-on-full",
+						},
 					},
 					{
 						Description: "Clear the policy.",
-						Command:     "baseten model environment update-request-backpressure --model-id <model-id> --environment production --policy null",
+						CommandLines: []string{
+							"baseten model environment update-request-backpressure --model-id <model-id>",
+							"--environment production --policy null",
+						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the resulting policy.",
-					Command:     "baseten model environment update-request-backpressure --model-id <model-id> --environment production --policy reject-on-full --jq '.environment.request_backpressure_settings.policy'",
+					CommandLines: []string{
+						"baseten model environment update-request-backpressure --model-id <model-id>",
+						"--environment production --policy reject-on-full",
+						"--jq '.environment.request_backpressure_settings.policy'",
+					},
 				},
 			},
 		},
@@ -286,7 +318,7 @@ type ModelEnvironmentUpdatePromotionFlags struct {
 // Embedded by commands that act on a specific environment.
 type ModelEnvironmentFlags struct {
 	ModelRefFlags
-	Environment string `flag:"environment" desc:"Name of the environment (e.g. production)." required:"true"`
+	Environment string `flag:"environment" desc:"Name of the environment (e.g. production). Run 'baseten model environment list' to see a model's environments." required:"true"`
 }
 
 // ModelEnvironmentListFlags configures `baseten model environment list`.

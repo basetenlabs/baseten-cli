@@ -84,7 +84,10 @@ var commandModelAPI = Command{
 					},
 					{
 						Description: "Send a full OpenAI-shaped body and stream it as JSONL.",
-						Command:     `baseten model-api predict --model <name> --data '{"model":"<name>","messages":[{"role":"user","content":"hi"}],"stream":true}' --output jsonl`,
+						CommandLines: []string{
+							`baseten model-api predict --model <name>`,
+							`--data '{"model":"<name>","messages":[{"role":"user","content":"hi"}],"stream":true}' --output jsonl`,
+						},
 					},
 				},
 				JQExample: CommandExample{
@@ -189,6 +192,6 @@ type ModelAPIPredictFlags struct {
 	Model string `flag:"model" desc:"Name of the Model API. Required with --content, where it sets the request's model." `
 
 	Content string `flag:"content" desc:"Single user message; builds an OpenAI chat-completions request and prints the assistant's reply. Only valid for OpenAI chat URLs and requires --model." oneof:"predict-input"`
-	Data    string `flag:"data" desc:"Inline request body, sent verbatim." oneof:"predict-input"`
+	Data    string `flag:"data" desc:"Inline request body, sent verbatim. The accepted shapes are documented at https://docs.baseten.co/inference/model-apis/overview." oneof:"predict-input"`
 	File    string `flag:"file" desc:"Path to a file containing the request body, sent verbatim. Use '-' for stdin." oneof:"predict-input"`
 }
