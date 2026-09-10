@@ -8,12 +8,16 @@ var commandModelEnvironment = Command{
 	Summary: "Manage environments of a model",
 	Children: []Command{
 		{
-			Name:        "activate",
-			Summary:     "Activate the environment's active deployment",
-			Description: "Activate the deployment associated with an environment.",
-			Flags:       ModelEnvironmentActivateFlags{},
+			Name:    "activate",
+			Summary: "Activate the environment's active deployment",
+			Description: "Activate the deployment associated with an environment.\n\n" +
+				"Activation is idempotent: activating a deployment that is already active " +
+				"does nothing and still succeeds.",
+			Flags: ModelEnvironmentActivateFlags{},
 			Output: &CommandOutput[managementapi.ActivateResponse]{
-				TextDescription: "On success, prints \"Activated environment <name>\" to stderr; no stdout output.",
+				TextDescription: "On success, prints \"Activated environment <name>\" to stderr, or " +
+					"\"Environment <name> was already active; nothing to do\" when nothing changed; " +
+					"no stdout output.",
 				Examples: []CommandExample{
 					{
 						Description: "Activate the deployment associated with an environment.",
@@ -31,10 +35,14 @@ var commandModelEnvironment = Command{
 			Summary: "Deactivate the environment's active deployment",
 			Description: "Deactivate the deployment associated with an environment.\n\n" +
 				"Prompts for yes/no confirmation. Pass --yes to skip the prompt. When " +
-				"stdin is not a terminal, --yes is required.",
+				"stdin is not a terminal, --yes is required.\n\n" +
+				"Deactivation is idempotent: deactivating a deployment that is already " +
+				"inactive does nothing and still succeeds.",
 			Flags: ModelEnvironmentDeactivateFlags{},
 			Output: &CommandOutput[managementapi.DeactivateResponse]{
-				TextDescription: "On success, prints \"Deactivated environment <name>\" to stderr; no stdout output.",
+				TextDescription: "On success, prints \"Deactivated environment <name>\" to stderr, or " +
+					"\"Environment <name> was already inactive; nothing to do\" when nothing changed; " +
+					"no stdout output.",
 				Examples: []CommandExample{
 					{
 						Description: "Deactivate an environment without the confirmation prompt.",
