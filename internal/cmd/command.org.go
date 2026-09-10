@@ -22,6 +22,7 @@ var billingEarliest = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 func init() {
 	Register("org billing usage", commandOrgBillingUsage)
 	Register("org audit-logs", commandOrgAuditLogs)
+	Register("org describe", commandOrgDescribe)
 }
 
 func commandOrgBillingUsage(ctx *CommandContext, flags *cmd.OrgBillingUsageFlags) error {
@@ -496,4 +497,31 @@ func auditEnumValues[T ~string](flagName string, values, allowed []string) ([]T,
 		out = append(out, T(strings.ToUpper(strings.ReplaceAll(v, "-", "_"))))
 	}
 	return out, nil
+}
+
+func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	info, err := cl.API().GetOrganizationsMe(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching organization info: %w", err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(info)
+		return nil
+	}
+
+	ctx.Outputf("Org ID:               %s\n", info.OrgId)
+	if info.Name != nil && *info.Name != "" {
+		ctx.Outputf("Name:                 %s\n", *info.Name)
+	}
+	if info.AwsAssumeRole != nil {
+		ctx.Outputf("AWS AssumeRole:\n")
+		ctx.Outputf("  Baseten Role ARN:     %s\n", info.AwsAssumeRole.BasetenRoleArn)
+		ctx.Outputf("  AWS External ID:      %s\n", info.AwsAssumeRole.ExternalId)
+	}
+	return nil
 }

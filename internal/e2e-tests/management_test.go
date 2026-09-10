@@ -23,6 +23,7 @@ func TestE2EManagement(t *testing.T) {
 	t.Run("User", m.User)
 	t.Run("Team", m.Team)
 	t.Run("Whoami", m.Whoami)
+	t.Run("Describe", m.Describe)
 }
 
 // management gates on the e2e env vars and installs the credential into the
@@ -242,4 +243,13 @@ func (m *management) Whoami(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &resp))
 	require.NotEmpty(t, resp.UserID, "whoami missing user_id")
+}
+
+func (m *management) Describe(t *testing.T) {
+	out := mustCLI(t, "org", "describe", "--output", "json")
+	var resp struct {
+		OrgID string `json:"org_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resp))
+	require.NotEmpty(t, resp.OrgID, "org describe missing org_id")
 }
