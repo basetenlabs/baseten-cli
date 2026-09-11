@@ -663,6 +663,33 @@ func Test_Model_Push_Develop_SetsIsDevelopment(t *testing.T) {
 	h.Require.Equal(true, dep["is_development"])
 }
 
+// Both environment behaviors are opt-in, so a plain environment push sends them
+// off rather than leaving the server to apply its own defaults.
+func Test_Model_Push_EnvironmentFlagsDefaultOff(t *testing.T) {
+	h := newModelPushHarness(t)
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--environment", "staging"))
+
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
+	h.Require.NotNil(prep)
+	dep := prep.BodyJSON(h.T)["deployment"].(map[string]any)
+	h.Require.Equal(false, dep["preserve_env_instance_type"])
+	h.Require.Equal(false, dep["create_environment_if_missing"])
+}
+
+func Test_Model_Push_EnvironmentFlagsOptIn(t *testing.T) {
+	h := newModelPushHarness(t)
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--environment", "staging",
+		"--preserve-env-instance-type", "--create-environment-if-missing"))
+
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
+	h.Require.NotNil(prep)
+	dep := prep.BodyJSON(h.T)["deployment"].(map[string]any)
+	h.Require.Equal(true, dep["preserve_env_instance_type"])
+	h.Require.Equal(true, dep["create_environment_if_missing"])
+}
+
 // A push into a region reports the per-region invoke URL, since the plain host
 // resolves to the model's default workload plane rather than the pinned one.
 func Test_Model_Push_Region(t *testing.T) {

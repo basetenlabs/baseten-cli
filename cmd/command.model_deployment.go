@@ -132,10 +132,10 @@ var commandModelDeployment = Command{
 						Command:     "baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id> --yes",
 					},
 					{
-						Description: "Promote to a non-production environment using the deployment's own instance type.",
+						Description: "Promote to a non-production environment, keeping that environment's current instance type.",
 						CommandLines: []string{
 							"baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id>",
-							"--environment staging --override-env-instance-type --yes",
+							"--environment staging --preserve-env-instance-type --yes",
 						},
 					},
 				},
@@ -488,7 +488,7 @@ type ModelDeploymentPromoteFlags struct {
 	ModelDeploymentIDFlags
 
 	Environment             string `flag:"environment" desc:"Target environment name. Defaults to production." default:"production"`
-	OverrideEnvInstanceType bool   `flag:"override-env-instance-type" desc:"Use this deployment's instance type instead of preserving the target environment's."`
+	PreserveEnvInstanceType bool   `flag:"preserve-env-instance-type" desc:"Keep the target environment's current instance type instead of applying the promoted deployment's."`
 
 	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }

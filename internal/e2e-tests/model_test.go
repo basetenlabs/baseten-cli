@@ -781,6 +781,13 @@ func (l *lifecycle) SSH(t *testing.T) {
 }
 
 func (l *lifecycle) Redeploy(t *testing.T) {
+	// Creating the environment is opt-in, so a push naming one the model does
+	// not have is rejected. This fails at prepare, before the archive uploads.
+	missingEnv := "nope-" + randomSuffix(t)
+	_, errOut, err := cli(t, "model", "push", "--dir", l.modelDir, "--environment", missingEnv)
+	require.Error(t, err, "push to a nonexistent environment should fail; stdout was %s", errOut)
+	require.Contains(t, errOut, missingEnv)
+
 	out := mustCLI(t, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
 	var redeploy pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(out), &redeploy))

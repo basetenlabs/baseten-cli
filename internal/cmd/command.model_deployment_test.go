@@ -318,11 +318,11 @@ func Test_Model_Deployment_Promote_Default(t *testing.T) {
 	call := m.FindCall("POST", "/v1/models/m-1/environments/production/promote")
 	h.Require.NotNil(call)
 	h.Require.Contains(call.Body, `"deployment_id":"d-1"`)
-	h.Require.Contains(call.Body, `"preserve_env_instance_type":true`)
+	h.Require.Contains(call.Body, `"preserve_env_instance_type":false`)
 	h.Require.Contains(h.Stderr.String(), "Promoted deployment d-1 to environment production")
 }
 
-func Test_Model_Deployment_Promote_OverrideInstanceType(t *testing.T) {
+func Test_Model_Deployment_Promote_PreserveInstanceType(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("POST", "/v1/models/m-1/environments/staging/promote", 200,
@@ -330,10 +330,10 @@ func Test_Model_Deployment_Promote_OverrideInstanceType(t *testing.T) {
 
 	h.Require.NoError(h.Execute("model", "deployment", "promote",
 		"--model-id", "m-1", "--deployment-id", "d-1",
-		"--environment", "staging", "--override-env-instance-type", "--yes"))
+		"--environment", "staging", "--preserve-env-instance-type", "--yes"))
 	call := m.FindCall("POST", "/v1/models/m-1/environments/staging/promote")
 	h.Require.NotNil(call)
-	h.Require.Contains(call.Body, `"preserve_env_instance_type":false`)
+	h.Require.Contains(call.Body, `"preserve_env_instance_type":true`)
 }
 
 func Test_Model_Deployment_Promote_NoTTY_RequiresYes(t *testing.T) {
