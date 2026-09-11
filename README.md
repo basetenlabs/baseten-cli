@@ -85,6 +85,19 @@ The directory defaults to the current working directory and is configurable via 
 
 Omit `--tail` and pass `--since 1h` (or `--start`/`--end`) to fetch a historical window.
 
+### Viewing Model API Costs
+
+```bash
+baseten model-api costs --since 7d --group-by model
+baseten model-api costs --start 2026-09-01 --end 2026-09-08 --output json
+```
+
+Costs are daily USD subtotals and may differ from finalized invoices. Date ranges use UTC,
+with an inclusive start and exclusive end. `--since 7d` includes today and the preceding
+six UTC dates. Group or filter by model, user, API-key prefix, or service tier; use
+`baseten model-api costs --help` for all options. JSON output preserves exact decimal
+strings, and `--output jsonl` streams one bucket per day.
+
 Run `baseten --help` for more, and see [docs.baseten.co](https://docs.baseten.co) for general Baseten platform documentation.
 
 ## Building
