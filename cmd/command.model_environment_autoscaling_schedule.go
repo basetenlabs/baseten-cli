@@ -27,23 +27,38 @@ var commandModelEnvironmentAutoscalingSchedule = Command{
 				"timezone is shared by the whole collection and has no default. Afterwards it " +
 				"is optional and must match the existing one; use 'update-settings' to change " +
 				"it for every schedule at once.\n\n" +
-				"Run 'baseten model environment describe' to see the current values.",
+				"Run 'baseten model environment describe' to see the current values. Scheduled " +
+				"scaling is documented at https://docs.baseten.co/deployment/autoscaling/schedules.",
 			Flags: ModelEnvironmentAutoscalingScheduleCreateFlags{},
 			Output: &CommandOutput[managementapi.UpdateEnvironmentResponse]{
 				TextDescription: "On success, prints \"Created autoscaling schedule <name>\" to stderr; no stdout output.",
 				Examples: []CommandExample{
 					{
 						Description: "Scale up on weekday mornings.",
-						Command:     "baseten model environment autoscaling-schedule create --model-id <model-id> --environment production --name weekday-peak --cadence daily --weekdays monday,tuesday,wednesday,thursday,friday --start-hour 8 --start-minute 0 --end-hour 18 --end-minute 0 --timezone America/New_York --min-replica 4 --max-replica 20",
+						CommandLines: []string{
+							"baseten model environment autoscaling-schedule create --model-id <model-id> --environment production",
+							"--name weekday-peak --cadence daily --weekdays monday,tuesday,wednesday,thursday,friday",
+							"--start-hour 8 --start-minute 0 --end-hour 18 --end-minute 0 --timezone America/New_York",
+							"--min-replica 4 --max-replica 20",
+						},
 					},
 					{
 						Description: "Scale up for a one-off launch window.",
-						Command:     "baseten model environment autoscaling-schedule create --model-id <model-id> --environment production --name launch --cadence one-time --start-at 2026-09-01T08:00 --end-at 2026-09-01T20:00 --timezone America/New_York --min-replica 10 --max-replica 50",
+						CommandLines: []string{
+							"baseten model environment autoscaling-schedule create --model-id <model-id> --environment production",
+							"--name launch --cadence one-time --start-at 2026-09-01T08:00 --end-at 2026-09-01T20:00",
+							"--timezone America/New_York --min-replica 10 --max-replica 50",
+						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the ids of every schedule after the create.",
-					Command:     "baseten model environment autoscaling-schedule create --model-id <model-id> --environment production --name weekday-peak --cadence daily --weekdays monday --start-minute 0 --end-minute 0 --timezone UTC --min-replica 1 --max-replica 2 --jq '.environment.autoscaling_schedules.schedules[].id'",
+					CommandLines: []string{
+						"baseten model environment autoscaling-schedule create --model-id <model-id> --environment production",
+						"--name weekday-peak --cadence daily --weekdays monday --start-minute 0 --end-minute 0",
+						"--timezone UTC --min-replica 1 --max-replica 2",
+						"--jq '.environment.autoscaling_schedules.schedules[].id'",
+					},
 				},
 			},
 		},
@@ -59,16 +74,25 @@ var commandModelEnvironmentAutoscalingSchedule = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Delete a schedule by id.",
-						Command:     "baseten model environment autoscaling-schedule delete --model-id <model-id> --environment production --schedule-id <schedule-id>",
+						CommandLines: []string{
+							"baseten model environment autoscaling-schedule delete --model-id <model-id> --environment production",
+							"--schedule-id <schedule-id>",
+						},
 					},
 					{
 						Description: "Delete a schedule by name.",
-						Command:     "baseten model environment autoscaling-schedule delete --model-id <model-id> --environment production --schedule-name weekday-peak",
+						CommandLines: []string{
+							"baseten model environment autoscaling-schedule delete --model-id <model-id> --environment production",
+							"--schedule-name weekday-peak",
+						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the ids that remain.",
-					Command:     "baseten model environment autoscaling-schedule delete --model-id <model-id> --environment production --schedule-id <schedule-id> --jq '.environment.autoscaling_schedules.schedules[].id'",
+					CommandLines: []string{
+						"baseten model environment autoscaling-schedule delete --model-id <model-id> --environment production",
+						"--schedule-id <schedule-id> --jq '.environment.autoscaling_schedules.schedules[].id'",
+					},
 				},
 			},
 		},
@@ -89,7 +113,10 @@ var commandModelEnvironmentAutoscalingSchedule = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print each schedule's id and name.",
-					Command:     "baseten model environment autoscaling-schedule list --model-id <model-id> --environment production --jq '.schedules[] | \"\\(.id) \\(.name)\"'",
+					CommandLines: []string{
+						"baseten model environment autoscaling-schedule list --model-id <model-id> --environment production",
+						"--jq '.schedules[] | \"\\(.id) \\(.name)\"'",
+					},
 				},
 			},
 		},
@@ -112,20 +139,34 @@ var commandModelEnvironmentAutoscalingSchedule = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Raise a schedule's replica floor.",
-						Command:     "baseten model environment autoscaling-schedule update --model-id <model-id> --environment production --schedule-id <schedule-id> --min-replica 6",
+						CommandLines: []string{
+							"baseten model environment autoscaling-schedule update --model-id <model-id> --environment production",
+							"--schedule-id <schedule-id> --min-replica 6",
+						},
 					},
 					{
 						Description: "Turn a schedule off without deleting it, naming it instead of using its id.",
-						Command:     "baseten model environment autoscaling-schedule update --model-id <model-id> --environment production --schedule-name weekday-peak --enabled false",
+						CommandLines: []string{
+							"baseten model environment autoscaling-schedule update --model-id <model-id> --environment production",
+							"--schedule-name weekday-peak --enabled false",
+						},
 					},
 					{
 						Description: "Convert a recurring schedule into a one-time one.",
-						Command:     "baseten model environment autoscaling-schedule update --model-id <model-id> --environment production --schedule-name weekday-peak --cadence one-time --start-at 2026-09-01T08:00 --end-at 2026-09-01T20:00",
+						CommandLines: []string{
+							"baseten model environment autoscaling-schedule update --model-id <model-id> --environment production",
+							"--schedule-name weekday-peak --cadence one-time",
+							"--start-at 2026-09-01T08:00 --end-at 2026-09-01T20:00",
+						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the resulting schedule names.",
-					Command:     "baseten model environment autoscaling-schedule update --model-id <model-id> --environment production --schedule-id <schedule-id> --min-replica 6 --jq '.environment.autoscaling_schedules.schedules[].name'",
+					CommandLines: []string{
+						"baseten model environment autoscaling-schedule update --model-id <model-id> --environment production",
+						"--schedule-id <schedule-id> --min-replica 6",
+						"--jq '.environment.autoscaling_schedules.schedules[].name'",
+					},
 				},
 			},
 		},
@@ -145,12 +186,19 @@ var commandModelEnvironmentAutoscalingSchedule = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Move every schedule to a new timezone.",
-						Command:     "baseten model environment autoscaling-schedule update-settings --model-id <model-id> --environment production --timezone Europe/Berlin",
+						CommandLines: []string{
+							"baseten model environment autoscaling-schedule update-settings --model-id <model-id>",
+							"--environment production --timezone Europe/Berlin",
+						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the resulting timezone.",
-					Command:     "baseten model environment autoscaling-schedule update-settings --model-id <model-id> --environment production --timezone Europe/Berlin --jq '.environment.autoscaling_schedules.timezone'",
+					CommandLines: []string{
+						"baseten model environment autoscaling-schedule update-settings --model-id <model-id>",
+						"--environment production --timezone Europe/Berlin",
+						"--jq '.environment.autoscaling_schedules.timezone'",
+					},
 				},
 			},
 		},

@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,21 +53,50 @@ func commandModelAPIList(ctx *CommandContext, flags *cmd.ModelAPIListFlags) erro
 		ctx.LogLine("No Model APIs found.")
 		return nil
 	}
+
+	// Order the table the way the workspace Model APIs page does: the Model APIs
+	// the workspace has used come first, most recently used first, then ones
+	// added but never used, then the rest of the catalog by newest release. This
+	// is presentation only, so JSON output above stays in backend order.
+	tier := func(m managementapi.ModelAPI) int {
+		switch {
+		case m.OrgDetails == nil:
+			return 2
+		case m.OrgDetails.LastUsedAt == nil:
+			return 1
+		default:
+			return 0
+		}
+	}
+	slices.SortStableFunc(items, func(a, b managementapi.ModelAPI) int {
+		if c := cmp.Compare(tier(a), tier(b)); c != 0 {
+			return c
+		}
+		// Only the used tier carries a last-used timestamp; the other two fall
+		// through to release date.
+		if a.OrgDetails != nil && a.OrgDetails.LastUsedAt != nil {
+			if c := b.OrgDetails.LastUsedAt.Compare(*a.OrgDetails.LastUsedAt); c != 0 {
+				return c
+			}
+		}
+		// ReleaseDate is a YYYY-MM-DD string, so reversed lexical order is newest first.
+		if c := cmp.Compare(b.ReleaseDate, a.ReleaseDate); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Name, b.Name)
+	})
+
 	rows := make([][]string, 0, len(items))
 	for _, m := range items {
-		added := ""
-		if m.OrgDetails != nil {
-			added = "yes"
-		}
 		rows = append(rows, []string{
 			m.Name, fmt.Sprintf("%d", m.ContextLength),
 			modelAPICurrencyString(m.CostPerMillionInputTokens),
 			modelAPICurrencyString(m.CostPerMillionOutputTokens),
-			added,
+			m.ReleaseDate,
 		})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers:             []string{"NAME", "CONTEXT", "$/1M IN", "$/1M OUT", "ADDED"},
+		Headers:             []string{"NAME", "CONTEXT", "$/1M IN", "$/1M OUT", "RELEASED"},
 		Rows:                rows,
 		RightAlignedColumns: []int{1, 2, 3},
 	})
@@ -103,7 +134,7 @@ func commandModelAPIDescribe(ctx *CommandContext, flags *cmd.ModelAPIDescribeFla
 		ctx.Outputf("Rate Limits:     %s\n", modelAPIRateLimitsString(m.RateLimits))
 	}
 	if m.OrgDetails != nil {
-		ctx.Outputf("Added:           %s\n", m.OrgDetails.AddedAt.UTC().Format(time.RFC3339))
+		ctx.Outputf("First Used:      %s\n", m.OrgDetails.AddedAt.UTC().Format(time.RFC3339))
 		if m.OrgDetails.LastUsedAt != nil {
 			ctx.Outputf("Last Used:       %s\n", m.OrgDetails.LastUsedAt.UTC().Format(time.RFC3339))
 		}

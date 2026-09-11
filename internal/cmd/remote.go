@@ -130,9 +130,22 @@ func (r *Remote) InferenceHostHeader(modelID, chainID, environment string) (stri
 	return host, true, nil
 }
 
+// modelInvokeBaseURL returns the base URL a model's deployments are invoked
+// through. A deployment pinned to a region is served by a per-region host,
+// which resolves to the workload plane the pinned replicas run in; the
+// model's plain host resolves to its default plane and so does not reach
+// them. regionSlug is empty for an unpinned deployment.
+func (r *Remote) modelInvokeBaseURL(modelID, regionSlug string) string {
+	host := "model-" + modelID
+	if regionSlug != "" {
+		host += "-region-" + regionSlug
+	}
+	return r.scheme + "://" + host + "." + r.managementAPIHost
+}
+
 // PredictURL returns the user-facing predict URL printed in push output.
-func (r *Remote) PredictURL(modelID, deploymentID string, isDraft bool) string {
-	base := r.scheme + "://model-" + modelID + "." + r.managementAPIHost
+func (r *Remote) PredictURL(modelID, deploymentID string, isDraft bool, regionSlug string) string {
+	base := r.modelInvokeBaseURL(modelID, regionSlug)
 	if isDraft {
 		return base + "/development/predict"
 	}
@@ -141,8 +154,11 @@ func (r *Remote) PredictURL(modelID, deploymentID string, isDraft bool) string {
 
 // EnvironmentPredictURL returns the user-facing predict URL for a model
 // environment, whose stable name selects the live deployment via the path.
-func (r *Remote) EnvironmentPredictURL(modelID, environment string) string {
-	return r.scheme + "://model-" + modelID + "." + r.managementAPIHost + "/environments/" + environment + "/predict"
+// regionSlug is the region of the environment's current deployment, since an
+// environment holding a regional deployment is invoked through that
+// deployment's per-region host.
+func (r *Remote) EnvironmentPredictURL(modelID, environment, regionSlug string) string {
+	return r.modelInvokeBaseURL(modelID, regionSlug) + "/environments/" + environment + "/predict"
 }
 
 // LogsURL returns the user-facing logs URL printed in push output.

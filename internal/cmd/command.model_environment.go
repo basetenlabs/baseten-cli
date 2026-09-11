@@ -90,7 +90,12 @@ func commandModelEnvironmentDescribe(ctx *CommandContext, flags *cmd.ModelEnviro
 	if env.CandidateDeployment != nil {
 		ctx.Outputf("Candidate Deployment: %s\n", env.CandidateDeployment.Id)
 	}
-	ctx.Outputf("Invoke URL:          %s\n", hyperlink(ctx.Stdout, remote.EnvironmentPredictURL(env.ModelId, env.Name)))
+	regionSlug := ""
+	if env.CurrentDeployment != nil && env.CurrentDeployment.Region != nil {
+		regionSlug = env.CurrentDeployment.Region.Slug
+	}
+	ctx.Outputf("Invoke URL:          %s\n", hyperlink(ctx.Stdout,
+		remote.EnvironmentPredictURL(env.ModelId, env.Name, regionSlug)))
 	if env.CurrentDeployment != nil {
 		ctx.Outputf("Logs URL:            %s\n", hyperlink(ctx.Stdout, remote.LogsURL(env.ModelId, env.CurrentDeployment.Id)))
 	}
@@ -180,7 +185,11 @@ func commandModelEnvironmentActivate(ctx *CommandContext, flags *cmd.ModelEnviro
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Activated environment %s\n", flags.Environment)
+	if resp.NoOp != nil && *resp.NoOp {
+		ctx.Logf("Environment %s was already active; nothing to do\n", flags.Environment)
+	} else {
+		ctx.Logf("Activated environment %s\n", flags.Environment)
+	}
 	return nil
 }
 
@@ -209,7 +218,11 @@ func commandModelEnvironmentDeactivate(ctx *CommandContext, flags *cmd.ModelEnvi
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Deactivated environment %s\n", flags.Environment)
+	if resp.NoOp != nil && *resp.NoOp {
+		ctx.Logf("Environment %s was already inactive; nothing to do\n", flags.Environment)
+	} else {
+		ctx.Logf("Deactivated environment %s\n", flags.Environment)
+	}
 	return nil
 }
 

@@ -215,7 +215,10 @@ var commandLoopsCheckpoint = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print the deployable checkpoint names.",
-					Command:     "baseten loops checkpoint list --run-id <run-id> --jq '.checkpoints[] | select(.target != \"trainer\") | .checkpoint_id'",
+					CommandLines: []string{
+						"baseten loops checkpoint list --run-id <run-id>",
+						"--jq '.checkpoints[] | select(.target != \"trainer\") | .checkpoint_id'",
+					},
 				},
 			},
 		},
@@ -285,10 +288,10 @@ type LoopsRunRefFlags struct {
 type LoopsRunCreateFlags struct {
 	CommandFlags
 
-	BaseModel string `flag:"base-model" desc:"HuggingFace ID of the base model to fine-tune (for example 'Qwen/Qwen3-8B')." required:"true"`
+	BaseModel string `flag:"base-model" desc:"HuggingFace ID of the base model to fine-tune (for example 'Qwen/Qwen3-8B'). Supported models are listed at https://docs.baseten.co/loops/supported-models." required:"true"`
 	Name      string `flag:"name" desc:"Display name for the run. Defaults to the base model."`
 	Replicas  int    `flag:"replicas" desc:"Number of data-parallel trainer replicas. The trainer deployment runs this many copies of the model's preset node group, so --replicas 4 on a 4-node preset provisions 16 nodes. Defaults to 1."`
-	Team      string `flag:"team" desc:"Team name or ID that owns the run's infrastructure. Defaults to the organization's default team."`
+	Team      string `flag:"team" desc:"Team name or ID that owns the run's infrastructure. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
 }
 
 // LoopsRunListFlags configures `baseten loops run list`.
@@ -402,7 +405,7 @@ type LoopsCheckpointListFlags struct {
 type LoopsCheckpointFilesFlags struct {
 	CommandFlags
 
-	CheckpointID string `flag:"checkpoint-id" desc:"ID of the Loops checkpoint." required:"true"`
+	CheckpointID string `flag:"checkpoint-id" desc:"ID of the Loops checkpoint. Run 'baseten loops checkpoint list' to see checkpoints." required:"true"`
 }
 
 // LoopsCheckpointDeployFlags configures `baseten loops checkpoint deploy`.
@@ -412,7 +415,7 @@ type LoopsCheckpointDeployFlags struct {
 
 	RunID        string   `flag:"run-id" desc:"Loops run whose checkpoints are deployed. Cannot be combined with --checkpoint-id."`
 	Checkpoint   []string `flag:"checkpoint" desc:"Name of a checkpoint to deploy, for example 'step-50'. Requires --run-id, since names are scoped to a run. Cannot be combined with --checkpoint-id or --config. Repeatable."`
-	CheckpointID []string `flag:"checkpoint-id" desc:"ID of a checkpoint to deploy. Cannot be combined with --run-id, --checkpoint, or --config. Repeatable."`
-	Config       string   `flag:"config" desc:"Python file defining a DeployCheckpointsConfig: which checkpoints deploy and the model that serves them. Cannot be combined with --checkpoint or --checkpoint-id."`
+	CheckpointID []string `flag:"checkpoint-id" desc:"ID of a checkpoint to deploy. Cannot be combined with --run-id, --checkpoint, or --config. Repeatable. Run 'baseten loops checkpoint list' to see checkpoints."`
+	Config       string   `flag:"config" desc:"Python file defining a DeployCheckpointsConfig: which checkpoints deploy and the model that serves them. Cannot be combined with --checkpoint or --checkpoint-id. The type is documented at https://docs.baseten.co/reference/sdk/training#deploycheckpointsconfig."`
 	DryRun       bool     `flag:"dry-run" desc:"Print the generated model config without deploying anything."`
 }

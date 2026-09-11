@@ -232,8 +232,14 @@ func Test_Model_Deployment_Logs_SingleMillisecondBurstFails(t *testing.T) {
 		"--model-id", "m", "--deployment-id", "d", "--limit", "0", "--output", "jsonl")
 	h.Require.Error(err)
 	h.Require.Contains(err.Error(), "single millisecond")
-	// The lines it could fetch were still emitted before failing.
-	h.Require.Len(jsonlMessages(t, h.Stdout.String()), 1000)
+	// The lines it could fetch were still emitted before failing, with the
+	// error envelope appended as a final record.
+	outLines := strings.Split(strings.TrimSpace(h.Stdout.String()), "\n")
+	h.Require.Len(outLines, 1001)
+	h.Require.Len(jsonlMessages(t, strings.Join(outLines[:1000], "\n")), 1000)
+	var envelope map[string]map[string]any
+	h.Require.NoError(json.Unmarshal([]byte(outLines[1000]), &envelope))
+	h.Require.Contains(envelope["error"]["message"], "single millisecond")
 }
 
 func Test_Model_Deployment_Logs_PageSizeDrivesPagination(t *testing.T) {

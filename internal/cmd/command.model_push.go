@@ -115,7 +115,12 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	if err != nil {
 		return err
 	}
-	predictURL := remote.PredictURL(created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment)
+	regionSlug := ""
+	if created.Deployment.Region != nil {
+		regionSlug = created.Deployment.Region.Slug
+	}
+	predictURL := remote.PredictURL(
+		created.Model.Id, created.Deployment.Id, created.Deployment.IsDevelopment, regionSlug)
 	logsURL := remote.LogsURL(created.Model.Id, created.Deployment.Id)
 
 	// In JSON mode the human-readable output goes to stderr so stdout carries
@@ -166,6 +171,9 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	// failure; only the one-shot tail/wait paths classify the settled status.
 	if !flags.Watch && (flags.Tail || flags.Wait) &&
 		created.Deployment.Status != managementapi.DeploymentStatus_ACTIVE {
+		// The object above already carries the failed status, so it stands as
+		// the single document on stdout.
+		ctx.SuppressJSONError()
 		return fmt.Errorf("failed deployment status: %s", created.Deployment.Status)
 	}
 	return nil
@@ -180,8 +188,9 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 		EnvironmentName: flags.Environment,
 		Region:          flags.Region,
 		// --watch implies --develop: both push a development deployment.
-		IsDevelopment:           flags.Develop || flags.Watch,
-		OverrideEnvInstanceType: flags.OverrideEnvInstanceType,
+		IsDevelopment:              flags.Develop || flags.Watch,
+		PreserveEnvInstanceType:    flags.PreserveEnvInstanceType,
+		CreateEnvironmentIfMissing: flags.CreateEnvironmentIfMissing,
 		Archive: modelarchive.BuildModelArchiveOptions{
 			Dir: flags.Dir,
 			IgnoreFileProcessor: func(_ context.Context, opts modelarchive.IgnoreFileProcessorOptions) (modelarchive.IgnoreFileFunc, error) {

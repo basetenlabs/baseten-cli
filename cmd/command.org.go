@@ -136,6 +136,52 @@ var commandOrg = Command{
 			},
 		},
 		{
+			Name:        "describe",
+			Summary:     "Describe the organization",
+			Description: "Describe the caller's organization.",
+			Flags:       OrgDescribeFlags{},
+			Output: &CommandOutput[managementapi.OrganizationInfo]{
+				TextDescription: "Field-per-line summary: org ID, name (when set), and the AWS AssumeRole role ARN and external ID (if enabled).",
+				Examples: []CommandExample{
+					{
+						Description: "Describe the organization.",
+						Command:     "baseten org describe",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the organization ID.",
+					Command:     "baseten org describe --jq '.org_id'",
+				},
+			},
+		},
+		{
+			Name:    "regions",
+			Summary: "List available deployment regions",
+			Description: "List the regions the organization can deploy models in.\n\n" +
+				"Pass a region's slug to 'baseten model push --region'.\n\n" +
+				"Pass --team to list the regions available to one team instead, which may be a " +
+				"subset of the organization's.",
+			Flags: OrgRegionsFlags{},
+			Output: &CommandOutput[managementapi.Regions]{
+				TextDescription: "Table with columns: SLUG, NAME. When the organization has no " +
+					"regions, prints \"No regions found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List the organization's regions.",
+						Command:     "baseten org regions",
+					},
+					{
+						Description: "List one team's regions.",
+						Command:     "baseten org regions --team <team>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the region slugs.",
+					Command:     "baseten org regions --jq '.regions[].slug'",
+				},
+			},
+		},
+		{
 			Name:    "secret",
 			Summary: "Manage secrets",
 			Children: []Command{
@@ -357,6 +403,11 @@ type OrgTeamDescribeFlags struct {
 	TeamName string `flag:"team-name" desc:"Team name to describe." oneof:"team-ref"`
 }
 
+// OrgDescribeFlags configures `baseten org describe`.
+type OrgDescribeFlags struct {
+	CommandFlags
+}
+
 type OrgUserListFlags struct {
 	CommandFlags
 }
@@ -378,7 +429,7 @@ type OrgAPIKeyCreateFlags struct {
 	Type     string   `flag:"type" desc:"API key category." required:"true" enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all,workspace-manage-api-keys"`
 	Name     string   `flag:"name" desc:"Optional human-readable name for the key."`
 	ModelIDs []string `flag:"model-id" desc:"Restrict the key to a specific model. May be repeated. Only valid with --type workspace-export-metrics or workspace-invoke."`
-	Team     string   `flag:"team" desc:"Team name or ID to create the key in. Defaults to the organization's default team."`
+	Team     string   `flag:"team" desc:"Team name or ID to create the key in. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
 }
 
 type OrgAPIKeyDeleteFlags struct {
@@ -396,6 +447,12 @@ type OrgBillingUsageFlags struct {
 	End   time.Time     `flag:"end" desc:"End of the window. Accepts ISO 8601; values without a timezone are interpreted in the local timezone. Requires --start. Mutually exclusive with --since."`
 }
 
+type OrgRegionsFlags struct {
+	CommandFlags
+
+	Team string `flag:"team" desc:"List the regions available to this team by name or ID, instead of the organization's. Run 'baseten org team list' to see teams."`
+}
+
 type OrgSecretListFlags struct {
 	CommandFlags
 
@@ -407,14 +464,14 @@ type OrgSecretSetFlags struct {
 
 	Name  string `flag:"name" desc:"Name of the secret." required:"true"`
 	Value string `flag:"value" desc:"Secret value. Discouraged: leaks into shell history and process list. Prefer stdin or prompt."`
-	Team  string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team."`
+	Team  string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
 }
 
 type OrgSecretDeleteFlags struct {
 	CommandFlags
 
 	Name string `flag:"name" desc:"Name of the secret to delete." required:"true"`
-	Team string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team."`
+	Team string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
 }
 
 // AuditLogFlags is the shared query flag set for `baseten org audit-logs` and

@@ -101,12 +101,30 @@ func Execute(ctx context.Context, options ExecuteOptions) error {
 	for _, child := range cmd.Root.Children {
 		root.AddCommand(buildCommand(child, "", &options))
 	}
-	return help.Execute(ctx, root, help.Options{
+	err := help.Execute(ctx, root, help.Options{
 		Args:    options.Args,
 		Version: Version,
 		Signals: []os.Signal{os.Interrupt, syscall.SIGTERM},
 		Tree:    cmd.Root,
 	})
+	if err == nil {
+		return nil
+	}
+
+	// The invocation was rejected before any runner ran: an unparseable flag,
+	// an unknown subcommand, or the wrong argument count. Cobra has already
+	// printed the message to stderr, but the failure never passed through a
+	// leaf's error handling, so classify it here as the usage error it is and
+	// give it the same exit code and envelope a leaf would produce.
+	ce := cmd.NewErrUsage(err)
+	format := outputFormatFromArgs(options.Args)
+	(&CommandContext{
+		Stdout:      options.Stdout,
+		JSON:        format == "json" || format == "jsonl",
+		JSONCompact: format == "jsonl",
+	}).writeJSONError(ce, err)
+	options.ExitWithCode(int(ce.ExitCode()))
+	return err
 }
 
 func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *cobra.Command {
@@ -265,9 +283,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			// generic failure. Gated on the context, not the error's identity:
 			// only an actual interrupt should be treated this way.
 			if ctx.Err() != nil {
-				fmt.Fprintln(options.Stderr, "Canceled.")
-				ctx.ExitWithCode(int(cmd.ExitInterrupted))
-				return nil
+				runErr = cmd.NewErrInterrupted(errors.New("Canceled."))
 			}
 
 			// Render the error and set exit code.
@@ -275,12 +291,17 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			c.SilenceErrors = true
 			c.SilenceUsage = true
 			fmt.Fprintln(options.Stderr, ce)
+			ctx.writeJSONError(ce, runErr)
 			// A subprocess exit code is the child's, not ours. Delegated tools
 			// like truss exit 2 for their own validation errors, which collides
 			// with ExitUsage, so only dump usage for errors that originated here.
 			var subErr *ErrSubprocess
 			if ce.ExitCode() == cmd.ExitUsage && !errors.As(runErr, &subErr) {
-				_ = c.Usage()
+				// Rendered through UsageString rather than Usage, which writes
+				// to cobra's out writer: that is stdout here, where the usage
+				// text would corrupt the error envelope and any payload
+				// already emitted.
+				fmt.Fprint(options.Stderr, c.UsageString())
 			}
 			ctx.ExitWithCode(int(ce.ExitCode()))
 			return nil
@@ -291,22 +312,33 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 }
 
 // validateOutput panics if a leaf command's Output is malformed: missing
-// examples, or a JQExample whose Command doesn't actually invoke --jq.
-// Leaves with DisableFlagParsing, or whose JSON output is marked unimportant,
-// are exempt from the JQExample requirement since --jq is not honored (or not
-// useful) for them.
+// examples, an example declaring both Command and CommandLines, or a
+// JQExample that doesn't actually invoke --jq. Leaves with
+// DisableFlagParsing, or whose JSON output is marked unimportant, are exempt
+// from the JQExample requirement since --jq is not honored (or not useful)
+// for them.
 func validateOutput(path string, def cmd.Command) {
 	if len(def.Output.ExampleList()) == 0 {
 		panic(fmt.Sprintf("command %q Output requires at least one example", path))
 	}
+	for _, ex := range append(def.Output.ExampleList(), def.Output.JQ()) {
+		if ex.Command != "" && len(ex.CommandLines) > 0 {
+			panic(fmt.Sprintf("command %q example %q declares both Command and CommandLines", path, ex.Description))
+		}
+	}
+	for _, line := range help.OverlongExampleLines(def.Output) {
+		panic(fmt.Sprintf("command %q example line would render truncated in help; shorten it, or "+
+			"for a command split it with CommandLines: %q", path, line))
+	}
 	if def.DisableFlagParsing || def.Output.JSONOutputUnimportantBool() {
 		return
 	}
-	if def.Output.JQ().Command == "" {
+	jq := def.Output.JQ().CommandString()
+	if jq == "" {
 		panic(fmt.Sprintf("command %q Output requires a JQExample", path))
 	}
-	if !strings.Contains(def.Output.JQ().Command, "--jq") {
-		panic(fmt.Sprintf("command %q JQExample.Command must invoke --jq, got %q", path, def.Output.JQ().Command))
+	if !strings.Contains(jq, "--jq") {
+		panic(fmt.Sprintf("command %q JQExample must invoke --jq, got %q", path, jq))
 	}
 }
 
@@ -413,6 +445,45 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 			}
 		}
 	}
+}
+
+// outputFormatFromArgs returns the --output value read straight out of argv,
+// for the failures cobra rejects before it finishes parsing flags. Repeats
+// follow pflag: the last value wins, and nothing after a bare -- is a flag.
+// Returns "" when the invocation names no format. A typo'd value comes back
+// as written, and so matches neither json nor jsonl: the failure gets no
+// envelope, since there is no telling what the caller meant by it. --jq counts
+// as json only when no --output appears at all. Shorthands combined into one
+// arg (-vojson) are not recognized.
+func outputFormatFromArgs(args []string) string {
+	format, sawOutput, sawJQ := "", false, false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		switch {
+		case arg == "--output" || arg == "-o":
+			sawOutput = true
+			// A trailing --output with no value is the parse error cobra is
+			// already reporting; it names no format.
+			format = ""
+			if i+1 < len(args) {
+				format = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(arg, "--output="):
+			sawOutput, format = true, strings.TrimPrefix(arg, "--output=")
+		case strings.HasPrefix(arg, "-o"):
+			sawOutput, format = true, strings.TrimPrefix(strings.TrimPrefix(arg, "-o"), "=")
+		case arg == "--jq" || strings.HasPrefix(arg, "--jq=") || strings.HasPrefix(arg, "-q"):
+			sawJQ = true
+		}
+	}
+	if !sawOutput && sawJQ {
+		return "json"
+	}
+	return format
 }
 
 // optionalFlagValue binds a [cmd.OptionalFlag] to pflag. Only parsing varies by

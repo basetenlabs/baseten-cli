@@ -30,6 +30,7 @@ func TestE2EModelLifecycle(t *testing.T) {
 	t.Run("APIInference", l.APIInference)
 	t.Run("Model", l.Model)
 	t.Run("Deployment", l.Deployment)
+	t.Run("Activate", l.Activate)
 	t.Run("Logs", l.Logs)
 	t.Run("Environment", l.Environment)
 	t.Run("ModelPredict", l.ModelPredict)
@@ -294,6 +295,32 @@ func (l *lifecycle) Deployment(t *testing.T) {
 		st, err := os.Stat(outFile)
 		require.NoError(t, err)
 		require.Greater(t, st.Size(), int64(0), "downloaded tar should be non-empty")
+	})
+}
+
+// Activate checks that activating a deployment is idempotent. The push in
+// newLifecycle left this deployment active, so every activate here is the
+// already-active case: the server reports no_op and the CLI says so rather than
+// claiming it activated anything.
+func (l *lifecycle) Activate(t *testing.T) {
+	t.Run("JSON", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "activate",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--output", "json")
+		var resp struct {
+			Success bool `json:"success"`
+			NoOp    bool `json:"no_op"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.True(t, resp.Success, "activating an active deployment should still succeed")
+		require.True(t, resp.NoOp, "activating an active deployment should be a no-op")
+	})
+
+	t.Run("Text", func(t *testing.T) {
+		out, errOut, err := cli(t, "model", "deployment", "activate",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID)
+		require.NoError(t, err, "stderr: %s", errOut)
+		require.Empty(t, out, "activate writes nothing to stdout in text mode")
+		require.Contains(t, errOut, fmt.Sprintf("Deployment %s was already active", l.initialDeploymentID))
 	})
 }
 
@@ -754,6 +781,13 @@ func (l *lifecycle) SSH(t *testing.T) {
 }
 
 func (l *lifecycle) Redeploy(t *testing.T) {
+	// Creating the environment is opt-in, so a push naming one the model does
+	// not have is rejected. This fails at prepare, before the archive uploads.
+	missingEnv := "nope-" + randomSuffix(t)
+	_, errOut, err := cli(t, "model", "push", "--dir", l.modelDir, "--environment", missingEnv)
+	require.Error(t, err, "push to a nonexistent environment should fail; stdout was %s", errOut)
+	require.Contains(t, errOut, missingEnv)
+
 	out := mustCLI(t, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
 	var redeploy pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(out), &redeploy))

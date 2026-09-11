@@ -16,27 +16,60 @@ import (
 
 // composeExamples produces the newline-joined example block for a leaf's
 // help. Examples come first (each prefixed with a `# Description` line),
-// followed by JQExample. Returns "" for non-leaves or for leaves with no
-// declared examples (e.g. DisableFlagParsing commands).
+// followed by JQExample. An example declaring CommandLines is emitted over
+// those lines, joined by a trailing backslash so it stays pasteable.
+// Returns "" for non-leaves or for leaves with no declared examples (e.g.
+// DisableFlagParsing commands).
 func composeExamples(spec cmd.CommandOutputSpec) string {
 	if spec == nil {
 		return ""
 	}
 	var lines []string
 	add := func(ex cmd.CommandExample) {
-		if ex.Command == "" {
+		if ex.CommandString() == "" {
 			return
 		}
 		if ex.Description != "" {
 			lines = append(lines, "# "+ex.Description)
 		}
-		lines = append(lines, ex.Command)
+		if len(ex.CommandLines) == 0 {
+			lines = append(lines, ex.Command)
+			return
+		}
+		for i, line := range ex.CommandLines {
+			if i < len(ex.CommandLines)-1 {
+				line += " \\"
+			}
+			lines = append(lines, line)
+		}
 	}
 	for _, ex := range spec.ExampleList() {
 		add(ex)
 	}
 	add(spec.JQ())
 	return strings.Join(lines, "\n")
+}
+
+// OverlongExampleLines returns the composed example lines of spec that render
+// truncated, descriptions included. The budget is the non-terminal width; a
+// narrower terminal truncates sooner and no author can target every width.
+func OverlongExampleLines(spec cmd.CommandOutputSpec) []string {
+	// Mirrors render: the codeblock is capped at the terminal width less one
+	// padding, and its content at the block width less another.
+	limit := maxTermWidth - 2*exampleCodeblockPadding()
+	var overlong []string
+	var indented bool
+	for _, line := range strings.Split(composeExamples(spec), "\n") {
+		width := len(line)
+		if indented {
+			width += exampleIndent
+		}
+		if line != "" && width > limit {
+			overlong = append(overlong, line)
+		}
+		indented = strings.HasSuffix(line, "\\") || strings.HasSuffix(line, "|")
+	}
+	return overlong
 }
 
 // renderOutputSection produces the Output section appended to --help when
@@ -78,6 +111,17 @@ func renderRootOutput(styles fang.Styles) string {
 	for _, e := range cmd.StandardErrors() {
 		b.WriteString(formatErrorLine(e))
 	}
+	b.WriteString(styles.Title.Render("json errors"))
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().PaddingLeft(longPad).Width(termWidth()).Render(
+		"Under --output json or jsonl, a failed command writes an object matching the schema " +
+			"below to stdout as the last JSON document there, on top of the plain message " +
+			"always written to stderr. The type field matches the names above. The api_ fields " +
+			"appear only for a failed API call. A command whose payload already reports the " +
+			"failure, or that delegates to another tool, writes none."))
+	b.WriteString("\n")
+	b.WriteString(renderCodeblock(jsonSchemaForType(reflect.TypeFor[cmd.JSONErrorEnvelope]()), styles))
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -126,28 +170,30 @@ func renderLeafJSON(def cmd.Command, styles fang.Styles) string {
 		b.WriteString("\n")
 	}
 
-	writeSchemaBlock(&b, styles, jsonSchemaBlock(def.Output, def.Output.JSONOutputType()))
+	b.WriteString(renderCodeblock(jsonSchemaBlock(def.Output, def.Output.JSONOutputType()), styles))
+	b.WriteString("\n")
 	// A command whose shape depends on its input documents every shape it can
 	// produce, each labelled with the input that selects it. The primary
 	// shape's own condition is in the prose above.
 	for _, alt := range def.Output.JSONAlternativeList() {
 		b.WriteString(lipgloss.NewStyle().PaddingLeft(longPad).Render("when the " + alt.When + ":"))
 		b.WriteString("\n")
-		writeSchemaBlock(&b, styles, jsonSchemaBlock(def.Output, alt.Type))
+		b.WriteString(renderCodeblock(jsonSchemaBlock(def.Output, alt.Type), styles))
+		b.WriteString("\n")
 	}
 	return b.String()
 }
 
-func writeSchemaBlock(b *strings.Builder, styles fang.Styles, body string) {
+// renderCodeblock renders body as a codeblock sized to its widest line, up to
+// the terminal width.
+func renderCodeblock(body string, styles fang.Styles) string {
 	padding := styles.Codeblock.Base.GetHorizontalPadding()
 	blockWidth := 0
 	for _, line := range strings.Split(body, "\n") {
 		blockWidth = max(blockWidth, lipgloss.Width(line))
 	}
 	blockWidth = min(termWidth()-padding, blockWidth+padding)
-	blockStyle := styles.Codeblock.Base.Width(blockWidth)
-	b.WriteString(blockStyle.Render(body))
-	b.WriteString("\n")
+	return styles.Codeblock.Base.Width(blockWidth).Render(body)
 }
 
 func jsonSchemaBlock(spec cmd.CommandOutputSpec, typ reflect.Type) string {
@@ -160,6 +206,15 @@ func jsonSchemaBlock(spec cmd.CommandOutputSpec, typ reflect.Type) string {
 		return "undefined (raw passthrough, not guaranteed JSON)"
 	}
 
+	pretty := jsonSchemaForType(typ)
+	if spec.JSONArrayStreamedBool() {
+		return "Streamed: --output json wraps records in an array, --output jsonl emits one per line.\nRecord schema:\n" + pretty
+	}
+	return pretty
+}
+
+// jsonSchemaForType renders typ as a pretty-printed JSON schema.
+func jsonSchemaForType(typ reflect.Type) string {
 	schema := (&jsonschema.Reflector{
 		Anonymous:                 true,
 		DoNotReference:            true,
@@ -175,9 +230,6 @@ func jsonSchemaBlock(spec cmd.CommandOutputSpec, typ reflect.Type) string {
 	pretty, err := prettyJSONSchema(raw)
 	if err != nil {
 		return fmt.Sprintf("(schema render error: %v)", err)
-	}
-	if spec.JSONArrayStreamedBool() {
-		return "Streamed: --output json wraps records in an array, --output jsonl emits one per line.\nRecord schema:\n" + pretty
 	}
 	return pretty
 }
