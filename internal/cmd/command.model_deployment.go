@@ -519,11 +519,12 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 		}
 	}
 
-	preserve := !flags.OverrideEnvInstanceType
+	// Sent explicitly so the behavior is the caller's choice rather than the
+	// server default, which is the opposite of this flag's.
 	dep, err := cl.API().PostModelsEnvironmentsPromote(ctx, ref.ModelID, flags.Environment,
 		managementapi.PromoteToEnvironmentRequest{
 			DeploymentId:            ref.DeploymentID,
-			PreserveEnvInstanceType: &preserve,
+			PreserveEnvInstanceType: &flags.PreserveEnvInstanceType,
 		})
 	if err != nil {
 		return fmt.Errorf("promote deployment %s to environment %s: %w", ref.DeploymentID, flags.Environment, err)

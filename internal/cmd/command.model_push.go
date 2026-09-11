@@ -188,8 +188,9 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 		EnvironmentName: flags.Environment,
 		Region:          flags.Region,
 		// --watch implies --develop: both push a development deployment.
-		IsDevelopment:           flags.Develop || flags.Watch,
-		OverrideEnvInstanceType: flags.OverrideEnvInstanceType,
+		IsDevelopment:              flags.Develop || flags.Watch,
+		PreserveEnvInstanceType:    flags.PreserveEnvInstanceType,
+		CreateEnvironmentIfMissing: flags.CreateEnvironmentIfMissing,
 		Archive: modelarchive.BuildModelArchiveOptions{
 			Dir: flags.Dir,
 			IgnoreFileProcessor: func(_ context.Context, opts modelarchive.IgnoreFileProcessorOptions) (modelarchive.IgnoreFileFunc, error) {
