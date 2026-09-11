@@ -381,6 +381,41 @@ func Test_Volume_Stat_Version_NoSelector(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "Digest:           b3:aaa")
 }
 
+func Test_Volume_Stat_Version_ShortensRef(t *testing.T) {
+	// Every other fixture carries a digest that is already a prefix, which is
+	// left alone, so the shortening only shows on a whole one.
+	const digest = "b3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/volumes/weights/llama/versions/@"+digest, 200,
+		map[string]any{
+			"namespace": "weights", "volume": "llama", "digest": digest,
+			"version_ref": "bdn:weights/llama@" + digest, "sequence": 9, "entry_count": 3,
+			"total_size_bytes": 2048, "lifecycle": "ALIVE", "is_head": true,
+			"tags": []string{"prod"}, "created_at": volumeTestTime, "volume_sequence": 9,
+		})
+
+	h.Require.NoError(h.Execute("volume", "stat", "bdn:weights/llama@"+digest))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Ref:              bdn:weights/llama@0123456789ab\n")
+	// The digest a command writes on its own stays whole, so the output still
+	// carries the canonical value the shortened ref abbreviates.
+	h.Require.Contains(out, "Digest:           "+digest+"\n")
+}
+
+func Test_Volume_Stat_Version_FullRef(t *testing.T) {
+	const digest = "b3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/volumes/weights/llama/versions/@"+digest, 200,
+		map[string]any{
+			"namespace": "weights", "volume": "llama", "digest": digest,
+			"version_ref": "bdn:weights/llama@" + digest, "lifecycle": "ALIVE",
+			"tags": []string{"prod"}, "created_at": volumeTestTime, "volume_sequence": 9,
+		})
+
+	h.Require.NoError(h.Execute("volume", "stat", "--full-ref", "bdn:weights/llama@"+digest))
+	h.Require.Contains(h.Stdout.String(), "Ref:              bdn:weights/llama@"+digest+"\n")
+}
+
 func Test_Volume_Stat_Entry_File(t *testing.T) {
 	h := NewCommandHarness(t)
 	withVolumeTransfer(t, h)
@@ -606,7 +641,8 @@ func Test_Volume_Push(t *testing.T) {
 	h.Require.Equal(int64(512*1024*1024), opts.Concurrency.MaxBytesInFlight)
 
 	out := h.Stdout.String()
-	h.Require.Contains(out, "Version:  bdn:weights/llama@b3:a1b2c3d4e5f6")
+	h.Require.Contains(out, "Ref:      bdn:weights/llama@b3:a1b2c3d4e5f6")
+	h.Require.Contains(out, "Digest:   b3:a1b2c3d4e5f6")
 	h.Require.Contains(out, "Contents: 3 files, 4.0 KiB")
 	h.Require.Contains(out, "Uploaded: 4 of 9 chunks")
 	h.Require.Contains(out, "Tags:     prod")

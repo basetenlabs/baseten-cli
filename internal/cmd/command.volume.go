@@ -336,9 +336,9 @@ func commandVolumeStat(ctx *CommandContext, flags *cmd.VolumeStatFlags) error {
 	case client.VolumeRefLevelVolume:
 		return volumeStatVolume(ctx, ref)
 	case client.VolumeRefLevelPoint:
-		return volumeStatVersion(ctx, ref)
+		return volumeStatVersion(ctx, flags, ref)
 	default:
-		return volumeStatEntry(ctx, ref)
+		return volumeStatEntry(ctx, flags, ref)
 	}
 }
 
@@ -363,14 +363,14 @@ func volumeStatVolume(ctx *CommandContext, ref client.VolumeRef) error {
 		volume.VersionsAlive, volume.VersionsTombstoned, volume.VersionsUntagged)
 	ctx.Outputf("Tags:        %s\n", volumeTagNames(volume.Tags, volume.TagCount))
 	if volume.Head != nil {
-		ctx.Outputf("Head:        %s\n", volume.Head.Digest)
+		ctx.Outputf("Head digest: %s\n", volume.Head.Digest)
 		ctx.Outputf("Head size:   %s\n", formatBytes(int64(volume.Head.TotalSizeBytes)))
 		ctx.Outputf("Head pushed: %s\n", volume.Head.CreatedAt.UTC().Format(time.RFC3339))
 	}
 	return nil
 }
 
-func volumeStatVersion(ctx *CommandContext, ref client.VolumeRef) error {
+func volumeStatVersion(ctx *CommandContext, flags *cmd.VolumeStatFlags, ref client.VolumeRef) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -385,7 +385,7 @@ func volumeStatVersion(ctx *CommandContext, ref client.VolumeRef) error {
 		ctx.OutputJSON(version)
 		return nil
 	}
-	ctx.Outputf("Ref:              %s\n", version.VersionRef)
+	ctx.Outputf("Ref:              %s\n", volumeRefTextOf(version.VersionRef, flags.VolumeRefFlags))
 	ctx.Outputf("Digest:           %s\n", version.Digest)
 	if version.Sequence != nil {
 		ctx.Outputf("Sequence:         %d\n", *version.Sequence)
@@ -409,7 +409,7 @@ func volumeStatVersion(ctx *CommandContext, ref client.VolumeRef) error {
 	return nil
 }
 
-func volumeStatEntry(ctx *CommandContext, ref client.VolumeRef) error {
+func volumeStatEntry(ctx *CommandContext, flags *cmd.VolumeStatFlags, ref client.VolumeRef) error {
 	transfer, err := ctx.NewVolumeTransfer()
 	if err != nil {
 		return err
@@ -465,7 +465,7 @@ func volumeStatEntry(ctx *CommandContext, ref client.VolumeRef) error {
 	}
 	entryRef := manifest.VersionRef
 	entryRef.Path = entry.Path
-	ctx.Outputf("Ref:         %s\n", entryRef)
+	ctx.Outputf("Ref:         %s\n", volumeRefText(entryRef, flags.VolumeRefFlags))
 	ctx.Outputf("Kind:        %s\n", entry.Kind)
 	if entry.Kind == client.VolumeEntryKindFile {
 		ctx.Outputf("Size:        %s\n", formatBytes(entry.Size))
@@ -598,7 +598,7 @@ func volumeRmVersion(ctx *CommandContext, flags *cmd.VolumeRmFlags, ref client.V
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Outputf("Ref:              %s\n", resp.VersionRef)
+	ctx.Outputf("Ref:              %s\n", volumeRefTextOf(resp.VersionRef, flags.VolumeRefFlags))
 	ctx.Outputf("Digest:           %s\n", resp.Digest)
 	ctx.Outputf("Lifecycle:        %s\n", resp.Lifecycle)
 	ctx.Outputf("Restorable until: %s\n", resp.DeleteAfter.UTC().Format(time.RFC3339))
@@ -660,7 +660,7 @@ func commandVolumeRestore(ctx *CommandContext, flags *cmd.VolumeRestoreFlags) er
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Outputf("Ref:       %s\n", resp.VersionRef)
+	ctx.Outputf("Ref:       %s\n", volumeRefTextOf(resp.VersionRef, flags.VolumeRefFlags))
 	ctx.Outputf("Digest:    %s\n", resp.Digest)
 	ctx.Outputf("Lifecycle: %s\n", resp.Lifecycle)
 	ctx.Outputf("Volume sequence: %d\n", resp.VolumeSequence)
@@ -679,6 +679,30 @@ func volumeVersionSelector(ref client.VolumeRef) string {
 	default:
 		return "head"
 	}
+}
+
+// volumeRefText renders a ref for text output, shortening the digest inside it
+// unless the whole thing was asked for. What it writes still parses, so it can
+// be handed back to any of these commands.
+func volumeRefText(ref client.VolumeRef, flags cmd.VolumeRefFlags) string {
+	if flags.FullRef {
+		return ref.String()
+	}
+	return ref.ShorthandString()
+}
+
+// volumeRefTextOf renders a ref the API returned, which arrives as a string
+// rather than a parsed ref. One it writes in a form this client cannot read is
+// passed through whole, since the ref it named is still the useful answer.
+func volumeRefTextOf(ref string, flags cmd.VolumeRefFlags) string {
+	if flags.FullRef {
+		return ref
+	}
+	parsed, err := client.ParseVolumeRef(ref)
+	if err != nil {
+		return ref
+	}
+	return parsed.ShorthandString()
 }
 
 // volumeTagNames renders a volume's readable tags. total is the volume's own

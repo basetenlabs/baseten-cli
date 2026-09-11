@@ -314,6 +314,17 @@ func (v *volumeLifecycle) Inventory(t *testing.T) {
 			}
 		})
 	}
+	// Text output shortens the digest inside a ref, which only a whole digest
+	// from the service can show, and leaves the digest field beside it alone.
+	t.Run("StatVersionTextShortensTheRef", func(t *testing.T) {
+		out := mustCLI(t, "volume", "stat", v.versionRef)
+		require.Contains(t, out, v.ref+"@"+v.untaggedDigest()[:12]+"\n")
+		require.NotContains(t, out, v.versionRef)
+		require.Contains(t, out, v.digest+"\n")
+
+		out = mustCLI(t, "volume", "stat", v.versionRef, "--full-ref")
+		require.Contains(t, out, v.versionRef+"\n")
+	})
 }
 
 // Entries covers what a listing reads straight from the volume service rather

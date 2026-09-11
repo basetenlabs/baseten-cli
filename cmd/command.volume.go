@@ -164,9 +164,9 @@ var commandVolume = Command{
 			ExactArgs: 2,
 			Flags:     VolumePushFlags{},
 			Output: &CommandOutput[VolumePushResult]{
-				TextDescription: "A summary of what was published: the version ref, the file and byte " +
-					"counts, how many chunks were uploaded, and any tags applied. Transfer progress " +
-					"goes to stderr.",
+				TextDescription: "A summary of what was published: the version ref and digest, the file " +
+					"and byte counts, how many chunks were uploaded, and any tags applied. Transfer " +
+					"progress goes to stderr.",
 				Examples: []CommandExample{
 					{
 						Description: "Publish a directory as a new version.",
@@ -199,8 +199,8 @@ var commandVolume = Command{
 			ExactArgs: 2,
 			Flags:     VolumePullFlags{},
 			Output: &CommandOutput[VolumePullResult]{
-				TextDescription: "A summary of what was written: the version ref, the destination, and " +
-					"the file and byte counts. Transfer progress goes to stderr.",
+				TextDescription: "A summary of what was written: the version ref and digest, the " +
+					"destination, and the file and byte counts. Transfer progress goes to stderr.",
 				Examples: []CommandExample{
 					{
 						Description: "Download the version head points at.",
@@ -324,6 +324,14 @@ type VolumeTransferFlags struct {
 	MaxInFlightMiB  int `flag:"max-in-flight-mib" desc:"Cap on the chunk data held in memory, in MiB. Defaults to 2048." group:"transfer"`
 }
 
+// VolumeRefFlags chooses how wide a ref a command writes in text output. Text
+// output shortens the digest inside a ref so the ref does not crowd out the
+// fields beside it; a shortened ref still names the same version and still
+// parses, and a digest a command writes on its own is never shortened.
+type VolumeRefFlags struct {
+	FullRef bool `flag:"full-ref" desc:"Write refs with the whole digest instead of shortening it to 12 hex characters."`
+}
+
 type VolumeLsFlags struct {
 	CommandFlags
 
@@ -332,6 +340,7 @@ type VolumeLsFlags struct {
 
 type VolumeStatFlags struct {
 	CommandFlags
+	VolumeRefFlags
 }
 
 type VolumeCatFlags struct {
@@ -340,6 +349,7 @@ type VolumeCatFlags struct {
 
 type VolumePushFlags struct {
 	CommandFlags
+	VolumeRefFlags
 	VolumeTransferFlags
 
 	Tags []string `flag:"tag" desc:"Tag to apply to the new version at commit. May be repeated, and adds to a tag written on REF. Push is the only command where a tag is written rather than read."`
@@ -351,6 +361,7 @@ type VolumePushFlags struct {
 
 type VolumePullFlags struct {
 	CommandFlags
+	VolumeRefFlags
 	VolumeTransferFlags
 
 	Overwrite bool `flag:"overwrite" desc:"Allow writing into a non-empty directory. Files already there that the version does not describe are left alone."`
@@ -363,6 +374,7 @@ type VolumePullFlags struct {
 
 type VolumeRmFlags struct {
 	CommandFlags
+	VolumeRefFlags
 
 	Recursive bool `flag:"recursive" short:"r" desc:"Delete every live version of the volume. Required for a ref that names a volume rather than one version."`
 	Yes       bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
@@ -376,6 +388,7 @@ type VolumeVersionsFlags struct {
 
 type VolumeRestoreFlags struct {
 	CommandFlags
+	VolumeRefFlags
 }
 
 // VolumeNamespaceList is the JSON output of `baseten volume ls` with no ref:

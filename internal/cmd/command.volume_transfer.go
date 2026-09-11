@@ -149,7 +149,8 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 		return nil
 	}
 	ctx.Outputf("✨ Volume %s was successfully pushed ✨\n\n", ref)
-	ctx.Outputf("Version:  %s\n", result.VersionRef)
+	ctx.Outputf("Ref:      %s\n", volumeRefText(result.VersionRef, flags.VolumeRefFlags))
+	ctx.Outputf("Digest:   %s\n", result.VersionRef.Digest)
 	ctx.Outputf("Contents: %d files, %s\n", result.Files, formatBytes(result.Bytes))
 	ctx.Outputf("Uploaded: %d of %d chunks\n", result.Unique, result.Chunks)
 	if len(result.TagsApplied) > 0 {
@@ -216,7 +217,8 @@ func commandVolumePull(ctx *CommandContext, flags *cmd.VolumePullFlags) error {
 		ctx.Logf("Warning: %s\n", warning)
 	}
 	ctx.Outputf("✨ Volume version was successfully downloaded ✨\n\n")
-	ctx.Outputf("Version:     %s\n", result.VersionRef)
+	ctx.Outputf("Ref:         %s\n", volumeRefText(result.VersionRef, flags.VolumeRefFlags))
+	ctx.Outputf("Digest:      %s\n", result.VersionRef.Digest)
 	ctx.Outputf("Destination: %s\n", dir)
 	ctx.Outputf("Written:     %d files, %s\n", result.Files, formatBytes(result.Bytes))
 	if result.SelectedFiles != result.TotalFiles {
