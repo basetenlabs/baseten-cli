@@ -23,6 +23,7 @@ func init() {
 	Register("org billing usage", commandOrgBillingUsage)
 	Register("org audit-logs", commandOrgAuditLogs)
 	Register("org describe", commandOrgDescribe)
+	Register("org regions", commandOrgRegions)
 }
 
 func commandOrgBillingUsage(ctx *CommandContext, flags *cmd.OrgBillingUsageFlags) error {
@@ -497,6 +498,52 @@ func auditEnumValues[T ~string](flagName string, values, allowed []string) ([]T,
 		out = append(out, T(strings.ToUpper(strings.ReplaceAll(v, "-", "_"))))
 	}
 	return out, nil
+}
+
+func commandOrgRegions(ctx *CommandContext, flags *cmd.OrgRegionsFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	var regions *managementapi.Regions
+	if flags.Team != "" {
+		teamID, err := ResolveTeam(ctx, cl.API(), flags.Team)
+		if err != nil {
+			return err
+		}
+		regions, err = cl.API().GetTeamsRegions(ctx, teamID)
+		if err != nil {
+			return fmt.Errorf("listing regions for team %q: %w", flags.Team, err)
+		}
+	} else {
+		regions, err = cl.API().GetRegions(ctx)
+		if err != nil {
+			return fmt.Errorf("listing regions: %w", err)
+		}
+	}
+	// The endpoints do not promise an order, so sort by the field callers key
+	// off of rather than letting the table shuffle between runs.
+	slices.SortFunc(regions.Regions, func(a, b managementapi.Region) int {
+		return strings.Compare(a.Slug, b.Slug)
+	})
+
+	if ctx.JSON {
+		ctx.OutputJSON(regions)
+		return nil
+	}
+	if len(regions.Regions) == 0 {
+		ctx.LogLine("No regions found.")
+		return nil
+	}
+	rows := make([][]string, 0, len(regions.Regions))
+	for _, r := range regions.Regions {
+		rows = append(rows, []string{r.Slug, r.DisplayName})
+	}
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"SLUG", "NAME"},
+		Rows:    rows,
+	})
+	return nil
 }
 
 func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error {
