@@ -556,6 +556,35 @@ func (c *CommandContext) newS3APIClient(cfg aws.Config) transfermanager.S3APICli
 	return s3.NewFromConfig(cfg)
 }
 
+// VolumeTransfer reaches a volume's contents: the bytes of a version and the
+// manifest describing its file tree. Satisfied by the management client, and
+// an interface so tests can substitute a fake rather than speak the volume
+// service's protocol.
+type VolumeTransfer interface {
+	PushVolume(context.Context, client.PushVolumeOptions) (*client.PushVolumeResult, error)
+	PullVolume(context.Context, client.PullVolumeOptions) (*client.PullVolumeResult, error)
+	FetchVolumeManifest(
+		context.Context, client.FetchVolumeManifestOptions,
+	) (*client.VolumeManifest, error)
+}
+
+type volumeTransferKey struct{}
+
+// WithVolumeTransfer returns a context that overrides what reaches volume
+// contents. Intended for tests.
+func WithVolumeTransfer(ctx context.Context, t VolumeTransfer) context.Context {
+	return context.WithValue(ctx, volumeTransferKey{}, t)
+}
+
+// NewVolumeTransfer returns what reaches volume contents, honoring any
+// override installed via [WithVolumeTransfer].
+func (c *CommandContext) NewVolumeTransfer() (VolumeTransfer, error) {
+	if t, ok := c.Value(volumeTransferKey{}).(VolumeTransfer); ok {
+		return t, nil
+	}
+	return c.NewManagementClient()
+}
+
 // Execer looks up and runs external commands. The default uses os/exec; tests
 // inject a fake via WithExecer to avoid spawning real processes.
 type Execer interface {

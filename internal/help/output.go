@@ -170,8 +170,17 @@ func renderLeafJSON(def cmd.Command, styles fang.Styles) string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(renderCodeblock(jsonSchemaBlock(def.Output), styles))
+	b.WriteString(renderCodeblock(jsonSchemaBlock(def.Output, def.Output.JSONOutputType()), styles))
 	b.WriteString("\n")
+	// A command whose shape depends on its input documents every shape it can
+	// produce, each labelled with the input that selects it. The primary
+	// shape's own condition is in the prose above.
+	for _, alt := range def.Output.JSONAlternativeList() {
+		b.WriteString(lipgloss.NewStyle().PaddingLeft(longPad).Render("when the " + alt.When + ":"))
+		b.WriteString("\n")
+		b.WriteString(renderCodeblock(jsonSchemaBlock(def.Output, alt.Type), styles))
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 
@@ -187,8 +196,7 @@ func renderCodeblock(body string, styles fang.Styles) string {
 	return styles.Codeblock.Base.Width(blockWidth).Render(body)
 }
 
-func jsonSchemaBlock(spec cmd.CommandOutputSpec) string {
-	typ := spec.JSONOutputType()
+func jsonSchemaBlock(spec cmd.CommandOutputSpec, typ reflect.Type) string {
 	jsonAny := reflect.TypeOf((cmd.JSONAny)(nil))
 	jsonUndefined := reflect.TypeFor[cmd.JSONUndefined]()
 	switch typ {

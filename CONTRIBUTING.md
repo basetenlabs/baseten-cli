@@ -13,6 +13,7 @@
 - Internal (`internal/cmd/`): runner registered in `init()` via `Register("parent child", runner)`; path and flag type must match.
 - Parents (commands with subcommands) are not executable: no run function, no `Flags`.
 - Avoid shorthand flags and positional args unless really needed.
+  - `volume` is the exception: it addresses a file tree, so refs are positional and shorthands follow the unix namesakes.
 - Enum values are `lowercase-kebab-case`.
 - Tests: `command.<name>_test.go` (package `cmd_test`); name `Test_ParentCmd_SubCmd_WhatThisTests` (e.g. `Test_API_Management_DefaultGET`).
 
