@@ -14,10 +14,17 @@ const volumeRefGrammar = "A ref is 'bdn:<namespace>/<volume>', with an optional 
 	"The 'bdn:' is required; with no selector, the volume's head is used. A digest may be " +
 	"written with or without its 'b3:' prefix, and shortened to 12 or more hex characters."
 
+// volumePreRelease warns that this group is not GA. Prepended to each
+// command's description so it leads the help rather than trailing the prose,
+// and paired with the " (PRE-RELEASE)" summary suffix for the short listings.
+const volumePreRelease = "PRE-RELEASE: Volume commands are not GA yet. " +
+	"Their arguments, flags, and output may change.\n\n"
+
 var commandVolume = Command{
 	Name:    "volume",
-	Summary: "Manage volumes",
-	Description: "Manage volumes: file trees stored once and mounted into models, training jobs, and Loops.\n\n" +
+	Summary: "Manage volumes (PRE-RELEASE)",
+	Description: volumePreRelease +
+		"Manage volumes: file trees stored once and mounted into models, training jobs, and Loops.\n\n" +
 		"A volume holds versions. A version is an immutable file tree addressed by digest. A tag is a " +
 		"mutable name pointing at a version.\n\n" +
 		"These commands address volumes positionally, the way filesystem commands address paths, so " +
@@ -26,8 +33,9 @@ var commandVolume = Command{
 	Children: []Command{
 		{
 			Name:    "ls",
-			Summary: "List namespaces, volumes, or the files in a version",
-			Description: "Lists what a ref contains. With no ref, lists the namespaces holding volumes " +
+			Summary: "List namespaces, volumes, or the files in a version (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Lists what a ref contains. With no ref, lists the namespaces holding volumes " +
 				"your API key can read. A namespace ref lists its volumes. A volume or version ref " +
 				"lists that version's file entries, and a trailing path narrows to the entries under " +
 				"it, matched on slash boundaries so 'config' does not also match 'configuration.json'.\n\n" +
@@ -73,8 +81,9 @@ var commandVolume = Command{
 		},
 		{
 			Name:    "stat",
-			Summary: "Describe a volume, a version, or one file",
-			Description: "Describes what a ref names. A volume ref describes the volume: its tags, head, " +
+			Summary: "Describe a volume, a version, or one file (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Describes what a ref names. A volume ref describes the volume: its tags, head, " +
 				"and version counts. A version ref describes that version: its digest, size, entry " +
 				"count, and when it was created. A ref with a trailing path describes that one entry.\n\n" +
 				"A namespace ref is an error, since a namespace has nothing to describe beyond the " +
@@ -112,8 +121,9 @@ var commandVolume = Command{
 		},
 		{
 			Name:    "cat",
-			Summary: "Write one file from a volume to stdout",
-			Description: "Writes one file's bytes to stdout, so it can be piped or redirected. The ref " +
+			Summary: "Write one file from a volume to stdout (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Writes one file's bytes to stdout, so it can be piped or redirected. The ref " +
 				"must carry a path naming a file: a ref naming a volume or a version has no single " +
 				"file to write, and a path naming a directory is an error.\n\n" +
 				"Chunks are verified against the digests the version records before they are written, " +
@@ -141,8 +151,9 @@ var commandVolume = Command{
 		},
 		{
 			Name:    "push",
-			Summary: "Publish a directory as a new version of a volume",
-			Description: "Publishes DIR as a new version of the volume REF names, creating the volume if " +
+			Summary: "Publish a directory as a new version of a volume (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Publishes DIR as a new version of the volume REF names, creating the volume if " +
 				"it does not exist. Only content the volume does not already hold is uploaded, so " +
 				"pushing a tree that mostly matches an existing version transfers only what differs.\n\n" +
 				"Nothing is visible until the whole tree has been uploaded, so an interrupted push " +
@@ -174,8 +185,9 @@ var commandVolume = Command{
 		},
 		{
 			Name:    "pull",
-			Summary: "Download a version of a volume into a directory",
-			Description: "Downloads what REF names into DIR. A volume or version ref pulls the whole " +
+			Summary: "Download a version of a volume into a directory (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Downloads what REF names into DIR. A volume or version ref pulls the whole " +
 				"tree; a trailing path pulls that subtree or that one file.\n\n" +
 				"DIR is always a directory, and entries land at their volume-relative path under it, " +
 				"so pulling 'bdn:weights/llama/config/model.json' into './out' writes " +
@@ -207,8 +219,9 @@ var commandVolume = Command{
 		},
 		{
 			Name:    "rm",
-			Summary: "Delete a version, or every version of a volume",
-			Description: "Deletes what REF names. A ref carrying a digest deletes that version. " +
+			Summary: "Delete a version, or every version of a volume (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Deletes what REF names. A ref carrying a digest deletes that version. " +
 				"A volume ref deletes every live version of the volume and requires --recursive, so a " +
 				"ref that meant to name one version cannot take the whole volume with it.\n\n" +
 				"A deleted version is recoverable with 'volume restore' for a limited window, which " +
@@ -244,8 +257,9 @@ var commandVolume = Command{
 		},
 		{
 			Name:    "versions",
-			Summary: "List the versions of a volume",
-			Description: "Lists a volume's versions, newest first, with the digest, sequence, size, " +
+			Summary: "List the versions of a volume (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Lists a volume's versions, newest first, with the digest, sequence, size, " +
 				"lifecycle, tags, and which one head points at.\n\n" +
 				"The ref must name a volume: a selector or a path names one point in the history " +
 				"rather than the history itself.\n\n" + volumeRefGrammar,
@@ -275,8 +289,9 @@ var commandVolume = Command{
 		},
 		{
 			Name:    "restore",
-			Summary: "Return a deleted version to service",
-			Description: "Restores a deleted version during its recovery window, which 'volume rm' " +
+			Summary: "Return a deleted version to service (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Restores a deleted version during its recovery window, which 'volume rm' " +
 				"reports and 'volume versions --include-tombstoned' lists.\n\n" +
 				"The ref must carry a digest, since deleting a version drops the tags that pointed " +
 				"at it, so a tag no longer names one.\n\n" +
