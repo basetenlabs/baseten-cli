@@ -72,11 +72,10 @@ type CodeHarnessFlags struct {
 
 type CodeInitFlags struct {
 	CodeOutputFlags
-	Harness   []string `flag:"harness" desc:"Harness to configure (repeatable)" enum:"codex,codex-desktop,claude-code,claude-desktop,opencode"`
-	Model     string   `flag:"model" desc:"Initial Route slug from the authenticated catalog"`
-	Label     string   `flag:"label" desc:"Installation label for a new Code credential"`
-	NoBrowser bool     `flag:"no-browser" desc:"Display device authorization URL without opening a browser"`
-	DryRun    bool     `flag:"dry-run" desc:"Preview without writing configuration or issuing credentials"`
+	Harness []string `flag:"harness" desc:"Harness to configure (repeatable)" enum:"codex,codex-desktop,claude-code,claude-desktop,opencode"`
+	Model   string   `flag:"model" desc:"Initial Route slug from the authenticated catalog"`
+	Label   string   `flag:"label" desc:"Installation label for a new Code credential"`
+	DryRun  bool     `flag:"dry-run" desc:"Preview without writing configuration or issuing credentials"`
 }
 
 type CodeSpendFlags struct {

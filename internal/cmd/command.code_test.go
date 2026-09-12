@@ -95,7 +95,7 @@ func Test_Code_ExplicitCommandsRemainInvocable(t *testing.T) {
 }
 func Test_Code_Init_DryRunHasNoSideEffects(t *testing.T) {
 	h := newCodeHarness(t)
-	h.Require.NoError(h.Execute("code", "init", "--harness", "codex", "--harness", "codex-desktop", "--model", "engineering", "--no-browser", "--no-interactive", "--dry-run", "--json"))
+	h.Require.NoError(h.Execute("code", "init", "--harness", "codex", "--harness", "codex-desktop", "--model", "engineering", "--no-interactive", "--dry-run", "--json"))
 	var r struct {
 		Status    string
 		Harnesses []code.Harness

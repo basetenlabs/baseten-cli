@@ -53,7 +53,7 @@ filter `Command.Hidden` before descending.
    make no guessed management requests. Logout retains credentials until
    confirmed revocation. No ordinary API-key management endpoint is substituted.
    Wire the existing OAuth device login/profile machinery to these contracts,
-   including no-browser flow, installation reuse, organization resolution and
+   including installation reuse, organization resolution and
    creator identity. M1 does not introduce a separate eligibility/team gate.
    There is intentionally no production command to seed local Code credentials.
 2. **Spend:** the SDK has daily Cost API user/model/API-key-prefix filters, but
