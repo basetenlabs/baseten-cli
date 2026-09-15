@@ -550,6 +550,112 @@ func Test_Model_Push_WaitFailure(t *testing.T) {
 	h.Require.NotContains(result, "error")
 }
 
+// A development push replaces the dev deployment in place, and the server
+// reports FAILED while the old service is gone, so --wait keeps polling
+// through it and settles on the ACTIVE that follows.
+func Test_Model_Push_WaitDevelopmentToleratesTransientFailed(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	h.API.SetRoute("POST", "/v1/models", 200, map[string]any{
+		"model": map[string]any{
+			"id":                 "model-123",
+			"name":               "test-model",
+			"created_at":         "2026-01-01T00:00:00Z",
+			"deployments_count":  1,
+			"instance_type_name": "1x2",
+		},
+		"deployment": map[string]any{
+			"id":             "deploy-456",
+			"model_id":       "model-123",
+			"name":           "v1",
+			"created":        "2026-01-01T00:00:00Z",
+			"updated":        "2026-01-01T00:00:00Z",
+			"is_development": true,
+			"status":         "LOADING_MODEL",
+		},
+	})
+	statuses := []string{"LOADING_MODEL", "FAILED", "FAILED", "ACTIVE"}
+	idx := 0
+	h.API.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456", func(w http.ResponseWriter, _ *http.Request) {
+		dep := deploymentResponse(statuses[idx])
+		dep["is_development"] = true
+		if idx < len(statuses)-1 {
+			idx++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(dep)
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--develop", "--wait", "--output", "json"))
+	h.Require.Contains(h.Stderr.String(), "is deployed and active")
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("ACTIVE", dep["status"])
+}
+
+// The development grace period is bounded: a FAILED that outlasts it settles
+// as a failed deploy rather than polling forever.
+func Test_Model_Push_WaitDevelopmentFailedOutlastsGrace(t *testing.T) {
+	h := newModelPushHarness(t)
+	// Sleeping advances the clock, so the grace period actually elapses.
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+		now = now.Add(d)
+		return nil
+	})
+	h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
+	h.API.SetRoute("POST", "/v1/models", 200, map[string]any{
+		"model": map[string]any{
+			"id":                 "model-123",
+			"name":               "test-model",
+			"created_at":         "2026-01-01T00:00:00Z",
+			"deployments_count":  1,
+			"instance_type_name": "1x2",
+		},
+		"deployment": map[string]any{
+			"id":             "deploy-456",
+			"model_id":       "model-123",
+			"name":           "v1",
+			"created":        "2026-01-01T00:00:00Z",
+			"updated":        "2026-01-01T00:00:00Z",
+			"is_development": true,
+			"status":         "LOADING_MODEL",
+		},
+	})
+	dep := deploymentResponse("FAILED")
+	dep["is_development"] = true
+	h.API.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456", 200, dep)
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--develop", "--wait", "--output", "json")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "failed deployment status: FAILED")
+}
+
+// The grace period is specific to the development deployment a push replaces:
+// on any other deployment the first FAILED settles immediately.
+func Test_Model_Push_WaitFailedNotToleratedOutsideDevelopment(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	gets := 0
+	h.API.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456", func(w http.ResponseWriter, _ *http.Request) {
+		gets++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(deploymentResponse("FAILED"))
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--wait", "--output", "json")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "failed deployment status: FAILED")
+	// Time is pinned here, so a grace period would poll forever; one read
+	// proves FAILED was terminal on sight.
+	h.Require.Equal(1, gets)
+}
+
 // --tail without --wait stops only on terminal-failure statuses; logs go
 // to stderr as text regardless of --output, and the JSON result reflects
 // the final fetched status.
