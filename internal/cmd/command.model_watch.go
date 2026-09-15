@@ -190,7 +190,7 @@ func waitForDeploymentReadyForWatch(
 	modelID, deploymentID string,
 ) error {
 	ctx.LogLine("Waiting for deployment to be ready...")
-	dep, err := pollDeploymentUntilSettled(ctx, api, modelID, deploymentID,
+	dep, err := pollDeploymentUntilSettled(ctx, api, modelID, deploymentID, 0,
 		func(status managementapi.DeploymentStatus) bool {
 			return status == managementapi.DeploymentStatus_BUILDING ||
 				status == managementapi.DeploymentStatus_DEPLOYING ||

@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/stretchr/testify/require"
@@ -122,11 +123,27 @@ func repoRoot(t *testing.T) string {
 	return filepath.Join(filepath.Dir(file), "..", "..")
 }
 
+const (
+	// defaultCLITimeout bounds an ordinary CLI call. t.Context() has no
+	// deadline, so without this a wedged backend call hangs the whole package
+	// until `go test -timeout` panics, which kills the process before cleanup
+	// can delete the resources the run created. Ordinary commands finish in
+	// seconds; the few that legitimately run for minutes pass their own context.
+	defaultCLITimeout = 5 * time.Minute
+
+	// pushCLITimeout bounds a push, which builds an image and waits for the
+	// deployment or job it created.
+	pushCLITimeout = 15 * time.Minute
+)
+
 // cli runs the CLI in-process with the given args, returning captured stdout
-// and stderr. Non-zero exits surface as a non-nil error.
+// and stderr. Non-zero exits surface as a non-nil error. The call is bounded by
+// defaultCLITimeout; use cliCtx for a command that needs longer.
 func cli(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	return cliCtx(t, t.Context(), args...)
+	ctx, cancel := context.WithTimeout(t.Context(), defaultCLITimeout)
+	defer cancel()
+	return cliCtx(t, ctx, args...)
 }
 
 // cliCtx is cli with an explicit context. Use this from t.Cleanup, since
@@ -157,7 +174,16 @@ func cliWithStdin(t *testing.T, ctx context.Context, stdin string, args ...strin
 // mustCLI runs cli and fatals on error, returning stdout.
 func mustCLI(t *testing.T, args ...string) string {
 	t.Helper()
-	out, errOut, err := cli(t, args...)
+	ctx, cancel := context.WithTimeout(t.Context(), defaultCLITimeout)
+	defer cancel()
+	return mustCLICtx(t, ctx, args...)
+}
+
+// mustCLICtx is mustCLI with an explicit context, for commands that outlast
+// defaultCLITimeout.
+func mustCLICtx(t *testing.T, ctx context.Context, args ...string) string {
+	t.Helper()
+	out, errOut, err := cliCtx(t, ctx, args...)
 	if err != nil {
 		t.Fatalf("baseten %s failed: %v\nstderr: %s", strings.Join(args, " "), err, errOut)
 	}
@@ -194,11 +220,79 @@ func writeTruss(t *testing.T, modelName string) string {
 	return dir
 }
 
-// lookupModelIDByName is the fallback used at cleanup when we couldn't parse
-// the push response (e.g. push failed mid-way). Returns "" if not found.
-func lookupModelIDByName(t *testing.T, name string) string {
+// step logs a phase boundary with a UTC wall-clock timestamp. CI runs these
+// tests with -v, so step lines stream as the run progresses: they are what
+// identifies where a hung run stopped, and their timestamps line up with the
+// build and deployment logs the platform shows for the same window.
+func step(t *testing.T, format string, args ...any) {
 	t.Helper()
-	out, _, err := cli(t, "api", "management", "models")
+	t.Logf("[%s] %s", time.Now().UTC().Format("15:04:05"), fmt.Sprintf(format, args...))
+}
+
+// failureLogLineLimit caps how many log lines are pulled per deployment when
+// dumping after a failure. Enough to cover a load() and a few requests without
+// burying the failure itself.
+const failureLogLineLimit = 300
+
+// dumpModelLogsIfFailure writes every deployment's recent logs into the test
+// output when the test has failed, and does nothing otherwise. Call it from the
+// top of a test's cleanup, before the model is deleted: the platform drops the
+// logs with the model, so this is the only durable copy of what the container
+// printed. Every step is best-effort, including a recover, since this runs
+// after the real failure and must not replace it with one of its own.
+func dumpModelLogsIfFailure(t *testing.T, modelName string) {
+	if !t.Failed() {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Logf("dumping logs for model %q panicked: %v", modelName, r)
+		}
+	}()
+	// t.Context() is canceled before cleanup, and the log fetches should not
+	// eat into the deletion's budget, so this gets its own context.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	out, errOut, err := cliCtx(t, ctx, "model", "deployment", "list",
+		"--model-name", modelName, "--output", "json")
+	if err != nil {
+		t.Logf("could not list deployments of model %q for log dump: %v\nstderr: %s",
+			modelName, err, errOut)
+		return
+	}
+	var resp struct {
+		Deployments []struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		} `json:"deployments"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Logf("could not parse deployments of model %q for log dump: %v", modelName, err)
+		return
+	}
+	for _, d := range resp.Deployments {
+		logs, errOut, err := cliCtx(t, ctx, "model", "deployment", "logs",
+			"--model-name", modelName, "--deployment-id", d.ID,
+			"--since", "1h", "--limit", fmt.Sprint(failureLogLineLimit))
+		if err != nil {
+			t.Logf("could not fetch logs of deployment %s (%s) for log dump: %v\nstderr: %s",
+				d.ID, d.Name, err, errOut)
+			continue
+		}
+		t.Logf("logs for model %q deployment %s (%s, status %s):\n%s",
+			modelName, d.ID, d.Name, d.Status, logs)
+	}
+}
+
+// lookupModelIDByName is the fallback used at cleanup when we couldn't parse
+// the push response (e.g. push failed mid-way). Takes an explicit context
+// because its callers run in cleanup, after t.Context() is canceled. Returns ""
+// if not found.
+func lookupModelIDByName(t *testing.T, ctx context.Context, name string) string {
+	t.Helper()
+	out, _, err := cliCtx(t, ctx, "api", "management", "models")
 	if err != nil {
 		return ""
 	}

@@ -56,19 +56,23 @@ func TestE2EModelWatch(t *testing.T) {
 	// Phase 1: push --watch (implies --develop) creates the development
 	// deployment and enters the watch loop. The first push builds and deploys a
 	// fresh deployment, so allow it plenty of time to reach the watch loop.
+	step(t, "phase 1: push --watch of model %s", w.modelName)
 	push := w.startWatch("model", "push", "--watch", "--dir", w.dir)
 	push.waitForMarker(t, 5*time.Minute)
+	step(t, "phase 1: watching for changes")
 
 	// The push created the model; resolve its ID for predicting and cleanup, and
 	// confirm the development deployment serves the original code. The first
 	// predict may race the initial-sync model reload, so allow it generous time.
 	w.resolveModelID(push)
+	step(t, "phase 1: model %s created; waiting for it to serve v1", w.modelID)
 	pidV1 := w.requireServesVersion(push, "v1", 5*time.Minute)
 
 	// Mutate the predict response and confirm the push --watch loop patches the
 	// running container. The model is already serving, so propagation is quick.
 	// Without --watch-hot-reload the patch is cold: the process restarts, so the
 	// serving PID must change.
+	step(t, "phase 1: serving v1 (pid %d); patching to v2", pidV1)
 	w.writeModelPy("v2")
 	pidV2 := w.requireServesVersion(push, "v2", 20*time.Second)
 	require.NotEqual(t, pidV1, pidV2, "a cold patch should restart the model process")
@@ -79,9 +83,11 @@ func TestE2EModelWatch(t *testing.T) {
 	// deployment and patches a further change. It is already built and ACTIVE,
 	// so it reaches the watch loop in seconds (no build or deploy). Still cold,
 	// so the PID changes again.
+	step(t, "phase 2: standalone model watch")
 	watch := w.startWatch("model", "watch", "--dir", w.dir)
 	watch.waitForMarker(t, 30*time.Second)
 
+	step(t, "phase 2: watching for changes; patching to v3")
 	w.writeModelPy("v3")
 	pidV3 := w.requireServesVersion(watch, "v3", 20*time.Second)
 	require.NotEqual(t, pidV2, pidV3, "a cold patch should restart the model process")
@@ -91,9 +97,11 @@ func TestE2EModelWatch(t *testing.T) {
 	// Phase 3: standalone `model watch --hot-reload`. A model-code-only change
 	// hot-reloads in place rather than restarting the process, so the new code
 	// is served under the SAME PID.
+	step(t, "phase 3: model watch --hot-reload")
 	hot := w.startWatch("model", "watch", "--hot-reload", "--dir", w.dir)
 	hot.waitForMarker(t, 30*time.Second)
 
+	step(t, "phase 3: watching for changes; patching to v4")
 	w.writeModelPy("v4")
 	pidV4 := w.requireServesVersion(hot, "v4", 20*time.Second)
 	require.Equal(t, pidV3, pidV4, "a hot reload should not restart the model process")
@@ -107,10 +115,12 @@ func TestE2EModelWatch(t *testing.T) {
 	// build hangs in BUILDING indefinitely rather than failing, so --wait would
 	// poll forever: bound it with a deadline. On the bug the push errors at the
 	// deadline; when correct it builds and reaches ACTIVE well within it.
+	step(t, "phase 4: development re-push of v5")
 	w.writeModelPy("v5")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	_, errOut, err := cliCtx(t, ctx, "model", "push", "--develop", "--wait", "--dir", w.dir, "--output", "json")
+	step(t, "phase 4: re-push returned")
 	require.NoError(t, err,
 		"development re-push to an existing model should build and reach ACTIVE; "+
 			"a hang here means the existing-model development push did not resolve an instance type\nstderr:\n%s",
@@ -119,6 +129,7 @@ func TestE2EModelWatch(t *testing.T) {
 	// Confirm the re-pushed code is actually live: the development deployment now
 	// serves v5. The push reached ACTIVE above, so this settles quickly; a fresh
 	// deployment may still briefly return the not-ready 400 while it loads.
+	step(t, "phase 4: waiting for the re-pushed deployment to serve v5")
 	require.Eventually(t, func() bool {
 		out, errOut, err := cli(t, "model", "predict",
 			"--model-name", w.modelName, "--data", "{}", "--output", "json")
@@ -172,19 +183,20 @@ func newWatchTest(t *testing.T) *watchTest {
 
 	// Register cleanup before the push so even a partial create gets removed.
 	t.Cleanup(func() {
+		dumpModelLogsIfFailure(t, w.modelName)
 		if os.Getenv("BASETEN_E2E_KEEP_MODEL") != "" {
 			t.Logf("BASETEN_E2E_KEEP_MODEL set; leaving model %q in place", w.modelName)
 			return
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		if w.modelID == "" {
-			w.modelID = lookupModelIDByName(t, w.modelName)
+			w.modelID = lookupModelIDByName(t, ctx, w.modelName)
 		}
 		if w.modelID == "" {
 			return
 		}
 		t.Logf("deleting model %s (%s)", w.modelName, w.modelID)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
 		if _, errOut, err := cliCtx(t, ctx, "model", "delete", "--model-id", w.modelID, "--yes"); err != nil {
 			t.Logf("cleanup delete failed: %v\nstderr: %s", err, errOut)
 		}

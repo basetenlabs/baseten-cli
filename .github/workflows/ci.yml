@@ -52,4 +52,6 @@ jobs:
           # to main will run them.
           BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
           BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
-        run: go test -tags=e2e -timeout 30m ./internal/e2e-tests/...
+        # -v so each test and its step logs stream as the run progresses; without
+        # it a hung run shows no output at all and the stuck test is unknowable.
+        run: go test -v -tags=e2e -timeout 30m ./internal/e2e-tests/...

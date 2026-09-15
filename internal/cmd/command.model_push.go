@@ -386,6 +386,11 @@ func (c *readCounter) Read(p []byte) (int, error) {
 const (
 	modelPushPollInterval  = 2 * time.Second
 	modelPushWarmupTimeout = 30 * time.Second
+
+	// modelPushDevFailedGrace is how long a FAILED status is tolerated while
+	// waiting on a development deployment, which a push replaces in place. See
+	// waitModelPushDeployment.
+	modelPushDevFailedGrace = 30 * time.Second
 )
 
 // watchModelPushDeployment runs the development-deployment patch loop after a
@@ -456,12 +461,25 @@ func tailModelPushDeployment(
 // surfaces as a failure via the caller's status check. Status transitions
 // are logged to stderr. Mutates created.Deployment with the freshest
 // fetch so the JSON result reflects final state.
+//
+// A development push is the exception: it overwrites the single dev slot in
+// place, tearing down and recreating the underlying service, and the status
+// reported in that window is FAILED. FAILED has exactly one source server-side
+// ("the service does not exist") and never means a build or load failure, so
+// on a development deployment it is tolerated for a grace period rather than
+// reported as a failed deploy. Temporary: remove once the server stops
+// reporting FAILED while it replaces a development deployment.
 func waitModelPushDeployment(
 	ctx *CommandContext,
 	api *managementapi.Client,
 	created *managementapi.CreatedModelDeployment,
 ) error {
+	tolerateFailed := time.Duration(0)
+	if created.Deployment.IsDevelopment {
+		tolerateFailed = modelPushDevFailedGrace
+	}
 	dep, err := pollDeploymentUntilSettled(ctx, api, created.Model.Id, created.Deployment.Id,
+		tolerateFailed,
 		func(status managementapi.DeploymentStatus) bool {
 			return status == managementapi.DeploymentStatus_BUILDING ||
 				status == managementapi.DeploymentStatus_DEPLOYING ||
@@ -480,15 +498,22 @@ func waitModelPushDeployment(
 // in-progress, then returns the settled deployment for the caller to classify.
 // A brand-new deployment may 404 for a few seconds after creation; those reads
 // are retried within a warmup window.
+//
+// When tolerateFailed is positive, a FAILED status is treated as still pending
+// until that long after it was first seen; it settles as FAILED if it outlasts
+// that. Zero (the default for every caller that is not replacing a development
+// deployment) settles on the first FAILED.
 func pollDeploymentUntilSettled(
 	ctx *CommandContext,
 	api *managementapi.Client,
 	modelID, deploymentID string,
+	tolerateFailed time.Duration,
 	pending func(managementapi.DeploymentStatus) bool,
 ) (*managementapi.Deployment, error) {
 	warmupDeadline := ctx.Now().Add(modelPushWarmupTimeout)
 	warmedUp := false
 	var lastStatus managementapi.DeploymentStatus
+	var failedDeadline time.Time
 
 	for {
 		dep, err := api.GetModelsDeploymentsDeploymentId(ctx, modelID, deploymentID)
@@ -509,6 +534,17 @@ func pollDeploymentUntilSettled(
 		if dep.Status != lastStatus {
 			ctx.Logf("Status: %s\n", dep.Status)
 			lastStatus = dep.Status
+		}
+		if dep.Status == managementapi.DeploymentStatus_FAILED && tolerateFailed > 0 {
+			if failedDeadline.IsZero() {
+				failedDeadline = ctx.Now().Add(tolerateFailed)
+			}
+			if ctx.Now().Before(failedDeadline) {
+				if err := ctx.Sleep(modelPushPollInterval); err != nil {
+					return nil, err
+				}
+				continue
+			}
 		}
 		if !pending(dep.Status) {
 			return dep, nil

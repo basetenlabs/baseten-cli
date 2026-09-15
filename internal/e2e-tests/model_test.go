@@ -79,25 +79,30 @@ func newLifecycle(t *testing.T) *lifecycle {
 
 	// Register cleanup before the push so even a partial create gets removed.
 	t.Cleanup(func() {
+		dumpModelLogsIfFailure(t, l.modelName)
 		if os.Getenv("BASETEN_E2E_KEEP_MODEL") != "" {
 			t.Logf("BASETEN_E2E_KEEP_MODEL set; leaving model %q in place", l.modelName)
 			return
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		if l.modelID == "" {
-			l.modelID = lookupModelIDByName(t, l.modelName)
+			l.modelID = lookupModelIDByName(t, ctx, l.modelName)
 		}
 		if l.modelID == "" {
 			return
 		}
 		t.Logf("deleting model %s (%s)", l.modelName, l.modelID)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
 		if _, errOut, err := cliCtx(t, ctx, "model", "delete", "--model-id", l.modelID, "--yes"); err != nil {
 			t.Logf("cleanup delete failed: %v\nstderr: %s", err, errOut)
 		}
 	})
 
-	pushOut := mustCLI(t, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
+	step(t, "pushing model %s to production", l.modelName)
+	ctx, cancel := context.WithTimeout(t.Context(), pushCLITimeout)
+	defer cancel()
+	pushOut := mustCLICtx(t, ctx, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
+	step(t, "pushed model %s", l.modelName)
 	var initial pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(pushOut), &initial))
 	require.Equal(t, l.modelName, initial.Model.Name)
@@ -788,7 +793,11 @@ func (l *lifecycle) Redeploy(t *testing.T) {
 	require.Error(t, err, "push to a nonexistent environment should fail; stdout was %s", errOut)
 	require.Contains(t, errOut, missingEnv)
 
-	out := mustCLI(t, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
+	step(t, "re-pushing model %s to production", l.modelName)
+	ctx, cancel := context.WithTimeout(t.Context(), pushCLITimeout)
+	defer cancel()
+	out := mustCLICtx(t, ctx, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
+	step(t, "re-pushed model %s", l.modelName)
 	var redeploy pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(out), &redeploy))
 	require.Equal(t, l.modelID, redeploy.Model.ID, "redeploy should reuse existing model")
