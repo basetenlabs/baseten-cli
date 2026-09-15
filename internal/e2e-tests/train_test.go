@@ -238,8 +238,12 @@ func newTrainLifecycle(t *testing.T) *trainLifecycle {
 
 	// The delegated push reports nothing structured, so the job is found by
 	// listing the project it created.
-	t.Logf("pushing training job %s to project %s", tr.jobName, tr.projectName)
-	mustCLI(t, "train", "push", "--config", configPath, "--job-name", tr.jobName)
+	// The push runs truss through `uv tool run`, so it can spend minutes
+	// resolving that tool before it uploads anything.
+	step(t, "pushing training job %s to project %s", tr.jobName, tr.projectName)
+	ctx, cancel := context.WithTimeout(t.Context(), pushCLITimeout)
+	defer cancel()
+	mustCLICtx(t, ctx, "train", "push", "--config", configPath, "--job-name", tr.jobName)
 
 	job := tr.findJob(t)
 	require.NotNil(t, job, "pushed job %q not found in project %q", tr.jobName, tr.projectName)

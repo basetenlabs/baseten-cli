@@ -26,9 +26,10 @@ E2e tests live in `internal/e2e-tests/` behind the `e2e` build tag and run again
 - Tests must be idempotent and clean up resources they create.
 - Use random/unique identifiers for created resources so parallel or repeated runs don't clash.
 - Do not assume specific orgs, models, or other state exists; create or look up dynamically.
+- Mark phase boundaries of a long test with `step`, and run with `-v` (as CI does) so they stream and a stuck run is attributable.
 
 ```bash
 BASETEN_E2E_TEST_API_KEY=... \
 BASETEN_E2E_TEST_REMOTE_URL=... \
-    go test -tags=e2e ./internal/e2e-tests/...
+    go test -v -tags=e2e ./internal/e2e-tests/...
 ```
