@@ -118,6 +118,9 @@ func Execute(ctx context.Context, options ExecuteOptions) error {
 	// give it the same exit code and envelope a leaf would produce.
 	ce := cmd.NewErrUsage(err)
 	format := outputFormatFromArgs(options.Args)
+	if failed, _, _ := root.Find(options.Args); failed != nil && failed.Annotations["baseten/raw-output"] == "true" {
+		format = "text"
+	}
 	(&CommandContext{
 		Stdout:      options.Stdout,
 		JSON:        format == "json" || format == "jsonl",
@@ -143,6 +146,9 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 		Short:  def.Summary,
 		Long:   def.Description,
 		Hidden: def.Hidden,
+	}
+	if def.RawOutput {
+		c.Annotations = map[string]string{"baseten/raw-output": "true"}
 	}
 	c.InitDefaultHelpFlag()
 	if f := c.Flags().Lookup("help"); f != nil {
@@ -219,20 +225,32 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				cmdFlags = f.Interface().(cmd.CommandFlags)
 			}
 			ctx := &CommandContext{
-				Context:      c.Context(),
-				Command:      c,
-				Args:         args,
-				Stdin:        options.Stdin,
-				Stdout:       options.Stdout,
-				Stderr:       options.Stderr,
-				ExitWithCode: options.ExitWithCode,
-				strictOutput: options.StrictOutputChecks,
-				authInfo:     authInfo{profileFlag: cmdFlags.Profile},
+				Context:           c.Context(),
+				Command:           c,
+				Args:              args,
+				Stdin:             options.Stdin,
+				Stdout:            options.Stdout,
+				Stderr:            options.Stderr,
+				ExitWithCode:      options.ExitWithCode,
+				strictOutput:      options.StrictOutputChecks,
+				suppressJSONError: def.RawOutput,
+				authInfo:          authInfo{profileFlag: cmdFlags.Profile},
 			}
 
-			// Resolve --jq and --output, populating ctx.
+			// Code's spec uses --json; preserve the CLI's output and jq machinery.
 			var runErr error
-			if cmdFlags.JQ != "" {
+			if f := flagsVal.FieldByName("JSON"); f.IsValid() && f.Kind() == reflect.Bool && f.Bool() {
+				if c.Flags().Changed("output") && cmdFlags.Output != "json" {
+					runErr = cmd.NewErrUsagef("--json conflicts with --output %s", cmdFlags.Output)
+				} else {
+					cmdFlags.Output = "json"
+				}
+			}
+			// Resolve --jq and --output, populating ctx.
+			if def.RawOutput && (cmdFlags.Output != "text" || cmdFlags.JQ != "") {
+				runErr = cmd.NewErrUsagef("this command emits raw output and does not support --output or --jq")
+			}
+			if runErr == nil && cmdFlags.JQ != "" {
 				outputChanged := c.Flags().Changed("output")
 				if outputChanged && (cmdFlags.Output == "text" || cmdFlags.Output == "none") {
 					runErr = cmd.NewErrUsagef("--jq cannot be used with --output %s", cmdFlags.Output)
@@ -456,13 +474,17 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 // as json only when no --output appears at all. Shorthands combined into one
 // arg (-vojson) are not recognized.
 func outputFormatFromArgs(args []string) string {
-	format, sawOutput, sawJQ := "", false, false
+	format, sawOutput, sawJQ, sawJSON := "", false, false, false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
 			break
 		}
 		switch {
+		case arg == "--json" || arg == "--json=true":
+			sawJSON = true
+		case arg == "--json=false":
+			sawJSON = false
 		case arg == "--output" || arg == "-o":
 			sawOutput = true
 			// A trailing --output with no value is the parse error cobra is
@@ -480,7 +502,7 @@ func outputFormatFromArgs(args []string) string {
 			sawJQ = true
 		}
 	}
-	if !sawOutput && sawJQ {
+	if !sawOutput && (sawJQ || sawJSON) {
 		return "json"
 	}
 	return format

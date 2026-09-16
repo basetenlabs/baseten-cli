@@ -33,6 +33,7 @@ var Root = Command{
 	Children: []Command{
 		commandAPI,
 		commandAuth,
+		commandCode,
 		commandLoops,
 		commandModel,
 		commandModelAPI,
@@ -86,6 +87,9 @@ type Command struct {
 	// Hidden keeps the command out of help listings and completion. The command
 	// is still fully runnable.
 	Hidden bool
+	// RawOutput disables output formatting and keeps every failure off stdout.
+	// Reserved for credential helpers and other strict machine protocols.
+	RawOutput bool
 }
 
 // LoadFlags parses the Flags struct tags and returns the flag metadata. Returns
