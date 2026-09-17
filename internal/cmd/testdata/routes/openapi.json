@@ -1,0 +1,819 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Routes contract extract",
+    "version": "c10f76e76799201c2036d4acedd021c1a29acb29"
+  },
+  "paths": {
+    "/v1/routes": {
+      "get": {
+        "summary": "Lists routes",
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "source": "curl --request GET \\\n--url {{API_BASE}}/v1/routes \\\n--header \"Authorization: Bearer $BASETEN_API_KEY\"\n"
+          },
+          {
+            "lang": "python",
+            "source": "import requests\nimport os\nAPI_KEY = os.environ.get(\"BASETEN_API_KEY\", \"<YOUR_API_KEY>\")\nurl = \"{{API_BASE}}/v1/routes\"\n\nheaders = {\"Authorization\": f\"Bearer {API_KEY}\"}\n\nresponse = requests.request(\n    \"GET\",\n    url,\n    headers=headers,\n    params={'cursor': None, 'team_id': None, 'name': None}\n)\n\nprint(response.text)"
+          }
+        ],
+        "description": "Lists routes you can invoke, newest first, optionally filtered by team and exact name.",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor returned by a previous page. Omit to fetch the first page.",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of items to return.",
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "required": false,
+            "description": "Filter by owning team ID. Preserved by the cursor; if repeated, must match the original filter.",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "description": "Filter by exact route name. Preserved by the cursor; if repeated, must match the original filter.",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutesResponseV1"
+                }
+              }
+            }
+          }
+        },
+        "x-stability": "unstable"
+      },
+      "post": {
+        "summary": "Creates a route",
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "source": "curl --request POST \\\n--url {{API_BASE}}/v1/routes \\\n--header \"Authorization: Bearer $BASETEN_API_KEY\" \\\n--data '{\n  \"name\": \"my-org/assistant\",\n  \"team_id\": \"abc1234\",\n  \"display_name\": \"Assistant\",\n  \"target\": {\n    \"model_api\": \"zai-org/GLM-5.3\",\n    \"type\": \"BASETEN_MODEL_API\"\n  },\n  \"description\": \"Assistant for code review and debugging.\"\n}'"
+          },
+          {
+            "lang": "python",
+            "source": "import requests\nimport os\nAPI_KEY = os.environ.get(\"BASETEN_API_KEY\", \"<YOUR_API_KEY>\")\nurl = \"{{API_BASE}}/v1/routes\"\n\nheaders = {\"Authorization\": f\"Bearer {API_KEY}\"}\n\nresponse = requests.request(\n    \"POST\",\n    url,\n    headers=headers,\n    json={'name': 'my-org/assistant', 'team_id': 'abc1234', 'display_name': 'Assistant', 'target': {'model_api': 'zai-org/GLM-5.3', 'type': 'BASETEN_MODEL_API'}, 'description': 'Assistant for code review and debugging.'}\n)\n\nprint(response.text)"
+          }
+        ],
+        "description": "Dedicated deployment targets are not supported.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRouteRequestV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteV1"
+                }
+              }
+            }
+          }
+        },
+        "x-stability": "unstable"
+      }
+    },
+    "/v1/routes/{route_id}": {
+      "delete": {
+        "summary": "Deletes a route",
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "source": "curl --request DELETE \\\n--url {{API_BASE}}/v1/routes/{route_id} \\\n--header \"Authorization: Bearer $BASETEN_API_KEY\"\n"
+          },
+          {
+            "lang": "python",
+            "source": "import requests\nimport os\nAPI_KEY = os.environ.get(\"BASETEN_API_KEY\", \"<YOUR_API_KEY>\")\nurl = \"{{API_BASE}}/v1/routes/{route_id}\"\n\nheaders = {\"Authorization\": f\"Bearer {API_KEY}\"}\n\nresponse = requests.request(\n    \"DELETE\",\n    url,\n    headers=headers,\n    json={}\n)\n\nprint(response.text)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteTombstoneV1"
+                }
+              }
+            }
+          }
+        },
+        "x-stability": "unstable"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/route_id"
+        }
+      ],
+      "get": {
+        "summary": "Gets a route",
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "source": "curl --request GET \\\n--url {{API_BASE}}/v1/routes/{route_id} \\\n--header \"Authorization: Bearer $BASETEN_API_KEY\"\n"
+          },
+          {
+            "lang": "python",
+            "source": "import requests\nimport os\nAPI_KEY = os.environ.get(\"BASETEN_API_KEY\", \"<YOUR_API_KEY>\")\nurl = \"{{API_BASE}}/v1/routes/{route_id}\"\n\nheaders = {\"Authorization\": f\"Bearer {API_KEY}\"}\n\nresponse = requests.request(\n    \"GET\",\n    url,\n    headers=headers,\n    json={}\n)\n\nprint(response.text)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteV1"
+                }
+              }
+            }
+          }
+        },
+        "x-stability": "unstable"
+      },
+      "patch": {
+        "summary": "Updates a route",
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "source": "curl --request PATCH \\\n--url {{API_BASE}}/v1/routes/{route_id} \\\n--header \"Authorization: Bearer $BASETEN_API_KEY\" \\\n--data '{\n  \"description\": \"Assistant for code review and debugging.\",\n  \"display_name\": \"Assistant\",\n  \"target\": {\n    \"model_api\": \"zai-org/GLM-5.3\",\n    \"type\": \"BASETEN_MODEL_API\"\n  }\n}'"
+          },
+          {
+            "lang": "python",
+            "source": "import requests\nimport os\nAPI_KEY = os.environ.get(\"BASETEN_API_KEY\", \"<YOUR_API_KEY>\")\nurl = \"{{API_BASE}}/v1/routes/{route_id}\"\n\nheaders = {\"Authorization\": f\"Bearer {API_KEY}\"}\n\nresponse = requests.request(\n    \"PATCH\",\n    url,\n    headers=headers,\n    json={'description': 'Assistant for code review and debugging.', 'display_name': 'Assistant', 'target': {'model_api': 'zai-org/GLM-5.3', 'type': 'BASETEN_MODEL_API'}}\n)\n\nprint(response.text)"
+          }
+        ],
+        "description": "Replaces the entire target when provided. The route name and owning team are immutable.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRouteRequestV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteV1"
+                }
+              }
+            }
+          }
+        },
+        "x-stability": "unstable"
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RoutesResponseV1": {
+        "properties": {
+          "items": {
+            "description": "Items in this page.",
+            "items": {
+              "$ref": "#/components/schemas/RouteV1"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationResponseV1",
+            "description": "Pagination metadata for the page."
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "RoutesResponseV1",
+        "type": "object"
+      },
+      "RouteV1": {
+        "properties": {
+          "id": {
+            "description": "Stable route identifier.",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "description": "Immutable name to send in the inference request's model field.",
+            "title": "Name",
+            "type": "string"
+          },
+          "team_id": {
+            "description": "Identifier of the owning team.",
+            "title": "Team Id",
+            "type": "string"
+          },
+          "display_name": {
+            "description": "Display label, defaulting to the route name.",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "description": {
+            "description": "Short description of the route, empty when unset.",
+            "title": "Description",
+            "type": "string"
+          },
+          "target": {
+            "description": "Configured upstream target.",
+            "discriminator": {
+              "mapping": {
+                "ANTHROPIC": "#/components/schemas/RouteTargetAnthropicV1",
+                "BASETEN_MODEL_API": "#/components/schemas/RouteTargetBasetenModelAPIV1",
+                "OPENAI": "#/components/schemas/RouteTargetOpenAIV1",
+                "OPENAI_COMPATIBLE": "#/components/schemas/RouteTargetOpenAICompatibleV1",
+                "VERTEX": "#/components/schemas/RouteTargetVertexV1",
+                "XAI": "#/components/schemas/RouteTargetXAIV1"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RouteTargetBasetenModelAPIV1"
+              },
+              {
+                "$ref": "#/components/schemas/RouteTargetAnthropicV1"
+              },
+              {
+                "$ref": "#/components/schemas/RouteTargetOpenAIV1"
+              },
+              {
+                "$ref": "#/components/schemas/RouteTargetXAIV1"
+              },
+              {
+                "$ref": "#/components/schemas/RouteTargetVertexV1"
+              },
+              {
+                "$ref": "#/components/schemas/RouteTargetOpenAICompatibleV1"
+              }
+            ],
+            "title": "Target"
+          },
+          "invoke_url": {
+            "description": "Base URL for inference requests using this route.",
+            "title": "Invoke Url",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "Creation time, ISO 8601.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "team_id",
+          "display_name",
+          "description",
+          "target",
+          "invoke_url",
+          "created_at"
+        ],
+        "title": "RouteV1",
+        "type": "object"
+      },
+      "RouteTargetBasetenModelAPIV1": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "BASETEN_MODEL_API",
+            "description": "Target kind for a Baseten Model API.",
+            "title": "Type",
+            "type": "string"
+          },
+          "model_api": {
+            "description": "Name of the target Model API.",
+            "minLength": 1,
+            "title": "Model Api",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "model_api"
+        ],
+        "title": "RouteTargetBasetenModelAPIV1",
+        "type": "object"
+      },
+      "RouteTargetAnthropicV1": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "ANTHROPIC",
+            "description": "Target kind for Anthropic.",
+            "title": "Type",
+            "type": "string"
+          },
+          "model": {
+            "description": "Model name sent to the provider.",
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "secret_name": {
+            "description": "Name of a credential secret owned by the route's team.",
+            "minLength": 1,
+            "title": "Secret Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "model",
+          "secret_name"
+        ],
+        "title": "RouteTargetAnthropicV1",
+        "type": "object"
+      },
+      "RouteTargetOpenAIV1": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "OPENAI",
+            "description": "Target kind for OpenAI.",
+            "title": "Type",
+            "type": "string"
+          },
+          "model": {
+            "description": "Model name sent to the provider.",
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "secret_name": {
+            "description": "Name of a credential secret owned by the route's team.",
+            "minLength": 1,
+            "title": "Secret Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "model",
+          "secret_name"
+        ],
+        "title": "RouteTargetOpenAIV1",
+        "type": "object"
+      },
+      "RouteTargetXAIV1": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "XAI",
+            "description": "Target kind for xAI.",
+            "title": "Type",
+            "type": "string"
+          },
+          "model": {
+            "description": "Model name sent to the provider.",
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "secret_name": {
+            "description": "Name of a credential secret owned by the route's team.",
+            "minLength": 1,
+            "title": "Secret Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "model",
+          "secret_name"
+        ],
+        "title": "RouteTargetXAIV1",
+        "type": "object"
+      },
+      "RouteTargetVertexV1": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "VERTEX",
+            "description": "Target kind for Google Vertex AI.",
+            "title": "Type",
+            "type": "string"
+          },
+          "model": {
+            "description": "Model name sent to the provider.",
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "secret_name": {
+            "description": "Name of a credential secret owned by the route's team.",
+            "minLength": 1,
+            "title": "Secret Name",
+            "type": "string"
+          },
+          "vertex_config": {
+            "$ref": "#/components/schemas/VertexTargetConfigV1",
+            "description": "Google Vertex configuration."
+          }
+        },
+        "required": [
+          "type",
+          "model",
+          "secret_name",
+          "vertex_config"
+        ],
+        "title": "RouteTargetVertexV1",
+        "type": "object"
+      },
+      "VertexTargetConfigV1": {
+        "properties": {
+          "project_id": {
+            "description": "Google Cloud project ID or project number.",
+            "examples": [
+              "my-gcp-project",
+              "464036093014"
+            ],
+            "title": "Project Id",
+            "type": "string"
+          },
+          "location": {
+            "description": "Google Cloud location.",
+            "examples": [
+              "global"
+            ],
+            "title": "Location",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "location"
+        ],
+        "title": "VertexTargetConfigV1",
+        "type": "object"
+      },
+      "RouteTargetOpenAICompatibleV1": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "OPENAI_COMPATIBLE",
+            "description": "Target kind for an OpenAI-compatible provider.",
+            "title": "Type",
+            "type": "string"
+          },
+          "model": {
+            "description": "Model name sent to the provider.",
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "secret_name": {
+            "description": "Name of a credential secret owned by the route's team.",
+            "minLength": 1,
+            "title": "Secret Name",
+            "type": "string"
+          },
+          "base_url": {
+            "description": "HTTPS base URL of the OpenAI-compatible provider.",
+            "minLength": 1,
+            "title": "Base Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "model",
+          "secret_name",
+          "base_url"
+        ],
+        "title": "RouteTargetOpenAICompatibleV1",
+        "type": "object"
+      },
+      "PaginationResponseV1": {
+        "properties": {
+          "has_more": {
+            "description": "Whether more items exist after this page.",
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Opaque cursor to pass into the next request. Null when there is no next page.",
+            "title": "Cursor"
+          }
+        },
+        "required": [
+          "has_more"
+        ],
+        "title": "PaginationResponseV1",
+        "type": "object"
+      },
+      "CreateRouteRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Immutable, globally unique route name using an organization-owned prefix.",
+            "examples": [
+              "my-org/assistant"
+            ],
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "team_id": {
+            "description": "Identifier of the team that owns the route.",
+            "examples": [
+              "abc1234"
+            ],
+            "minLength": 1,
+            "title": "Team Id",
+            "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Display label. Omit to use the route name; null is not accepted.",
+            "examples": [
+              "Assistant"
+            ],
+            "title": "Display Name"
+          },
+          "target": {
+            "description": "Upstream target for the route.",
+            "discriminator": {
+              "mapping": {
+                "ANTHROPIC": "#/components/schemas/RouteTargetAnthropicV1",
+                "BASETEN_MODEL_API": "#/components/schemas/RouteTargetBasetenModelAPIV1",
+                "OPENAI": "#/components/schemas/RouteTargetOpenAIV1",
+                "OPENAI_COMPATIBLE": "#/components/schemas/RouteTargetOpenAICompatibleV1",
+                "VERTEX": "#/components/schemas/RouteTargetVertexV1",
+                "XAI": "#/components/schemas/RouteTargetXAIV1"
+              },
+              "propertyName": "type"
+            },
+            "examples": [
+              {
+                "model_api": "zai-org/GLM-5.3",
+                "type": "BASETEN_MODEL_API"
+              }
+            ],
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RouteTargetBasetenModelAPIV1"
+              },
+              {
+                "$ref": "#/components/schemas/RouteTargetAnthropicV1"
+              },
+              {
+                "$ref": "#/components/schemas/RouteTargetOpenAIV1"
+              },
+              {
+                "$ref": "#/components/schemas/RouteTargetXAIV1"
+              },
+              {
+                "$ref": "#/components/schemas/RouteTargetVertexV1"
+              },
+              {
+                "$ref": "#/components/schemas/RouteTargetOpenAICompatibleV1"
+              }
+            ],
+            "title": "Target"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Short description of the route. Omit for no description; null is not accepted.",
+            "examples": [
+              "Assistant for code review and debugging."
+            ],
+            "title": "Description"
+          }
+        },
+        "required": [
+          "name",
+          "team_id",
+          "target"
+        ],
+        "title": "CreateRouteRequestV1",
+        "type": "object"
+      },
+      "RouteTombstoneV1": {
+        "properties": {
+          "id": {
+            "description": "Stable identifier of the deleted route.",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "description": "Name of the deleted route.",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "RouteTombstoneV1",
+        "type": "object"
+      },
+      "UpdateRouteRequestV1": {
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New description. Omit to keep the current description; use an empty string to clear it. Null is not accepted.",
+            "examples": [
+              "Assistant for code review and debugging."
+            ],
+            "title": "Description"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New display label. Omit to keep the current label; null is not accepted.",
+            "examples": [
+              "Assistant"
+            ],
+            "title": "Display Name"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "ANTHROPIC": "#/components/schemas/RouteTargetAnthropicV1",
+                    "BASETEN_MODEL_API": "#/components/schemas/RouteTargetBasetenModelAPIV1",
+                    "OPENAI": "#/components/schemas/RouteTargetOpenAIV1",
+                    "OPENAI_COMPATIBLE": "#/components/schemas/RouteTargetOpenAICompatibleV1",
+                    "VERTEX": "#/components/schemas/RouteTargetVertexV1",
+                    "XAI": "#/components/schemas/RouteTargetXAIV1"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RouteTargetBasetenModelAPIV1"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RouteTargetAnthropicV1"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RouteTargetOpenAIV1"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RouteTargetXAIV1"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RouteTargetVertexV1"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RouteTargetOpenAICompatibleV1"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Replaces the entire target. Omit to keep the current target; null is not accepted.",
+            "examples": [
+              {
+                "model_api": "zai-org/GLM-5.3",
+                "type": "BASETEN_MODEL_API"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "title": "UpdateRouteRequestV1",
+        "type": "object"
+      }
+    },
+    "parameters": {
+      "route_id": {
+        "schema": {
+          "type": "string"
+        },
+        "name": "route_id",
+        "in": "path",
+        "required": true
+      }
+    }
+  }
+}

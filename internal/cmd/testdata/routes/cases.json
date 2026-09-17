@@ -1,0 +1,268 @@
+[
+  {
+    "name": "model-api",
+    "flags": [
+      "--target-model-api",
+      "moonshotai/glm-5.3"
+    ],
+    "create": {
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "BASETEN_MODEL_API",
+        "model_api": "moonshotai/glm-5.3"
+      }
+    },
+    "update": {
+      "target": {
+        "type": "BASETEN_MODEL_API",
+        "model_api": "moonshotai/glm-5.3"
+      }
+    },
+    "response": {
+      "id": "r123456",
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "BASETEN_MODEL_API",
+        "model_api": "moonshotai/glm-5.3"
+      },
+      "invoke_url": "https://coding.baseten.co",
+      "created_at": "2026-09-17T10:00:00Z",
+      "description": ""
+    }
+  },
+  {
+    "name": "anthropic",
+    "flags": [
+      "--target-provider",
+      "anthropic",
+      "--target-provider-model",
+      "test-model",
+      "--target-provider-secret",
+      "provider-key"
+    ],
+    "create": {
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "ANTHROPIC",
+        "model": "test-model",
+        "secret_name": "provider-key"
+      }
+    },
+    "update": {
+      "target": {
+        "type": "ANTHROPIC",
+        "model": "test-model",
+        "secret_name": "provider-key"
+      }
+    },
+    "response": {
+      "id": "r123456",
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "ANTHROPIC",
+        "model": "test-model",
+        "secret_name": "provider-key"
+      },
+      "invoke_url": "https://coding.baseten.co",
+      "created_at": "2026-09-17T10:00:00Z",
+      "description": ""
+    }
+  },
+  {
+    "name": "openai",
+    "flags": [
+      "--target-provider",
+      "openai",
+      "--target-provider-model",
+      "test-model",
+      "--target-provider-secret",
+      "provider-key"
+    ],
+    "create": {
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "OPENAI",
+        "model": "test-model",
+        "secret_name": "provider-key"
+      }
+    },
+    "update": {
+      "target": {
+        "type": "OPENAI",
+        "model": "test-model",
+        "secret_name": "provider-key"
+      }
+    },
+    "response": {
+      "id": "r123456",
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "OPENAI",
+        "model": "test-model",
+        "secret_name": "provider-key"
+      },
+      "invoke_url": "https://coding.baseten.co",
+      "created_at": "2026-09-17T10:00:00Z",
+      "description": ""
+    }
+  },
+  {
+    "name": "xai",
+    "flags": [
+      "--target-provider",
+      "xai",
+      "--target-provider-model",
+      "test-model",
+      "--target-provider-secret",
+      "provider-key"
+    ],
+    "create": {
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "XAI",
+        "model": "test-model",
+        "secret_name": "provider-key"
+      }
+    },
+    "update": {
+      "target": {
+        "type": "XAI",
+        "model": "test-model",
+        "secret_name": "provider-key"
+      }
+    },
+    "response": {
+      "id": "r123456",
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "XAI",
+        "model": "test-model",
+        "secret_name": "provider-key"
+      },
+      "invoke_url": "https://coding.baseten.co",
+      "created_at": "2026-09-17T10:00:00Z",
+      "description": ""
+    }
+  },
+  {
+    "name": "vertex",
+    "flags": [
+      "--target-provider",
+      "vertex",
+      "--target-provider-model",
+      "test-model",
+      "--target-provider-secret",
+      "provider-key",
+      "--target-provider-vertex-project",
+      "example-project",
+      "--target-provider-vertex-location",
+      "global"
+    ],
+    "create": {
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "VERTEX",
+        "model": "test-model",
+        "secret_name": "provider-key",
+        "vertex_config": {
+          "project_id": "example-project",
+          "location": "global"
+        }
+      }
+    },
+    "update": {
+      "target": {
+        "type": "VERTEX",
+        "model": "test-model",
+        "secret_name": "provider-key",
+        "vertex_config": {
+          "project_id": "example-project",
+          "location": "global"
+        }
+      }
+    },
+    "response": {
+      "id": "r123456",
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "VERTEX",
+        "model": "test-model",
+        "secret_name": "provider-key",
+        "vertex_config": {
+          "project_id": "example-project",
+          "location": "global"
+        }
+      },
+      "invoke_url": "https://coding.baseten.co",
+      "created_at": "2026-09-17T10:00:00Z",
+      "description": ""
+    }
+  },
+  {
+    "name": "openai-compatible",
+    "flags": [
+      "--target-provider",
+      "openai-compatible",
+      "--target-provider-model",
+      "test-model",
+      "--target-provider-secret",
+      "provider-key",
+      "--target-provider-base-url",
+      "https://api.example.com/v1"
+    ],
+    "create": {
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "OPENAI_COMPATIBLE",
+        "model": "test-model",
+        "secret_name": "provider-key",
+        "base_url": "https://api.example.com/v1"
+      }
+    },
+    "update": {
+      "target": {
+        "type": "OPENAI_COMPATIBLE",
+        "model": "test-model",
+        "secret_name": "provider-key",
+        "base_url": "https://api.example.com/v1"
+      }
+    },
+    "response": {
+      "id": "r123456",
+      "name": "acme/assistant",
+      "team_id": "t123456",
+      "display_name": "Assistant",
+      "target": {
+        "type": "OPENAI_COMPATIBLE",
+        "model": "test-model",
+        "secret_name": "provider-key",
+        "base_url": "https://api.example.com/v1"
+      },
+      "invoke_url": "https://coding.baseten.co",
+      "created_at": "2026-09-17T10:00:00Z",
+      "description": ""
+    }
+  }
+]

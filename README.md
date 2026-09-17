@@ -60,6 +60,17 @@ Authenticate via `baseten auth login`, or set `BASETEN_API_KEY` in the environme
 
 Run `baseten --help` (or `baseten <command> --help`) for the full command tree.
 
+### Managing Routes (pre-release)
+
+    baseten route list --all
+    baseten route describe --name acme/assistant
+
+This feature is pre-release. Use `route create`, `update`, and `delete` to manage
+Model API and external-provider targets. In a terminal, missing required inputs
+are prompted, including a team dropdown for creation. See
+[Managing Routes](docs/routes.md) for target flags, pagination, and backend
+availability requirements.
+
 ### Deploying Models
 
 From inside a model directory containing a `config.yaml`:
