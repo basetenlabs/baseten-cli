@@ -1,7 +1,10 @@
 package cmd
 
+const harnessPreReleaseNotice = "Pre-release: harness commands and configuration behavior may change."
+
 var commandHarness = Command{
-	Name: "harness", Summary: "Configure Baseten harness integrations", Hidden: true,
+	Name: "harness", Summary: "Configure Baseten harness integrations (pre-release)", Hidden: true,
+	Description: harnessPreReleaseNotice,
 	Children: []Command{
 		commandHarnessAuth,
 		harnessLeaf("setup", "Set up harness authentication and configuration", HarnessSetupFlags{}),
@@ -43,7 +46,7 @@ func harnessLeaf(name, summary string, flags any) Command {
 		}
 	}
 	return Command{Name: name, Summary: summary, Flags: flags,
-		Description: summary + ".\n\nSetup reads team Routes and their /v1/models metadata, creates or reuses a Routes key, and configures selected harnesses. Setup never sends inference requests.",
+		Description: harnessPreReleaseNotice + "\n\n" + summary + ".\n\nSetup reads team Routes and their /v1/models metadata, creates or reuses a Routes key, and configures selected harnesses. Setup never sends inference requests.",
 		Output:      output}
 }
 
@@ -98,9 +101,10 @@ type HarnessTeardownFlags struct {
 
 var commandHarnessAuth = Command{
 	Name: "auth", Summary: "Manage saved Routes keys for harnesses",
+	Description: harnessPreReleaseNotice,
 	Children: []Command{{
 		Name: "setup", Summary: "Create and save a Routes key",
-		Description: "Create a Routes key through the existing API and save it in the system keyring. Reuse a saved key for the same API endpoint, profile, user, team and name. Selects the only available team automatically; otherwise prompts when --team is omitted. Does not modify harness configs or validate a saved key against inference. There is no plaintext storage fallback.",
+		Description: harnessPreReleaseNotice + "\n\nCreate a Routes key through the existing API and save it in the system keyring. Reuse a saved key for the same API endpoint, profile, user, team and name. Selects the only available team automatically; otherwise prompts when --team is omitted. Does not modify harness configs or validate a saved key against inference. There is no plaintext storage fallback.",
 		Flags:       HarnessAuthSetupFlags{},
 		Output: &CommandOutput[HarnessAuthSetupResult]{
 			TextDescription: "Reports whether a Routes key was created or reused. Never prints the secret.",
