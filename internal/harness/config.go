@@ -361,7 +361,16 @@ func Inspect(d Detection) (Status, error) {
 		return r, err
 	}
 	if j == nil {
-
+		if d.Name == "codex" {
+			_, _, _, catalog, err := Read(CatalogPath(d.Path))
+			if err != nil {
+				return r, err
+			}
+			if catalog != nil {
+				r.State = "interrupted"
+				r.Drift = []string{"orphaned model catalog"}
+			}
+		}
 		return r, nil
 	}
 	r.State = "configured"
@@ -391,7 +400,35 @@ func Inspect(d Detection) (Status, error) {
 			}
 		}
 	}
-
+	if d.Name == "opencode" {
+		for _, route := range j.Routes {
+			if get(data, []string{"provider", providerID, "models", route}).Exists {
+				r.Routes = append(r.Routes, route)
+			}
+		}
+	}
+	if d.Name == "codex" {
+		_, _, _, catalog, err := Read(CatalogPath(d.Path))
+		if err != nil {
+			return r, err
+		}
+		if catalog == nil {
+			r.State = "drifted"
+			r.Drift = append(r.Drift, "model catalog missing")
+		} else {
+			r.Routes = append(r.Routes, catalog.Routes...)
+			_, contents, _, _, err := Read(CatalogPath(d.Path))
+			if err != nil {
+				return r, err
+			}
+			for _, v := range catalog.Settings {
+				if !same(get(contents, v.Path), v.Installed) {
+					r.State = "drifted"
+					r.Drift = append(r.Drift, "model catalog changed")
+				}
+			}
+		}
+	}
 	return r, nil
 }
 
