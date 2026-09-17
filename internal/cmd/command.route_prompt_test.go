@@ -83,7 +83,7 @@ func (p *scriptedRoutePrompter) Select(title string, options []cmd.RoutePromptOp
 func (p *scriptedRoutePrompter) Confirm(title string) error { return p.next("confirm", title).err }
 
 func Test_Route_Interactive_Create_AllTargets(t *testing.T) {
-	for _, tc := range routeCases(t) {
+	for _, tc := range routeCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
@@ -121,7 +121,7 @@ func Test_Route_Interactive_Create_OnlyMissingInputs(t *testing.T) {
 	h := NewCommandHarness(t)
 	routeTeams(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/routes", 200, routeCases(t)[2].Response)
+	m.SetRoute("POST", "/v1/routes", 200, routeCases()[2].Response)
 	routePrompts(h, routePromptStep{kind: "optional", title: "Display name"}, routePromptStep{kind: "optional", title: "Description"}, routePromptStep{kind: "input", title: "secret name", answer: "provider-key"})
 	h.Require.NoError(h.Execute("route", "create", "--team", "Engineering", "--name", "acme/assistant", "--target-provider", "openai", "--target-provider-model", "test-model"))
 	h.Require.Equal("OPENAI", m.FindCall("POST", "/v1/routes").BodyJSON(t)["target"].(map[string]any)["type"])
@@ -145,7 +145,7 @@ func Test_Route_Interactive_FullySpecifiedSkipsPrompts(t *testing.T) {
 				if r.Method == "GET" && r.URL.Path == "/v1/routes" {
 					_ = json.NewEncoder(w).Encode(routePage([]any{}, nil))
 				} else {
-					_ = json.NewEncoder(w).Encode(routeCases(t)[0].Response)
+					_ = json.NewEncoder(w).Encode(routeCases()[0].Response)
 				}
 			})
 			routePrompts(h)
@@ -157,7 +157,7 @@ func Test_Route_Interactive_FullySpecifiedSkipsPrompts(t *testing.T) {
 func Test_Route_Interactive_Describe_PagesDropdown(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	fixture := routeCases(t)[0].Response
+	fixture := routeCases()[0].Response
 	m.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("cursor") == "" {
@@ -179,7 +179,7 @@ func Test_Route_Interactive_Update_Choices(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			fixture := routeCases(t)[0].Response
+			fixture := routeCases()[0].Response
 			m.SetRoute("GET", "/v1/routes", 200, routePage([]any{fixture}, nil))
 			m.SetRoute("PATCH", "/v1/routes/r123456", 200, fixture)
 			steps := []routePromptStep{{kind: "select", title: "Choose a Route", answer: "r123456"}, {kind: "select", title: "update", answer: change}}
@@ -216,7 +216,7 @@ func Test_Route_Interactive_CancellationNeverMutates(t *testing.T) {
 			h := NewCommandHarness(t)
 			routeTeams(h)
 			m := h.MockManagementAPI()
-			m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases(t)[0].Response}, nil))
+			m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases()[0].Response}, nil))
 			routePrompts(h, tc.steps...)
 			h.Require.ErrorContains(h.Execute(append([]string{"route"}, tc.args...)...), "cancelled")
 			for _, call := range m.Calls() {
@@ -229,7 +229,7 @@ func Test_Route_Interactive_CancellationNeverMutates(t *testing.T) {
 func Test_Route_Interactive_Delete_Confirmed(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases(t)[0].Response}, nil))
+	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases()[0].Response}, nil))
 	m.SetRoute("DELETE", "/v1/routes/r123456", 200, map[string]any{"id": "r123456", "name": "acme/assistant"})
 	routePrompts(h, routePromptStep{kind: "select", title: "Choose a Route", answer: "r123456"}, routePromptStep{kind: "confirm", title: "r123456"})
 	h.Require.NoError(h.Execute("route", "delete"))
@@ -297,7 +297,7 @@ func Test_Route_Interactive_Create_OptionalMetadata(t *testing.T) {
 			h := NewCommandHarness(t)
 			routeTeams(h)
 			m := h.MockManagementAPI()
-			m.SetRoute("POST", "/v1/routes", 200, routeCases(t)[0].Response)
+			m.SetRoute("POST", "/v1/routes", 200, routeCases()[0].Response)
 			steps := []routePromptStep{{kind: "optional", title: "Display name", answer: tc.label}, {kind: "optional", title: "Description", answer: tc.description}}
 			if tc.cancel {
 				steps[1].err = errors.New("cancelled")
@@ -349,7 +349,7 @@ func Test_Route_Interactive_PrefixPrefill(t *testing.T) {
 				w.WriteHeader(tc.status)
 				_ = json.NewEncoder(w).Encode(tc.response)
 			})
-			m.SetRoute("POST", "/v1/routes", 200, routeCases(t)[0].Response)
+			m.SetRoute("POST", "/v1/routes", 200, routeCases()[0].Response)
 			steps := []routePromptStep{}
 			if tc.selected != "" {
 				steps = append(steps, routePromptStep{kind: "select", title: "organization prefix", answer: tc.selected})
@@ -393,7 +393,7 @@ func Test_Route_Interactive_ModelAPIPicker(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(routePage([]any{modelAPIFixture("second/model", "Second", "test")}, nil))
 				}
 			})
-			m.SetRoute("POST", "/v1/routes", 200, routeCases(t)[0].Response)
+			m.SetRoute("POST", "/v1/routes", 200, routeCases()[0].Response)
 			steps := []routePromptStep{{kind: "select", title: "Target type", answer: "model-api"}}
 			switch mode {
 			case "select":
@@ -443,7 +443,7 @@ func Test_Route_Interactive_SecretPicker(t *testing.T) {
 				status = 403
 			}
 			m.SetRoute("POST", path, status, map[string]any{"name": "anthropic-api-key", "team_name": "Engineering", "created_at": "2026-01-02T03:04:05Z"})
-			fixture := routeCases(t)[0].Response
+			fixture := routeCases()[0].Response
 			m.SetRoute("POST", "/v1/routes", 200, fixture)
 			m.SetRoute("PATCH", "/v1/routes/r123456", 200, fixture)
 			m.SetRoute("GET", "/v1/routes/r123456", 200, map[string]any{"id": "r123456", "team_id": teamID})

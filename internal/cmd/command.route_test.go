@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 
@@ -12,24 +11,74 @@ import (
 )
 
 type routeCase struct {
-	Name     string         `json:"name"`
-	Flags    []string       `json:"flags"`
-	Create   map[string]any `json:"create"`
-	Update   map[string]any `json:"update"`
-	Response map[string]any `json:"response"`
+	Name     string
+	Flags    []string
+	Create   map[string]any
+	Update   map[string]any
+	Response map[string]any
 }
 
-func routeCases(t *testing.T) []routeCase {
-	t.Helper()
-	b, err := os.ReadFile("testdata/routes/cases.json")
-	if err != nil {
-		t.Fatal(err)
+func routeCases() []routeCase {
+	targets := []struct {
+		name   string
+		flags  []string
+		target map[string]any
+	}{
+		{
+			name:   "model-api",
+			flags:  []string{"--target-model-api", "moonshotai/glm-5.3"},
+			target: map[string]any{"type": "BASETEN_MODEL_API", "model_api": "moonshotai/glm-5.3"},
+		},
+		{
+			name:   "anthropic",
+			flags:  []string{"--target-provider", "anthropic", "--target-provider-model", "test-model", "--target-provider-secret", "provider-key"},
+			target: map[string]any{"type": "ANTHROPIC", "model": "test-model", "secret_name": "provider-key"},
+		},
+		{
+			name:   "openai",
+			flags:  []string{"--target-provider", "openai", "--target-provider-model", "test-model", "--target-provider-secret", "provider-key"},
+			target: map[string]any{"type": "OPENAI", "model": "test-model", "secret_name": "provider-key"},
+		},
+		{
+			name:   "xai",
+			flags:  []string{"--target-provider", "xai", "--target-provider-model", "test-model", "--target-provider-secret", "provider-key"},
+			target: map[string]any{"type": "XAI", "model": "test-model", "secret_name": "provider-key"},
+		},
+		{
+			name:   "vertex",
+			flags:  []string{"--target-provider", "vertex", "--target-provider-model", "test-model", "--target-provider-secret", "provider-key", "--target-provider-vertex-project", "example-project", "--target-provider-vertex-location", "global"},
+			target: map[string]any{"type": "VERTEX", "model": "test-model", "secret_name": "provider-key", "vertex_config": map[string]any{"project_id": "example-project", "location": "global"}},
+		},
+		{
+			name:   "openai-compatible",
+			flags:  []string{"--target-provider", "openai-compatible", "--target-provider-model", "test-model", "--target-provider-secret", "provider-key", "--target-provider-base-url", "https://api.example.com/v1"},
+			target: map[string]any{"type": "OPENAI_COMPATIBLE", "model": "test-model", "secret_name": "provider-key", "base_url": "https://api.example.com/v1"},
+		},
 	}
-	var cases []routeCase
-	if err := json.Unmarshal(b, &cases); err != nil {
-		t.Fatal(err)
+	cases := make([]routeCase, 0, len(targets))
+	for _, tc := range targets {
+		cases = append(cases, routeCase{
+			Name:     tc.name,
+			Flags:    tc.flags,
+			Create:   map[string]any{"name": "acme/assistant", "team_id": "t123456", "display_name": "Assistant", "target": tc.target},
+			Update:   map[string]any{"target": tc.target},
+			Response: routeFixture(tc.target),
+		})
 	}
 	return cases
+}
+
+func routeFixture(target map[string]any) map[string]any {
+	return map[string]any{
+		"id":           "r123456",
+		"name":         "acme/assistant",
+		"team_id":      "t123456",
+		"display_name": "Assistant",
+		"description":  "",
+		"target":       target,
+		"invoke_url":   "https://coding.baseten.co",
+		"created_at":   "2026-09-17T10:00:00Z",
+	}
 }
 
 func routePage(items []any, cursor any) map[string]any {
@@ -41,7 +90,7 @@ func routeTeams(h *CommandHarness) {
 }
 
 func Test_Route_Create_ContractTargets(t *testing.T) {
-	for _, tc := range routeCases(t) {
+	for _, tc := range routeCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			routeTeams(h)
@@ -70,7 +119,7 @@ func Test_Route_Create_ContractTargets(t *testing.T) {
 }
 
 func Test_Route_Update_ContractTargets(t *testing.T) {
-	for _, tc := range routeCases(t) {
+	for _, tc := range routeCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
@@ -87,7 +136,7 @@ func Test_Route_Create_DefaultDisplayName(t *testing.T) {
 	h := NewCommandHarness(t)
 	routeTeams(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/routes", 200, routeCases(t)[0].Response)
+	m.SetRoute("POST", "/v1/routes", 200, routeCases()[0].Response)
 	h.Require.NoError(h.Execute("route", "create", "--name", "acme/assistant", "--team", "t123456", "--target-model-api", "moonshotai/glm-5.3"))
 	body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
 	h.Require.NotContains(body, "display_name")
@@ -100,7 +149,7 @@ func Test_Route_Update_LabelAndCombined(t *testing.T) {
 		t.Run(fmt.Sprint(combined), func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			m.SetRoute("PATCH", "/v1/routes/r123456", 200, routeCases(t)[0].Response)
+			m.SetRoute("PATCH", "/v1/routes/r123456", 200, routeCases()[0].Response)
 			args := []string{"route", "update", "--id", "r123456", "--display-name", "New label"}
 			expected := map[string]any{"display_name": "New label"}
 			if combined {
@@ -118,7 +167,7 @@ func Test_Route_Addressed_ExactName(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			fixture := routeCases(t)[0].Response
+			fixture := routeCases()[0].Response
 			name := "acme/assistant+test:1"
 			fixture["name"] = name
 			m.SetRoute("GET", "/v1/routes", 200, routePage([]any{fixture}, nil))
@@ -165,7 +214,7 @@ func Test_Route_Addressed_InvalidSelectors(t *testing.T) {
 }
 
 func Test_Route_Addressed_FailedLookupNeverMutates(t *testing.T) {
-	fixture := routeCases(t)[0].Response
+	fixture := routeCases()[0].Response
 	for _, tc := range []struct {
 		name string
 		page any
@@ -208,7 +257,7 @@ func Test_Route_List_PaginationAndFilters(t *testing.T) {
 			h := NewCommandHarness(t)
 			routeTeams(h)
 			m := h.MockManagementAPI()
-			fixture := routeCases(t)[0].Response
+			fixture := routeCases()[0].Response
 			m.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
 				h.Require.Equal("t123456", r.URL.Query().Get("team_id"))
 				h.Require.Equal("acme/assistant", r.URL.Query().Get("name"))
@@ -259,7 +308,7 @@ func Test_Route_List_CursorWithoutFilters(t *testing.T) {
 func Test_Route_List_TextAndJQ(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases(t)[0].Response, routeCases(t)[1].Response}, "next"))
+	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases()[0].Response, routeCases()[1].Response}, "next"))
 	h.Require.NoError(h.Execute("route", "list"))
 	for _, text := range []string{"ID", "NAME", "TEAM ID", "DISPLAY NAME", "moonshotai/glm-5.3", "ANTHROPIC:test-model"} {
 		h.Require.Contains(h.Stdout.String(), text)
@@ -356,7 +405,7 @@ func Test_Route_Usage_InvalidBaseURL(t *testing.T) {
 }
 
 func Test_Route_Describe_AllProviderFields(t *testing.T) {
-	for _, tc := range routeCases(t) {
+	for _, tc := range routeCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
@@ -428,7 +477,7 @@ func Test_Route_API_ProfileAndOutputModes(t *testing.T) {
 		h.Require.Equal("Bearer profile-fixture-key", r.Header.Get("Authorization"))
 		h.Require.Regexp(`^baseten-cli/\S+ \(Go/\S+; [^)]+\)$`, r.Header.Get("User-Agent"))
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(routeCases(t)[0].Response)
+		_ = json.NewEncoder(w).Encode(routeCases()[0].Response)
 	})
 	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456", "--profile", "route-profile", "--output", "jsonl"))
 	h.Require.Equal(1, strings.Count(h.Stdout.String(), "\n"))
@@ -442,7 +491,7 @@ func Test_Route_List_LaterPageErrorHasNoPartialSuccess(t *testing.T) {
 	m.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("cursor") == "" {
-			_ = json.NewEncoder(w).Encode(routePage([]any{routeCases(t)[0].Response}, "next"))
+			_ = json.NewEncoder(w).Encode(routePage([]any{routeCases()[0].Response}, "next"))
 		} else {
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": "PERMISSION_DENIED", "message": "fixture permission changed"})
@@ -461,7 +510,7 @@ func Test_Route_Metadata_Description(t *testing.T) {
 	for _, description := range []string{"", "Route used for reviews"} {
 		h := NewCommandHarness(t)
 		m := h.MockManagementAPI()
-		response := routeCases(t)[0].Response
+		response := routeCases()[0].Response
 		response["description"] = description
 		m.SetRoute("PATCH", "/v1/routes/r123456", 200, response)
 		h.Require.NoError(h.Execute("route", "update", "--id", "r123456", "--description", description, "--output", "json"))
@@ -481,7 +530,7 @@ func Test_Route_Describe_TeamName(t *testing.T) {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			m.SetRoute("GET", "/v1/routes/r123456", 200, routeCases(t)[0].Response)
+			m.SetRoute("GET", "/v1/routes/r123456", 200, routeCases()[0].Response)
 			if status == 200 {
 				m.SetRoute("GET", "/v1/teams/t123456", 200, teamFixture("t123456", "Engineering", false))
 			} else {
@@ -503,7 +552,7 @@ func Test_Route_Describe_TeamName(t *testing.T) {
 func Test_Route_Describe_StructuredOutputSkipsTeamLookup(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/routes/r123456", 200, routeCases(t)[0].Response)
+	m.SetRoute("GET", "/v1/routes/r123456", 200, routeCases()[0].Response)
 	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456", "--output", "json"))
 	h.Require.Len(m.Calls(), 1)
 	h.Require.Contains(h.Stdout.String(), `"team_id": "t123456"`)
