@@ -1,0 +1,18 @@
+[
+  {
+    "name": "acme/primary",
+    "display_name": "Engineering"
+  },
+  {
+    "name": "acme/background",
+    "display_name": "Background"
+  },
+  {
+    "name": "acme/subagent",
+    "display_name": "Subagents"
+  },
+  {
+    "name": "acme/fallback",
+    "display_name": "Fallback"
+  }
+]
