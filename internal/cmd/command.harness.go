@@ -85,7 +85,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		}
 		detections = append(detections, d)
 	}
-	credential, err := prepareHarnessAuth(ctx, &cmd.HarnessAuthSetupFlags{CommandFlags: f.CommandFlags, Team: f.Team, Name: f.KeyName, DryRun: f.DryRun})
+	credential, err := prepareHarnessAuth(ctx, f)
 	if err != nil {
 		return err
 	}
@@ -146,6 +146,11 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	keyAction := "reuse saved key"
+	if credential.saved == "" {
+		keyAction = "create a key when changes are applied"
+	}
+	ctx.Logf("Team: %s\nRoutes key: %s (%s)\n", credential.scope.TeamID, credential.scope.Name, keyAction)
 	if f.DryRun {
 		harnessPlansOutput(ctx, plans)
 		return nil
