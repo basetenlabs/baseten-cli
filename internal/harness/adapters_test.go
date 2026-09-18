@@ -78,7 +78,7 @@ func TestCodexCatalogDriftAndInterruptedInstall(t *testing.T) {
 	require.NotEmpty(t, plans[1].Conflicts)
 	require.FileExists(t, CatalogPath(path))
 }
-func TestAdaptersRejectUnknownMetadataAndUnsupportedOptions(t *testing.T) {
+func TestAdaptersRejectInvalidNamesAndUnsupportedOptions(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"codex", "opencode"} {
 		path := filepath.Join(dir, "config.toml")
@@ -86,7 +86,7 @@ func TestAdaptersRejectUnknownMetadataAndUnsupportedOptions(t *testing.T) {
 			path = filepath.Join(dir, "config.json")
 		}
 		routes := fixture(t)
-		routes[0].ContextWindow = 0
+		routes[0].Name = ""
 		_, e := PrepareHarness(name, path, routes, Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 		require.Error(t, e)
 		_, e = PrepareHarness(name, path, fixture(t), Selection{Primary: "acme/primary", Fallback: "acme/fallback"}, "http://127.0.0.1:1234", FixtureToken, false, false)

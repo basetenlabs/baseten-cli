@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -115,18 +116,19 @@ func FixtureEndpoint(raw string) error {
 	return nil
 }
 
-// ClaudeSettings consumes normalized capabilities. It never guesses a model's
-// capabilities or identity from the backing provider or target model name.
+// TODO: Make the Haiku/background model server-driven.
+const claudeHaikuModel = "deepseek-ai/DeepSeek-V4.1-Flash"
+
 func ClaudeSettings(routes []Route, selection Selection, endpoint, token string, replacePicker bool, current map[string]any, prior *Journal) ([]Setting, error) {
 	if _, err := ValidateCatalog(routes); err != nil {
 		return nil, err
 	}
-	for _, r := range routes {
-		if !r.Messages {
-			return nil, fmt.Errorf("Route %q lacks verified Messages support", r.Name)
-		}
-	}
+
 	explicitSubagent := selection.Subagent != ""
+	if selection.Primary == "" {
+		selection.Primary = routes[0].Name
+	}
+	selection.Background = "" // Claude uses the temporary Haiku model below.
 	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
@@ -198,6 +200,9 @@ func ClaudeSettings(routes []Route, selection Selection, endpoint, token string,
 			allowed = append(allowed, r.Name)
 		}
 	}
+	if !slices.Contains(allowed, any(claudeHaikuModel)) {
+		allowed = append(allowed, claudeHaikuModel)
+	}
 	values := []Setting{
 		desired([]string{"model"}, s.Primary),
 		desired([]string{"fallbackModel"}, []string{s.Fallback}),
@@ -205,7 +210,7 @@ func ClaudeSettings(routes []Route, selection Selection, endpoint, token string,
 		desired([]string{"modelPicker", "replaceBuiltInOptions"}, replacePicker),
 		desired([]string{"availableModels"}, allowed),
 	}
-	for _, kv := range [][2]string{{"ANTHROPIC_BASE_URL", endpoint}, {"ANTHROPIC_AUTH_TOKEN", token}, {"ANTHROPIC_DEFAULT_SONNET_MODEL", s.Primary}, {"ANTHROPIC_DEFAULT_OPUS_MODEL", s.Primary}, {"ANTHROPIC_DEFAULT_FABLE_MODEL", s.Primary}, {"ANTHROPIC_DEFAULT_HAIKU_MODEL", s.Background}, {"ANTHROPIC_SMALL_FAST_MODEL", s.Background}, {"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"}} {
+	for _, kv := range [][2]string{{"ANTHROPIC_BASE_URL", endpoint}, {"ANTHROPIC_AUTH_TOKEN", token}, {"ANTHROPIC_DEFAULT_SONNET_MODEL", s.Primary}, {"ANTHROPIC_DEFAULT_OPUS_MODEL", s.Primary}, {"ANTHROPIC_DEFAULT_FABLE_MODEL", s.Primary}, {"ANTHROPIC_DEFAULT_HAIKU_MODEL", claudeHaikuModel}, {"ANTHROPIC_SMALL_FAST_MODEL", claudeHaikuModel}, {"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"}} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
 	if explicitSubagent {
