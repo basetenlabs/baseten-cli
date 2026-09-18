@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,9 +18,10 @@ func Test_Harness_Setup_MCPServersWritten(t *testing.T) {
 	h, api := productionHarness(t)
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	t.Setenv("BASETEN_MCP_TOKEN_GITHUB", "mcp-secret")
 	api.SetRoute("GET", "/v1/mcp_servers", 200, map[string]any{
 		"mcp_servers": []any{
-			map[string]any{"name": "github", "url": "https://api.githubcopilot.com/mcp/", "authorization_token": "mcp-secret"},
+			map[string]any{"name": "github", "url": "https://api.githubcopilot.com/mcp/"},
 			map[string]any{"name": "docs", "url": "https://docs.example.com/mcp"},
 		},
 		"next_cursor": "",
@@ -76,7 +78,7 @@ func Test_Harness_MCPServers_ReadPagination(t *testing.T) {
 		require.Equal(t, "team-a", r.URL.Query().Get("team_id"))
 		require.Equal(t, "Bearer mock", r.Header.Get("Authorization"))
 		if calls == 1 {
-			json.NewEncoder(w).Encode(map[string]any{"mcp_servers": []any{map[string]any{"name": "github", "url": "https://api.githubcopilot.com/mcp/", "authorization_token": "mcp-secret"}}, "next_cursor": "next"})
+			json.NewEncoder(w).Encode(map[string]any{"mcp_servers": []any{map[string]any{"name": "github", "url": "https://api.githubcopilot.com/mcp/", "authorization_token": "wire-token-must-be-ignored"}}, "next_cursor": "next"})
 			return
 		}
 		require.Equal(t, "next", r.URL.Query().Get("cursor"))
@@ -86,7 +88,7 @@ func Test_Harness_MCPServers_ReadPagination(t *testing.T) {
 	servers, err := internalcmd.ReadHarnessMCPServersForTest(t.Context(), server.Client(), server.URL, http.Header{"Authorization": []string{"Bearer mock"}}, "team-a")
 	require.NoError(t, err)
 	require.Equal(t, []harness.MCPServer{
-		{Name: "github", URL: "https://api.githubcopilot.com/mcp/", AuthorizationToken: "mcp-secret"},
+		{Name: "github", URL: "https://api.githubcopilot.com/mcp/"},
 		{Name: "docs", URL: "https://docs.example.com/mcp"},
 	}, servers)
 	require.Equal(t, 2, calls)
@@ -100,6 +102,24 @@ func Test_Harness_MCPServers_Read404IsEmpty(t *testing.T) {
 	servers, err := internalcmd.ReadHarnessMCPServersForTest(t.Context(), server.Client(), server.URL, nil, "team-a")
 	require.NoError(t, err)
 	require.Empty(t, servers)
+}
+
+func Test_Harness_MCPServers_TokenEnvVar(t *testing.T) {
+	require.Equal(t, "BASETEN_MCP_TOKEN_GITHUB", internalcmd.HarnessMCPTokenEnvVarForTest("github"))
+	require.Equal(t, "BASETEN_MCP_TOKEN_MY_SERVER", internalcmd.HarnessMCPTokenEnvVarForTest("my-server"))
+	require.Equal(t, "BASETEN_MCP_TOKEN_ACME_CO", internalcmd.HarnessMCPTokenEnvVarForTest("acme.co"))
+}
+
+func Test_Harness_MCPServers_ResolveTokensFromEnv(t *testing.T) {
+	t.Setenv("BASETEN_MCP_TOKEN_GITHUB", "env-secret")
+	ctx := &internalcmd.CommandContext{Stdin: &bytes.Buffer{}}
+	servers, err := internalcmd.ResolveHarnessMCPServerTokensForTest(ctx, []harness.MCPServer{
+		{Name: "github", URL: "https://api.githubcopilot.com/mcp/"},
+		{Name: "docs", URL: "https://docs.example.com/mcp"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "env-secret", servers[0].AuthorizationToken)
+	require.Empty(t, servers[1].AuthorizationToken)
 }
 
 func Test_Harness_MCPServers_ReadRejectsInvalidPages(t *testing.T) {

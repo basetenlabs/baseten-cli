@@ -7,3 +7,5 @@ var HarnessSetupOptionsForTest = harnessSetupOptions
 var HarnessDetectionLabelForTest = harnessDetectionLabel
 var DefaultHarnessKeyNameForTest = defaultHarnessKeyName
 var ReadHarnessMCPServersForTest = readMCPServers
+var HarnessMCPTokenEnvVarForTest = harnessMCPTokenEnvVar
+var ResolveHarnessMCPServerTokensForTest = resolveHarnessMCPServerTokens

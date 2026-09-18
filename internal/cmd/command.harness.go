@@ -97,6 +97,10 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	mcpServers, err = resolveHarnessMCPServerTokens(ctx, mcpServers)
+	if err != nil {
+		return err
+	}
 	routes, endpoint, skipped, err := harnessCatalog(ctx, credential.transport, credential.scope.ManagementURL, listed)
 	if err != nil {
 		return err
@@ -196,6 +200,36 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	}
 	return nil
 }
+func harnessMCPTokenEnvVar(name string) string {
+	var b strings.Builder
+	b.WriteString("BASETEN_MCP_TOKEN_")
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+			b.WriteByte(c - ('a' - 'A'))
+		case c >= 'A' && c <= 'Z' || c >= '0' && c <= '9':
+			b.WriteByte(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
+func resolveHarnessMCPServerTokens(ctx *CommandContext, servers []harness.MCPServer) ([]harness.MCPServer, error) {
+	for i := range servers {
+		token := os.Getenv(harnessMCPTokenEnvVar(servers[i].Name))
+		if token == "" && ctx.IsInteractive() && !ctx.JSON {
+			if err := harnessPrompt(ctx, huh.NewInput().Title("Token for "+servers[i].Name+" ("+servers[i].URL+") — optional, Enter to skip").EchoMode(huh.EchoModePassword).Value(&token)); err != nil {
+				return nil, err
+			}
+		}
+		servers[i].AuthorizationToken = token
+	}
+	return servers, nil
+}
+
 func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessFlags) error {
 	d, err := harness.Detect(ctx, ctx.Execer(), f.Harness, f.Config)
 	if err != nil {
