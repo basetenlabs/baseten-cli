@@ -207,6 +207,18 @@ func (l *lifecycle) Model(t *testing.T) {
 		require.Equal(t, l.modelID, resp.ID)
 		require.Equal(t, l.modelName, resp.Name)
 	})
+
+	t.Run("Rename", func(t *testing.T) {
+		renamed := l.modelName + "-renamed"
+		mustCLI(t, "model", "rename", "--model-id", l.modelID, "--new-name", renamed)
+		out := mustCLI(t, "model", "describe", "--model-id", l.modelID, "--jq", ".name")
+		require.JSONEq(t, fmt.Sprintf("%q", renamed), out)
+
+		// Renamed back so the later name-based lookups still resolve.
+		mustCLI(t, "model", "rename", "--model-name", renamed, "--new-name", l.modelName)
+		out = mustCLI(t, "model", "describe", "--model-id", l.modelID, "--jq", ".name")
+		require.JSONEq(t, fmt.Sprintf("%q", l.modelName), out)
+	})
 }
 
 func (l *lifecycle) Deployment(t *testing.T) {

@@ -186,6 +186,34 @@ var commandModel = Command{
 			},
 		},
 		{
+			Name:    "rename",
+			Summary: "Rename a model",
+			Description: "Change a model's name. The new name must be unique within the model's team.\n\n" +
+				"Renaming does not change the model ID, endpoints, or deployments. Pushes that " +
+				"still use the old `model_name` create another model or target a model that now " +
+				"uses that name, so update config.yaml after renaming.\n\n" +
+				"Run 'baseten model describe' to see the current values.",
+			Flags: ModelRenameFlags{},
+			Output: &CommandOutput[managementapi.Model]{
+				TextDescription: "On success, prints \"Renamed model <id> to <name>\" and a reminder to " +
+					"update `model_name` in config.yaml to stderr (also under --output json); no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Rename by ID.",
+						Command:     "baseten model rename --model-id <model-id> --new-name my-model-v2",
+					},
+					{
+						Description: "Rename by name, scoped to a team.",
+						Command:     "baseten model rename --model-name <name> --team <team> --new-name my-model-v2",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the model's new name.",
+					Command:     "baseten model rename --model-id <model-id> --new-name my-model-v2 --jq '.name'",
+				},
+			},
+		},
+		{
 			Name:    "audit-logs",
 			Summary: "List audit-log entries for a model",
 			Description: "List audit-log entries scoped to a single model, newest first.\n\n" +
@@ -237,6 +265,15 @@ type ModelRefFlags struct {
 	ModelID   string `flag:"model-id" desc:"ID of the model." oneof:"model-ref"`
 	ModelName string `flag:"model-name" desc:"Name of the model. Use --team to disambiguate when the same name exists in multiple teams." oneof:"model-ref"`
 	Team      string `flag:"team" desc:"Team name or ID. Only valid with --model-name."`
+}
+
+// ModelRenameFlags configures `baseten model rename`. The new name is --new-name
+// rather than --name, which would read as identifying the model being renamed.
+type ModelRenameFlags struct {
+	CommandFlags
+	ModelRefFlags
+
+	NewName string `flag:"new-name" desc:"New name for the model, unique within its team." required:"true"`
 }
 
 // AutoscalingSettingsFlags is the shared autoscaling flag set for
