@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix='baseten-harness-probe-') as tmp:
  subprocess.run([cli,'harness','teardown','--config',str(f),'--yes'],env=env,cwd=tmp,capture_output=True,text=True,check=True)
  assert not f.exists()
  assert not pathlib.Path(str(f)+'.baseten-harness.json').exists()
-for scenario,expected in [('primary','acme/primary'),('background','acme/background'),('subagent','acme/subagent'),('fallback','acme/fallback')]:
+for scenario,expected in [('primary','acme/primary'),('background','deepseek-ai/DeepSeek-V4.1-Flash'),('subagent','acme/subagent'),('fallback','acme/fallback')]:
  assert any(x['mode']==scenario and x['model']==expected for x in requests), (scenario,requests)
 server.shutdown()
 print(json.dumps(requests,indent=2))

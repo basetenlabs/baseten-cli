@@ -13,17 +13,8 @@ import (
 )
 
 type Route struct {
-	InputModalities []string `json:"input_modalities"`
-	ReasoningLevels []string `json:"reasoning_levels"`
-	ParallelTools   bool     `json:"parallel_tools"`
-	Responses       bool     `json:"responses"`
-	ChatCompletions bool     `json:"chat_completions"`
-	ContextWindow   int      `json:"context_window"`
-	OutputLimit     int      `json:"output_limit"`
-	Name            string   `json:"name"`
-	DisplayName     string   `json:"display_name"`
-	Messages        bool     `json:"messages"`
-	Tools           bool     `json:"tools"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
 }
 
 type Catalog interface {
@@ -69,21 +60,6 @@ func ValidateCatalog(routes []Route) ([]Route, error) {
 		}
 		if strings.TrimSpace(r.DisplayName) == "" {
 			return nil, fmt.Errorf("Route %q has no display name", r.Name)
-		}
-		if !r.Tools {
-			return nil, fmt.Errorf("Route %q lacks verified tool support", r.Name)
-		}
-		for _, modality := range r.InputModalities {
-			if modality != "text" && modality != "image" {
-				return nil, fmt.Errorf("Route %q has an unsupported input modality", r.Name)
-			}
-		}
-		for _, level := range r.ReasoningLevels {
-			switch level {
-			case "low", "medium", "high", "minimal", "none", "xhigh":
-			default:
-				return nil, fmt.Errorf("Route %q has an unsupported reasoning level", r.Name)
-			}
 		}
 		seen[r.Name] = true
 	}

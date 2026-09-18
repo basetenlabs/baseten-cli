@@ -43,8 +43,8 @@ func harnessPlanOutput(ctx *CommandContext, p *harness.Plan) {
 
 func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	interactive := ctx.IsInteractive() && !ctx.JSON
-	if !interactive && (f.Harness == "" || f.Model == "") {
-		return cmd.NewErrUsagef("pass --harness and --model when not interactive")
+	if !interactive && (f.Harness == "" || (f.Model == "" && f.Harness != "claude-code")) {
+		return cmd.NewErrUsagef("pass --harness and --model when not interactive (--model is optional for Claude Code)")
 	}
 	names := []string{f.Harness}
 	if f.Harness == "" {
@@ -97,16 +97,16 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
-	routes, endpoint, skipped, err := harnessCatalog(ctx, credential.transport, credential.scope.ManagementURL, listed)
+	routes, endpoint, err := harnessCatalog(credential.scope.ManagementURL, listed)
 	if err != nil {
 		return err
-	}
-	if len(skipped) > 0 {
-		ctx.Logf("Routes omitted because /v1/models lacks usable metadata: %s\n", strings.Join(skipped, ", "))
 	}
 	selections := make([]harness.Selection, len(detections))
 	for i, d := range detections {
 		selection := harness.Selection{Primary: f.Model, Background: f.BackgroundModel, Subagent: f.SubagentModel, Fallback: f.FallbackModel}
+		if selection.Primary == "" && d.Name == "claude-code" {
+			selection.Primary = routes[0].Name
+		}
 		if selection.Primary == "" {
 			options := make([]huh.Option[string], 0, len(routes))
 			for _, route := range routes {
@@ -122,7 +122,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		var plans []*harness.Plan
 		occupied := map[string]bool{}
 		for i, d := range detections {
-			current, err := harness.PrepareHarness(d.Name, d.Path, routes, selections[i], endpoint, token, f.ReplacePicker, true)
+			current, err := harness.PrepareHarness(d.Name, d.Path, routes, selections[i], endpoint, token, f.ReplacePicker && d.Name == "claude-code", true)
 			if err != nil {
 				return nil, cmd.NewErrUsage(fmt.Errorf("%s: %w", d.Name, err))
 			}

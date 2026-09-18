@@ -92,7 +92,7 @@ func Test_Harness_Setup_RequiresExplicitNoninteractiveChoices(t *testing.T) {
 			args := []string{"harness", "setup", "--output", output}
 			h.Require.Error(h.Execute(args...))
 			h.Require.Contains(h.Stderr.String(), "pass --harness")
-			args = append(args, "--harness", "claude-code")
+			args = append(args, "--harness", "codex")
 			h.Require.Error(h.Execute(args...))
 			h.Require.Contains(h.Stderr.String(), "pass --harness and --model")
 		})
@@ -112,9 +112,7 @@ func productionHarness(t *testing.T) (*CommandHarness, *MockManagementAPI) {
 			"pagination": map[string]any{"has_more": false, "cursor": nil},
 		})
 	})
-	api.SetRoute("GET", "/v1/models", 200, map[string]any{"data": []any{map[string]any{
-		"id": "acme/primary", "context_length": 128000, "max_completion_tokens": 4096, "supported_features": []string{"tools"}, "input_modalities": []string{"text"},
-	}}})
+
 	return h, api
 }
 
@@ -142,12 +140,20 @@ func Test_Harness_Setup_FailureNeverMints(t *testing.T) {
 	}
 }
 
-func Test_Harness_Setup_MissingMetadataNeverMints(t *testing.T) {
+func Test_Harness_Setup_FirstClaudeRouteWithoutModelMetadata(t *testing.T) {
 	h, api := productionHarness(t)
-	api.SetRoute("GET", "/v1/models", 200, map[string]any{"data": []any{}})
-	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--model", "acme/primary", "--team", "team-a", "--config", filepath.Join(t.TempDir(), "settings.json"), "--yes"))
-	h.Require.Contains(h.Stderr.String(), "no accessible Routes have usable")
-	h.Require.Nil(api.FindCall("POST", "/v1/api_keys"))
+	api.SetRoute("GET", "/v1/models", 500, map[string]string{"message": "must not be called"})
+	path := filepath.Join(t.TempDir(), "settings.json")
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--team", "team-a", "--config", path, "--yes"))
+	h.Require.Nil(api.FindCall("GET", "/v1/models"))
+	data, err := os.ReadFile(path)
+	h.Require.NoError(err)
+	var config map[string]any
+	h.Require.NoError(json.Unmarshal(data, &config))
+	h.Require.Equal("acme/primary", config["model"])
+	env := config["env"].(map[string]any)
+	h.Require.Equal("deepseek-ai/DeepSeek-V4.1-Flash", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	h.Require.Equal("deepseek-ai/DeepSeek-V4.1-Flash", env["ANTHROPIC_SMALL_FAST_MODEL"])
 }
 
 func Test_Harness_Setup_PaginationAndReuse(t *testing.T) {

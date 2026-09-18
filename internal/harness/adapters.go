@@ -58,17 +58,7 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 	case "opencode":
 		models := map[string]any{}
 		for _, r := range routes {
-			if !r.ChatCompletions || r.ContextWindow <= 0 || r.OutputLimit <= 0 || r.OutputLimit >= r.ContextWindow {
-				return nil, fmt.Errorf("Route %q requires Chat Completions and explicit context/output limits", r.Name)
-			}
-			if len(r.InputModalities) == 0 {
-				return nil, fmt.Errorf("Route %q requires explicit input modalities", r.Name)
-			}
-			variants := map[string]any{}
-			for _, level := range r.ReasoningLevels {
-				variants[level] = map[string]any{"reasoningEffort": level}
-			}
-			models[r.Name] = map[string]any{"name": r.DisplayName, "limit": map[string]any{"context": r.ContextWindow, "output": r.OutputLimit}, "tool_call": r.Tools, "modalities": map[string]any{"input": r.InputModalities, "output": []string{"text"}}, "reasoning": len(r.ReasoningLevels) > 0, "variants": variants}
+			models[r.Name] = map[string]any{"name": r.DisplayName}
 		}
 		values = []Setting{desired([]string{"model"}, providerID+"/"+s.Primary), desired([]string{"small_model"}, providerID+"/"+s.Background), desired([]string{"provider", providerID}, map[string]any{"npm": "@ai-sdk/openai-compatible", "name": "Baseten harness", "options": map[string]any{"baseURL": strings.TrimRight(endpoint, "/") + "/v1", "apiKey": token}, "models": models})}
 		if explicitSubagent {
@@ -115,18 +105,27 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 	}
 	models := []any{}
 	for i, r := range routes {
-		if !r.Responses || r.ContextWindow <= 0 || len(r.InputModalities) == 0 {
-			return nil, fmt.Errorf("Route %q requires Responses, a context limit and explicit input modalities", r.Name)
-		}
-		levels := []any{}
-		var defaultLevel any
-		for _, level := range r.ReasoningLevels {
-			levels = append(levels, map[string]any{"effort": level, "description": level})
-		}
-		if len(r.ReasoningLevels) > 0 {
-			defaultLevel = r.ReasoningLevels[0]
-		}
-		models = append(models, map[string]any{"slug": r.Name, "display_name": r.DisplayName, "description": "Baseten Route", "base_instructions": codexNativeInstructions, "default_reasoning_level": defaultLevel, "supported_reasoning_levels": levels, "shell_type": "shell_command", "visibility": "list", "supported_in_api": true, "priority": i, "supports_reasoning_summaries": false, "support_verbosity": false, "default_verbosity": nil, "apply_patch_tool_type": nil, "truncation_policy": map[string]any{"mode": "tokens", "limit": 10000}, "context_window": r.ContextWindow, "input_modalities": r.InputModalities, "supports_parallel_tool_calls": r.ParallelTools, "experimental_supported_tools": []any{}})
+		// Required Codex catalog fields use conservative defaults. Model-specific
+		// capabilities and limits are intentionally left to a follow-up.
+		models = append(models, map[string]any{
+			"slug":                         r.Name,
+			"display_name":                 r.DisplayName,
+			"description":                  "Baseten Route",
+			"base_instructions":            codexNativeInstructions,
+			"default_reasoning_level":      nil,
+			"supported_reasoning_levels":   []any{},
+			"shell_type":                   "shell_command",
+			"visibility":                   "list",
+			"supported_in_api":             true,
+			"priority":                     i,
+			"supports_reasoning_summaries": false,
+			"support_verbosity":            false,
+			"default_verbosity":            nil,
+			"apply_patch_tool_type":        nil,
+			"truncation_policy":            map[string]any{"mode": "tokens", "limit": 10000},
+			"supports_parallel_tool_calls": false,
+			"experimental_supported_tools": []any{},
+		})
 	}
 	catalog, err := prepareSettings(CatalogPath(path), routes, replaceExisting, func(map[string]any, *Journal) ([]Setting, error) {
 		return []Setting{desired([]string{"models"}, models)}, nil

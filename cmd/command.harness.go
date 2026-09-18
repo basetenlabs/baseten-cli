@@ -13,17 +13,16 @@ var commandHarness = Command{
 			Name:    "setup",
 			Summary: "Set up harness authentication and configuration (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Configure one or more installed harnesses using a team's Routes. Select an initial Route for each harness. Setup " +
+				"Configure one or more installed harnesses using a team's Routes. Claude uses the first returned Route by default; --model overrides it. Setup " +
 				"shows installed versions and config paths, then previews changes before asking for " +
 				"confirmation. A sole available team is selected automatically. " +
 				"With multiple teams, pass --team with a team name or ID.\n\nExisting prompts, plugins, " +
 				"permissions, and unrelated settings are preserved. Existing integration settings may be replaced after " +
-				"confirmation; their original values are backed up for harness teardown. Routes without usable " +
-				"model metadata are omitted.\n\nUse --dry-run to " +
-				"preview without creating a key or writing files. For scripts, pass --harness, --model, and " +
-				"--yes; also pass --team when multiple teams are available. A missing key for the selected " +
+				"confirmation; their original values are backed up for harness teardown.\n\nUse --dry-run to " +
+				"preview without creating a key or writing files. For scripts, pass --harness and " +
+				"--yes; Codex and OpenCode also require --model. Pass --team when multiple teams are available. A missing key for the selected " +
 				"team is created automatically. Saved keys for other teams are retained. Unlike route list, " +
-				"setup includes only the selected team's Routes with usable model metadata.\n\n" +
+				"setup includes only the selected team's Routes.\n\n" +
 				"Restart the harness after setup. Rerun setup to refresh available Routes. " +
 				"Supported harnesses are Claude Code, Codex CLI, and OpenCode CLI on supported versions of " +
 				"macOS.",
@@ -158,8 +157,8 @@ type HarnessSetupFlags struct {
 	KeyName         string `flag:"key-name" desc:"Routes key name; defaults to baseten-harness-<normalized-hostname>"`
 	Harness         string `flag:"harness" desc:"Harness to configure; prompts when omitted" enum:"claude-code,codex,opencode"`
 	Config          string `flag:"config" desc:"Explicit settings file for a single harness; defaults to its native config path"`
-	Model           string `flag:"model" desc:"Initial Route name"`
-	BackgroundModel string `flag:"background-model" desc:"Background Route for Claude/OpenCode (defaults to initial Route)"`
+	Model           string `flag:"model" desc:"Default Route name; Claude Code defaults to the first returned Route"`
+	BackgroundModel string `flag:"background-model" desc:"Background Route for OpenCode (defaults to initial Route)"`
 	SubagentModel   string `flag:"subagent-model" desc:"Optional subagent default Route (Claude/OpenCode)"`
 	FallbackModel   string `flag:"fallback-model" desc:"Fallback Route for Claude Code (defaults to initial Route)"`
 	ReplacePicker   bool   `flag:"replace-picker" desc:"Hide built-in picker choices; preserve existing custom entries" default:"true"`
