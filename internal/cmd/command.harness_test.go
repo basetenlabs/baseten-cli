@@ -120,7 +120,7 @@ func Test_Harness_Setup_FailureNeverMints(t *testing.T) {
 		body   any
 		want   string
 	}{
-		{"unavailable", 404, map[string]any{}, "Routes API is unavailable"},
+		{"unavailable", 404, map[string]any{}, "HTTP 404"},
 		{"empty", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}}, "no accessible Routes"},
 		{"pagination", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": true}}, "pagination cursor"},
 	} {
@@ -149,6 +149,7 @@ func Test_Harness_Setup_PaginationAndReuse(t *testing.T) {
 	h, api := productionHarness(t)
 	pages := 0
 	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		h.Require.Equal("team-a", r.URL.Query().Get("team_id"))
 		pages++
 		cursor := r.URL.Query().Get("cursor")

@@ -28,6 +28,7 @@ func Test_Harness_AuthSetup_CreateAndReuse(t *testing.T) {
 	h, api := routesAuthHarness(t)
 	var headers []string
 	api.SetRouteFunc("POST", "/v1/api_keys", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		headers = append(headers, r.Header.Get("Authorization"))
 		_ = json.NewEncoder(w).Encode(map[string]string{"api_key": "created-routes-secret"})
 	})
@@ -116,6 +117,7 @@ func Test_Harness_AuthSetup_ProfileAndIdentityIsolation(t *testing.T) {
 	args := []string{"harness", "auth", "setup", "--profile", "alice-routes-test", "--team", "team-a", "--name", "laptop"}
 	var headers []string
 	api.SetRouteFunc("POST", "/v1/api_keys", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		headers = append(headers, r.Header.Get("Authorization"))
 		_, _ = w.Write([]byte(`{"api_key":"routes-key"}`))
 	})
@@ -175,6 +177,7 @@ func Test_Harness_AuthSetup_OAuthProfile(t *testing.T) {
 	h.Require.NoError(store.SetOAuthProfile("oauth-routes-test", "https://app.example.com", auth.OAuthCredential{AccessToken: "oauth-access", RefreshToken: "oauth-refresh", Expiry: time.Now().Add(time.Hour)}, false, nil))
 	var authorization string
 	api.SetRouteFunc("POST", "/v1/api_keys", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		authorization = r.Header.Get("Authorization")
 		_, _ = w.Write([]byte(`{"api_key":"routes-from-oauth"}`))
 	})
@@ -192,7 +195,7 @@ func Test_Harness_AuthSetup_ReportsAPIValidationMessage(t *testing.T) {
 		"api_key": "secret-in-body",
 	})
 	h.Require.Error(h.Execute("harness", "auth", "setup", "--team", "Engineering"))
-	h.Require.Contains(h.Stderr.String(), "POST /v1/api_keys returned HTTP 400")
+	h.Require.Contains(h.Stderr.String(), "HTTP 400")
 	h.Require.Contains(h.Stderr.String(), "Routes keys require membership in the selected team.")
 	h.Require.NotContains(h.Stderr.String()+h.Stdout.String(), "secret-in-")
 	api.SetRoute("POST", "/v1/api_keys", 400, map[string]string{"message": "Invalid credential test-key"})

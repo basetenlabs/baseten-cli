@@ -12,6 +12,7 @@ import (
 
 func Test_Harness_Setup_HarnessCatalogJoinsRouteNames(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		require.Equal(t, "/v1/models", r.URL.Path)
 		require.Empty(t, r.Header.Get("X-Baseten-Client"))
 		json.NewEncoder(w).Encode(map[string]any{"data": []any{
@@ -21,8 +22,8 @@ func Test_Harness_Setup_HarnessCatalogJoinsRouteNames(t *testing.T) {
 	}))
 	defer server.Close()
 	routes, endpoint, skipped, err := internalcmd.HarnessCatalogForTest(t.Context(), server.Client(), server.URL, []internalcmd.RouteRecordForTest{
-		{Name: "acme/primary", DisplayName: "Engineering", InvokeURL: server.URL},
-		{Name: "acme/provider", DisplayName: "Provider", InvokeURL: server.URL},
+		{Name: "acme/primary", DisplayName: "Engineering", InvokeUrl: server.URL},
+		{Name: "acme/provider", DisplayName: "Provider", InvokeUrl: server.URL},
 	})
 	require.NoError(t, err)
 	require.Equal(t, server.URL, endpoint)
@@ -37,8 +38,8 @@ func Test_Harness_Setup_HarnessCatalogJoinsRouteNames(t *testing.T) {
 }
 
 func Test_Harness_Setup_HarnessCatalogRejectsUntrustedInvokeURL(t *testing.T) {
-	_, _, _, err := internalcmd.HarnessCatalogForTest(t.Context(), http.DefaultClient, "https://api.baseten.co", []internalcmd.RouteRecordForTest{{InvokeURL: "http://127.0.0.1:1234"}})
+	_, _, _, err := internalcmd.HarnessCatalogForTest(t.Context(), http.DefaultClient, "https://api.baseten.co", []internalcmd.RouteRecordForTest{{InvokeUrl: "http://127.0.0.1:1234"}})
 	require.ErrorContains(t, err, "unsupported invoke URL")
-	_, _, _, err = internalcmd.HarnessCatalogForTest(t.Context(), http.DefaultClient, "https://api.baseten.co", []internalcmd.RouteRecordForTest{{InvokeURL: "https://example.com"}})
+	_, _, _, err = internalcmd.HarnessCatalogForTest(t.Context(), http.DefaultClient, "https://api.baseten.co", []internalcmd.RouteRecordForTest{{InvokeUrl: "https://example.com"}})
 	require.ErrorContains(t, err, "unsupported invoke URL")
 }
