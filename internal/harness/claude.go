@@ -176,12 +176,12 @@ func ClaudeSettings(routes []Route, selection Selection, endpoint, token string,
 			if !ok {
 				return nil, errors.New("invalid existing picker entry")
 			}
-			if m["id"] == r.Name {
+			if m["model"] == r.Name {
 				found = true
 			}
 		}
 		if !found {
-			options = append(options, map[string]any{"id": r.Name, "label": r.DisplayName})
+			options = append(options, map[string]any{"model": r.Name, "label": r.DisplayName})
 		}
 		found = false
 		for _, a := range allowed {

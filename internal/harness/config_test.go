@@ -40,7 +40,7 @@ func save(t *testing.T, path string, d map[string]any) {
 }
 func TestLifecycleRefreshRestoresOriginalAndPreservesUnrelatedEdits(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	original := []byte("{\n  \"theme\": \"dark\", \"model\": \"old\", \"env\": {\"MY_VAR\": \"keep\"}, \"modelPicker\": {\"options\": [{\"id\": \"user/model\", \"label\": \"Mine\"}]}\n}\n")
+	original := []byte("{\n  \"theme\": \"dark\", \"model\": \"old\", \"env\": {\"MY_VAR\": \"keep\"}, \"modelPicker\": {\"options\": [{\"model\": \"user/model\", \"label\": \"Mine\"}]}\n}\n")
 	require.NoError(t, os.WriteFile(path, original, 0600))
 	_, err := Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 	require.ErrorContains(t, err, "model conflicts")
@@ -242,7 +242,7 @@ func TestPickerEditBlocksRefreshAndSurvivesTeardown(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	require.NoError(t, setup(t, path, fixture(t), false).Apply())
 	d := load(t, path)
-	require.NoError(t, put(d, []string{"modelPicker", "options"}, Value{Exists: true, Data: []any{map[string]any{"id": "user/custom", "label": "Custom"}}}))
+	require.NoError(t, put(d, []string{"modelPicker", "options"}, Value{Exists: true, Data: []any{map[string]any{"model": "user/custom", "label": "Custom"}}}))
 	save(t, path, d)
 	_, e := Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
 	require.ErrorContains(t, e, "user changed modelPicker.options")
@@ -250,5 +250,50 @@ func TestPickerEditBlocksRefreshAndSurvivesTeardown(t *testing.T) {
 	require.NoError(t, e)
 	require.Contains(t, p.Conflicts, "modelPicker.options")
 	require.NoError(t, p.Apply())
-	require.Equal(t, "user/custom", get(load(t, path), []string{"modelPicker", "options"}).Data.([]any)[0].(map[string]any)["id"])
+	require.Equal(t, "user/custom", get(load(t, path), []string{"modelPicker", "options"}).Data.([]any)[0].(map[string]any)["model"])
+}
+
+func TestClaudePickerUsesModelAndPreservesCustomRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	original := map[string]any{"modelPicker": map[string]any{"options": []any{
+		map[string]any{"model": "acme/primary", "label": "My label", "description": "My description"},
+	}}}
+	save(t, path, original)
+	plan := setup(t, path, fixture(t), false)
+	require.NoError(t, plan.Apply())
+	rows := get(load(t, path), []string{"modelPicker", "options"}).Data.([]any)
+	require.Len(t, rows, len(fixture(t)))
+	require.Equal(t, original["modelPicker"].(map[string]any)["options"].([]any)[0], rows[0])
+	for _, row := range rows {
+		m := row.(map[string]any)
+		require.NotEmpty(t, m["model"])
+		require.NotContains(t, m, "id")
+	}
+	// Simulate a config and journal written by the previous adapter.
+	_, data, _, prior, err := Read(path)
+	require.NoError(t, err)
+	for _, row := range rows[1:] {
+		m := row.(map[string]any)
+		m["id"] = m["model"]
+		delete(m, "model")
+	}
+	require.NoError(t, put(data, []string{"modelPicker", "options"}, Value{Exists: true, Data: rows}))
+	save(t, path, data)
+	for i := range prior.Settings {
+		if pathKey(prior.Settings[i].Path) == "modelPicker.options" {
+			prior.Settings[i].Installed.Data = rows
+		}
+	}
+	journal, err := encode(prior)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(JournalPath(path), journal, 0600))
+	require.NoError(t, setup(t, path, fixture(t), false).Apply())
+	for _, row := range get(load(t, path), []string{"modelPicker", "options"}).Data.([]any) {
+		require.NotEmpty(t, row.(map[string]any)["model"])
+		require.NotContains(t, row.(map[string]any), "id")
+	}
+	teardown, err := PrepareTeardown(path)
+	require.NoError(t, err)
+	require.NoError(t, teardown.Apply())
+	require.Equal(t, original, load(t, path))
 }

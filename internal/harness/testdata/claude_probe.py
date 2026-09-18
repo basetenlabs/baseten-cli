@@ -54,6 +54,7 @@ with tempfile.TemporaryDirectory(prefix='baseten-harness-probe-') as tmp:
   try:
    r=subprocess.run(args,env=env,cwd=tmp,capture_output=True,text=True,timeout=40)
    assert r.returncode == 0, (mode,r.stderr,r.stdout)
+   assert "This row was ignored" not in r.stderr+r.stdout, (mode,r.stderr,r.stdout)
    outputs=[json.loads(line) for line in r.stdout.splitlines() if line.startswith('{')]
    assert any(x.get('result')=='LOCAL_ROUTE_OK' for x in outputs), (mode,r.stdout)
    print(json.dumps({'mode':mode,'exit':r.returncode,'models':sorted({x['model'] for x in requests if x['mode']==mode})}),flush=True)
