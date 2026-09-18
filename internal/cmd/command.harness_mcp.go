@@ -8,11 +8,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/harness"
+	"github.com/charmbracelet/huh"
 )
 
 // listHarnessMCPServers returns the team's registered MCP servers. The backend
@@ -25,6 +27,36 @@ func listHarnessMCPServers(ctx *CommandContext, teamID string) ([]harness.MCPSer
 	}
 	api := cl.API()
 	return readMCPServers(ctx, api.HTTPClient, api.BaseURL, api.Headers, teamID)
+}
+
+func harnessMCPTokenEnvVar(name string) string {
+	var b strings.Builder
+	b.WriteString("BASETEN_MCP_TOKEN_")
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+			b.WriteByte(c - ('a' - 'A'))
+		case c >= 'A' && c <= 'Z' || c >= '0' && c <= '9':
+			b.WriteByte(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
+func resolveHarnessMCPServerTokens(ctx *CommandContext, servers []harness.MCPServer) ([]harness.MCPServer, error) {
+	for i := range servers {
+		token := os.Getenv(harnessMCPTokenEnvVar(servers[i].Name))
+		if token == "" && ctx.IsInteractive() && !ctx.JSON {
+			if err := huh.NewInput().Title("Token for " + servers[i].Name + " (" + servers[i].URL + ") — optional, Enter to skip").EchoMode(huh.EchoModePassword).Value(&token).Run(); err != nil {
+				return nil, err
+			}
+		}
+		servers[i].AuthorizationToken = token
+	}
+	return servers, nil
 }
 
 func readMCPServers(ctx context.Context, client interface {

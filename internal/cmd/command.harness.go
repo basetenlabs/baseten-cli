@@ -132,6 +132,10 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	mcpServers, err = resolveHarnessMCPServerTokens(ctx, mcpServers)
+	if err != nil {
+		return err
+	}
 	// A dry run leaves the keyring alone, so its preview keeps the credential
 	// already in each file.
 	var key *harnessKey
