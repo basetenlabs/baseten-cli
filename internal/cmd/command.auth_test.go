@@ -407,6 +407,7 @@ func Test_Auth_Login_Web_DeviceFlow(t *testing.T) {
 	pointManagementAt(t, srv.URL)
 
 	h.Require.NoError(h.Execute("auth", "login", "--web"))
+	h.Require.Equal([]string{"https://auth.example.com/device?user_code=ABCD-EFGH"}, h.OpenedURLs)
 
 	h.Require.Equal(1, srv.DeviceAuthCalls)
 	h.Require.GreaterOrEqual(srv.DeviceTokenCalls, 1)
@@ -431,6 +432,7 @@ func Test_Auth_Login_Web_ProfileFlagOverridesName(t *testing.T) {
 	pointManagementAt(t, srv.URL)
 
 	h.Require.NoError(h.Execute("auth", "login", "--web", "--profile", "work"))
+	h.Require.Equal([]string{"https://auth.example.com/device?user_code=ABCD-EFGH"}, h.OpenedURLs)
 
 	name, _, ok := configDirStore(t).CurrentProfile()
 	h.Require.True(ok)

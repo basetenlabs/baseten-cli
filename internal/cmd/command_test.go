@@ -38,8 +38,9 @@ type CommandHarness struct {
 	// terminal-detection paths, which only inspect an *os.File.
 	StdinReader io.Reader
 
-	ExitCode int
-	exited   bool
+	OpenedURLs []string
+	ExitCode   int
+	exited     bool
 
 	mockManagementAPI *MockManagementAPI
 }
@@ -58,6 +59,7 @@ func (h *CommandHarness) Execute(args ...string) error {
 	h.Stdout.Reset()
 	h.Stderr.Reset()
 	h.ExitCode = 0
+	h.OpenedURLs = nil
 	h.exited = false
 	cmd.VerifyRunners()
 	var stdin io.Reader = &h.Stdin
@@ -72,6 +74,10 @@ func (h *CommandHarness) Execute(args ...string) error {
 		ExitWithCode: func(code int) {
 			h.ExitCode = code
 			h.exited = true
+		},
+		OpenURL: func(url string) error {
+			h.OpenedURLs = append(h.OpenedURLs, url)
+			return nil
 		},
 		StrictOutputChecks: true,
 	})
