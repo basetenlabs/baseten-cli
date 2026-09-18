@@ -9,19 +9,21 @@ var commandHarness = Command{
 	Description: harnessPreRelease + "Configure Claude Code, Codex CLI, and OpenCode CLI to use Baseten Routes.",
 	Hidden:      true,
 	Children: []Command{
-		commandHarnessAuth,
 		{
 			Name:    "setup",
 			Summary: "Set up harness authentication and configuration (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Select one or more installed harnesses, a team, and an initial Route for each harness. Setup " +
+				"Configure one or more installed harnesses using a team's Routes. Select an initial Route for each harness. Setup " +
 				"shows installed versions and config paths, then previews changes before asking for " +
-				"confirmation. A sole available team is selected automatically.\n\nExisting prompts, plugins, " +
+				"confirmation. A sole available team is selected automatically. " +
+				"With multiple teams, pass --team with a team name or ID.\n\nExisting prompts, plugins, " +
 				"permissions, and unrelated settings are preserved. Conflicting integration settings require " +
 				"--replace-existing. Routes without usable model metadata are omitted.\n\nUse --dry-run to " +
 				"preview without creating a key or writing files. For scripts, pass --harness, --model, and " +
-				"--yes; also pass --team when multiple teams are available. A missing Routes key is created " +
-				"automatically.\n\nRestart the harness after setup. Rerun setup to refresh available Routes. " +
+				"--yes; also pass --team when multiple teams are available. A missing key for the selected " +
+				"team is created automatically. Saved keys for other teams are retained. Unlike route list, " +
+				"setup includes only the selected team's Routes with usable model metadata.\n\n" +
+				"Restart the harness after setup. Rerun setup to refresh available Routes. " +
 				"Supported harnesses are Claude Code, Codex CLI, and OpenCode CLI on supported versions of " +
 				"macOS.",
 			Flags: HarnessSetupFlags{},
@@ -117,37 +119,6 @@ var commandHarness = Command{
 	},
 }
 
-var commandHarnessAuth = Command{
-	Name:        "auth",
-	Summary:     "Manage saved Routes keys for harnesses (PRE-RELEASE)",
-	Description: harnessPreRelease + "Set up a saved Routes key without changing harness configuration.",
-	Children: []Command{
-		{
-			Name:    "setup",
-			Summary: "Create and save a Routes key (PRE-RELEASE)",
-			Description: harnessPreRelease +
-				"Create or reuse a saved Routes key for the selected team. Selects the only available team " +
-				"automatically; otherwise prompts when --team is omitted.\n\nThe key is saved securely and is " +
-				"never printed. Reuse does not verify that a saved key is still valid. Use --dry-run to check " +
-				"for a saved key without creating one. Run baseten harness setup to configure a harness.",
-			Flags: HarnessAuthSetupFlags{},
-			Output: &CommandOutput[HarnessAuthSetupResult]{
-				TextDescription: "Reports whether a Routes key was created or reused. Never prints the secret.",
-				Examples: []CommandExample{
-					{
-						Description: "Create or reuse a Routes key for a team.",
-						Command:     "baseten harness auth setup --team <team>",
-					},
-				},
-				JQExample: CommandExample{
-					Description: "Check whether a key was created.",
-					Command:     "baseten harness auth setup --team <team> --jq '.created'",
-				},
-			},
-		},
-	},
-}
-
 type HarnessPlanResult struct {
 	Managed   bool     `json:"managed"`
 	Path      string   `json:"config"`
@@ -181,7 +152,7 @@ type HarnessFlags struct {
 
 type HarnessSetupFlags struct {
 	CommandFlags
-	Team            string `flag:"team" desc:"Team name or ID for the Routes key; automatically selects a sole team or prompts"`
+	Team            string `flag:"team" desc:"Team name or ID; required when multiple teams are available"`
 	KeyName         string `flag:"key-name" desc:"Routes key name; defaults to baseten-harness-<normalized-hostname>"`
 	Harness         string `flag:"harness" desc:"Harness to configure; prompts when omitted" enum:"claude-code,codex,opencode"`
 	Config          string `flag:"config" desc:"Explicit settings file for a single harness; defaults to its native config path"`
@@ -199,20 +170,4 @@ type HarnessTeardownFlags struct {
 	HarnessFlags
 	DryRun bool `flag:"dry-run" desc:"Preview restoration without writing files"`
 	Yes    bool `flag:"yes" desc:"Restore the selected config without prompting"`
-}
-
-type HarnessAuthSetupFlags struct {
-	CommandFlags
-	Team   string `flag:"team" desc:"Team name or ID for the saved Routes key; prompts with available teams when omitted."`
-	Name   string `flag:"name" desc:"Routes key name (defaults to baseten-harness-<normalized-hostname>); also identifies the local saved key"`
-	DryRun bool   `flag:"dry-run" desc:"Check for a saved key without creating one"`
-}
-
-type HarnessAuthSetupResult struct {
-	Name    string `json:"name"`
-	TeamID  string `json:"team_id"`
-	Storage string `json:"storage"`
-	Created bool   `json:"created"`
-	Reused  bool   `json:"reused"`
-	DryRun  bool   `json:"dry_run"`
 }
