@@ -157,7 +157,9 @@ func ClaudeSettings(routes []Route, selection Selection, endpoint, token string,
 		if prior != nil {
 			for _, p := range prior.Settings {
 				if pathKey(p.Path) == pathKey(item.path) {
-					v = p.Before
+					if same(v, p.Installed) || (prior.Pending && same(v, p.Previous)) {
+						v = p.Before
+					}
 				}
 			}
 		}
