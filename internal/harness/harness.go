@@ -57,10 +57,11 @@ type Harness interface {
 	// Detect finds the harness executable and its settings file in configDir,
 	// or in the harness's native configuration directory when configDir is empty.
 	Detect(ctx context.Context, execer Execer, configDir string) (Detection, error)
-	// Prepare plans setup of the settings file at path. ApplyPlans replaces
-	// token; an empty token keeps the file's current credential, so a preview
-	// doesn't report it as changed.
-	Prepare(path string, routes []Route, selection Selection, endpoint, token string) ([]*Plan, error)
+	// Prepare plans setup of the settings file at path and, for harnesses with
+	// MCP support, registration of mcpServers. ApplyPlans replaces token; an
+	// empty token keeps the file's current credential, so a preview doesn't
+	// report it as changed.
+	Prepare(path string, routes []Route, mcpServers []MCPServer, selection Selection, endpoint, token string) ([]*Plan, error)
 	// Inspect reports the integration state of the detected settings file.
 	Inspect(d Detection) (Status, error)
 	// Teardown plans removal of the integration settings at path.

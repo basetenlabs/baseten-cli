@@ -26,7 +26,7 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 
 func (codexHarness) BackgroundRoute(Selection) string { return "" }
 
-func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
+func (codexHarness) Prepare(path string, routes []Route, mcpServers []MCPServer, s Selection, endpoint, token string) ([]*Plan, error) {
 	switch {
 	case s.Background != "":
 		return nil, errors.New("--background-route is supported only for Claude Code and OpenCode")
@@ -51,6 +51,12 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, 
 			"requires_openai_auth":      false,
 			"experimental_bearer_token": token,
 		}),
+	}
+	for _, server := range mcpServers {
+		values = append(values, desired([]string{"mcp_servers", server.Name, "url"}, server.URL))
+		if server.AuthorizationToken != "" {
+			values = append(values, desired([]string{"mcp_servers", server.Name, "http_headers", "Authorization"}, "Bearer "+server.AuthorizationToken))
+		}
 	}
 	credential := []string{"model_providers", providerID, "experimental_bearer_token"}
 	p, err := prepareSettings(path, credential, token, func(map[string]any) ([]setting, error) { return values, nil })

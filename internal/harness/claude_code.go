@@ -3,6 +3,7 @@ package harness
 import (
 	"cmp"
 	"context"
+	"os"
 	"path/filepath"
 	"slices"
 )
@@ -39,14 +40,47 @@ func (claudeCodeHarness) BackgroundRoute(s Selection) string {
 	return cmp.Or(s.Background, defaultBackgroundRoute)
 }
 
-func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
+func (h claudeCodeHarness) Prepare(path string, routes []Route, mcpServers []MCPServer, s Selection, endpoint, token string) ([]*Plan, error) {
 	p, err := prepareSettings(path, []string{"env", "ANTHROPIC_AUTH_TOKEN"}, token, func(data map[string]any) ([]setting, error) {
 		return claudeSettings(routes, s, endpoint, token, data)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return []*Plan{p}, nil
+	if len(mcpServers) == 0 {
+		return []*Plan{p}, nil
+	}
+	mcpPath, err := claudeMCPPath()
+	if err != nil {
+		return nil, err
+	}
+	mcp, err := prepareSettings(mcpPath, nil, "", func(map[string]any) ([]setting, error) {
+		var values []setting
+		for _, server := range mcpServers {
+			values = append(values, desired([]string{"mcpServers", server.Name, "type"}, "http"), desired([]string{"mcpServers", server.Name, "url"}, server.URL))
+			if server.AuthorizationToken != "" {
+				values = append(values, desired([]string{"mcpServers", server.Name, "headers", "Authorization"}, "Bearer "+server.AuthorizationToken))
+			}
+		}
+		return values, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return []*Plan{p, mcp}, nil
+}
+
+// Claude Code keeps MCP servers in ~/.claude.json, not the settings file.
+func claudeMCPPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if dir == "" {
+		dir = home
+	}
+	return filepath.Join(dir, ".claude.json"), nil
 }
 
 func claudeSettings(routes []Route, selection Selection, endpoint, token string, current map[string]any) ([]setting, error) {

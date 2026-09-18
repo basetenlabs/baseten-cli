@@ -38,7 +38,7 @@ func (openCodeHarness) BackgroundRoute(s Selection) string {
 	return cmp.Or(s.Background, defaultBackgroundRoute)
 }
 
-func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
+func (openCodeHarness) Prepare(path string, routes []Route, mcpServers []MCPServer, s Selection, endpoint, token string) ([]*Plan, error) {
 	if s.Fallback != "" {
 		return nil, errors.New("--fallback-route is supported only for Claude Code")
 	}
@@ -67,6 +67,12 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 			},
 			"models": models,
 		}),
+	}
+	for _, server := range mcpServers {
+		values = append(values, desired([]string{"mcp", server.Name, "type"}, "remote"), desired([]string{"mcp", server.Name, "url"}, server.URL))
+		if server.AuthorizationToken != "" {
+			values = append(values, desired([]string{"mcp", server.Name, "headers", "Authorization"}, "Bearer "+server.AuthorizationToken))
+		}
 	}
 	if explicitSubagent {
 		for _, path := range openCodeSubagentPaths {
