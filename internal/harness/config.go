@@ -200,7 +200,12 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 					owned = true
 					v.Before = old.Before
 					if !same(current, old.Installed) && !(prior.Pending && same(current, old.Previous)) {
-						return nil, fmt.Errorf("user changed %s; resolve it before rerunning setup", pathKey(v.Path))
+						if !replaceExisting {
+							return nil, fmt.Errorf("user changed %s; replacement is disabled for this plan", pathKey(v.Path))
+						}
+						// A confirmed replacement restores the value present at this preview,
+						// not the older value captured by the first setup.
+						v.Before = current
 					}
 				}
 			}

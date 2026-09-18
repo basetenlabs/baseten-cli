@@ -240,3 +240,35 @@ func Test_Harness_Setup_ReplacementRejectsConcurrentEdit(t *testing.T) {
 	_, err = os.Stat(path + ".baseten-harness.json")
 	h.Require.True(os.IsNotExist(err))
 }
+
+func Test_Harness_Setup_ConfirmedReplacementOfManagedModel(t *testing.T) {
+	h, _ := productionHarness(t)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	args := []string{"harness", "setup", "--harness", "claude-code", "--team", "team-a", "--model", "acme/primary", "--config", path}
+	h.Require.NoError(h.Execute(append(args, "--yes")...))
+	data, err := os.ReadFile(path)
+	h.Require.NoError(err)
+	var config map[string]any
+	h.Require.NoError(json.Unmarshal(data, &config))
+	config["model"] = "opus"
+	edited, err := json.Marshal(config)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, edited, 0600))
+	journalBefore, err := os.ReadFile(path + ".baseten-harness.json")
+	h.Require.NoError(err)
+	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
+	h.Require.Contains(h.Stdout.String(), "Settings to replace: model")
+	h.Require.Error(h.Execute(args...))
+	unchanged, err := os.ReadFile(path)
+	h.Require.NoError(err)
+	h.Require.Equal(edited, unchanged)
+	journalAfter, err := os.ReadFile(path + ".baseten-harness.json")
+	h.Require.NoError(err)
+	h.Require.Equal(journalBefore, journalAfter)
+	h.Require.NoError(h.Execute(append(args, "--yes")...))
+	h.Require.NoError(h.Execute("harness", "teardown", "--config", path, "--yes"))
+	restored, err := os.ReadFile(path)
+	h.Require.NoError(err)
+	h.Require.NoError(json.Unmarshal(restored, &config))
+	h.Require.Equal("opus", config["model"])
+}

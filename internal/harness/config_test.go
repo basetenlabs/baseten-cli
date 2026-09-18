@@ -107,7 +107,7 @@ func TestDriftIsPreservedAndBackupRetained(t *testing.T) {
 	d := load(t, path)
 	d["model"] = "user-edit"
 	save(t, path, d)
-	_, e := Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+	_, e := Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 	require.ErrorContains(t, e, "user changed model")
 	r, e := Inspect(Detection{Path: path})
 	require.NoError(t, e)
@@ -244,7 +244,7 @@ func TestPickerEditBlocksRefreshAndSurvivesTeardown(t *testing.T) {
 	d := load(t, path)
 	require.NoError(t, put(d, []string{"modelPicker", "options"}, Value{Exists: true, Data: []any{map[string]any{"model": "user/custom", "label": "Custom"}}}))
 	save(t, path, d)
-	_, e := Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+	_, e := Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 	require.ErrorContains(t, e, "user changed modelPicker.options")
 	p, e := PrepareTeardown(path)
 	require.NoError(t, e)
@@ -296,4 +296,21 @@ func TestClaudePickerUsesModelAndPreservesCustomRows(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, teardown.Apply())
 	require.Equal(t, original, load(t, path))
+}
+
+func TestConfirmedRefreshPreservesEditedPickerAndRestoresIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	require.NoError(t, setup(t, path, fixture(t), false).Apply())
+	data := load(t, path)
+	edited := []any{map[string]any{"model": "user/custom", "label": "My custom model"}}
+	require.NoError(t, put(data, []string{"modelPicker", "options"}, Value{Exists: true, Data: edited}))
+	save(t, path, data)
+	require.NoError(t, setup(t, path, fixture(t), true).Apply())
+	rows := get(load(t, path), []string{"modelPicker", "options"}).Data.([]any)
+	require.Equal(t, edited[0], rows[0])
+	require.Len(t, rows, len(fixture(t))+1)
+	teardown, err := PrepareTeardown(path)
+	require.NoError(t, err)
+	require.NoError(t, teardown.Apply())
+	require.Equal(t, edited, get(load(t, path), []string{"modelPicker", "options"}).Data)
 }
