@@ -37,6 +37,7 @@ type Journal struct {
 // Plan exposes paths and key names only: configuration and backups may contain
 // credentials. Never include their values in JSON output or error messages.
 type Plan struct {
+	Replaced                  []string `json:"replaced_settings,omitempty"`
 	Managed                   bool     `json:"managed"`
 	Path                      string   `json:"config"`
 	Keys                      []string `json:"settings"`
@@ -209,7 +210,10 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 		} // Pre-existing matching values stay user-owned.
 		merge := pathKey(v.Path) == "modelPicker.options" || pathKey(v.Path) == "availableModels"
 		if !owned && current.Exists && !merge && !replaceExisting {
-			return nil, fmt.Errorf("existing %s conflicts; use --replace-existing to back up and replace it", pathKey(v.Path))
+			return nil, fmt.Errorf("existing %s conflicts; replacement is disabled for this plan", pathKey(v.Path))
+		}
+		if current.Exists && !same(current, v.Installed) {
+			p.Replaced = append(p.Replaced, pathKey(v.Path))
 		}
 		if err := put(d, v.Path, v.Installed); err != nil {
 			return nil, err
