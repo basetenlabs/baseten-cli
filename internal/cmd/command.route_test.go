@@ -146,7 +146,8 @@ func Test_Route_Create_DefaultDisplayName(t *testing.T) {
 	body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
 	h.Require.NotContains(body, "display_name")
 	h.Require.Equal("t123456", body["team_id"])
-	h.Require.Contains(h.Stdout.String(), "Model API:")
+	h.Require.Empty(h.Stdout.String())
+	h.Require.Contains(h.Stderr.String(), "Created Route acme/assistant (r123456)")
 }
 
 func Test_Route_Update_LabelAndCombined(t *testing.T) {
@@ -592,4 +593,74 @@ func Test_Route_TargetNamesAreLiteral(t *testing.T) {
 			h.Require.NotNil(m.FindCall("GET", "/v1/teams"))
 		})
 	}
+}
+
+func Test_Route_MutationOutputConventions(t *testing.T) {
+	for _, verb := range []string{"create", "update"} {
+		for _, format := range []string{"text", "json", "jsonl", "none"} {
+			t.Run(verb+"/"+format, func(t *testing.T) {
+				h := NewCommandHarness(t)
+				routeTeams(h)
+				m := h.MockManagementAPI()
+				// A successful mutation must not be reported as failed just
+				// because a newer API returns an unfamiliar target variant.
+				fixture := routeFixture(map[string]any{"type": "FUTURE_PROVIDER", "model": "future-model"})
+				args := []string{"route", verb, "--output", format}
+				message := "Updated Route acme/assistant (r123456)"
+				if verb == "create" {
+					m.SetRoute("POST", "/v1/routes", 200, fixture)
+					args = append(args, "--team", "Engineering", "--name", "acme/assistant", "--target-model-api", "model")
+					message = "Created Route acme/assistant (r123456)"
+				} else {
+					m.SetRoute("PATCH", "/v1/routes/r123456", 200, fixture)
+					args = append(args, "--id", "r123456", "--description", "new description")
+				}
+				h.Require.NoError(h.Execute(args...))
+				switch format {
+				case "text", "none":
+					h.Require.Empty(h.Stdout.String())
+					h.Require.Equal(message+"\n", h.Stderr.String())
+				default:
+					expected, err := json.Marshal(fixture)
+					h.Require.NoError(err)
+					h.Require.JSONEq(string(expected), h.Stdout.String())
+					h.Require.Empty(h.Stderr.String())
+					if format == "jsonl" {
+						h.Require.Equal(1, strings.Count(h.Stdout.String(), "\n"))
+					}
+				}
+			})
+		}
+	}
+}
+
+func Test_Route_List_UnknownTarget(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	unknown := routeFixture(map[string]any{"type": "FUTURE_PROVIDER", "model": "future-model"})
+	unknown["name"] = "acme/future"
+	items := []any{unknown}
+	for _, tc := range routeCases() {
+		items = append(items, tc.Response)
+	}
+	m.SetRoute("GET", "/v1/routes", 200, routePage(items, nil))
+	h.Require.NoError(h.Execute("route", "list"))
+	h.Require.Contains(h.Stderr.String(), "Skipped Route acme/future")
+	for _, target := range []string{"moonshotai/glm-5.3", "ANTHROPIC:test-model", "OPENAI:test-model", "XAI:test-model", "VERTEX:test-model", "OPENAI_COMPATIBLE:test-model"} {
+		h.Require.Contains(h.Stdout.String(), target)
+	}
+	h.Require.NoError(h.Execute("route", "list", "--output", "json"))
+	var result managementapi.RoutesResponse
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	h.Require.Len(result.Items, len(items))
+	h.Require.Contains(h.Stdout.String(), "FUTURE_PROVIDER")
+	h.Require.Empty(h.Stderr.String())
+}
+
+func Test_Route_Describe_UnknownTargetHasNoPartialOutput(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/routes/r123456", 200, routeFixture(map[string]any{"type": "FUTURE_PROVIDER"}))
+	h.Require.ErrorContains(h.Execute("route", "describe", "--id", "r123456"), "unknown discriminator")
+	h.Require.Empty(h.Stdout.String())
 }

@@ -4,6 +4,11 @@ import "github.com/basetenlabs/baseten-go/client/managementapi"
 
 const routePrereleaseNotice = "PRE-RELEASE: Route commands are not GA yet. Their arguments, flags, and output may change.\n\n"
 
+const routeTargetJSONDescription = "target.type is BASETEN_MODEL_API, ANTHROPIC, OPENAI, XAI, VERTEX, or " +
+	"OPENAI_COMPATIBLE. A Model API target includes model_api. Provider targets include model and " +
+	"secret_name; VERTEX also includes vertex_config.project_id and vertex_config.location, and " +
+	"OPENAI_COMPATIBLE includes base_url."
+
 var commandRoute = Command{
 	Name:    "route",
 	Summary: "Manage Routes (PRE-RELEASE)",
@@ -18,6 +23,7 @@ var commandRoute = Command{
 			Description: routePrereleaseNotice +
 				"List Routes you can invoke, newest first. Fetches all pages automatically.",
 			Output: &CommandOutput[managementapi.RoutesResponse]{
+				JSONDescription: "All matching Routes in items, with pagination from the final page. " + routeTargetJSONDescription,
 				TextDescription: "Table with ID, NAME, DISPLAY NAME, TEAM ID, and TARGET. An empty-list message is written to stderr.",
 				Examples: []CommandExample{
 					{
@@ -42,6 +48,7 @@ var commandRoute = Command{
 			Description: routePrereleaseNotice +
 				"Describe a Route by exactly one of --id or --name (an exact match).",
 			Output: &CommandOutput[managementapi.Route]{
+				JSONDescription: routeTargetJSONDescription,
 				TextDescription: "Field-per-line Route summary, including the full target, invoke URL, and team name when accessible.",
 				Examples: []CommandExample{
 					{
@@ -65,7 +72,8 @@ var commandRoute = Command{
 				"owning team. Set optional metadata with --display-name and --description. Create provider " +
 				"credentials separately with 'baseten org secret set --team <team> --name <secret>'.",
 			Output: &CommandOutput[managementapi.Route]{
-				TextDescription: "Field-per-line summary of the created Route.",
+				JSONDescription: routeTargetJSONDescription,
+				TextDescription: "Creation confirmation on stderr; no stdout in text mode.",
 				Examples: []CommandExample{
 					{
 						Description: "Create a Model API Route.",
@@ -101,7 +109,8 @@ var commandRoute = Command{
 				"a combination. A target replaces the entire previous target; omitted fields are not merged. " +
 				"Name and team cannot be changed. Pass --description '' to clear the description.",
 			Output: &CommandOutput[managementapi.Route]{
-				TextDescription: "Field-per-line summary of the updated Route.",
+				JSONDescription: routeTargetJSONDescription,
+				TextDescription: "Update confirmation on stderr; no stdout in text mode.",
 				Examples: []CommandExample{
 					{
 						Description: "Replace a Route's target.",
@@ -138,8 +147,8 @@ var commandRoute = Command{
 }
 
 type RouteRefFlags struct {
-	ID   string `flag:"id" desc:"Stable Route ID."`
-	Name string `flag:"name" desc:"Exact Route name, including its organization-owned prefix."`
+	ID   string `flag:"id" desc:"Stable Route ID." oneof:"route-ref"`
+	Name string `flag:"name" desc:"Exact Route name, including its organization-owned prefix." oneof:"route-ref"`
 }
 
 type RouteTargetFlags struct {

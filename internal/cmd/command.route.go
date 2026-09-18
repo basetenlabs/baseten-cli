@@ -51,13 +51,20 @@ func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
 	}
 	rows := make([][]string, 0, len(result.Items))
 	for _, r := range result.Items {
-		fields, err := routeTargetFields(r.Target)
+		value, err := r.Target.ValueByDiscriminator()
+		if err != nil {
+			// Match autoscaling-schedule list: a newer target must not hide
+			// the Routes this CLI can still render. JSON retains every item.
+			ctx.Logf("Skipped Route %s with a target this CLI cannot read: %v\n", r.Name, err)
+			continue
+		}
+		kind, model, _, err := routeTargetFields(value)
 		if err != nil {
 			return err
 		}
-		target := fields[1][1]
-		if fields[0][1] != "BASETEN_MODEL_API" {
-			target = fields[0][1] + ":" + target
+		target := model
+		if kind != "BASETEN_MODEL_API" {
+			target = kind + ":" + model
 		}
 		rows = append(rows, []string{r.Id, r.Name, r.DisplayName, r.TeamId, target})
 	}
@@ -309,7 +316,12 @@ func commandRouteCreate(ctx *CommandContext, flags *cmd.RouteCreateFlags) error 
 	if err != nil {
 		return fmt.Errorf("create Route: %w", err)
 	}
-	return outputRoute(ctx, *route, "")
+	if ctx.JSON {
+		ctx.OutputJSON(route)
+	} else {
+		ctx.Logf("Created Route %s (%s)\n", route.Name, route.Id)
+	}
+	return nil
 }
 
 func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error {
@@ -356,7 +368,12 @@ func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error 
 	if err != nil {
 		return fmt.Errorf("update Route %s: %w", id, err)
 	}
-	return outputRoute(ctx, *route, "")
+	if ctx.JSON {
+		ctx.OutputJSON(route)
+	} else {
+		ctx.Logf("Updated Route %s (%s)\n", route.Name, route.Id)
+	}
+	return nil
 }
 
 func commandRouteDelete(ctx *CommandContext, flags *cmd.RouteDeleteFlags) error {
@@ -391,6 +408,14 @@ func outputRoute(ctx *CommandContext, route managementapi.Route, teamName string
 		ctx.OutputJSON(route)
 		return nil
 	}
+	value, err := route.Target.ValueByDiscriminator()
+	if err != nil {
+		return fmt.Errorf("decode Route target: %w", err)
+	}
+	kind, model, secret, err := routeTargetFields(value)
+	if err != nil {
+		return err
+	}
 	ctx.Outputf("ID:               %s\n", route.Id)
 	ctx.Outputf("Name:             %s\n", route.Name)
 	ctx.Outputf("Display Name:     %s\n", route.DisplayName)
@@ -399,43 +424,45 @@ func outputRoute(ctx *CommandContext, route managementapi.Route, teamName string
 	if teamName != "" {
 		ctx.Outputf("Team Name:        %s\n", teamName)
 	}
-	fields, err := routeTargetFields(route.Target)
-	if err != nil {
-		return err
+	ctx.Outputf("Target Type:      %s\n", kind)
+	if kind == "BASETEN_MODEL_API" {
+		ctx.Outputf("Model API:        %s\n", model)
+	} else {
+		ctx.Outputf("Provider:         %s\n", kind)
+		ctx.Outputf("Provider Model:   %s\n", model)
+		ctx.Outputf("Provider Secret:  %s\n", secret)
 	}
-	for _, field := range fields {
-		ctx.Outputf("%-18s%s\n", field[0]+":", field[1])
+	switch t := value.(type) {
+	case managementapi.RouteTargetVertex:
+		ctx.Outputf("Vertex Project:   %s\n", t.VertexConfig.ProjectId)
+		ctx.Outputf("Vertex Location:  %s\n", t.VertexConfig.Location)
+	case managementapi.RouteTargetOpenAICompatible:
+		ctx.Outputf("Base URL:         %s\n", t.BaseUrl)
 	}
 	ctx.Outputf("Invoke URL:       %s\n", hyperlink(ctx.Stdout, route.InvokeUrl))
 	ctx.Outputf("Created:          %s\n", route.CreatedAt.UTC().Format(time.RFC3339))
 	return nil
 }
 
-func routeTargetFields(target managementapi.Route_Target) ([][2]string, error) {
-	value, err := target.ValueByDiscriminator()
-	if err != nil {
-		return nil, fmt.Errorf("decode Route target: %w", err)
-	}
+// routeTargetFields extracts the shared fields from generated target variants,
+// like autoscalingScheduleFields does for schedule variants.
+func routeTargetFields(value any) (kind, model, secret string, err error) {
 	switch t := value.(type) {
 	case managementapi.RouteTargetBasetenModelAPI:
-		return [][2]string{{"Target Type", t.Type}, {"Model API", t.ModelApi}}, nil
+		return t.Type, t.ModelApi, "", nil
 	case managementapi.RouteTargetAnthropic:
-		return providerTargetFields(t.Type, t.Model, t.SecretName), nil
+		return t.Type, t.Model, t.SecretName, nil
 	case managementapi.RouteTargetOpenAI:
-		return providerTargetFields(t.Type, t.Model, t.SecretName), nil
+		return t.Type, t.Model, t.SecretName, nil
 	case managementapi.RouteTargetXAI:
-		return providerTargetFields(t.Type, t.Model, t.SecretName), nil
+		return t.Type, t.Model, t.SecretName, nil
 	case managementapi.RouteTargetVertex:
-		return append(providerTargetFields(t.Type, t.Model, t.SecretName), [2]string{"Vertex Project", t.VertexConfig.ProjectId}, [2]string{"Vertex Location", t.VertexConfig.Location}), nil
+		return t.Type, t.Model, t.SecretName, nil
 	case managementapi.RouteTargetOpenAICompatible:
-		return append(providerTargetFields(t.Type, t.Model, t.SecretName), [2]string{"Base URL", t.BaseUrl}), nil
+		return t.Type, t.Model, t.SecretName, nil
 	default:
-		return nil, fmt.Errorf("unsupported Route target %T", value)
+		return "", "", "", fmt.Errorf("unsupported Route target %T", value)
 	}
-}
-
-func providerTargetFields(kind, model, secret string) [][2]string {
-	return [][2]string{{"Target Type", kind}, {"Provider Model", model}, {"Provider", kind}, {"Provider Secret", secret}}
 }
 
 func routeNonemptyFlags(ctx *CommandContext, names ...string) error {
