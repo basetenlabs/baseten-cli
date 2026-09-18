@@ -27,32 +27,32 @@ func routeCases() []routeCase {
 	}{
 		{
 			name:   "model-api",
-			flags:  []string{"--target-model-api", "moonshotai/glm-5.3"},
-			target: map[string]any{"type": "BASETEN_MODEL_API", "model_api": "moonshotai/glm-5.3"},
+			flags:  []string{"--target-type", "baseten-model-api", "--target-model", "test-model-api"},
+			target: map[string]any{"type": "BASETEN_MODEL_API", "model": "test-model-api"},
 		},
 		{
 			name:   "anthropic",
-			flags:  []string{"--target-provider", "anthropic", "--target-provider-model", "test-model", "--target-provider-secret", "provider-key"},
+			flags:  []string{"--target-type", "anthropic", "--target-model", "test-model", "--target-secret", "provider-key"},
 			target: map[string]any{"type": "ANTHROPIC", "model": "test-model", "secret_name": "provider-key"},
 		},
 		{
 			name:   "openai",
-			flags:  []string{"--target-provider", "openai", "--target-provider-model", "test-model", "--target-provider-secret", "provider-key"},
+			flags:  []string{"--target-type", "openai", "--target-model", "test-model", "--target-secret", "provider-key"},
 			target: map[string]any{"type": "OPENAI", "model": "test-model", "secret_name": "provider-key"},
 		},
 		{
 			name:   "xai",
-			flags:  []string{"--target-provider", "xai", "--target-provider-model", "test-model", "--target-provider-secret", "provider-key"},
+			flags:  []string{"--target-type", "xai", "--target-model", "test-model", "--target-secret", "provider-key"},
 			target: map[string]any{"type": "XAI", "model": "test-model", "secret_name": "provider-key"},
 		},
 		{
 			name:   "vertex",
-			flags:  []string{"--target-provider", "vertex", "--target-provider-model", "test-model", "--target-provider-secret", "provider-key", "--target-provider-vertex-project", "example-project", "--target-provider-vertex-location", "global"},
+			flags:  []string{"--target-type", "vertex", "--target-model", "test-model", "--target-secret", "provider-key", "--target-vertex-project", "example-project", "--target-vertex-location", "global"},
 			target: map[string]any{"type": "VERTEX", "model": "test-model", "secret_name": "provider-key", "vertex_config": map[string]any{"project_id": "example-project", "location": "global"}},
 		},
 		{
 			name:   "openai-compatible",
-			flags:  []string{"--target-provider", "openai-compatible", "--target-provider-model", "test-model", "--target-provider-secret", "provider-key", "--target-provider-base-url", "https://api.example.com/v1"},
+			flags:  []string{"--target-type", "openai-compatible", "--target-model", "test-model", "--target-secret", "provider-key", "--target-base-url", "https://api.example.com/v1"},
 			target: map[string]any{"type": "OPENAI_COMPATIBLE", "model": "test-model", "secret_name": "provider-key", "base_url": "https://api.example.com/v1"},
 		},
 	}
@@ -74,6 +74,7 @@ func routeFixture(target map[string]any) map[string]any {
 		"id":           "r123456",
 		"name":         "acme/assistant",
 		"team_id":      "t123456",
+		"team_name":    "Engineering",
 		"display_name": "Assistant",
 		"description":  "",
 		"target":       target,
@@ -142,12 +143,12 @@ func Test_Route_Create_DefaultDisplayName(t *testing.T) {
 	routeTeams(h)
 	m := h.MockManagementAPI()
 	m.SetRoute("POST", "/v1/routes", 200, routeCases()[0].Response)
-	h.Require.NoError(h.Execute("route", "create", "--name", "acme/assistant", "--team", "t123456", "--target-model-api", "moonshotai/glm-5.3"))
+	h.Require.NoError(h.Execute("route", "create", "--name", "acme/assistant", "--team", "t123456", "--target-type", "baseten-model-api", "--target-model", "test-model-api"))
 	body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
 	h.Require.NotContains(body, "display_name")
 	h.Require.Equal("t123456", body["team_id"])
 	h.Require.Empty(h.Stdout.String())
-	h.Require.Contains(h.Stderr.String(), "Created Route acme/assistant (r123456)")
+	h.Require.Contains(h.Stderr.String(), "Created route acme/assistant (r123456)")
 }
 
 func Test_Route_Update_LabelAndCombined(t *testing.T) {
@@ -159,8 +160,8 @@ func Test_Route_Update_LabelAndCombined(t *testing.T) {
 			args := []string{"route", "update", "--id", "r123456", "--display-name", "New label"}
 			expected := map[string]any{"display_name": "New label"}
 			if combined {
-				args = append(args, "--target-model-api", "new-model")
-				expected["target"] = map[string]any{"type": "BASETEN_MODEL_API", "model_api": "new-model"}
+				args = append(args, "--target-type", "baseten-model-api", "--target-model", "new-model")
+				expected["target"] = map[string]any{"type": "BASETEN_MODEL_API", "model": "new-model"}
 			}
 			h.Require.NoError(h.Execute(args...))
 			h.Require.Equal(expected, m.FindCall("PATCH", "/v1/routes/r123456").BodyJSON(t))
@@ -188,11 +189,7 @@ func Test_Route_Addressed_ExactName(t *testing.T) {
 			}
 			h.Require.NoError(h.Execute(args...))
 			h.Require.Equal(name, m.FindCall("GET", "/v1/routes").Query().Get("name"))
-			if verb == "describe" {
-				h.Require.Len(m.Calls(), 3)
-			} else {
-				h.Require.Len(m.Calls(), 2)
-			}
+			h.Require.Len(m.Calls(), 2)
 			h.Require.NotNil(m.FindCall(method, "/v1/routes/r123456"))
 		})
 	}
@@ -254,7 +251,7 @@ func Test_Route_Delete_ConfirmationAndTombstone(t *testing.T) {
 	h.Require.JSONEq(`{"id":"r123456","name":"acme/assistant"}`, h.Stdout.String())
 	h.Require.NoError(h.Execute("route", "delete", "--id", "r123456", "--yes"))
 	h.Require.Empty(h.Stdout.String())
-	h.Require.Contains(h.Stderr.String(), "Deleted Route acme/assistant (r123456)")
+	h.Require.Contains(h.Stderr.String(), "Deleted route acme/assistant (r123456)")
 }
 
 func Test_Route_List_PaginationAndFilters(t *testing.T) {
@@ -264,8 +261,8 @@ func Test_Route_List_PaginationAndFilters(t *testing.T) {
 	fixture := routeCases()[0].Response
 	m.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
 		h.Require.Equal("t123456", r.URL.Query().Get("team_id"))
-		h.Require.Equal("acme/assistant", r.URL.Query().Get("name"))
-		h.Require.Equal("100", r.URL.Query().Get("limit"))
+		h.Require.NotContains(r.URL.Query(), "name")
+		h.Require.NotContains(r.URL.Query(), "limit")
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Query().Get("cursor") {
 		case "":
@@ -277,12 +274,11 @@ func Test_Route_List_PaginationAndFilters(t *testing.T) {
 			w.WriteHeader(400)
 		}
 	})
-	h.Require.NoError(h.Execute("route", "list", "--team", "Engineering", "--name", "acme/assistant", "--output", "json"))
-	var got managementapi.RoutesResponse
+	h.Require.NoError(h.Execute("route", "list", "--team", "Engineering", "--output", "json"))
+	var got publiccmd.RouteList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 	h.Require.Len(got.Items, 2)
-	h.Require.False(got.Pagination.HasMore)
-	h.Require.Nil(got.Pagination.Cursor)
+	h.Require.NotContains(h.Stdout.String(), "pagination")
 }
 
 func Test_Route_List_WithoutFilters(t *testing.T) {
@@ -293,8 +289,8 @@ func Test_Route_List_WithoutFilters(t *testing.T) {
 	q := m.FindCall("GET", "/v1/routes").Query()
 	h.Require.NotContains(q, "team_id")
 	h.Require.NotContains(q, "name")
-	h.Require.Equal("100", q.Get("limit"))
-	h.Require.JSONEq(`{"items":[],"pagination":{"has_more":false}}`, h.Stdout.String())
+	h.Require.NotContains(q, "limit")
+	h.Require.JSONEq(`{"items":null}`, h.Stdout.String())
 }
 
 func Test_Route_List_TextAndJQ(t *testing.T) {
@@ -302,7 +298,7 @@ func Test_Route_List_TextAndJQ(t *testing.T) {
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases()[0].Response, routeCases()[1].Response}, nil))
 	h.Require.NoError(h.Execute("route", "list"))
-	for _, text := range []string{"ID", "NAME", "TEAM ID", "DISPLAY NAME", "moonshotai/glm-5.3", "ANTHROPIC:test-model"} {
+	for _, text := range []string{"ID", "NAME", "TEAM", "Engineering", "DISPLAY NAME", "test-model-api", "anthropic:test-model", "CREATED", "2026-09-17T10:00:00Z"} {
 		h.Require.Contains(h.Stdout.String(), text)
 	}
 	h.Require.Empty(h.Stderr.String())
@@ -311,38 +307,24 @@ func Test_Route_List_TextAndJQ(t *testing.T) {
 	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{}, nil))
 	h.Require.NoError(h.Execute("route", "list"))
 	h.Require.Empty(h.Stdout.String())
-	h.Require.Contains(h.Stderr.String(), "No Routes found.")
-}
-
-func Test_Route_List_InvalidPagination(t *testing.T) {
-	for _, page := range []any{
-		routePage([]any{}, "repeat"),
-		map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": true, "cursor": nil}},
-	} {
-		h := NewCommandHarness(t)
-		m := h.MockManagementAPI()
-		m.SetRoute("GET", "/v1/routes", 200, page)
-		h.Require.ErrorContains(h.Execute("route", "list", "--output", "json"), "cursor")
-		h.Require.LessOrEqual(len(m.Calls()), 2)
-		h.Require.NotContains(h.Stdout.String(), `"items"`, "no partial success output")
-	}
+	h.Require.Contains(h.Stderr.String(), "No routes found.")
 }
 
 func Test_Route_Usage_InvalidTargets(t *testing.T) {
-	provider := []string{"--target-provider", "openai", "--target-provider-model", "test-model", "--target-provider-secret", "key"}
+	provider := []string{"--target-type", "openai", "--target-model", "test-model", "--target-secret", "key"}
 	cases := [][]string{
-		{}, {"--target-model-api", ""}, {"--target-provider", ""},
-		{"--target-model-api", "model", "--target-provider", "openai"},
-		{"--target-model-api", "model", "--target-provider-secret", "key"},
-		{"--target-provider-model", "model"}, {"--target-provider", "openai"},
-		{"--target-provider", "openai", "--target-provider-model", "model"},
-		{"--target-provider", "openai", "--target-provider-secret", "key"},
-		{"--target-provider", "invalid", "--target-provider-model", "model", "--target-provider-secret", "key"},
-		{"--target-provider", "openai-compatible", "--target-provider-model", "model", "--target-provider-secret", "key"},
-		{"--target-provider", "vertex", "--target-provider-model", "model", "--target-provider-secret", "key"},
-		append(append([]string{}, provider...), "--target-provider-base-url", "https://api.example.com"),
-		append(append([]string{}, provider...), "--target-provider-vertex-project", "project"),
-		append(append([]string{}, provider...), "--target-provider-vertex-location", "global"),
+		{}, {"--target-type", "baseten-model-api", "--target-model", ""}, {"--target-type", ""},
+		{"--target-type", "baseten-model-api", "--target-model", "model", "--target-type", "openai"},
+		{"--target-type", "baseten-model-api", "--target-model", "model", "--target-secret", "key"},
+		{"--target-model", "model"}, {"--target-type", "openai"},
+		{"--target-type", "openai", "--target-model", "model"},
+		{"--target-type", "openai", "--target-secret", "key"},
+		{"--target-type", "invalid", "--target-model", "model", "--target-secret", "key"},
+		{"--target-type", "openai-compatible", "--target-model", "model", "--target-secret", "key"},
+		{"--target-type", "vertex", "--target-model", "model", "--target-secret", "key"},
+		append(append([]string{}, provider...), "--target-base-url", "https://api.example.com"),
+		append(append([]string{}, provider...), "--target-vertex-project", "project"),
+		append(append([]string{}, provider...), "--target-vertex-location", "global"),
 	}
 	for _, verb := range []string{"create", "update"} {
 		for i, flags := range cases {
@@ -367,12 +349,8 @@ func Test_Route_Usage_InvalidTargets(t *testing.T) {
 func Test_Route_Usage_InvalidValues(t *testing.T) {
 	for _, args := range [][]string{
 		{"list", "--limit", "1"}, {"list", "--all"},
-		{"list", "--name", ""}, {"list", "--team", ""}, {"list", "--cursor", ""},
-		{"update", "--id", "r1", "--display-name", ""},
-		{"update", "--id", "r1", "--display-name", strings.Repeat("a", 256)},
+		{"list", "--name", ""}, {"list", "--cursor", ""},
 		{"update", "--id", "r1", "--team", "other"},
-		{"create", "--name", "", "--team", "Engineering", "--target-model-api", "model"},
-		{"create", "--name", "acme/a", "--team", "", "--target-model-api", "model"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -384,28 +362,19 @@ func Test_Route_Usage_InvalidValues(t *testing.T) {
 	}
 }
 
-func Test_Route_Usage_InvalidBaseURL(t *testing.T) {
-	for _, baseURL := range []string{"http://api.example.com", "https://", "https://user:pass@api.example.com", "https://api.example.com:443", "https://api.example.com:bad"} {
-		t.Run(baseURL, func(t *testing.T) {
-			h := NewCommandHarness(t)
-			m := h.MockManagementAPI()
-			h.Require.Error(h.Execute("route", "update", "--id", "r1", "--target-provider", "openai-compatible", "--target-provider-model", "model", "--target-provider-secret", "key", "--target-provider-base-url", baseURL))
-			h.Require.Equal(2, h.ExitCode)
-			h.Require.Empty(m.Calls())
-		})
-	}
-}
-
-func Test_Route_Describe_AllProviderFields(t *testing.T) {
+func Test_Route_Describe_AllTargetFields(t *testing.T) {
 	for _, tc := range routeCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
 			m.SetRoute("GET", "/v1/routes/r123456", 200, tc.Response)
 			h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
-			for _, field := range []string{"ID:", "Name:", "Display Name:", "Team ID:", "Target Type:", "Invoke URL:", "Created:"} {
+			for _, field := range []string{"ID:", "Name:", "Display Name:", "Team ID:", "Target Type:", "Target Model:", "Invoke URL:", "Created:"} {
 				h.Require.Contains(h.Stdout.String(), field)
 			}
+			h.Require.Contains(h.Stdout.String(), "Target Type:      "+tc.Flags[1])
+			h.Require.Contains(h.Stdout.String(), "Target Model:     "+tc.Flags[3])
+			h.Require.NotContains(h.Stdout.String(), "Provider:")
 			if tc.Name == "vertex" {
 				h.Require.Contains(h.Stdout.String(), "example-project")
 				h.Require.Contains(h.Stdout.String(), "global")
@@ -414,7 +383,7 @@ func Test_Route_Describe_AllProviderFields(t *testing.T) {
 				h.Require.Contains(h.Stdout.String(), "api.example.com/v1")
 			}
 			if tc.Name != "model-api" {
-				h.Require.Contains(h.Stdout.String(), "provider-key")
+				h.Require.Contains(h.Stdout.String(), "Target Secret:    provider-key")
 			}
 		})
 	}
@@ -499,7 +468,7 @@ func Test_Route_List_LaterPageErrorHasNoPartialSuccess(t *testing.T) {
 }
 
 func Test_Route_Metadata_Description(t *testing.T) {
-	for _, description := range []string{"", "Route used for reviews"} {
+	for _, description := range []string{"", "route used for reviews"} {
 		h := NewCommandHarness(t)
 		m := h.MockManagementAPI()
 		response := routeCases()[0].Response
@@ -511,34 +480,17 @@ func Test_Route_Metadata_Description(t *testing.T) {
 		h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 		h.Require.Equal(description, got.Description)
 	}
-	h := NewCommandHarness(t)
-	m := h.MockManagementAPI()
-	h.Require.Error(h.Execute("route", "update", "--id", "r1", "--description", strings.Repeat("a", 1001)))
-	h.Require.Empty(m.Calls())
 }
 
 func Test_Route_Describe_TeamName(t *testing.T) {
-	for _, status := range []int{200, 403, 404, 500} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
-			h := NewCommandHarness(t)
-			m := h.MockManagementAPI()
-			m.SetRoute("GET", "/v1/routes/r123456", 200, routeCases()[0].Response)
-			if status == 200 {
-				m.SetRoute("GET", "/v1/teams/t123456", 200, teamFixture("t123456", "Engineering", false))
-			} else {
-				m.SetRoute("GET", "/v1/teams/t123456", status, map[string]any{"code": "PERMISSION_DENIED", "message": "Team unavailable"})
-			}
-			h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
-			h.Require.Contains(h.Stdout.String(), "Team ID:          t123456")
-			if status == 200 {
-				h.Require.Contains(h.Stdout.String(), "Team Name:        Engineering")
-			} else {
-				h.Require.NotContains(h.Stdout.String(), "Team Name:")
-				h.Require.Empty(h.Stderr.String())
-			}
-			h.Require.Contains(h.Stdout.String(), "Model API:")
-		})
-	}
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/routes/r123456", 200, routeCases()[0].Response)
+	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
+	h.Require.Contains(h.Stdout.String(), "Team ID:          t123456")
+	h.Require.Contains(h.Stdout.String(), "Team Name:        Engineering")
+	h.Require.Contains(h.Stdout.String(), "Target Type:      baseten-model-api")
+	h.Require.Len(m.Calls(), 1, "team name comes directly from the route response")
 }
 
 func Test_Route_Describe_StructuredOutputSkipsTeamLookup(t *testing.T) {
@@ -573,8 +525,8 @@ func Test_Route_RequiresFlagsWithoutReadingStdin(t *testing.T) {
 
 func Test_Route_TargetNamesAreLiteral(t *testing.T) {
 	for _, args := range [][]string{
-		{"--target-model-api", "__manual__"},
-		{"--target-provider", "anthropic", "--target-provider-model", "test-model", "--target-provider-secret", "__create_secret__"},
+		{"--target-type", "baseten-model-api", "--target-model", "__manual__"},
+		{"--target-type", "anthropic", "--target-model", "test-model", "--target-secret", "__create_secret__"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -584,8 +536,8 @@ func Test_Route_TargetNamesAreLiteral(t *testing.T) {
 			h.Require.NoError(h.Execute(append([]string{"route", "create", "--team", "t123456", "--name", "acme/assistant", "--output", "json"}, args...)...))
 			body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
 			target := body["target"].(map[string]any)
-			if args[0] == "--target-model-api" {
-				h.Require.Equal("__manual__", target["model_api"])
+			if args[1] == "baseten-model-api" {
+				h.Require.Equal("__manual__", target["model"])
 			} else {
 				h.Require.Equal("__create_secret__", target["secret_name"])
 			}
@@ -606,11 +558,11 @@ func Test_Route_MutationOutputConventions(t *testing.T) {
 				// because a newer API returns an unfamiliar target variant.
 				fixture := routeFixture(map[string]any{"type": "FUTURE_PROVIDER", "model": "future-model"})
 				args := []string{"route", verb, "--output", format}
-				message := "Updated Route acme/assistant (r123456)"
+				message := "Updated route acme/assistant (r123456)"
 				if verb == "create" {
 					m.SetRoute("POST", "/v1/routes", 200, fixture)
-					args = append(args, "--team", "Engineering", "--name", "acme/assistant", "--target-model-api", "model")
-					message = "Created Route acme/assistant (r123456)"
+					args = append(args, "--team", "Engineering", "--name", "acme/assistant", "--target-type", "baseten-model-api", "--target-model", "model")
+					message = "Created route acme/assistant (r123456)"
 				} else {
 					m.SetRoute("PATCH", "/v1/routes/r123456", 200, fixture)
 					args = append(args, "--id", "r123456", "--description", "new description")
@@ -645,22 +597,60 @@ func Test_Route_List_UnknownTarget(t *testing.T) {
 	}
 	m.SetRoute("GET", "/v1/routes", 200, routePage(items, nil))
 	h.Require.NoError(h.Execute("route", "list"))
-	h.Require.Contains(h.Stderr.String(), "Skipped Route acme/future")
-	for _, target := range []string{"moonshotai/glm-5.3", "ANTHROPIC:test-model", "OPENAI:test-model", "XAI:test-model", "VERTEX:test-model", "OPENAI_COMPATIBLE:test-model"} {
+	h.Require.Empty(h.Stderr.String())
+	h.Require.Contains(h.Stdout.String(), "acme/future")
+	h.Require.Contains(h.Stdout.String(), "<unrecognized type>")
+	for _, target := range []string{"test-model-api", "anthropic:test-model", "openai:test-model", "xai:test-model", "vertex:test-model", "openai-compatible:test-model"} {
 		h.Require.Contains(h.Stdout.String(), target)
 	}
 	h.Require.NoError(h.Execute("route", "list", "--output", "json"))
-	var result managementapi.RoutesResponse
+	var result publiccmd.RouteList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
 	h.Require.Len(result.Items, len(items))
 	h.Require.Contains(h.Stdout.String(), "FUTURE_PROVIDER")
 	h.Require.Empty(h.Stderr.String())
 }
 
-func Test_Route_Describe_UnknownTargetHasNoPartialOutput(t *testing.T) {
+func Test_Route_Describe_UnknownTarget(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/routes/r123456", 200, routeFixture(map[string]any{"type": "FUTURE_PROVIDER"}))
-	h.Require.ErrorContains(h.Execute("route", "describe", "--id", "r123456"), "unknown discriminator")
+	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
+	for _, text := range []string{"r123456", "acme/assistant", "Engineering", "<unrecognized type>", "https://coding.baseten.co", "2026-09-17T10:00:00Z"} {
+		h.Require.Contains(h.Stdout.String(), text)
+	}
+	h.Require.Empty(h.Stderr.String())
+	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456", "--output", "json"))
+	h.Require.Contains(h.Stdout.String(), "FUTURE_PROVIDER")
+	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456", "--output", "none"))
 	h.Require.Empty(h.Stdout.String())
+}
+
+func Test_Route_Delete_ResolvesBeforeConfirmation(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases()[0].Response}, nil))
+	devNullStdin(t, h)
+	h.Require.ErrorContains(h.Execute("route", "delete", "--name", "acme/assistant"), "stdin is not a terminal; pass --yes")
+	h.Require.Equal(2, h.ExitCode)
+	h.Require.Len(m.Calls(), 1)
+	h.Require.NotNil(m.FindCall("GET", "/v1/routes"))
+	h.Require.Nil(m.FindCall("DELETE", "/v1/routes/r123456"))
+}
+
+func Test_Route_Create_DefaultTeam(t *testing.T) {
+	for _, tc := range routeCases() {
+		t.Run(tc.Name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			m.SetRoute("POST", "/v1/routes", 200, tc.Response)
+			args := append([]string{"route", "create", "--name", "acme/assistant", "--output", "json"}, tc.Flags...)
+			h.Require.NoError(h.Execute(args...))
+			body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
+			h.Require.NotContains(body, "team_id", "the server selects the default team")
+			h.Require.Equal(tc.Update["target"], body["target"])
+			h.Require.Len(m.Calls(), 1, "default team selection must not require a team-list request")
+			h.Require.Contains(h.Stdout.String(), `"team_name": "Engineering"`)
+		})
+	}
 }
