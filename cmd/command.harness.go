@@ -17,8 +17,9 @@ var commandHarness = Command{
 				"shows installed versions and config paths, then previews changes before asking for " +
 				"confirmation. A sole available team is selected automatically. " +
 				"With multiple teams, pass --team with a team name or ID.\n\nExisting prompts, plugins, " +
-				"permissions, and unrelated settings are preserved. Conflicting integration settings require " +
-				"--replace-existing. Routes without usable model metadata are omitted.\n\nUse --dry-run to " +
+				"permissions, and unrelated settings are preserved. Existing integration settings may be replaced after " +
+				"confirmation; their original values are backed up for harness teardown. Routes without usable " +
+				"model metadata are omitted.\n\nUse --dry-run to " +
 				"preview without creating a key or writing files. For scripts, pass --harness, --model, and " +
 				"--yes; also pass --team when multiple teams are available. A missing key for the selected " +
 				"team is created automatically. Saved keys for other teams are retained. Unlike route list, " +
@@ -120,6 +121,7 @@ var commandHarness = Command{
 }
 
 type HarnessPlanResult struct {
+	Replaced  []string `json:"replaced_settings,omitempty"`
 	Managed   bool     `json:"managed"`
 	Path      string   `json:"config"`
 	Keys      []string `json:"settings"`
@@ -161,7 +163,6 @@ type HarnessSetupFlags struct {
 	SubagentModel   string `flag:"subagent-model" desc:"Optional subagent default Route (Claude/OpenCode)"`
 	FallbackModel   string `flag:"fallback-model" desc:"Fallback Route for Claude Code (defaults to initial Route)"`
 	ReplacePicker   bool   `flag:"replace-picker" desc:"Hide built-in picker choices; preserve existing custom entries"`
-	ReplaceExisting bool   `flag:"replace-existing" desc:"Back up and replace conflicting integration settings"`
 	DryRun          bool   `flag:"dry-run" desc:"Preview setting names without writing files"`
 	Yes             bool   `flag:"yes" desc:"Apply the displayed configuration plan without prompting"`
 }

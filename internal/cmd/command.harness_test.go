@@ -186,3 +186,57 @@ func (harnessFakeExecer) Exec(command *exec.Cmd) error {
 	_, err := fmt.Fprintln(command.Stdout, "2.1.272 (Claude Code)")
 	return err
 }
+
+func Test_Harness_Setup_ReplacementPreviewConfirmationAndRestore(t *testing.T) {
+	h, api := productionHarness(t)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	original := []byte(`{"model":"my-old-model","theme":"dark"}`)
+	h.Require.NoError(os.WriteFile(path, original, 0600))
+	args := []string{"harness", "setup", "--harness", "claude-code", "--team", "team-a", "--model", "acme/primary", "--config", path}
+	h.Require.NoError(h.Execute(append(args, "--dry-run", "--output", "json")...))
+	var result public.HarnessPlanResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	h.Require.Contains(result.Replaced, "model")
+	h.Require.NotContains(h.Stdout.String(), "my-old-model")
+	checkUnchanged := func() {
+		data, err := os.ReadFile(path)
+		h.Require.NoError(err)
+		h.Require.Equal(original, data)
+		_, err = os.Stat(path + ".baseten-harness.json")
+		h.Require.True(os.IsNotExist(err))
+		h.Require.Nil(api.FindCall("POST", "/v1/api_keys"))
+	}
+	checkUnchanged()
+	h.Require.Error(h.Execute(args...))
+	h.Require.Contains(h.Stderr.String(), "pass --yes")
+	h.Require.Contains(h.Stdout.String(), "Settings to replace: model")
+	h.Require.Contains(h.Stdout.String(), "backed up")
+	checkUnchanged()
+	h.Require.NoError(h.Execute(append(args, "--yes")...))
+	data, err := os.ReadFile(path)
+	h.Require.NoError(err)
+	h.Require.Contains(string(data), "acme/primary")
+	h.Require.Contains(string(data), "dark")
+	h.Require.NoError(h.Execute("harness", "teardown", "--config", path, "--yes"))
+	restored, err := os.ReadFile(path)
+	h.Require.NoError(err)
+	h.Require.JSONEq(string(original), string(restored))
+}
+
+func Test_Harness_Setup_ReplacementRejectsConcurrentEdit(t *testing.T) {
+	h, api := productionHarness(t)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	h.Require.NoError(os.WriteFile(path, []byte(`{"model":"old"}`), 0600))
+	edited := []byte(`{"model":"user-edited-after-preview"}`)
+	api.SetRouteFunc("POST", "/v1/api_keys", func(w http.ResponseWriter, r *http.Request) {
+		h.Require.NoError(os.WriteFile(path, edited, 0600))
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"api_key": "dummy-route-key"})
+	})
+	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--team", "team-a", "--model", "acme/primary", "--config", path, "--yes"))
+	data, err := os.ReadFile(path)
+	h.Require.NoError(err)
+	h.Require.Equal(edited, data)
+	_, err = os.Stat(path + ".baseten-harness.json")
+	h.Require.True(os.IsNotExist(err))
+}

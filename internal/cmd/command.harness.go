@@ -32,6 +32,10 @@ func harnessPlanOutput(ctx *CommandContext, p *harness.Plan) {
 		return
 	}
 	ctx.Outputf("Config: %s\nSettings: %s\nChanged: %t\n", p.Path, strings.Join(p.Keys, ", "), p.Changed)
+	if len(p.Replaced) > 0 {
+		ctx.Outputf("Settings to replace: %s\n", strings.Join(p.Replaced, ", "))
+		ctx.OutputLine("Original settings are backed up when applied and can be restored with harness teardown.")
+	}
 	if len(p.Conflicts) > 0 {
 		ctx.Outputf("Preserved user edits: %s\n", strings.Join(p.Conflicts, ", "))
 	}
@@ -118,7 +122,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		var plans []*harness.Plan
 		occupied := map[string]bool{}
 		for i, d := range detections {
-			current, err := harness.PrepareHarness(d.Name, d.Path, routes, selections[i], endpoint, token, f.ReplacePicker, f.ReplaceExisting)
+			current, err := harness.PrepareHarness(d.Name, d.Path, routes, selections[i], endpoint, token, f.ReplacePicker, true)
 			if err != nil {
 				return nil, cmd.NewErrUsage(fmt.Errorf("%s: %w", d.Name, err))
 			}
@@ -292,7 +296,7 @@ func harnessPlansOutput(ctx *CommandContext, plans []*harness.Plan) {
 }
 
 func harnessPlanResult(p *harness.Plan) cmd.HarnessPlanResult {
-	return cmd.HarnessPlanResult{Managed: p.Managed, Path: p.Path, Keys: p.Keys, Changed: p.Changed, Conflicts: p.Conflicts}
+	return cmd.HarnessPlanResult{Replaced: p.Replaced, Managed: p.Managed, Path: p.Path, Keys: p.Keys, Changed: p.Changed, Conflicts: p.Conflicts}
 }
 
 // Keep unavailable installations visible without offering choices that setup
