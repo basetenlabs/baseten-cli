@@ -22,36 +22,27 @@ func init() {
 	Register("model-api predict", commandModelAPIPredict)
 }
 
-func fetchModelAPIs(ctx *CommandContext, addedOnly bool) ([]managementapi.ModelAPI, error) {
+func commandModelAPIList(ctx *CommandContext, flags *cmd.ModelAPIListFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// The catalog is small, so walk every page and aggregate into one list
 	// rather than exposing cursors. By default browse the full visible catalog;
 	// --added-only restricts to the Model APIs the workspace has added.
-	params := managementapi.GetV1ModelApisParams{AddedOnly: &addedOnly}
+	params := managementapi.GetV1ModelApisParams{AddedOnly: &flags.AddedOnly}
 	var items []managementapi.ModelAPI
 	for {
 		resp, err := cl.API().GetModelApis(ctx, params)
 		if err != nil {
-			return nil, fmt.Errorf("list model APIs: %w", err)
+			return fmt.Errorf("list model APIs: %w", err)
 		}
 		items = append(items, resp.Items...)
 		if !resp.Pagination.HasMore || resp.Pagination.Cursor == nil {
 			break
 		}
 		params.Cursor = resp.Pagination.Cursor
-	}
-
-	return items, nil
-}
-
-func commandModelAPIList(ctx *CommandContext, flags *cmd.ModelAPIListFlags) error {
-	items, err := fetchModelAPIs(ctx, flags.AddedOnly)
-	if err != nil {
-		return err
 	}
 
 	if ctx.JSON {

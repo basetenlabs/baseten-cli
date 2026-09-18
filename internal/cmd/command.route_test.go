@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	publiccmd "github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
 type routeCase struct {
@@ -104,15 +105,19 @@ func Test_Route_Create_ContractTargets(t *testing.T) {
 			args := append([]string{"route", "create", "--name", "acme/assistant", "--team", "Engineering", "--display-name", "Assistant", "--output", "json"}, tc.Flags...)
 			h.Require.NoError(h.Execute(args...))
 			h.Require.Equal(tc.Create, m.FindCall("POST", "/v1/routes").BodyJSON(t))
-			var got publiccmd.Route
+			var got managementapi.Route
 			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
-			h.Require.Equal("r123456", got.ID)
-			h.Require.Equal("https://coding.baseten.co", got.InvokeURL)
+			h.Require.Equal("r123456", got.Id)
+			h.Require.Equal("https://coding.baseten.co", got.InvokeUrl)
 			if tc.Name == "openai-compatible" {
-				h.Require.Equal("https://api.example.com/v1", *got.Target.BaseURL)
+				target, err := got.Target.AsRouteTargetOpenAICompatible()
+				h.Require.NoError(err)
+				h.Require.Equal("https://api.example.com/v1", target.BaseUrl)
 			}
 			if tc.Name == "vertex" {
-				h.Require.Equal("example-project", got.Target.VertexConfig.ProjectID)
+				target, err := got.Target.AsRouteTargetVertex()
+				h.Require.NoError(err)
+				h.Require.Equal("example-project", target.VertexConfig.ProjectId)
 			}
 		})
 	}
@@ -252,68 +257,54 @@ func Test_Route_Delete_ConfirmationAndTombstone(t *testing.T) {
 }
 
 func Test_Route_List_PaginationAndFilters(t *testing.T) {
-	for _, all := range []bool{false, true} {
-		t.Run(fmt.Sprint(all), func(t *testing.T) {
-			h := NewCommandHarness(t)
-			routeTeams(h)
-			m := h.MockManagementAPI()
-			fixture := routeCases()[0].Response
-			m.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
-				h.Require.Equal("t123456", r.URL.Query().Get("team_id"))
-				h.Require.Equal("acme/assistant", r.URL.Query().Get("name"))
-				h.Require.Equal("1", r.URL.Query().Get("limit"))
-				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Query().Get("cursor") {
-				case "start+/=":
-					_ = json.NewEncoder(w).Encode(routePage([]any{fixture}, "next+/="))
-				case "next+/=":
-					_ = json.NewEncoder(w).Encode(routePage([]any{fixture}, nil))
-				default:
-					t.Error("unexpected cursor")
-					w.WriteHeader(400)
-				}
-			})
-			args := []string{"route", "list", "--team", "Engineering", "--name", "acme/assistant", "--limit", "1", "--cursor", "start+/=", "--output", "json"}
-			if all {
-				args = append(args, "--all")
-			}
-			h.Require.NoError(h.Execute(args...))
-			var got publiccmd.RouteList
-			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
-			if all {
-				h.Require.Len(got.Items, 2)
-				h.Require.False(got.Pagination.HasMore)
-				h.Require.Nil(got.Pagination.Cursor)
-			} else {
-				h.Require.Len(got.Items, 1)
-				h.Require.True(got.Pagination.HasMore)
-				h.Require.Equal("next+/=", *got.Pagination.Cursor)
-			}
-		})
-	}
+	h := NewCommandHarness(t)
+	routeTeams(h)
+	m := h.MockManagementAPI()
+	fixture := routeCases()[0].Response
+	m.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+		h.Require.Equal("t123456", r.URL.Query().Get("team_id"))
+		h.Require.Equal("acme/assistant", r.URL.Query().Get("name"))
+		h.Require.Equal("100", r.URL.Query().Get("limit"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("cursor") {
+		case "":
+			_ = json.NewEncoder(w).Encode(routePage([]any{fixture}, "next+/="))
+		case "next+/=":
+			_ = json.NewEncoder(w).Encode(routePage([]any{fixture}, nil))
+		default:
+			t.Error("unexpected cursor")
+			w.WriteHeader(400)
+		}
+	})
+	h.Require.NoError(h.Execute("route", "list", "--team", "Engineering", "--name", "acme/assistant", "--output", "json"))
+	var got managementapi.RoutesResponse
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Len(got.Items, 2)
+	h.Require.False(got.Pagination.HasMore)
+	h.Require.Nil(got.Pagination.Cursor)
 }
 
-func Test_Route_List_CursorWithoutFilters(t *testing.T) {
+func Test_Route_List_WithoutFilters(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{}, nil))
-	h.Require.NoError(h.Execute("route", "list", "--cursor", "opaque", "--output", "json"))
+	h.Require.NoError(h.Execute("route", "list", "--output", "json"))
 	q := m.FindCall("GET", "/v1/routes").Query()
 	h.Require.NotContains(q, "team_id")
 	h.Require.NotContains(q, "name")
 	h.Require.Equal("100", q.Get("limit"))
-	h.Require.JSONEq(`{"items":[],"pagination":{"has_more":false,"cursor":null}}`, h.Stdout.String())
+	h.Require.JSONEq(`{"items":[],"pagination":{"has_more":false}}`, h.Stdout.String())
 }
 
 func Test_Route_List_TextAndJQ(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases()[0].Response, routeCases()[1].Response}, "next"))
+	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases()[0].Response, routeCases()[1].Response}, nil))
 	h.Require.NoError(h.Execute("route", "list"))
 	for _, text := range []string{"ID", "NAME", "TEAM ID", "DISPLAY NAME", "moonshotai/glm-5.3", "ANTHROPIC:test-model"} {
 		h.Require.Contains(h.Stdout.String(), text)
 	}
-	h.Require.Contains(h.Stderr.String(), `--cursor "next"`)
+	h.Require.Empty(h.Stderr.String())
 	h.Require.NoError(h.Execute("route", "list", "--jq", ".items[0].name"))
 	h.Require.Equal("\"acme/assistant\"\n", h.Stdout.String())
 	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{}, nil))
@@ -330,7 +321,7 @@ func Test_Route_List_InvalidPagination(t *testing.T) {
 		h := NewCommandHarness(t)
 		m := h.MockManagementAPI()
 		m.SetRoute("GET", "/v1/routes", 200, page)
-		h.Require.ErrorContains(h.Execute("route", "list", "--all", "--output", "json"), "cursor")
+		h.Require.ErrorContains(h.Execute("route", "list", "--output", "json"), "cursor")
 		h.Require.LessOrEqual(len(m.Calls()), 2)
 		h.Require.NotContains(h.Stdout.String(), `"items"`, "no partial success output")
 	}
@@ -374,7 +365,7 @@ func Test_Route_Usage_InvalidTargets(t *testing.T) {
 
 func Test_Route_Usage_InvalidValues(t *testing.T) {
 	for _, args := range [][]string{
-		{"list", "--limit", "0"}, {"list", "--limit", "1001"}, {"list", "--limit", "-1"},
+		{"list", "--limit", "1"}, {"list", "--all"},
 		{"list", "--name", ""}, {"list", "--team", ""}, {"list", "--cursor", ""},
 		{"update", "--id", "r1", "--display-name", ""},
 		{"update", "--id", "r1", "--display-name", strings.Repeat("a", 256)},
@@ -497,7 +488,7 @@ func Test_Route_List_LaterPageErrorHasNoPartialSuccess(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": "PERMISSION_DENIED", "message": "fixture permission changed"})
 		}
 	})
-	h.Require.Error(h.Execute("route", "list", "--all", "--output", "json"))
+	h.Require.Error(h.Execute("route", "list", "--output", "json"))
 	h.Require.Equal(3, h.ExitCode)
 	h.Require.Len(m.Calls(), 2)
 	var envelope publiccmd.JSONErrorEnvelope
@@ -515,7 +506,7 @@ func Test_Route_Metadata_Description(t *testing.T) {
 		m.SetRoute("PATCH", "/v1/routes/r123456", 200, response)
 		h.Require.NoError(h.Execute("route", "update", "--id", "r123456", "--description", description, "--output", "json"))
 		h.Require.Equal(map[string]any{"description": description}, m.FindCall("PATCH", "/v1/routes/r123456").BodyJSON(t))
-		var got publiccmd.Route
+		var got managementapi.Route
 		h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 		h.Require.Equal(description, got.Description)
 	}
@@ -556,4 +547,49 @@ func Test_Route_Describe_StructuredOutputSkipsTeamLookup(t *testing.T) {
 	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456", "--output", "json"))
 	h.Require.Len(m.Calls(), 1)
 	h.Require.Contains(h.Stdout.String(), `"team_id": "t123456"`)
+}
+
+func Test_Route_RequiresFlagsWithoutReadingStdin(t *testing.T) {
+	for _, args := range [][]string{
+		{"create"},
+		{"create", "--team", "Engineering", "--name", "acme/assistant"},
+		{"describe"},
+		{"update"},
+		{"update", "--id", "r123456"},
+		{"delete", "--id", "r123456"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			h.Stdin.WriteString("acme/assistant\nyes\n")
+			h.Require.Error(h.Execute(append([]string{"route"}, args...)...))
+			h.Require.Equal(2, h.ExitCode)
+			h.Require.Equal("acme/assistant\nyes\n", h.Stdin.String())
+			h.Require.Empty(m.Calls())
+		})
+	}
+}
+
+func Test_Route_TargetNamesAreLiteral(t *testing.T) {
+	for _, args := range [][]string{
+		{"--target-model-api", "__manual__"},
+		{"--target-provider", "anthropic", "--target-provider-model", "test-model", "--target-provider-secret", "__create_secret__"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			routeTeams(h)
+			m := h.MockManagementAPI()
+			m.SetRoute("POST", "/v1/routes", 200, routeCases()[0].Response)
+			h.Require.NoError(h.Execute(append([]string{"route", "create", "--team", "t123456", "--name", "acme/assistant", "--output", "json"}, args...)...))
+			body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
+			target := body["target"].(map[string]any)
+			if args[0] == "--target-model-api" {
+				h.Require.Equal("__manual__", target["model_api"])
+			} else {
+				h.Require.Equal("__create_secret__", target["secret_name"])
+			}
+			h.Require.Len(m.Calls(), 2)
+			h.Require.NotNil(m.FindCall("GET", "/v1/teams"))
+		})
+	}
 }

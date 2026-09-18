@@ -1,14 +1,8 @@
 package cmd
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -24,64 +18,9 @@ func init() {
 	Register("route delete", commandRouteDelete)
 }
 
-// The SDK does not yet expose Routes. Keep this shim Route-specific and use the
-// existing client's transport, headers and error type until it does.
-func routeRequest(ctx *CommandContext, api *managementapi.Client, method, id string, query url.Values, body, result any) error {
-	path := "/v1/routes"
-	if id != "" {
-		path += "/" + url.PathEscape(id)
-	}
-	if len(query) > 0 {
-		path += "?" + query.Encode()
-	}
-	var reader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		reader = bytes.NewReader(data)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(api.BaseURL, "/")+path, reader)
-	if err != nil {
-		return err
-	}
-	req.Header = api.Headers.Clone()
-	if req.Header == nil {
-		req.Header = make(http.Header)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := api.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("%s Route: %w", method, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		if err != nil {
-			return fmt.Errorf("reading Route error response: %w", err)
-		}
-		return &managementapi.ResponseError{StatusCode: resp.StatusCode, Body: string(data)}
-	}
-	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
-		return fmt.Errorf("unexpected Route response content type %q", resp.Header.Get("Content-Type"))
-	}
-	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-		return fmt.Errorf("decoding Route response: %w", err)
-	}
-	return nil
-}
-
 func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
-	if flags.Limit < 1 || flags.Limit > 1000 {
-		return cmd.NewErrUsagef("--limit must be between 1 and 1000")
-	}
-	for name, value := range map[string]string{"team": flags.Team, "name": flags.Name, "cursor": flags.Cursor} {
-		if ctx.Command.Flags().Changed(name) && value == "" {
-			return cmd.NewErrUsagef("--%s must not be empty", name)
-		}
+	if err := routeNonemptyFlags(ctx, "team", "name"); err != nil {
+		return err
 	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -91,17 +30,14 @@ func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
 	if err != nil {
 		return err
 	}
-	query := url.Values{"limit": {strconv.Itoa(flags.Limit)}}
+	params := managementapi.GetV1RoutesParams{}
 	if team != "" {
-		query.Set("team_id", team)
+		params.TeamId = &team
 	}
 	if flags.Name != "" {
-		query.Set("name", flags.Name)
+		params.Name = &flags.Name
 	}
-	if flags.Cursor != "" {
-		query.Set("cursor", flags.Cursor)
-	}
-	result, err := fetchRoutePages(ctx, cl.API(), query, flags.All)
+	result, err := fetchRoutePages(ctx, cl.API(), params)
 	if err != nil {
 		return err
 	}
@@ -111,44 +47,49 @@ func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
 	}
 	if len(result.Items) == 0 {
 		ctx.LogLine("No Routes found.")
-	} else {
-		rows := make([][]string, 0, len(result.Items))
-		for _, r := range result.Items {
-			target := r.Target.ModelAPI
-			if r.Target.Type != "BASETEN_MODEL_API" {
-				target = r.Target.Type + ":" + r.Target.Model
-			}
-			rows = append(rows, []string{r.ID, r.Name, r.DisplayName, r.TeamID, target})
+		return nil
+	}
+	rows := make([][]string, 0, len(result.Items))
+	for _, r := range result.Items {
+		fields, err := routeTargetFields(r.Target)
+		if err != nil {
+			return err
 		}
-		ctx.OutputTable(TableOutput{Headers: []string{"ID", "SLUG", "DISPLAY NAME", "TEAM ID", "TARGET"}, Rows: rows})
+		target := fields[1][1]
+		if fields[0][1] != "BASETEN_MODEL_API" {
+			target = fields[0][1] + ":" + target
+		}
+		rows = append(rows, []string{r.Id, r.Name, r.DisplayName, r.TeamId, target})
 	}
-	if result.Pagination.HasMore && result.Pagination.Cursor != nil {
-		ctx.Logf("More Routes available. Continue with --cursor %q or use --all.\n", *result.Pagination.Cursor)
-	}
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"ID", "NAME", "DISPLAY NAME", "TEAM ID", "TARGET"},
+		Rows:    rows,
+	})
 	return nil
 }
 
-func fetchRoutePages(ctx *CommandContext, api *managementapi.Client, query url.Values, all bool) (cmd.RouteList, error) {
-	result := cmd.RouteList{Items: []cmd.Route{}}
-	seen := map[string]bool{query.Get("cursor"): true}
+func fetchRoutePages(ctx *CommandContext, api *managementapi.Client, params managementapi.GetV1RoutesParams) (managementapi.RoutesResponse, error) {
+	result := managementapi.RoutesResponse{Items: []managementapi.Route{}}
+	limit := 100
+	params.Limit = &limit
+	seen := map[string]bool{"": true}
 	for {
-		var page cmd.RouteList
-		if err := routeRequest(ctx, api, http.MethodGet, "", query, nil, &page); err != nil {
+		page, err := api.GetRoutes(ctx, params)
+		if err != nil {
 			return result, fmt.Errorf("list Routes: %w", err)
 		}
 		result.Items = append(result.Items, page.Items...)
 		result.Pagination = page.Pagination
-		if !all || !page.Pagination.HasMore {
-			break
+		if !page.Pagination.HasMore {
+			return result, nil
 		}
 		cursor := page.Pagination.Cursor
 		if cursor == nil || *cursor == "" || seen[*cursor] {
 			return result, fmt.Errorf("list Routes: invalid or repeated continuation cursor")
 		}
 		seen[*cursor] = true
-		query.Set("cursor", *cursor)
+		params.Cursor = cursor
 	}
-	return result, nil
 }
 
 func validateRouteRef(ref cmd.RouteRefFlags) error {
@@ -164,8 +105,9 @@ func resolveRouteID(ctx *CommandContext, api *managementapi.Client, ref cmd.Rout
 	if ref.ID != "" {
 		return ref.ID, nil
 	}
-	var page cmd.RouteList
-	if err := routeRequest(ctx, api, http.MethodGet, "", url.Values{"name": {ref.Name}, "limit": {"2"}}, nil, &page); err != nil {
+	limit := 2
+	page, err := api.GetRoutes(ctx, managementapi.GetV1RoutesParams{Name: &ref.Name, Limit: &limit})
+	if err != nil {
 		return "", fmt.Errorf("resolve Route %q: %w", ref.Name, err)
 	}
 	if len(page.Items) == 0 {
@@ -174,14 +116,14 @@ func resolveRouteID(ctx *CommandContext, api *managementapi.Client, ref cmd.Rout
 	if len(page.Items) != 1 || page.Pagination.HasMore {
 		return "", fmt.Errorf("multiple Routes named %q; pass --id instead", ref.Name)
 	}
-	if page.Items[0].Name != ref.Name || page.Items[0].ID == "" {
+	if page.Items[0].Name != ref.Name || page.Items[0].Id == "" {
 		return "", fmt.Errorf("Route lookup returned an invalid exact-name match for %q", ref.Name)
 	}
-	return page.Items[0].ID, nil
+	return page.Items[0].Id, nil
 }
 
 func commandRouteDescribe(ctx *CommandContext, flags *cmd.RouteDescribeFlags) error {
-	if err := completeRouteRef(ctx, &flags.RouteRefFlags); err != nil {
+	if err := validateRouteRefFlags(ctx, flags.RouteRefFlags); err != nil {
 		return err
 	}
 	cl, err := ctx.NewManagementClient()
@@ -192,27 +134,28 @@ func commandRouteDescribe(ctx *CommandContext, flags *cmd.RouteDescribeFlags) er
 	if err != nil {
 		return err
 	}
-	var route cmd.Route
-	if err := routeRequest(ctx, cl.API(), http.MethodGet, id, nil, nil, &route); err != nil {
+	route, err := cl.API().GetRoutesRouteId(ctx, id)
+	if err != nil {
 		return fmt.Errorf("describe Route %s: %w", id, err)
 	}
 	teamName := ""
-	if !ctx.JSON && flags.Output != "none" && route.TeamID != "" {
-		team, err := cl.API().GetTeamsTeamId(ctx, route.TeamID)
+	if !ctx.JSON && flags.Output != "none" && route.TeamId != "" {
+		team, err := cl.API().GetTeamsTeamId(ctx, route.TeamId)
 		if err != nil {
-			ctx.VerboseLogf("Could not resolve team name for %s: %v\n", route.TeamID, err)
+			ctx.VerboseLogf("Could not resolve team name for %s: %v\n", route.TeamId, err)
 		} else {
 			teamName = team.Name
 		}
 	}
-	outputRoute(ctx, route, teamName)
-	return nil
+	return outputRoute(ctx, *route, teamName)
 }
 
-func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool) (*cmd.RouteTarget, error) {
+func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool) (*managementapi.CreateRouteRequest_Target, error) {
 	values := map[string]string{
-		"target-model-api": flags.TargetModelAPI, "target-provider": flags.TargetProvider,
-		"target-provider-model": flags.TargetProviderModel, "target-provider-secret": flags.TargetProviderSecret,
+		"target-model-api":                flags.TargetModelAPI,
+		"target-provider":                 flags.TargetProvider,
+		"target-provider-model":           flags.TargetProviderModel,
+		"target-provider-secret":          flags.TargetProviderSecret,
 		"target-provider-base-url":        flags.TargetProviderBaseURL,
 		"target-provider-vertex-project":  flags.TargetProviderVertexProject,
 		"target-provider-vertex-location": flags.TargetProviderVertexLocation,
@@ -233,7 +176,7 @@ func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool)
 		return nil, nil
 	}
 	if (flags.TargetModelAPI == "") == (flags.TargetProvider == "") {
-		return nil, cmd.NewErrUsagef("pass exactly one target head: --target-model-api or --target-provider")
+		return nil, cmd.NewErrUsagef("pass exactly one target: --target-model-api or --target-provider")
 	}
 	if flags.TargetModelAPI != "" {
 		for name, value := range values {
@@ -241,12 +184,17 @@ func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool)
 				return nil, cmd.NewErrUsagef("--target-model-api is mutually exclusive with --%s", name)
 			}
 		}
-		return &cmd.RouteTarget{Type: "BASETEN_MODEL_API", ModelAPI: flags.TargetModelAPI}, nil
+		target := &managementapi.CreateRouteRequest_Target{}
+		err := target.FromRouteTargetBasetenModelAPI(managementapi.RouteTargetBasetenModelAPI{
+			Type:     "BASETEN_MODEL_API",
+			ModelApi: flags.TargetModelAPI,
+		})
+		return target, err
 	}
 	if flags.TargetProviderModel == "" || flags.TargetProviderSecret == "" {
 		return nil, cmd.NewErrUsagef("--target-provider requires --target-provider-model and --target-provider-secret; restate the complete target")
 	}
-	target := &cmd.RouteTarget{Type: strings.ToUpper(strings.ReplaceAll(flags.TargetProvider, "-", "_")), Model: flags.TargetProviderModel, SecretName: flags.TargetProviderSecret}
+	target := &managementapi.CreateRouteRequest_Target{}
 	if flags.TargetProvider == "openai-compatible" {
 		if flags.TargetProviderBaseURL == "" {
 			return nil, cmd.NewErrUsagef("openai-compatible requires --target-provider-base-url")
@@ -258,7 +206,6 @@ func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool)
 		if u.User != nil || u.Port() != "" {
 			return nil, cmd.NewErrUsagef("--target-provider-base-url must not include credentials or a port")
 		}
-		target.BaseURL = &flags.TargetProviderBaseURL
 	} else if flags.TargetProviderBaseURL != "" {
 		return nil, cmd.NewErrUsagef("--target-provider-base-url is only valid with openai-compatible")
 	}
@@ -266,11 +213,50 @@ func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool)
 		if flags.TargetProviderVertexProject == "" || flags.TargetProviderVertexLocation == "" {
 			return nil, cmd.NewErrUsagef("vertex requires --target-provider-vertex-project and --target-provider-vertex-location")
 		}
-		target.VertexConfig = &cmd.RouteVertexConfig{ProjectID: flags.TargetProviderVertexProject, Location: flags.TargetProviderVertexLocation}
 	} else if flags.TargetProviderVertexProject != "" || flags.TargetProviderVertexLocation != "" {
 		return nil, cmd.NewErrUsagef("Vertex project and location flags are only valid with vertex")
 	}
-	return target, nil
+	var err error
+	switch flags.TargetProvider {
+	case "anthropic":
+		err = target.FromRouteTargetAnthropic(managementapi.RouteTargetAnthropic{
+			Type:       "ANTHROPIC",
+			Model:      flags.TargetProviderModel,
+			SecretName: flags.TargetProviderSecret,
+		})
+	case "openai":
+		err = target.FromRouteTargetOpenAI(managementapi.RouteTargetOpenAI{
+			Type:       "OPENAI",
+			Model:      flags.TargetProviderModel,
+			SecretName: flags.TargetProviderSecret,
+		})
+	case "xai":
+		err = target.FromRouteTargetXAI(managementapi.RouteTargetXAI{
+			Type:       "XAI",
+			Model:      flags.TargetProviderModel,
+			SecretName: flags.TargetProviderSecret,
+		})
+	case "vertex":
+		err = target.FromRouteTargetVertex(managementapi.RouteTargetVertex{
+			Type:       "VERTEX",
+			Model:      flags.TargetProviderModel,
+			SecretName: flags.TargetProviderSecret,
+			VertexConfig: managementapi.VertexTargetConfig{
+				ProjectId: flags.TargetProviderVertexProject,
+				Location:  flags.TargetProviderVertexLocation,
+			},
+		})
+	case "openai-compatible":
+		err = target.FromRouteTargetOpenAICompatible(managementapi.RouteTargetOpenAICompatible{
+			Type:       "OPENAI_COMPATIBLE",
+			Model:      flags.TargetProviderModel,
+			SecretName: flags.TargetProviderSecret,
+			BaseUrl:    flags.TargetProviderBaseURL,
+		})
+	default:
+		return nil, cmd.NewErrUsagef("unsupported provider %q", flags.TargetProvider)
+	}
+	return target, err
 }
 
 func validateRouteDisplayName(name cmd.OptionalFlag[string]) error {
@@ -287,26 +273,15 @@ func validateRouteDescription(description cmd.OptionalFlag[string]) error {
 	return nil
 }
 
-type createRouteRequest struct {
-	Name        string           `json:"name"`
-	TeamID      string           `json:"team_id"`
-	DisplayName *string          `json:"display_name,omitempty"`
-	Description *string          `json:"description,omitempty"`
-	Target      *cmd.RouteTarget `json:"target"`
-}
-
-type updateRouteRequest struct {
-	DisplayName *string          `json:"display_name,omitempty"`
-	Description *string          `json:"description,omitempty"`
-	Target      *cmd.RouteTarget `json:"target,omitempty"`
-}
-
 func commandRouteCreate(ctx *CommandContext, flags *cmd.RouteCreateFlags) error {
-	if err := completeRouteCreate(ctx, flags); err != nil {
+	if err := routeNonemptyFlags(ctx, "name", "team"); err != nil {
 		return err
 	}
 	if flags.Name == "" || flags.Team == "" {
 		return cmd.NewErrUsagef("--name and --team must not be empty")
+	}
+	if err := validateRouteDescription(flags.Description); err != nil {
+		return err
 	}
 	if err := validateRouteDisplayName(flags.DisplayName); err != nil {
 		return err
@@ -323,20 +298,25 @@ func commandRouteCreate(ctx *CommandContext, flags *cmd.RouteCreateFlags) error 
 	if err != nil {
 		return err
 	}
-	body := createRouteRequest{Name: flags.Name, TeamID: team, DisplayName: flags.DisplayName.Pointer(), Description: flags.Description.Pointer(), Target: target}
-	var route cmd.Route
-	if err := routeRequest(ctx, cl.API(), http.MethodPost, "", nil, body, &route); err != nil {
+	body := managementapi.CreateRouteRequest{
+		Name:        flags.Name,
+		TeamId:      team,
+		DisplayName: flags.DisplayName.Pointer(),
+		Description: flags.Description.Pointer(),
+		Target:      *target,
+	}
+	route, err := cl.API().PostRoutes(ctx, body)
+	if err != nil {
 		return fmt.Errorf("create Route: %w", err)
 	}
-	outputRoute(ctx, route, "")
-	return nil
+	return outputRoute(ctx, *route, "")
 }
 
 func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error {
-	if err := completeRouteUpdate(ctx, flags); err != nil {
+	if err := validateRouteRefFlags(ctx, flags.RouteRefFlags); err != nil {
 		return err
 	}
-	if err := completeRouteRef(ctx, &flags.RouteRefFlags); err != nil {
+	if err := validateRouteDescription(flags.Description); err != nil {
 		return err
 	}
 	if err := validateRouteDisplayName(flags.DisplayName); err != nil {
@@ -357,21 +337,34 @@ func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error 
 	if err != nil {
 		return err
 	}
-	body := updateRouteRequest{DisplayName: flags.DisplayName.Pointer(), Description: flags.Description.Pointer(), Target: target}
-	var route cmd.Route
-	if err := routeRequest(ctx, cl.API(), http.MethodPatch, id, nil, body, &route); err != nil {
+	body := managementapi.UpdateRouteRequest{
+		DisplayName: flags.DisplayName.Pointer(),
+		Description: flags.Description.Pointer(),
+	}
+	if target != nil {
+		// The generated create and update unions are distinct Go types.
+		data, err := target.MarshalJSON()
+		if err != nil {
+			return err
+		}
+		body.Target = &managementapi.UpdateRouteRequest_Target{}
+		if err := body.Target.UnmarshalJSON(data); err != nil {
+			return err
+		}
+	}
+	route, err := cl.API().PatchRoutes(ctx, id, body)
+	if err != nil {
 		return fmt.Errorf("update Route %s: %w", id, err)
 	}
-	outputRoute(ctx, route, "")
-	return nil
+	return outputRoute(ctx, *route, "")
 }
 
 func commandRouteDelete(ctx *CommandContext, flags *cmd.RouteDeleteFlags) error {
-	if err := completeRouteRef(ctx, &flags.RouteRefFlags); err != nil {
+	if err := validateRouteRefFlags(ctx, flags.RouteRefFlags); err != nil {
 		return err
 	}
-	if !flags.Yes && !routeInteractive(ctx) {
-		return cmd.NewErrUsagef("cannot confirm deletion: stdin is not a terminal; pass --yes to skip the prompt")
+	if !flags.Yes {
+		return cmd.NewErrUsagef("pass --yes to confirm deletion")
 	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -381,51 +374,83 @@ func commandRouteDelete(ctx *CommandContext, flags *cmd.RouteDeleteFlags) error 
 	if err != nil {
 		return err
 	}
-	if !flags.Yes {
-		if err := routePrompt(ctx).Confirm(fmt.Sprintf("Delete Route %s?", id)); err != nil {
-			return err
-		}
-	}
-	var tombstone cmd.RouteTombstone
-	if err := routeRequest(ctx, cl.API(), http.MethodDelete, id, nil, nil, &tombstone); err != nil {
+	tombstone, err := cl.API().DeleteRoutes(ctx, id)
+	if err != nil {
 		return fmt.Errorf("delete Route %s: %w", id, err)
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(tombstone)
 	} else {
-		ctx.Logf("Deleted Route %s (%s)\n", tombstone.Name, tombstone.ID)
+		ctx.Logf("Deleted Route %s (%s)\n", tombstone.Name, tombstone.Id)
 	}
 	return nil
 }
 
-func outputRoute(ctx *CommandContext, route cmd.Route, teamName string) {
+func outputRoute(ctx *CommandContext, route managementapi.Route, teamName string) error {
 	if ctx.JSON {
 		ctx.OutputJSON(route)
-		return
+		return nil
 	}
-	ctx.Outputf("ID:               %s\n", route.ID)
-	ctx.Outputf("Slug:             %s\n", route.Name)
+	ctx.Outputf("ID:               %s\n", route.Id)
+	ctx.Outputf("Name:             %s\n", route.Name)
 	ctx.Outputf("Display Name:     %s\n", route.DisplayName)
 	ctx.Outputf("Description:      %s\n", route.Description)
-	ctx.Outputf("Team ID:          %s\n", route.TeamID)
+	ctx.Outputf("Team ID:          %s\n", route.TeamId)
 	if teamName != "" {
 		ctx.Outputf("Team Name:        %s\n", teamName)
 	}
-	ctx.Outputf("Target Type:      %s\n", route.Target.Type)
-	if route.Target.Type == "BASETEN_MODEL_API" {
-		ctx.Outputf("Model API:        %s\n", route.Target.ModelAPI)
-	} else {
-		ctx.Outputf("Provider:         %s\n", route.Target.Type)
-		ctx.Outputf("Provider Model:   %s\n", route.Target.Model)
-		ctx.Outputf("Provider Secret:  %s\n", route.Target.SecretName)
-		if route.Target.BaseURL != nil {
-			ctx.Outputf("Base URL:         %s\n", *route.Target.BaseURL)
-		}
-		if route.Target.VertexConfig != nil {
-			ctx.Outputf("Vertex Project:   %s\n", route.Target.VertexConfig.ProjectID)
-			ctx.Outputf("Vertex Location:  %s\n", route.Target.VertexConfig.Location)
+	fields, err := routeTargetFields(route.Target)
+	if err != nil {
+		return err
+	}
+	for _, field := range fields {
+		ctx.Outputf("%-18s%s\n", field[0]+":", field[1])
+	}
+	ctx.Outputf("Invoke URL:       %s\n", hyperlink(ctx.Stdout, route.InvokeUrl))
+	ctx.Outputf("Created:          %s\n", route.CreatedAt.UTC().Format(time.RFC3339))
+	return nil
+}
+
+func routeTargetFields(target managementapi.Route_Target) ([][2]string, error) {
+	value, err := target.ValueByDiscriminator()
+	if err != nil {
+		return nil, fmt.Errorf("decode Route target: %w", err)
+	}
+	switch t := value.(type) {
+	case managementapi.RouteTargetBasetenModelAPI:
+		return [][2]string{{"Target Type", t.Type}, {"Model API", t.ModelApi}}, nil
+	case managementapi.RouteTargetAnthropic:
+		return providerTargetFields(t.Type, t.Model, t.SecretName), nil
+	case managementapi.RouteTargetOpenAI:
+		return providerTargetFields(t.Type, t.Model, t.SecretName), nil
+	case managementapi.RouteTargetXAI:
+		return providerTargetFields(t.Type, t.Model, t.SecretName), nil
+	case managementapi.RouteTargetVertex:
+		return append(providerTargetFields(t.Type, t.Model, t.SecretName), [2]string{"Vertex Project", t.VertexConfig.ProjectId}, [2]string{"Vertex Location", t.VertexConfig.Location}), nil
+	case managementapi.RouteTargetOpenAICompatible:
+		return append(providerTargetFields(t.Type, t.Model, t.SecretName), [2]string{"Base URL", t.BaseUrl}), nil
+	default:
+		return nil, fmt.Errorf("unsupported Route target %T", value)
+	}
+}
+
+func providerTargetFields(kind, model, secret string) [][2]string {
+	return [][2]string{{"Target Type", kind}, {"Provider Model", model}, {"Provider", kind}, {"Provider Secret", secret}}
+}
+
+func routeNonemptyFlags(ctx *CommandContext, names ...string) error {
+	for _, name := range names {
+		f := ctx.Command.Flags().Lookup(name)
+		if f != nil && f.Changed && f.Value.String() == "" {
+			return cmd.NewErrUsagef("--%s must not be empty", name)
 		}
 	}
-	ctx.Outputf("Invoke URL:       %s\n", hyperlink(ctx.Stdout, route.InvokeURL))
-	ctx.Outputf("Created:          %s\n", route.CreatedAt.UTC().Format(time.RFC3339))
+	return nil
+}
+
+func validateRouteRefFlags(ctx *CommandContext, ref cmd.RouteRefFlags) error {
+	if err := routeNonemptyFlags(ctx, "id", "name"); err != nil {
+		return err
+	}
+	return validateRouteRef(ref)
 }
