@@ -83,13 +83,13 @@ func resolveRouteID(ctx *CommandContext, api *managementapi.Client, ref cmd.Rout
 		return "", fmt.Errorf("resolve route %q: %w", ref.Name, err)
 	}
 	if len(page.Items) == 0 {
-		return "", cmd.NewErrNotFound(fmt.Errorf("no visible route named %q", ref.Name))
+		return "", cmd.NewErrNotFound(fmt.Errorf("no route named %q", ref.Name))
 	}
 	if len(page.Items) != 1 || page.Pagination.HasMore {
 		return "", fmt.Errorf("multiple routes named %q; pass --id instead", ref.Name)
 	}
 	if page.Items[0].Name != ref.Name || page.Items[0].Id == "" {
-		return "", fmt.Errorf("route lookup returned an invalid exact-name match for %q", ref.Name)
+		return "", fmt.Errorf("route lookup returned an invalid match for %q; pass --id instead", ref.Name)
 	}
 	return page.Items[0].Id, nil
 }
@@ -152,11 +152,12 @@ func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool)
 		return nil, nil
 	}
 	if flags.TargetType == "" || flags.TargetModel == "" {
-		return nil, cmd.NewErrUsagef("--target-type and --target-model are required; restate the complete target")
+		return nil, cmd.NewErrUsagef("--target-type and --target-model are required")
 	}
 	if flags.TargetType == "baseten-model-api" {
 		if flags.TargetSecret != "" || flags.TargetBaseURL != "" || flags.TargetVertexProject != "" || flags.TargetVertexLocation != "" {
-			return nil, cmd.NewErrUsagef("baseten-model-api does not accept external target configuration")
+			return nil, cmd.NewErrUsagef("--target-secret, --target-base-url, --target-vertex-project, and " +
+				"--target-vertex-location are not valid with --target-type baseten-model-api")
 		}
 		target := &managementapi.CreateRouteRequest_Target{}
 		err := target.FromRouteTargetBasetenModelAPI(managementapi.RouteTargetBasetenModelAPI{
@@ -166,22 +167,22 @@ func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool)
 		return target, err
 	}
 	if flags.TargetSecret == "" {
-		return nil, cmd.NewErrUsagef("external targets require --target-secret; restate the complete target")
+		return nil, cmd.NewErrUsagef("--target-secret is required with --target-type %s", flags.TargetType)
 	}
 	target := &managementapi.CreateRouteRequest_Target{}
 	if flags.TargetType == "openai-compatible" {
 		if flags.TargetBaseURL == "" {
-			return nil, cmd.NewErrUsagef("openai-compatible requires --target-base-url")
+			return nil, cmd.NewErrUsagef("--target-base-url is required with --target-type openai-compatible")
 		}
 	} else if flags.TargetBaseURL != "" {
-		return nil, cmd.NewErrUsagef("--target-base-url is only valid with openai-compatible")
+		return nil, cmd.NewErrUsagef("--target-base-url is only valid with --target-type openai-compatible")
 	}
 	if flags.TargetType == "vertex" {
 		if flags.TargetVertexProject == "" || flags.TargetVertexLocation == "" {
-			return nil, cmd.NewErrUsagef("vertex requires --target-vertex-project and --target-vertex-location")
+			return nil, cmd.NewErrUsagef("--target-vertex-project and --target-vertex-location are required with --target-type vertex")
 		}
 	} else if flags.TargetVertexProject != "" || flags.TargetVertexLocation != "" {
-		return nil, cmd.NewErrUsagef("Vertex project and location flags are only valid with vertex")
+		return nil, cmd.NewErrUsagef("--target-vertex-project and --target-vertex-location are only valid with --target-type vertex")
 	}
 	var err error
 	switch flags.TargetType {
@@ -266,7 +267,7 @@ func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error 
 		return err
 	}
 	if target == nil && !flags.DisplayName.IsSet() && !flags.Description.IsSet() {
-		return cmd.NewErrUsagef("set --display-name, --description, a complete target, or a combination")
+		return cmd.NewErrUsagef("pass --display-name, --description, or a target with --target-type and --target-model")
 	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -281,15 +282,7 @@ func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error 
 		Description: flags.Description.Pointer(),
 	}
 	if target != nil {
-		// The generated create and update unions are distinct Go types.
-		data, err := target.MarshalJSON()
-		if err != nil {
-			return err
-		}
-		body.Target = &managementapi.UpdateRouteRequest_Target{}
-		if err := body.Target.UnmarshalJSON(data); err != nil {
-			return err
-		}
+		body.Target = (*managementapi.UpdateRouteRequest_Target)(target)
 	}
 	route, err := cl.API().PatchRoutes(ctx, id, body)
 	if err != nil {
