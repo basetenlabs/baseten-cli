@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,6 +16,7 @@ import (
 func Test_Routes_List_Pagination(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		calls++
 		require.Equal(t, "/v1/routes", r.URL.Path)
 		require.Equal(t, "team-a", r.URL.Query().Get("team_id"))
@@ -24,10 +26,10 @@ func Test_Routes_List_Pagination(t *testing.T) {
 			return
 		}
 		require.Equal(t, "next", r.URL.Query().Get("cursor"))
-		json.NewEncoder(w).Encode(map[string]any{"items": []internalcmd.RouteRecordForTest{{ID: "r", Name: "acme/primary", TeamID: "team-a", DisplayName: "Primary", InvokeURL: "https://coding.baseten.co"}}, "pagination": map[string]any{"has_more": false, "cursor": nil}})
+		json.NewEncoder(w).Encode(map[string]any{"items": []internalcmd.RouteRecordForTest{{Id: "r", Name: "acme/primary", TeamId: "team-a", DisplayName: "Primary", InvokeUrl: "https://coding.baseten.co"}}, "pagination": map[string]any{"has_more": false, "cursor": nil}})
 	}))
 	defer server.Close()
-	routes, err := internalcmd.ReadRoutesForTest(t.Context(), server.Client(), server.URL, http.Header{"Authorization": []string{"Bearer mock"}}, "team-a")
+	routes, err := internalcmd.ReadRoutesForTest(t.Context(), &managementapi.Client{HTTPClient: server.Client(), BaseURL: server.URL, Headers: http.Header{"Authorization": []string{"Bearer mock"}}}, "team-a")
 	require.NoError(t, err)
 	require.Len(t, routes, 1)
 	require.Equal(t, 2, calls)
@@ -44,15 +46,16 @@ func Test_Routes_List_RejectsInvalidPages(t *testing.T) {
 		{"empty", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}}},
 		{"missing cursor", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": true}}},
 		{"repeated cursor", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": true, "cursor": "repeat"}}},
-		{"wrong team", 200, map[string]any{"items": []internalcmd.RouteRecordForTest{{ID: "r", Name: "acme/primary", TeamID: "other", DisplayName: "Primary", InvokeURL: "https://coding.baseten.co"}}, "pagination": map[string]any{"has_more": false}}},
+		{"wrong team", 200, map[string]any{"items": []internalcmd.RouteRecordForTest{{Id: "r", Name: "acme/primary", TeamId: "other", DisplayName: "Primary", InvokeUrl: "https://coding.baseten.co"}}, "pagination": map[string]any{"has_more": false}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.status)
 				json.NewEncoder(w).Encode(tc.body)
 			}))
 			defer server.Close()
-			_, err := internalcmd.ReadRoutesForTest(t.Context(), server.Client(), server.URL, nil, "team-a")
+			_, err := internalcmd.ReadRoutesForTest(t.Context(), &managementapi.Client{HTTPClient: server.Client(), BaseURL: server.URL}, "team-a")
 			require.Error(t, err)
 		})
 	}
@@ -65,6 +68,7 @@ func Test_Routes_Key_Create(t *testing.T) {
 	require.NoError(t, err)
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		calls++
 		require.Equal(t, "POST", r.Method)
 		require.Equal(t, "/v1/api_keys", r.URL.Path)
@@ -87,6 +91,7 @@ func Test_Routes_Key_RejectionPreservesTypeAndRedacts(t *testing.T) {
 	session, err := auth.ResolveSession("", "")
 	require.NoError(t, err)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]string{"message": "invalid test-login", "api_key": "response-secret"})
 	}))
