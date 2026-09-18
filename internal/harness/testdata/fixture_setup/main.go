@@ -53,7 +53,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		plans, err = harness.PrepareHarness(*name, *path, routes, harness.Selection{Primary: *primary, Background: *background, Subagent: *subagent, Fallback: *fallback}, *endpoint, harness.FixtureToken, *picker, *replace)
+		plans, err = harness.PrepareHarness(*name, *path, routes, nil, harness.Selection{Primary: *primary, Background: *background, Subagent: *subagent, Fallback: *fallback}, *endpoint, harness.FixtureToken, *picker, *replace)
 		if err != nil {
 			return err
 		}

@@ -99,6 +99,18 @@ func Detect(ctx context.Context, executor Execer, name, path string) (Detection,
 	d.Supported = d.Version == TestedVersions[name] && runtime.GOOS == "darwin"
 	return d, nil
 }
+func claudeMCPPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if dir == "" {
+		dir = home
+	}
+	return filepath.Join(dir, ".claude.json"), nil
+}
+
 func FixtureEndpoint(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || u.Port() == "" {

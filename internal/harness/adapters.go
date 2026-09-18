@@ -27,10 +27,33 @@ func CatalogPath(path string) string {
 
 // PrepareHarness plans all files before any are written. Catalogs are installed
 // before configs that refer to them; teardown reverses that dependency order.
-func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, token string, replacePicker, replaceExisting bool) ([]*Plan, error) {
+func PrepareHarness(name, path string, routes []Route, mcpServers []MCPServer, s Selection, endpoint, token string, replacePicker, replaceExisting bool) ([]*Plan, error) {
 	if name == "claude-code" {
 		p, e := Prepare(path, routes, s, endpoint, token, replacePicker, replaceExisting)
-		return []*Plan{p}, e
+		if e != nil {
+			return nil, e
+		}
+		if len(mcpServers) == 0 {
+			return []*Plan{p}, nil
+		}
+		mcpPath, e := claudeMCPPath()
+		if e != nil {
+			return nil, e
+		}
+		mcp, e := prepareSettings(mcpPath, routes, replaceExisting, func(map[string]any, *Journal) ([]Setting, error) {
+			var values []Setting
+			for _, server := range mcpServers {
+				values = append(values, desired([]string{"mcpServers", server.Name, "type"}, "http"), desired([]string{"mcpServers", server.Name, "url"}, server.URL))
+				if server.AuthorizationToken != "" {
+					values = append(values, desired([]string{"mcpServers", server.Name, "headers", "Authorization"}, "Bearer "+server.AuthorizationToken))
+				}
+			}
+			return values, nil
+		})
+		if e != nil {
+			return nil, e
+		}
+		return []*Plan{p, mcp}, nil
 	}
 	if _, e := ValidateCatalog(routes); e != nil {
 		return nil, e
@@ -76,12 +99,24 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 				values = append(values, desired([]string{"agent", role, "model"}, providerID+"/"+s.Subagent))
 			}
 		}
+		for _, server := range mcpServers {
+			values = append(values, desired([]string{"mcp", server.Name, "type"}, "remote"), desired([]string{"mcp", server.Name, "url"}, server.URL))
+			if server.AuthorizationToken != "" {
+				values = append(values, desired([]string{"mcp", server.Name, "headers", "Authorization"}, "Bearer "+server.AuthorizationToken))
+			}
+		}
 	case "codex":
 		values = []Setting{desired([]string{"model"}, s.Primary), desired([]string{"model_provider"}, providerID), desired([]string{"model_catalog_json"}, CatalogPath(path)), desired([]string{"review_model"}, s.Subagent), desired([]string{"memories", "extract_model"}, s.Background), desired([]string{"memories", "consolidation_model"}, s.Background), desired([]string{"model_providers", providerID}, map[string]any{"name": "Baseten harness", "base_url": strings.TrimRight(endpoint, "/") + "/v1", "wire_api": "responses", "requires_openai_auth": false, "experimental_bearer_token": token})}
 		// Subagents inherit the primary model unless the user configures a role.
 		// Preserve explicit user roles instead of claiming a universal override.
 		if s.Subagent != s.Primary {
 			return nil, errors.New("Codex subagents inherit the primary Route; separate --subagent-model requires a verified role-file adapter")
+		}
+		for _, server := range mcpServers {
+			values = append(values, desired([]string{"mcp_servers", server.Name, "url"}, server.URL))
+			if server.AuthorizationToken != "" {
+				values = append(values, desired([]string{"mcp_servers", server.Name, "http_headers", "Authorization"}, "Bearer "+server.AuthorizationToken))
+			}
 		}
 	default:
 		return nil, fmt.Errorf("unknown harness %s", name)
@@ -148,6 +183,17 @@ func PrepareHarnessTeardown(name, path string) ([]*Plan, error) {
 		return nil, e
 	}
 	plans := []*Plan{p}
+	if name == "claude-code" {
+		mcpPath, e := claudeMCPPath()
+		if e != nil {
+			return nil, e
+		}
+		mcp, e := PrepareTeardown(mcpPath)
+		if e != nil {
+			return nil, e
+		}
+		plans = []*Plan{mcp, p}
+	}
 	if name == "codex" {
 		catalog, e := PrepareTeardown(CatalogPath(path))
 		if e != nil {

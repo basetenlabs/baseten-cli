@@ -93,6 +93,10 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	mcpServers, err := listHarnessMCPServers(ctx, credential.scope.TeamID)
+	if err != nil {
+		return err
+	}
 	routes, endpoint, skipped, err := harnessCatalog(ctx, credential.transport, credential.scope.ManagementURL, listed)
 	if err != nil {
 		return err
@@ -118,7 +122,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		var plans []*harness.Plan
 		occupied := map[string]bool{}
 		for i, d := range detections {
-			current, err := harness.PrepareHarness(d.Name, d.Path, routes, selections[i], endpoint, token, f.ReplacePicker, f.ReplaceExisting)
+			current, err := harness.PrepareHarness(d.Name, d.Path, routes, mcpServers, selections[i], endpoint, token, f.ReplacePicker, f.ReplaceExisting)
 			if err != nil {
 				return nil, cmd.NewErrUsage(fmt.Errorf("%s: %w", d.Name, err))
 			}

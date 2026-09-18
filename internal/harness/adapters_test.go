@@ -21,10 +21,10 @@ func TestAdaptersLifecycle(t *testing.T) {
 			}
 			path := filepath.Join(t.TempDir(), filename)
 			require.NoError(t, os.WriteFile(path, original, 0600))
-			plans, e := PrepareHarness(name, path, fixture(t), Selection{Primary: "acme/primary", Background: "acme/background"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+			plans, e := PrepareHarness(name, path, fixture(t), nil, Selection{Primary: "acme/primary", Background: "acme/background"}, "http://127.0.0.1:1234", FixtureToken, false, true)
 			require.NoError(t, e)
 			require.NoError(t, ApplyPlans(plans))
-			plans, e = PrepareHarness(name, path, fixture(t), Selection{Primary: "acme/primary", Background: "acme/background"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+			plans, e = PrepareHarness(name, path, fixture(t), nil, Selection{Primary: "acme/primary", Background: "acme/background"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 			require.NoError(t, e)
 			for _, p := range plans {
 				require.False(t, p.Changed)
@@ -35,7 +35,7 @@ func TestAdaptersLifecycle(t *testing.T) {
 			require.Equal(t, "configured", status.State)
 			require.Len(t, status.Routes, 4)
 			routes := fixture(t)[:2]
-			plans, e = PrepareHarness(name, path, routes, Selection{Primary: "acme/primary", Background: "acme/background"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+			plans, e = PrepareHarness(name, path, routes, nil, Selection{Primary: "acme/primary", Background: "acme/background"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 			require.NoError(t, e)
 			require.NoError(t, ApplyPlans(plans))
 			status, e = Inspect(Detection{Name: name, Path: path})
@@ -56,7 +56,7 @@ func TestAdaptersLifecycle(t *testing.T) {
 }
 func TestCodexCatalogDriftAndInterruptedInstall(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	plans, e := PrepareHarness("codex", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+	plans, e := PrepareHarness("codex", path, fixture(t), nil, Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 	require.NoError(t, e)
 	// Catalog succeeds, config is never written. Teardown must find the orphan.
 	require.NoError(t, plans[0].Apply())
@@ -65,7 +65,7 @@ func TestCodexCatalogDriftAndInterruptedInstall(t *testing.T) {
 	require.NoError(t, ApplyPlans(plans))
 	_, e = os.Stat(CatalogPath(path))
 	require.True(t, os.IsNotExist(e))
-	plans, e = PrepareHarness("codex", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+	plans, e = PrepareHarness("codex", path, fixture(t), nil, Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 	require.NoError(t, e)
 	require.NoError(t, ApplyPlans(plans))
 	save(t, CatalogPath(path), map[string]any{"models": []any{map[string]any{"slug": "user-edit"}}})
@@ -87,9 +87,9 @@ func TestAdaptersRejectUnknownMetadataAndUnsupportedOptions(t *testing.T) {
 		}
 		routes := fixture(t)
 		routes[0].ContextWindow = 0
-		_, e := PrepareHarness(name, path, routes, Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+		_, e := PrepareHarness(name, path, routes, nil, Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 		require.Error(t, e)
-		_, e = PrepareHarness(name, path, fixture(t), Selection{Primary: "acme/primary", Fallback: "acme/fallback"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+		_, e = PrepareHarness(name, path, fixture(t), nil, Selection{Primary: "acme/primary", Fallback: "acme/fallback"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 		require.ErrorContains(t, e, "only for Claude")
 	}
 }
@@ -99,7 +99,7 @@ func TestPreservesNativeInstructionsAndAgentSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	original := []byte("model_instructions_file = \"custom.md\"\n[agents.reviewer]\nconfig_file = \"reviewer.toml\"\n")
 	require.NoError(t, os.WriteFile(path, original, 0600))
-	plans, e := PrepareHarness("codex", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+	plans, e := PrepareHarness("codex", path, fixture(t), nil, Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 	require.NoError(t, e)
 	require.NoError(t, ApplyPlans(plans))
 	_, data, _, _, e := Read(path)
@@ -130,7 +130,7 @@ func TestClaudePolicyDoesNotBlockOtherHarnesses(t *testing.T) {
 			if name == "codex" {
 				filename = "config.toml"
 			}
-			_, err := PrepareHarness(name, filepath.Join(dir, filename), fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+			_, err := PrepareHarness(name, filepath.Join(dir, filename), fixture(t), nil, Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 			if name == "claude-code" {
 				require.ErrorContains(t, err, "managed policy")
 			} else {

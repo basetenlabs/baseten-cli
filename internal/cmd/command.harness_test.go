@@ -103,6 +103,7 @@ func productionHarness(t *testing.T) (*CommandHarness, *MockManagementAPI) {
 	}
 	h, api := routesAuthHarness(t)
 	h.Context = internalcmd.WithExecer(h.Context, harnessFakeExecer{})
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
 		"items":      []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": "team-a", "display_name": "Primary", "invoke_url": api.URL}},
 		"pagination": map[string]any{"has_more": false, "cursor": nil},
