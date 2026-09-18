@@ -16,8 +16,6 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-func init() { Register("harness auth setup", commandHarnessAuthSetup) }
-
 // Hostnames may include uppercase letters, dots, or characters the API rejects.
 func normalizeHarnessHostname(hostname string) string {
 	var name strings.Builder
@@ -52,24 +50,24 @@ type harnessAuth struct {
 	transport *auth.Transport
 }
 
-func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessAuthSetupFlags) (*harnessAuth, error) {
+func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*harnessAuth, error) {
 	if flags.Team != "" && strings.TrimSpace(flags.Team) == "" {
 		return nil, cmd.NewErrUsagef("team cannot be blank")
 	}
 	var previousNames []string
-	if flags.Name == "" {
+	if flags.KeyName == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
 			return nil, err
 		}
-		flags.Name = defaultHarnessKeyName(hostname)
+		flags.KeyName = defaultHarnessKeyName(hostname)
 		previous := "baseten-harness"
 		if normalized := normalizeHarnessHostname(hostname); normalized != "" {
 			previous += "-" + normalized
 		}
-		previousNames = []string{strings.TrimPrefix(flags.Name, "baseten-harness-"), previous, "baseten-harness-" + hostname}
+		previousNames = []string{strings.TrimPrefix(flags.KeyName, "baseten-harness-"), previous, "baseten-harness-" + hostname}
 	}
-	if flags.Name == "" || strings.IndexFunc(flags.Name, func(r rune) bool {
+	if flags.KeyName == "" || strings.IndexFunc(flags.KeyName, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-')
 	}) >= 0 {
 		return nil, cmd.NewErrUsagef("Routes key name can only contain lowercase letters, numbers, and hyphens")
@@ -100,21 +98,16 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessAuthSetupFlags) (
 			return nil, fmt.Errorf("list teams: %w", err)
 		}
 		if len(teams.Teams) == 0 {
-			return nil, fmt.Errorf("no teams available for the current account")
+			return nil, cmd.NewErrUsagef("no teams available for the current account; ask an organization admin to add you to a team")
 		}
 		if len(teams.Teams) == 1 {
 			teamID = teams.Teams[0].Id
 		} else {
-			if !ctx.IsInteractive() || ctx.JSON {
-				return nil, cmd.NewErrUsagef("multiple teams available; pass --team when not interactive")
-			}
-			options := make([]huh.Option[string], 0, len(teams.Teams))
+			available := make([]string, 0, len(teams.Teams))
 			for _, team := range teams.Teams {
-				options = append(options, huh.NewOption(team.Name+" ("+team.Id+")", team.Id))
+				available = append(available, fmt.Sprintf("  %s (%s)", team.Name, team.Id))
 			}
-			if err := harnessPrompt(ctx, huh.NewSelect[string]().Title("Which team should the Routes key belong to?").Options(options...).Value(&teamID)); err != nil {
-				return nil, err
-			}
+			return nil, cmd.NewErrUsagef("multiple teams available; pass --team with a team name or ID:\n%s\n\nExample: baseten harness setup --team %s", strings.Join(available, "\n"), teams.Teams[0].Id)
 		}
 		flags.Team = teamID
 	} else {
@@ -134,7 +127,7 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessAuthSetupFlags) (
 	if err != nil {
 		return nil, err
 	}
-	scope := auth.RoutesKeyScope{ManagementURL: endpoint, Profile: transport.Session.ProfileName(), UserID: user.UserId, TeamID: teamID, Name: flags.Name}
+	scope := auth.RoutesKeyScope{ManagementURL: endpoint, Profile: transport.Session.ProfileName(), UserID: user.UserId, TeamID: teamID, Name: flags.KeyName}
 	saved, err := store.GetRoutesKey(scope)
 	if err != nil {
 		return nil, err
@@ -150,7 +143,7 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessAuthSetupFlags) (
 				return nil, err
 			}
 			if key != "" {
-				scope, saved, flags.Name = prior, key, name
+				scope, saved, flags.KeyName = prior, key, name
 				break
 			}
 		}
@@ -176,45 +169,6 @@ func (a *harnessAuth) ensure(ctx context.Context) (string, bool, error) {
 	}
 	a.saved = key
 	return key, created, nil
-}
-
-func setupHarnessAuth(ctx *CommandContext, flags *cmd.HarnessAuthSetupFlags) (cmd.HarnessAuthSetupResult, error) {
-	credential, err := prepareHarnessAuth(ctx, flags)
-	if err != nil {
-		return cmd.HarnessAuthSetupResult{}, err
-	}
-
-	result := cmd.HarnessAuthSetupResult{Name: flags.Name, TeamID: credential.scope.TeamID, Storage: "system-keyring", Reused: credential.saved != "", DryRun: flags.DryRun}
-	if !flags.DryRun && credential.saved == "" {
-		_, result.Created, err = credential.ensure(ctx)
-		if err != nil {
-			return cmd.HarnessAuthSetupResult{}, err
-		}
-		result.Reused = !result.Created
-	}
-	return result, nil
-}
-
-func commandHarnessAuthSetup(ctx *CommandContext, flags *cmd.HarnessAuthSetupFlags) error {
-	result, err := setupHarnessAuth(ctx, flags)
-	if err != nil {
-		return err
-	}
-
-	if ctx.JSON {
-		ctx.OutputJSON(result)
-		return nil
-	}
-	switch {
-	case result.DryRun:
-		ctx.Outputf("Routes key %s for team %s: saved=%t. Dry run; no key created.\n", result.Name, result.TeamID, result.Reused)
-	case result.Created:
-		ctx.OutputLine("Routes key created and saved in the system keyring.")
-	default:
-		ctx.OutputLine("Using the saved Routes key in the system keyring.")
-	}
-	ctx.OutputLine("Harness configuration is unchanged. Run baseten harness setup to configure a harness.")
-	return nil
 }
 
 // Keep prompts on stderr so structured output remains usable by scripts.

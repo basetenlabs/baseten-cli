@@ -66,6 +66,7 @@ func Test_Harness_Setup_HiddenParentAndVisibleSubcommands(t *testing.T) {
 		if c.Name == "harness" {
 			found = true
 			h.Require.True(c.Hidden)
+			h.Require.Len(c.Children, 3)
 			for _, leaf := range c.Children {
 				h.Require.False(leaf.Hidden)
 				h.Require.NoError(h.Execute("harness", leaf.Name, "--help"))
@@ -103,9 +104,12 @@ func productionHarness(t *testing.T) (*CommandHarness, *MockManagementAPI) {
 	}
 	h, api := routesAuthHarness(t)
 	h.Context = internalcmd.WithExecer(h.Context, harnessFakeExecer{})
-	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
-		"items":      []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": "team-a", "display_name": "Primary", "invoke_url": api.URL}},
-		"pagination": map[string]any{"has_more": false, "cursor": nil},
+	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"items":      []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": r.URL.Query().Get("team_id"), "display_name": "Primary", "invoke_url": api.URL}},
+			"pagination": map[string]any{"has_more": false, "cursor": nil},
+		})
 	})
 	api.SetRoute("GET", "/v1/models", 200, map[string]any{"data": []any{map[string]any{
 		"id": "acme/primary", "context_length": 128000, "max_completion_tokens": 4096, "supported_features": []string{"tools"}, "input_modalities": []string{"text"},
