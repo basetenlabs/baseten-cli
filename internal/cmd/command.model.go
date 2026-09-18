@@ -15,6 +15,7 @@ func init() {
 	Register("model list", commandModelList)
 	Register("model describe", commandModelDescribe)
 	Register("model delete", commandModelDelete)
+	Register("model rename", commandModelRename)
 	Register("model audit-logs", commandModelAuditLogs)
 }
 
@@ -269,4 +270,26 @@ func enumToAPIValue(value string) string {
 // status are left as the API spells them.
 func enumFromAPIValue(value string) string {
 	return strings.ToLower(strings.ReplaceAll(value, "_", "-"))
+}
+
+func commandModelRename(ctx *CommandContext, flags *cmd.ModelRenameFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	if err != nil {
+		return err
+	}
+	model, err := cl.API().PatchModels(ctx, ref.ID, managementapi.UpdateModelRequest{Name: &flags.NewName})
+	if err != nil {
+		return fmt.Errorf("rename model %s: %w", ref.ID, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(model)
+	}
+	ctx.Logf("Renamed model %s to %s\n", ref.ID, model.Name)
+	ctx.LogLine("warning: update model_name in config.yaml, or pushes that still use the old name will create another model")
+	return nil
 }
