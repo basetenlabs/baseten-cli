@@ -1,62 +1,18 @@
 [
   {
     "name": "acme/primary",
-    "display_name": "Engineering",
-    "messages": true,
-    "tools": true,
-    "responses": true,
-    "chat_completions": true,
-    "context_window": 128000,
-    "output_limit": 4096,
-    "input_modalities": [
-      "text"
-    ],
-    "reasoning_levels": [],
-    "parallel_tools": false
+    "display_name": "Engineering"
   },
   {
     "name": "acme/background",
-    "display_name": "Background",
-    "messages": true,
-    "tools": true,
-    "responses": true,
-    "chat_completions": true,
-    "context_window": 128000,
-    "output_limit": 4096,
-    "input_modalities": [
-      "text"
-    ],
-    "reasoning_levels": [],
-    "parallel_tools": false
+    "display_name": "Background"
   },
   {
     "name": "acme/subagent",
-    "display_name": "Subagents",
-    "messages": true,
-    "tools": true,
-    "responses": true,
-    "chat_completions": true,
-    "context_window": 128000,
-    "output_limit": 4096,
-    "input_modalities": [
-      "text"
-    ],
-    "reasoning_levels": [],
-    "parallel_tools": false
+    "display_name": "Subagents"
   },
   {
     "name": "acme/fallback",
-    "display_name": "Fallback",
-    "messages": true,
-    "tools": true,
-    "responses": true,
-    "chat_completions": true,
-    "context_window": 128000,
-    "output_limit": 4096,
-    "input_modalities": [
-      "text"
-    ],
-    "reasoning_levels": [],
-    "parallel_tools": false
+    "display_name": "Fallback"
   }
 ]

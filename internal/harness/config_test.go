@@ -59,7 +59,7 @@ func TestLifecycleRefreshRestoresOriginalAndPreservesUnrelatedEdits(t *testing.T
 	require.Equal(t, first, second)
 	// A catalog addition/removal changes generated entries, not Route identity.
 	routes := fixture(t)[:1]
-	routes = append(routes, Route{Name: "acme/new", DisplayName: "New", Messages: true, Tools: true})
+	routes = append(routes, Route{Name: "acme/new", DisplayName: "New"})
 	p = setup(t, path, routes, false)
 	require.NoError(t, p.Apply())
 	d = load(t, path)
@@ -204,12 +204,12 @@ func TestCatalogAndSelections(t *testing.T) {
 	}
 	for _, name := range []string{"", "opus", "with space", "acme/primary"} {
 		routes := fixture(t)
-		routes = append(routes, Route{Name: name, DisplayName: "bad", Messages: true, Tools: true})
+		routes = append(routes, Route{Name: name, DisplayName: "bad"})
 		_, e := ValidateCatalog(routes)
 		require.Error(t, e)
 	}
 	routes := fixture(t)
-	routes[0].Tools = false
+	routes[0].DisplayName = ""
 	_, e := ValidateCatalog(routes)
 	require.Error(t, e)
 	_, e = (Selection{Primary: "missing"}).Resolve(fixture(t))
@@ -231,7 +231,7 @@ func TestRolesAndPicker(t *testing.T) {
 	}
 	require.Equal(t, "acme/subagent", get(d, []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}).Data)
 	require.False(t, get(d, []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"}).Exists)
-	require.Equal(t, "acme/background", get(d, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data)
+	require.Equal(t, "deepseek-ai/DeepSeek-V4.1-Flash", get(d, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data)
 	require.False(t, get(d, []string{"env", "ANTHROPIC_MODEL"}).Exists)
 	require.True(t, get(d, []string{"modelPicker", "replaceBuiltInOptions"}).Data.(bool))
 	b := string(mustJSON(t, d))
