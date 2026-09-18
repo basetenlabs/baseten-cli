@@ -41,6 +41,7 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 	b, readErr := os.ReadFile(path)
 	h.Require.NoError(readErr)
 	h.Require.Contains(string(b), "created-routes-secret")
+	h.Require.Contains(string(b), `"replaceBuiltInOptions": true`)
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
 	h.Require.Contains(h.Stdout.String(), `"changed": false`)
 	h.Require.NoError(h.Execute("harness", "status", "--config", path, "--output", "json"))
