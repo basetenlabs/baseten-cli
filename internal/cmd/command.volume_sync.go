@@ -366,7 +366,7 @@ func volumeSyncRequest(
 	if err != nil {
 		return fmt.Errorf("reading response: %w", err)
 	}
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return &managementapi.ResponseError{StatusCode: resp.StatusCode, Body: string(responseBody)}
 	}
 	if err := json.Unmarshal(responseBody, out); err != nil {

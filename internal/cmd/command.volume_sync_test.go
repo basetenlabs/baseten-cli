@@ -34,7 +34,7 @@ func volumeSyncPayload(id, status string) map[string]any {
 func Test_Volume_Sync_Start_BuildsSourceRequest(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/volumes/syncs", 200, volumeSyncPayload("vsync-1", "PENDING"))
+	m.SetRoute("POST", "/v1/volumes/syncs", http.StatusAccepted, volumeSyncPayload("vsync-1", "PENDING"))
 
 	err := h.Execute("volume", "sync", "start",
 		"--source", "hf://org/model",

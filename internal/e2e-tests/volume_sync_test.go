@@ -43,7 +43,12 @@ func TestE2EVolumeSync(t *testing.T) {
 	baseRef := "bdn:" + e2eVolumeNamespace + "/sync-" + suffix
 	destination := baseRef + ":e2e"
 	t.Cleanup(func() {
-		_, _, _ = cliCtx(t, t.Context(), "volume", "rm", "--recursive", "--yes", baseRef)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, errOut, err := cliCtx(t, ctx,
+			"volume", "rm", "--recursive", "--yes", baseRef); err != nil {
+			t.Logf("cleanup delete of volume %s failed: %v\nstderr: %s", baseRef, err, errOut)
+		}
 	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
