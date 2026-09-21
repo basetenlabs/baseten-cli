@@ -10,6 +10,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/harness"
 	"github.com/basetenlabs/baseten-cli/internal/safefile"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func init() {
@@ -385,26 +386,33 @@ func harnessRouteTable(ctx *CommandContext, title string, routes []harness.Route
 }
 
 func harnessSetupSummary(ctx *CommandContext, credential *harnessAuth, routes []harness.Route, detections []harness.Detection, selections []harness.Selection, plans []*harness.Plan) {
-	ctx.Outputf("Team: %s\n\n", credential.scope.TeamID)
+	renderer := lipgloss.NewRenderer(ctx.Stdout)
+	accent := renderer.NewStyle().Inherit(inlineCodeStyle)
+	heading := renderer.NewStyle().Bold(true)
+	team := credential.teamName
+	if team == "" {
+		team = credential.scope.TeamID
+	}
+	ctx.Outputf("Team: %s\n\n", accent.Render(team))
 	harnessRouteTable(ctx, "Available routes", routes)
 	keyAction := "Reuse saved key"
 	if credential.saved == "" {
 		keyAction = "Create on confirmation"
 	}
 	for i, d := range detections {
-		ctx.Outputf("\n%s\n  Config         %s\n  Default route  %s\n", d.Name, harnessDisplayPath(d.Path), selections[i].Primary)
+		ctx.Outputf("\n%s\n  Config         %s\n  Default route  %s\n", heading.Render(d.Name), harnessDisplayPath(d.Path), accent.Render(selections[i].Primary))
 		if small := harness.SmallTaskModel(d.Name, selections[i]); small != "" {
-			ctx.Outputf("  %s  %s\n", harnessSmallTaskLabel(d.Name), small)
+			ctx.Outputf("  %s  %s\n", harnessSmallTaskLabel(d.Name), accent.Render(small))
 		}
 		if selections[i].Subagent != "" {
-			ctx.Outputf("  Subagents      %s\n", selections[i].Subagent)
+			ctx.Outputf("  Subagents      %s\n", accent.Render(selections[i].Subagent))
 		}
 		if d.Name == "claude-code" {
 			fallback := selections[i].Fallback
 			if fallback == "" {
 				fallback = selections[i].Primary
 			}
-			ctx.Outputf("  Fallback route %s\n", fallback)
+			ctx.Outputf("  Fallback route %s\n", accent.Render(fallback))
 		}
 		ctx.Outputf("  Routes API key %s\n", keyAction)
 		changed, replaced := false, false
@@ -423,7 +431,7 @@ func harnessSetupSummary(ctx *CommandContext, credential *harnessAuth, routes []
 		if changed {
 			result = "Changes ready to apply"
 		}
-		ctx.Outputf("  Result         %s\n", result)
+		ctx.Outputf("  Result         %s\n", accent.Render(result))
 		if replaced {
 			ctx.OutputLine("  Existing integration settings will be replaced. Teardown restores settings from the first setup.")
 		}

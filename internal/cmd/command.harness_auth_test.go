@@ -279,3 +279,26 @@ func Test_Harness_Setup_TeamSwitchReusesPreviousKey(t *testing.T) {
 		h.Require.Equal("secret-"+team, key)
 	}
 }
+
+func Test_Harness_Setup_SummaryTeamName(t *testing.T) {
+	for _, team := range []string{"", "team-a", "Engineering"} {
+		t.Run(team, func(t *testing.T) {
+			h, api := productionHarness(t)
+			api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []map[string]string{{"id": "team-a", "name": "Engineering"}}})
+			args := []string{"--dry-run"}
+			if team != "" {
+				args = append(args, "--team", team)
+			}
+			h.Require.NoError(executeHarnessSetup(t, h, args...))
+			h.Require.Contains(h.Stdout.String(), "Team: Engineering")
+			h.Require.NotContains(h.Stdout.String(), "\x1b[")
+			lookups := 0
+			for _, call := range api.Calls() {
+				if call.Method == "GET" && call.Path == "/v1/teams" {
+					lookups++
+				}
+			}
+			h.Require.Equal(1, lookups)
+		})
+	}
+}
