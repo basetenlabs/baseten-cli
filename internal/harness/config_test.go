@@ -323,6 +323,78 @@ func TestConfirmedRefreshPreservesEditedPickerWithoutChangingRestorePoint(t *tes
 	require.True(t, os.IsNotExist(err)) // No settings file existed before the first setup.
 }
 
+func TestClaudeRefreshPreservesUnmanagedMatchingArrays(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	initial := []Route{{Name: "acme/primary", DisplayName: "Original label"}}
+	originalRow := map[string]any{"model": "acme/primary", "label": "Original label"}
+	save(t, path, map[string]any{
+		"modelPicker":     map[string]any{"options": []any{originalRow}},
+		"availableModels": []any{"acme/primary", defaultSmallTaskModel},
+	})
+	require.NoError(t, setup(t, path, initial, false).Apply())
+	_, _, _, journal, err := Read(path)
+	require.NoError(t, err)
+	for _, setting := range journal.Settings {
+		require.NotEqual(t, "modelPicker.options", pathKey(setting.Path))
+		require.NotEqual(t, "availableModels", pathKey(setting.Path))
+	}
+	initial[0].DisplayName = "Renamed route"
+	require.NoError(t, setup(t, path, initial, false).Apply())
+	data := load(t, path)
+	require.Equal(t, []any{originalRow}, get(data, []string{"modelPicker", "options"}).Data)
+	require.Equal(t, []any{"acme/primary", defaultSmallTaskModel}, get(data, []string{"availableModels"}).Data)
+}
+
+func TestClaudeRefreshRemovesOldRoutesAndPreservesUserEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	originalRow := map[string]any{"model": "acme/background", "label": "My background", "description": "Keep this"}
+	original := map[string]any{
+		"modelPicker":     map[string]any{"options": []any{originalRow}},
+		"availableModels": []any{"acme/background"},
+	}
+	save(t, path, original)
+	require.NoError(t, setup(t, path, fixture(t), false).Apply())
+	data := load(t, path)
+	customRow := map[string]any{"model": "user/custom", "label": "Added later"}
+	rows := get(data, []string{"modelPicker", "options"}).Data.([]any)
+	require.NoError(t, put(data, []string{"modelPicker", "options"}, Value{Exists: true, Data: append(rows, customRow)}))
+	allowed := get(data, []string{"availableModels"}).Data.([]any)
+	require.NoError(t, put(data, []string{"availableModels"}, Value{Exists: true, Data: append(allowed, "user/custom")}))
+	save(t, path, data)
+
+	routes := []Route{
+		{Name: "acme/primary", DisplayName: "Renamed"},
+		{Name: "acme/new", DisplayName: "New"},
+	}
+	// Simulate an interrupted refresh after its journal is saved, while the
+	// config still contains the old routes and the user's additions.
+	pending := setup(t, path, routes, true)
+	journal, err := encode(pending.journal)
+	require.NoError(t, err)
+	require.NoError(t, pending.journalSnapshot.Write(journal))
+	for i := 0; i < 2; i++ {
+		plan := setup(t, path, routes, true)
+		if i > 0 {
+			require.False(t, plan.Changed, "a second refresh must preserve later user entries")
+		}
+		require.NoError(t, plan.Apply())
+		data = load(t, path)
+		require.Equal(t, []any{
+			originalRow,
+			customRow,
+			map[string]any{"model": "acme/primary", "label": "Renamed"},
+			map[string]any{"model": "acme/new", "label": "New"},
+		}, get(data, []string{"modelPicker", "options"}).Data)
+		require.Equal(t, []any{
+			"acme/background", "user/custom", "acme/primary", "acme/new", defaultSmallTaskModel,
+		}, get(data, []string{"availableModels"}).Data)
+	}
+	teardown, err := PrepareTeardown(path)
+	require.NoError(t, err)
+	require.NoError(t, teardown.Apply())
+	require.Equal(t, original, load(t, path), "the first setup remains the restore point")
+}
+
 func TestSetupRepairsPermissionsWithoutContentChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	require.NoError(t, setup(t, path, fixture(t), false).Apply())

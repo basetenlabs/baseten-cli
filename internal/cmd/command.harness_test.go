@@ -305,7 +305,7 @@ func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {
 				if name == "codex" {
 					filename = "config.toml"
 				}
-				path := filepath.Join(t.TempDir(), filename)
+				path := filepath.Join(t.TempDir(), "user's config $(printf expanded)", filename)
 				args := []string{"harness", "setup", "--harness", name, "--team", "team-a", "--config", path, "--yes"}
 				expected := "acme/z-first"
 				if override != "" {
@@ -327,6 +327,24 @@ func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {
 				}
 				h.Require.Equal(expected, config["model"])
 				setupOutput := h.Stdout.String()
+				assertFollowup := func(output, prefix, action string) {
+					t.Helper()
+					var command string
+					for _, line := range strings.Split(output, "\n") {
+						if strings.HasPrefix(line, prefix) {
+							command = strings.TrimPrefix(line, prefix)
+							command = strings.TrimSuffix(command, " (add --team <team> if needed), then restart the harness.")
+							break
+						}
+					}
+					h.Require.NotEmpty(command)
+					// Parse the suggested command without invoking Baseten. Shell expansion
+					// must preserve spaces, apostrophes, and literal command substitutions.
+					parsed, err := exec.Command("sh", "-c", "set -- "+command+"; printf '%s\\0' \"$@\"").Output()
+					h.Require.NoError(err)
+					h.Require.Equal([]string{"baseten", "harness", action, "--harness", name, "--config", path}, strings.Split(strings.TrimSuffix(string(parsed), "\x00"), "\x00"))
+				}
+				assertFollowup(setupOutput, "Restore settings: ", "teardown")
 				h.Require.Equal(1, strings.Count(setupOutput, "Available routes: 2"))
 				h.Require.Equal(1, strings.Count(setupOutput, "Configuration saved."))
 				for _, value := range []string{"NAME", "DISPLAY NAME", "acme/z-first", "First", "acme/second", "Second"} {
@@ -337,6 +355,7 @@ func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {
 				calls := len(api.Calls())
 				h.Require.NoError(h.Execute("harness", "status", "--harness", name, "--config", path))
 				h.Require.Equal(calls, len(api.Calls()))
+				assertFollowup(h.Stdout.String(), "Refresh: ", "setup")
 				for _, value := range []string{"Configured routes: 2", "acme/z-first", "First", "acme/second", "Second", "Local configuration only", "Refresh: baseten harness setup --harness " + name} {
 					h.Require.Contains(h.Stdout.String(), value)
 				}

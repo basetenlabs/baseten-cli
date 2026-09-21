@@ -53,7 +53,13 @@ type Plan struct {
 func JournalPath(path string) string { return path + ".baseten-harness.json" }
 func pathKey(p []string) string      { return strings.Join(p, ".") }
 func desired(p []string, v any) Setting {
-	return Setting{Path: p, Installed: Value{Exists: true, Data: v}}
+	return Setting{
+		Path: p,
+		Installed: Value{
+			Exists: true,
+			Data:   v,
+		},
+	}
 }
 func same(a, b Value) bool {
 	aa, _ := json.Marshal(a)
@@ -69,7 +75,10 @@ func get(d map[string]any, p []string) Value {
 		d = child
 	}
 	v, ok := d[p[len(p)-1]]
-	return Value{Exists: ok, Data: v}
+	return Value{
+		Exists: ok,
+		Data:   v,
+	}
 }
 func put(d map[string]any, p []string, v Value) error {
 	if len(p) == 1 {
@@ -176,7 +185,13 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 	if err != nil {
 		return nil, err
 	}
-	j := &Journal{Version: 1, Path: s.Target, Original: s.Data, Existed: s.Info != nil, Pending: true}
+	j := &Journal{
+		Version:  1,
+		Path:     s.Target,
+		Original: s.Data,
+		Existed:  s.Info != nil,
+		Pending:  true,
+	}
 	for _, route := range routes {
 		j.Routes = append(j.Routes, route.Name)
 	}
@@ -188,7 +203,13 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 	if err != nil {
 		return nil, err
 	}
-	p := &Plan{Path: s.Path, Managed: true, snapshot: s, journalSnapshot: js, journal: j}
+	p := &Plan{
+		Path:            s.Path,
+		Managed:         true,
+		snapshot:        s,
+		journalSnapshot: js,
+		journal:         j,
+	}
 	managed := map[string]bool{}
 	for _, v := range settings {
 		managed[pathKey(v.Path)] = true
@@ -250,7 +271,13 @@ func PrepareTeardown(path string) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Plan{Path: s.Path, snapshot: s, journalSnapshot: js, teardown: true, data: s.Data}
+	p := &Plan{
+		Path:            s.Path,
+		snapshot:        s,
+		journalSnapshot: js,
+		teardown:        true,
+		data:            s.Data,
+	}
 	if j == nil {
 		return p, nil
 	}
@@ -379,7 +406,11 @@ type Status struct {
 }
 
 func Inspect(d Detection) (Status, error) {
-	r := Status{Detection: d, State: "not-configured", Note: "Local configuration only; no API authorization or inference was checked. Rerun setup to refresh routes, then restart the harness."}
+	r := Status{
+		Detection: d,
+		State:     "not-configured",
+		Note:      "Local configuration only; no API authorization or inference was checked. Rerun setup to refresh routes, then restart the harness.",
+	}
 	_, data, _, j, err := Read(d.Path)
 	if err != nil {
 		return r, err
@@ -505,7 +536,10 @@ func Inspect(d Detection) (Status, error) {
 		}
 	}
 	for _, name := range r.Routes {
-		r.RouteDetails = append(r.RouteDetails, Route{Name: name, DisplayName: labels[name]})
+		r.RouteDetails = append(r.RouteDetails, Route{
+			Name:        name,
+			DisplayName: labels[name],
+		})
 	}
 
 	return r, nil

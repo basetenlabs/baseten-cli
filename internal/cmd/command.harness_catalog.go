@@ -50,7 +50,10 @@ func harnessCatalog(managementURL string, listed []managementapi.Route) ([]harne
 	}
 	routes := make([]harness.Route, 0, len(listed))
 	for _, route := range listed {
-		routes = append(routes, harness.Route{Name: route.Name, DisplayName: route.DisplayName})
+		routes = append(routes, harness.Route{
+			Name:        route.Name,
+			DisplayName: route.DisplayName,
+		})
 	}
 	routes, err := harness.ValidateCatalog(routes)
 	return routes, endpoint, err

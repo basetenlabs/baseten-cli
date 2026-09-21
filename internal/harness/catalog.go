@@ -38,7 +38,12 @@ func ValidateCatalog(routes []Route) ([]Route, error) {
 // TODO: Make the Claude Haiku and OpenCode small-task default server-driven.
 const defaultSmallTaskModel = "deepseek-ai/DeepSeek-V4.1-Flash"
 
-type Selection struct{ Primary, Background, Subagent, Fallback string }
+type Selection struct {
+	Primary    string
+	Background string
+	Subagent   string
+	Fallback   string
+}
 
 func (s Selection) Resolve(routes []Route) (Selection, error) {
 	if s.Primary == "" {
