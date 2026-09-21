@@ -32,7 +32,8 @@ func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags
 	if err != nil {
 		return err
 	}
-	sync, err := cl.API().PostVolumesSyncs(ctx, managementapi.CreateVolumeSyncRequest{
+	api := cl.API()
+	sync, err := api.PostVolumesSyncs(ctx, managementapi.CreateVolumeSyncRequest{
 		Source:      source,
 		Destination: managementapi.VolumeSyncDestination{Ref: destination},
 	})
@@ -41,7 +42,7 @@ func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags
 	}
 
 	if flags.Wait {
-		waited, err := waitVolumeSync(ctx, *sync)
+		waited, err := waitVolumeSync(ctx, api, *sync)
 		if err != nil {
 			return err
 		}
@@ -55,7 +56,11 @@ func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags
 }
 
 func commandVolumeSyncDescribe(ctx *CommandContext, flags *cmd.VolumeSyncIDFlags) error {
-	sync, err := getVolumeSync(ctx, flags.SyncID)
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	sync, err := getVolumeSync(ctx, cl.API(), flags.SyncID)
 	if err != nil {
 		return fmt.Errorf("describing volume sync %s: %w", flags.SyncID, err)
 	}
@@ -77,8 +82,7 @@ func commandVolumeSyncCancel(ctx *CommandContext, flags *cmd.VolumeSyncIDFlags) 
 }
 
 func commandVolumeSyncList(ctx *CommandContext, flags *cmd.VolumeSyncListFlags) error {
-	limit := 100
-	params := managementapi.GetV1VolumesSyncsParams{Limit: &limit}
+	params := managementapi.GetV1VolumesSyncsParams{}
 	if flags.Destination != "" {
 		destination, err := volumeSyncDestination(flags.Destination)
 		if err != nil {
@@ -250,19 +254,19 @@ func volumeSyncDestination(raw string) (string, error) {
 	return ref.String(), nil
 }
 
-func getVolumeSync(ctx *CommandContext, syncID string) (managementapi.VolumeSync, error) {
-	cl, err := ctx.NewManagementClient()
-	if err != nil {
-		return managementapi.VolumeSync{}, err
-	}
-	sync, err := cl.API().GetVolumesSyncsVolumeSyncId(ctx, syncID)
+func getVolumeSync(
+	ctx *CommandContext, api *managementapi.Client, syncID string,
+) (managementapi.VolumeSync, error) {
+	sync, err := api.GetVolumesSyncsVolumeSyncId(ctx, syncID)
 	if err != nil {
 		return managementapi.VolumeSync{}, err
 	}
 	return *sync, nil
 }
 
-func waitVolumeSync(ctx *CommandContext, sync managementapi.VolumeSync) (managementapi.VolumeSync, error) {
+func waitVolumeSync(
+	ctx *CommandContext, api *managementapi.Client, sync managementapi.VolumeSync,
+) (managementapi.VolumeSync, error) {
 	var lastStatus managementapi.VolumeSyncStatus
 	for {
 		if sync.Status != lastStatus {
@@ -285,7 +289,7 @@ func waitVolumeSync(ctx *CommandContext, sync managementapi.VolumeSync) (managem
 		}
 		syncID := sync.SyncId
 		var err error
-		sync, err = getVolumeSync(ctx, syncID)
+		sync, err = getVolumeSync(ctx, api, syncID)
 		if err != nil {
 			return managementapi.VolumeSync{}, fmt.Errorf("waiting for volume sync %s: %w", syncID, err)
 		}

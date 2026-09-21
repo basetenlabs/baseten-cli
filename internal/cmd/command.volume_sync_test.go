@@ -223,7 +223,7 @@ func Test_Volume_Sync_ListFollowsPagination(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), `"sync_id": "vsync-6"`)
 	h.Require.Contains(h.Stdout.String(), `"sync_id": "vsync-7"`)
 	h.Require.Len(m.Calls(), 2)
-	h.Require.Equal("100", m.Calls()[0].Query().Get("limit"))
+	h.Require.Empty(m.Calls()[0].Query().Get("limit"))
 	h.Require.Equal("bdn:weights/model:prod", m.Calls()[0].Query().Get("ref"))
 	h.Require.Equal("next", m.Calls()[1].Query().Get("cursor"))
 }
