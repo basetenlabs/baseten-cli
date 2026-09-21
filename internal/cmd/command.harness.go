@@ -113,7 +113,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		var plans []*harness.Plan
 		occupied := map[string]bool{}
 		for i, d := range detections {
-			current, err := harness.PrepareHarness(d.Name, d.Path, routes, selections[i], endpoint, token, f.ReplacePicker && d.Name == "claude-code", true)
+			current, err := harness.PrepareHarness(d.Name, d.Path, routes, selections[i], endpoint, token, d.Name == "claude-code", true)
 			if err != nil {
 				return nil, cmd.NewErrUsage(fmt.Errorf("%s: %w", d.Name, err))
 			}

@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='baseten-harness-probe-') as tmp:
  env={k:v for k,v in os.environ.items() if k in ['PATH','TMPDIR','LANG']}
  env.update(HOME=str(p/'home'),CLAUDE_CONFIG_DIR=str(p/'config'),ANTHROPIC_BASE_URL=f'http://127.0.0.1:{server.server_port}',ANTHROPIC_AUTH_TOKEN='local-dummy',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1',DISABLE_AUTOUPDATER='1',CLAUDE_CODE_MAX_RETRIES='0')
  f=p/'settings.json'
- setup=[cli,'harness','setup','--harness','claude-code','--config',str(f),'--catalog-fixture',catalog,'--fixture-endpoint',f'http://127.0.0.1:{server.server_port}','--model','acme/primary','--background-model','acme/background','--subagent-model','acme/subagent','--fallback-model','acme/fallback','--replace-picker','--yes','--output','json']
+ setup=[cli,'harness','setup','--harness','claude-code','--config',str(f),'--catalog-fixture',catalog,'--fixture-endpoint',f'http://127.0.0.1:{server.server_port}','--model','acme/primary','--background-model','acme/background','--subagent-model','acme/subagent','--fallback-model','acme/fallback','--yes','--output','json']
  for repeat in range(2):
   applied=subprocess.run(setup,env=env,cwd=tmp,capture_output=True,text=True,check=True)
   result=json.loads(applied.stdout)

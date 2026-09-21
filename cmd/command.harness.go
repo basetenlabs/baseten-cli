@@ -161,7 +161,6 @@ type HarnessSetupFlags struct {
 	BackgroundModel string `flag:"background-model" desc:"Background Route for OpenCode (defaults to initial Route)"`
 	SubagentModel   string `flag:"subagent-model" desc:"Optional subagent default Route (Claude/OpenCode)"`
 	FallbackModel   string `flag:"fallback-model" desc:"Fallback Route for Claude Code (defaults to initial Route)"`
-	ReplacePicker   bool   `flag:"replace-picker" desc:"Hide built-in picker choices; preserve existing custom entries" default:"true"`
 	DryRun          bool   `flag:"dry-run" desc:"Preview setting names without writing files"`
 	Yes             bool   `flag:"yes" desc:"Apply the displayed configuration plan without prompting"`
 }
