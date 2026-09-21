@@ -151,7 +151,7 @@ func (s *volumeSyncLifecycle) Start(t *testing.T) {
 	startOut := mustCLICtx(t, ctx,
 		"volume", "sync", "start",
 		"--source", e2eVolumeSyncSource,
-		"--destination", s.destination,
+		"--dest", s.destination,
 		"--include", "config.json",
 		"--exclude", "*.md",
 		"--wait",
@@ -189,7 +189,7 @@ func (s *volumeSyncLifecycle) Describe(t *testing.T) {
 func (s *volumeSyncLifecycle) List(t *testing.T) {
 	listOut := mustCLI(t,
 		"volume", "sync", "list",
-		"--destination", s.destination,
+		"--dest", s.destination,
 		"--output", "json")
 	var listed struct {
 		Items []e2eVolumeSync `json:"items"`

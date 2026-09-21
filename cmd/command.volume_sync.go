@@ -13,7 +13,7 @@ var commandVolumeSync = Command{
 			Name:    "start",
 			Summary: "Start a remote volume sync (PRE-RELEASE)",
 			Description: volumePreRelease +
-				"Starts one durable asynchronous transfer from --source into --destination. The source URI " +
+				"Starts one durable asynchronous transfer from --source into --dest. The source URI " +
 				"scheme selects the provider: hf://, s3://, gs://, azure://, r2://, cw://, or bt://. " +
 				"Repeat --include and --exclude to filter source-relative paths.\n\n" +
 				"Remote credentials must already be stored as a Baseten secret or made available through " +
@@ -32,7 +32,7 @@ var commandVolumeSync = Command{
 						CommandLines: []string{
 							"baseten volume sync start",
 							"--source hf://<organization>/<repository>",
-							"--destination bdn:<namespace>/<volume>:<tag>",
+							"--dest bdn:<namespace>/<volume>:<tag>",
 						},
 					},
 					{
@@ -40,7 +40,7 @@ var commandVolumeSync = Command{
 						CommandLines: []string{
 							"baseten volume sync start",
 							"--source s3://<bucket>/<prefix>",
-							"--destination bdn:<namespace>/<volume>:<tag>",
+							"--dest bdn:<namespace>/<volume>:<tag>",
 							"--auth-aws-assume-role-arn <role-arn>",
 							"--auth-aws-assume-role-region <region>",
 							"--wait",
@@ -52,7 +52,7 @@ var commandVolumeSync = Command{
 					CommandLines: []string{
 						"baseten volume sync start",
 						"--source hf://<organization>/<repository>",
-						"--destination bdn:<namespace>/<volume>",
+						"--dest bdn:<namespace>/<volume>",
 						"--jq '.sync_id'",
 					},
 				},
@@ -81,7 +81,7 @@ var commandVolumeSync = Command{
 			Name:    "list",
 			Summary: "List remote volume syncs (PRE-RELEASE)",
 			Description: volumePreRelease +
-				"Lists every sync visible in the active workspace, newest first. Pass --destination to " +
+				"Lists every sync visible in the active workspace, newest first. Pass --dest to " +
 				"match one exact destination ref. The CLI follows every server page.",
 			Flags: VolumeSyncListFlags{},
 			Output: &CommandOutput[VolumeSyncList]{
@@ -94,7 +94,7 @@ var commandVolumeSync = Command{
 					},
 					{
 						Description: "List syncs for one exact destination.",
-						Command:     "baseten volume sync list --destination bdn:<namespace>/<volume>:<tag>",
+						Command:     "baseten volume sync list --dest bdn:<namespace>/<volume>:<tag>",
 					},
 				},
 				JQExample: CommandExample{
@@ -130,7 +130,7 @@ type VolumeSyncStartFlags struct {
 	CommandFlags
 
 	Source      string   `flag:"source" desc:"Remote source URI. Supported schemes: hf://, s3://, gs://, azure://, r2://, cw://, and bt://." required:"true"`
-	Destination string   `flag:"destination" desc:"Destination ref as bdn:<namespace>/<volume>, with an optional :<tag>." required:"true"`
+	Destination string   `flag:"dest" desc:"Destination ref as bdn:<namespace>/<volume>, with an optional :<tag>." required:"true"`
 	Include     []string `flag:"include" desc:"Glob selecting source-relative files to include. May be repeated."`
 	Exclude     []string `flag:"exclude" desc:"Glob selecting source-relative files to exclude. May be repeated."`
 
@@ -150,7 +150,7 @@ type VolumeSyncIDFlags struct {
 type VolumeSyncListFlags struct {
 	CommandFlags
 
-	Destination string `flag:"destination" desc:"Only return syncs whose destination exactly matches this ref."`
+	Destination string `flag:"dest" desc:"Only return syncs whose destination exactly matches this ref."`
 }
 
 type VolumeSyncList struct {

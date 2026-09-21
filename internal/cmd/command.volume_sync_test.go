@@ -38,7 +38,7 @@ func Test_Volume_Sync_Start_BuildsSourceRequest(t *testing.T) {
 
 	err := h.Execute("volume", "sync", "start",
 		"--source", "hf://org/model",
-		"--destination", "bdn:weights/model:prod",
+		"--dest", "bdn:weights/model:prod",
 		"--include", "*.safetensors",
 		"--include", "config.json",
 		"--exclude", "*.md",
@@ -67,7 +67,7 @@ func Test_Volume_Sync_Start_InfersAWSAssumeRole(t *testing.T) {
 
 	err := h.Execute("volume", "sync", "start",
 		"--source", "s3://bucket/models",
-		"--destination", "bdn:weights/model",
+		"--dest", "bdn:weights/model",
 		"--auth-aws-assume-role-arn", "arn:aws:iam::123:role/sync",
 		"--auth-aws-assume-role-region", "us-west-2")
 	h.Require.NoError(err)
@@ -116,7 +116,7 @@ func Test_Volume_Sync_Start_ValidatesAuthenticationGroups(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			args := []string{"volume", "sync", "start", "--source", "hf://org/model",
-				"--destination", "bdn:weights/model"}
+				"--dest", "bdn:weights/model"}
 			args = append(args, tc.args...)
 			err := h.Execute(args...)
 			h.Require.ErrorContains(err, tc.want)
@@ -147,7 +147,7 @@ func Test_Volume_Sync_Start_WaitPollsToReady(t *testing.T) {
 	})
 
 	err := h.Execute("volume", "sync", "start", "--source", "hf://org/model",
-		"--destination", "bdn:weights/model:prod", "--wait")
+		"--dest", "bdn:weights/model:prod", "--wait")
 	h.Require.NoError(err)
 	h.Require.Equal(2, gets)
 	h.Require.Contains(h.Stderr.String(), "Status: PENDING")
@@ -167,7 +167,7 @@ func Test_Volume_Sync_Start_WaitFailsWithFinalJSONOnly(t *testing.T) {
 	m.SetRoute("GET", "/v1/volumes/syncs/vsync-4", 200, payload)
 
 	err := h.Execute("volume", "sync", "start", "--source", "hf://org/model",
-		"--destination", "bdn:weights/model:prod", "--wait", "--output", "json")
+		"--dest", "bdn:weights/model:prod", "--wait", "--output", "json")
 	h.Require.ErrorContains(err, "Source authentication failed")
 	h.Require.Contains(h.Stdout.String(), `"status": "FAILED"`)
 	h.Require.NotContains(h.Stdout.String(), `"exit_code"`)
@@ -191,6 +191,14 @@ func Test_Volume_Sync_Describe_RejectsOldSyncIDFlag(t *testing.T) {
 	h.Require.ErrorContains(err, "unknown flag: --sync-id")
 }
 
+func Test_Volume_Sync_Start_RejectsOldDestinationFlag(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("volume", "sync", "start",
+		"--source", "hf://org/model",
+		"--destination", "bdn:weights/model")
+	h.Require.ErrorContains(err, "unknown flag: --destination")
+}
+
 func Test_Volume_Sync_ListFollowsPagination(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
@@ -210,7 +218,7 @@ func Test_Volume_Sync_ListFollowsPagination(t *testing.T) {
 	})
 
 	err := h.Execute("volume", "sync", "list",
-		"--destination", "bdn:weights/model:prod", "--output", "json")
+		"--dest", "bdn:weights/model:prod", "--output", "json")
 	h.Require.NoError(err)
 	h.Require.Contains(h.Stdout.String(), `"sync_id": "vsync-6"`)
 	h.Require.Contains(h.Stdout.String(), `"sync_id": "vsync-7"`)
