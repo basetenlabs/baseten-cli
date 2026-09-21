@@ -13,19 +13,12 @@ var commandHarness = Command{
 			Name:    "setup",
 			Summary: "Set up harness authentication and configuration (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Configure one or more installed harnesses using a team's routes. Each harness uses the first returned route by default; --model overrides it. Setup " +
-				"shows installed versions and config paths, then previews changes before asking for " +
-				"confirmation. A sole available team is selected automatically. " +
-				"With multiple teams, pass --team with a team name or ID.\n\nExisting prompts, plugins, " +
-				"permissions, and unrelated settings are preserved. Existing integration settings may be replaced after " +
-				"confirmation; their original values are backed up for harness teardown.\n\nUse --dry-run to " +
-				"preview without creating a key or writing files. For scripts, pass --harness and " +
-				"--yes. Pass --team when multiple teams are available. A missing key for the selected " +
-				"team is created automatically. Saved keys for other teams are retained. Unlike route list, " +
-				"setup includes only the selected team's routes.\n\n" +
-				"Restart the harness after setup. Rerun setup to refresh available routes. " +
-				"Supported harnesses are Claude Code, Codex CLI, and OpenCode CLI on supported versions of " +
-				"macOS.",
+				"Configure compatible harnesses with your team's routes.\n\n" +
+				"Setup detects installed harnesses, previews changes, and creates or reuses a team-scoped " +
+				"routes API key. Existing settings are backed up before replacement.\n\n" +
+				"Pass --team if you belong to multiple teams. Each harness defaults to the first route; " +
+				"use --model to override it.\n\n" +
+				"Use --dry-run to preview or --yes to skip confirmation. Restart the harness after setup.",
 			Flags: HarnessSetupFlags{},
 			Output: &CommandOutput[HarnessPlanResult]{
 				TextDescription: "Set up harness authentication and configuration. Reports paths and setting names without credential values.",
