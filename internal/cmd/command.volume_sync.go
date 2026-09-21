@@ -1,16 +1,11 @@
 package cmd
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
-	publiccmd "github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -23,34 +18,7 @@ func init() {
 
 const volumeSyncPollInterval = 2 * time.Second
 
-type volumeSyncAWSAssumeRole struct {
-	RoleARN string `json:"role_arn"`
-	Region  string `json:"region"`
-}
-
-type volumeSyncSourceRequest struct {
-	Type           string                   `json:"type"`
-	URI            string                   `json:"uri"`
-	Include        []string                 `json:"include"`
-	Exclude        []string                 `json:"exclude"`
-	AuthSecretName string                   `json:"auth_secret_name,omitempty"`
-	AWSAssumeRole  *volumeSyncAWSAssumeRole `json:"aws_assume_role,omitempty"`
-}
-
-type volumeSyncCreateRequest struct {
-	Source      volumeSyncSourceRequest         `json:"source"`
-	Destination publiccmd.VolumeSyncDestination `json:"destination"`
-}
-
-type volumeSyncPage struct {
-	Items      []publiccmd.VolumeSync `json:"items"`
-	Pagination struct {
-		Cursor  *string `json:"cursor"`
-		HasMore bool    `json:"has_more"`
-	} `json:"pagination"`
-}
-
-func commandVolumeSyncStart(ctx *CommandContext, flags *publiccmd.VolumeSyncStartFlags) error {
+func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags) error {
 	source, err := volumeSyncSourceFromFlags(flags)
 	if err != nil {
 		return err
@@ -60,30 +28,33 @@ func commandVolumeSyncStart(ctx *CommandContext, flags *publiccmd.VolumeSyncStar
 		return err
 	}
 
-	var sync publiccmd.VolumeSync
-	err = volumeSyncRequest(ctx, http.MethodPost, "/v1/volumes/syncs", nil,
-		volumeSyncCreateRequest{
-			Source:      source,
-			Destination: publiccmd.VolumeSyncDestination{Ref: destination},
-		}, &sync)
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	sync, err := cl.API().PostVolumesSyncs(ctx, managementapi.CreateVolumeSyncRequest{
+		Source:      source,
+		Destination: managementapi.VolumeSyncDestination{Ref: destination},
+	})
 	if err != nil {
 		return fmt.Errorf("starting volume sync: %w", err)
 	}
 
 	if flags.Wait {
-		sync, err = waitVolumeSync(ctx, sync)
+		waited, err := waitVolumeSync(ctx, *sync)
 		if err != nil {
 			return err
 		}
+		sync = &waited
 	}
-	outputVolumeSync(ctx, sync)
+	outputVolumeSync(ctx, *sync)
 	if flags.Wait {
-		return volumeSyncTerminalError(ctx, sync)
+		return volumeSyncTerminalError(ctx, *sync)
 	}
 	return nil
 }
 
-func commandVolumeSyncDescribe(ctx *CommandContext, flags *publiccmd.VolumeSyncIDFlags) error {
+func commandVolumeSyncDescribe(ctx *CommandContext, flags *cmd.VolumeSyncIDFlags) error {
 	sync, err := getVolumeSync(ctx, flags.VolumeSyncID)
 	if err != nil {
 		return fmt.Errorf("describing volume sync %s: %w", flags.VolumeSyncID, err)
@@ -92,41 +63,49 @@ func commandVolumeSyncDescribe(ctx *CommandContext, flags *publiccmd.VolumeSyncI
 	return nil
 }
 
-func commandVolumeSyncCancel(ctx *CommandContext, flags *publiccmd.VolumeSyncIDFlags) error {
-	var sync publiccmd.VolumeSync
-	path := "/v1/volumes/syncs/" + url.PathEscape(flags.VolumeSyncID) + "/cancel"
-	if err := volumeSyncRequest(ctx, http.MethodPost, path, nil, nil, &sync); err != nil {
+func commandVolumeSyncCancel(ctx *CommandContext, flags *cmd.VolumeSyncIDFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	sync, err := cl.API().PostVolumesSyncsCancel(ctx, flags.VolumeSyncID)
+	if err != nil {
 		return fmt.Errorf("canceling volume sync %s: %w", flags.VolumeSyncID, err)
 	}
-	outputVolumeSync(ctx, sync)
+	outputVolumeSync(ctx, *sync)
 	return nil
 }
 
-func commandVolumeSyncList(ctx *CommandContext, flags *publiccmd.VolumeSyncListFlags) error {
-	query := url.Values{"limit": {"100"}}
+func commandVolumeSyncList(ctx *CommandContext, flags *cmd.VolumeSyncListFlags) error {
+	limit := 100
+	params := managementapi.GetV1VolumesSyncsParams{Limit: &limit}
 	if flags.Destination != "" {
 		destination, err := volumeSyncDestination(flags.Destination)
 		if err != nil {
 			return err
 		}
-		query.Set("ref", destination)
+		params.Ref = &destination
 	}
 
-	var items []publiccmd.VolumeSync
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	var items []managementapi.VolumeSync
 	for {
-		var page volumeSyncPage
-		if err := volumeSyncRequest(ctx, http.MethodGet, "/v1/volumes/syncs", query, nil, &page); err != nil {
+		page, err := cl.API().GetVolumesSyncs(ctx, params)
+		if err != nil {
 			return fmt.Errorf("listing volume syncs: %w", err)
 		}
 		items = append(items, page.Items...)
 		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
 			break
 		}
-		query.Set("cursor", *page.Pagination.Cursor)
+		params.Cursor = page.Pagination.Cursor
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(publiccmd.VolumeSyncList{Items: items})
+		ctx.OutputJSON(cmd.VolumeSyncList{Items: items})
 		return nil
 	}
 	if len(items) == 0 {
@@ -137,16 +116,16 @@ func commandVolumeSyncList(ctx *CommandContext, flags *publiccmd.VolumeSyncListF
 	for _, sync := range items {
 		size := "-"
 		if sync.TotalSizeBytes != nil {
-			size = formatBytes(*sync.TotalSizeBytes)
+			size = formatBytes(int64(*sync.TotalSizeBytes))
 		}
 		completed := "-"
 		if sync.CompletedAt != nil {
 			completed = sync.CompletedAt.UTC().Format(time.RFC3339)
 		}
 		rows = append(rows, []string{
-			sync.SyncID,
-			sync.Status,
-			sync.Source.URI,
+			sync.SyncId,
+			string(sync.Status),
+			volumeSyncSourceURI(sync.Source),
 			sync.Destination.Ref,
 			size,
 			sync.CreatedAt.UTC().Format(time.RFC3339),
@@ -161,7 +140,7 @@ func commandVolumeSyncList(ctx *CommandContext, flags *publiccmd.VolumeSyncListF
 	return nil
 }
 
-func volumeSyncSourceFromFlags(flags *publiccmd.VolumeSyncStartFlags) (volumeSyncSourceRequest, error) {
+func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.CreateVolumeSyncRequest_Source, error) {
 	uri := strings.TrimSpace(flags.Source)
 	sourceType := ""
 	switch {
@@ -180,7 +159,7 @@ func volumeSyncSourceFromFlags(flags *publiccmd.VolumeSyncStartFlags) (volumeSyn
 	case strings.HasPrefix(uri, "bt://"):
 		sourceType = "BASETEN_TRAINING"
 	default:
-		return volumeSyncSourceRequest{}, publiccmd.NewErrUsagef(
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"unsupported source %q: want hf://, s3://, gs://, azure://, r2://, cw://, or bt://", uri)
 	}
 
@@ -188,31 +167,68 @@ func volumeSyncSourceFromFlags(flags *publiccmd.VolumeSyncStartFlags) (volumeSyn
 	region := strings.TrimSpace(flags.AuthAWSAssumeRoleRegion)
 	secret := strings.TrimSpace(flags.AuthSecretName)
 	if (arn == "") != (region == "") {
-		return volumeSyncSourceRequest{}, publiccmd.NewErrUsagef(
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"--auth-aws-assume-role-arn and --auth-aws-assume-role-region must be provided together")
 	}
 	if secret != "" && arn != "" {
-		return volumeSyncSourceRequest{}, publiccmd.NewErrUsagef(
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"--auth-secret-name and --auth-aws-assume-role-* are mutually exclusive")
 	}
 	if arn != "" && sourceType != "S3" {
-		return volumeSyncSourceRequest{}, publiccmd.NewErrUsagef(
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"--auth-aws-assume-role-* is supported only for an s3:// source")
 	}
 	if secret != "" && sourceType == "BASETEN_TRAINING" {
-		return volumeSyncSourceRequest{}, publiccmd.NewErrUsagef(
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"a bt:// source does not accept authentication flags")
 	}
 
-	source := volumeSyncSourceRequest{
-		Type:           sourceType,
-		URI:            uri,
-		Include:        append([]string{}, flags.Include...),
-		Exclude:        append([]string{}, flags.Exclude...),
-		AuthSecretName: secret,
+	include := append([]string{}, flags.Include...)
+	exclude := append([]string{}, flags.Exclude...)
+	var authSecretName *string
+	if secret != "" {
+		authSecretName = &secret
 	}
-	if arn != "" {
-		source.AWSAssumeRole = &volumeSyncAWSAssumeRole{RoleARN: arn, Region: region}
+
+	var source managementapi.CreateVolumeSyncRequest_Source
+	var err error
+	switch sourceType {
+	case "HUGGING_FACE":
+		err = source.FromVolumeSyncSourceHuggingFace(managementapi.VolumeSyncSourceHuggingFace{
+			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
+		})
+	case "S3":
+		var assumeRole *managementapi.VolumeSyncAuthenticationAWSAssumeRole
+		if arn != "" {
+			assumeRole = &managementapi.VolumeSyncAuthenticationAWSAssumeRole{RoleArn: arn, Region: region}
+		}
+		err = source.FromVolumeSyncSourceS3(managementapi.VolumeSyncSourceS3{
+			Uri: uri, Include: &include, Exclude: &exclude,
+			AuthSecretName: authSecretName, AwsAssumeRole: assumeRole,
+		})
+	case "GCS":
+		err = source.FromVolumeSyncSourceGCS(managementapi.VolumeSyncSourceGCS{
+			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
+		})
+	case "AZURE":
+		err = source.FromVolumeSyncSourceAzure(managementapi.VolumeSyncSourceAzure{
+			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
+		})
+	case "R2":
+		err = source.FromVolumeSyncSourceR2(managementapi.VolumeSyncSourceR2{
+			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
+		})
+	case "COREWEAVE":
+		err = source.FromVolumeSyncSourceCoreWeave(managementapi.VolumeSyncSourceCoreWeave{
+			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
+		})
+	case "BASETEN_TRAINING":
+		err = source.FromVolumeSyncSourceBasetenTraining(managementapi.VolumeSyncSourceBasetenTraining{
+			Uri: uri, Include: &include, Exclude: &exclude,
+		})
+	}
+	if err != nil {
+		return managementapi.CreateVolumeSyncRequest_Source{}, fmt.Errorf("encoding volume sync source: %w", err)
 	}
 	return source, nil
 }
@@ -223,83 +239,90 @@ func volumeSyncDestination(raw string) (string, error) {
 		return "", err
 	}
 	if ref.Volume == "" {
-		return "", publiccmd.NewErrUsagef("destination %s names a namespace; want bdn:<namespace>/<volume>", ref)
+		return "", cmd.NewErrUsagef("destination %s names a namespace; want bdn:<namespace>/<volume>", ref)
 	}
 	if ref.Path != "" {
-		return "", publiccmd.NewErrUsagef("destination %s carries a path; want a volume or tag ref", ref)
+		return "", cmd.NewErrUsagef("destination %s carries a path; want a volume or tag ref", ref)
 	}
 	if ref.Digest != "" {
-		return "", publiccmd.NewErrUsagef("destination %s carries an immutable digest; want a volume or tag ref", ref)
+		return "", cmd.NewErrUsagef("destination %s carries an immutable digest; want a volume or tag ref", ref)
 	}
 	return ref.String(), nil
 }
 
-func getVolumeSync(ctx *CommandContext, syncID string) (publiccmd.VolumeSync, error) {
-	var sync publiccmd.VolumeSync
-	path := "/v1/volumes/syncs/" + url.PathEscape(syncID)
-	err := volumeSyncRequest(ctx, http.MethodGet, path, nil, nil, &sync)
-	return sync, err
+func getVolumeSync(ctx *CommandContext, syncID string) (managementapi.VolumeSync, error) {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return managementapi.VolumeSync{}, err
+	}
+	sync, err := cl.API().GetVolumesSyncsVolumeSyncId(ctx, syncID)
+	if err != nil {
+		return managementapi.VolumeSync{}, err
+	}
+	return *sync, nil
 }
 
-func waitVolumeSync(ctx *CommandContext, sync publiccmd.VolumeSync) (publiccmd.VolumeSync, error) {
-	lastStatus := ""
+func waitVolumeSync(ctx *CommandContext, sync managementapi.VolumeSync) (managementapi.VolumeSync, error) {
+	var lastStatus managementapi.VolumeSyncStatus
 	for {
 		if sync.Status != lastStatus {
 			ctx.Logf("Status: %s\n", sync.Status)
 			lastStatus = sync.Status
 		}
 		switch sync.Status {
-		case "READY", "FAILED", "CANCELED":
+		case managementapi.VolumeSyncStatus_READY,
+			managementapi.VolumeSyncStatus_FAILED,
+			managementapi.VolumeSyncStatus_CANCELED:
 			return sync, nil
-		case "PENDING", "SYNCING":
+		case managementapi.VolumeSyncStatus_PENDING, managementapi.VolumeSyncStatus_SYNCING:
 			// Keep polling.
 		default:
-			return publiccmd.VolumeSync{}, fmt.Errorf(
-				"volume sync %s returned unknown status %q", sync.SyncID, sync.Status)
+			return managementapi.VolumeSync{}, fmt.Errorf(
+				"volume sync %s returned unknown status %q", sync.SyncId, sync.Status)
 		}
 		if err := ctx.Sleep(volumeSyncPollInterval); err != nil {
-			return publiccmd.VolumeSync{}, err
+			return managementapi.VolumeSync{}, err
 		}
-		syncID := sync.SyncID
+		syncID := sync.SyncId
 		var err error
 		sync, err = getVolumeSync(ctx, syncID)
 		if err != nil {
-			return publiccmd.VolumeSync{}, fmt.Errorf("waiting for volume sync %s: %w", syncID, err)
+			return managementapi.VolumeSync{}, fmt.Errorf("waiting for volume sync %s: %w", syncID, err)
 		}
 	}
 }
 
-func volumeSyncTerminalError(ctx *CommandContext, sync publiccmd.VolumeSync) error {
+func volumeSyncTerminalError(ctx *CommandContext, sync managementapi.VolumeSync) error {
 	switch sync.Status {
-	case "FAILED":
+	case managementapi.VolumeSyncStatus_FAILED:
 		ctx.SuppressJSONError()
 		if sync.Error != nil && sync.Error.Message != "" {
-			return fmt.Errorf("volume sync %s failed: %s", sync.SyncID, sync.Error.Message)
+			return fmt.Errorf("volume sync %s failed: %s", sync.SyncId, sync.Error.Message)
 		}
-		return fmt.Errorf("volume sync %s failed", sync.SyncID)
-	case "CANCELED":
+		return fmt.Errorf("volume sync %s failed", sync.SyncId)
+	case managementapi.VolumeSyncStatus_CANCELED:
 		ctx.SuppressJSONError()
-		return fmt.Errorf("volume sync %s was canceled", sync.SyncID)
+		return fmt.Errorf("volume sync %s was canceled", sync.SyncId)
 	default:
 		return nil
 	}
 }
 
-func outputVolumeSync(ctx *CommandContext, sync publiccmd.VolumeSync) {
+func outputVolumeSync(ctx *CommandContext, sync managementapi.VolumeSync) {
 	if ctx.JSON {
 		ctx.OutputJSON(sync)
 		return
 	}
-	ctx.Outputf("ID:          %s\n", sync.SyncID)
+	ctx.Outputf("ID:          %s\n", sync.SyncId)
 	ctx.Outputf("Status:      %s\n", sync.Status)
-	ctx.Outputf("Source:      %s\n", sync.Source.URI)
+	ctx.Outputf("Source:      %s\n", volumeSyncSourceURI(sync.Source))
 	ctx.Outputf("Destination: %s\n", sync.Destination.Ref)
 	ctx.Outputf("Created:     %s\n", sync.CreatedAt.UTC().Format(time.RFC3339))
 	if sync.CompletedAt != nil {
 		ctx.Outputf("Completed:   %s\n", sync.CompletedAt.UTC().Format(time.RFC3339))
 	}
-	if sync.VolumeVersionID != nil {
-		ctx.Outputf("Version ID:  %s\n", *sync.VolumeVersionID)
+	if sync.VolumeVersionId != nil {
+		ctx.Outputf("Version ID:  %s\n", *sync.VolumeVersionId)
 	}
 	if sync.VersionRef != nil {
 		ctx.Outputf("Version ref: %s\n", *sync.VersionRef)
@@ -308,7 +331,7 @@ func outputVolumeSync(ctx *CommandContext, sync publiccmd.VolumeSync) {
 		ctx.Outputf("Digest:      %s\n", *sync.ContentDigest)
 	}
 	if sync.TotalSizeBytes != nil {
-		ctx.Outputf("Size:        %s\n", formatBytes(*sync.TotalSizeBytes))
+		ctx.Outputf("Size:        %s\n", formatBytes(int64(*sync.TotalSizeBytes)))
 	}
 	if sync.Error != nil {
 		ctx.Outputf("Error code:  %s\n", sync.Error.Code)
@@ -316,61 +339,27 @@ func outputVolumeSync(ctx *CommandContext, sync publiccmd.VolumeSync) {
 	}
 }
 
-// volumeSyncRequest uses the management client's configured base URL, auth
-// transport, and headers while the unstable endpoints are not yet in the
-// released generated client.
-func volumeSyncRequest(
-	ctx *CommandContext,
-	method, path string,
-	query url.Values,
-	body any,
-	out any,
-) error {
-	cl, err := ctx.NewManagementClient()
+func volumeSyncSourceURI(source managementapi.VolumeSync_Source) string {
+	value, err := source.ValueByDiscriminator()
 	if err != nil {
-		return err
+		return "<unrecognized source>"
 	}
-	api := cl.API()
-	requestURL := strings.TrimRight(api.BaseURL, "/") + path
-	if len(query) > 0 {
-		requestURL += "?" + query.Encode()
+	switch source := value.(type) {
+	case managementapi.VolumeSyncSourceHuggingFace:
+		return source.Uri
+	case managementapi.VolumeSyncSourceS3:
+		return source.Uri
+	case managementapi.VolumeSyncSourceGCS:
+		return source.Uri
+	case managementapi.VolumeSyncSourceAzure:
+		return source.Uri
+	case managementapi.VolumeSyncSourceR2:
+		return source.Uri
+	case managementapi.VolumeSyncSourceCoreWeave:
+		return source.Uri
+	case managementapi.VolumeSyncSourceBasetenTraining:
+		return source.Uri
+	default:
+		return "<unrecognized source>"
 	}
-
-	var reader io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("encoding request: %w", err)
-		}
-		reader = bytes.NewReader(encoded)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, requestURL, reader)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	for key, values := range api.Headers {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
-	}
-
-	resp, err := api.HTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return fmt.Errorf("reading response: %w", err)
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return &managementapi.ResponseError{StatusCode: resp.StatusCode, Body: string(responseBody)}
-	}
-	if err := json.Unmarshal(responseBody, out); err != nil {
-		return fmt.Errorf("decoding response: %w", err)
-	}
-	return nil
 }

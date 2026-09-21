@@ -1,16 +1,6 @@
 package cmd
 
-import "time"
-
-func init() {
-	for i := range Root.Children {
-		if Root.Children[i].Name == "volume" {
-			Root.Children[i].Children = append(Root.Children[i].Children, commandVolumeSync)
-			return
-		}
-	}
-	panic("volume command is not registered")
-}
+import "github.com/basetenlabs/baseten-go/client/managementapi"
 
 var commandVolumeSync = Command{
 	Name:    "sync",
@@ -33,7 +23,7 @@ var commandVolumeSync = Command{
 				"until it is READY, FAILED, or CANCELED. Progress is written to stderr and the final result " +
 				"to stdout.",
 			Flags: VolumeSyncStartFlags{},
-			Output: &CommandOutput[VolumeSync]{
+			Output: &CommandOutput[managementapi.VolumeSync]{
 				TextDescription: "One field per line describing the sync. With --wait, the result is the " +
 					"terminal state and a successful result includes its immutable version ref.",
 				Examples: []CommandExample{
@@ -75,7 +65,7 @@ var commandVolumeSync = Command{
 				"Retrieves the current state of one sync. A READY sync includes the immutable version ref " +
 				"produced by the job; a FAILED sync includes a stable error code and redacted message.",
 			Flags: VolumeSyncIDFlags{},
-			Output: &CommandOutput[VolumeSync]{
+			Output: &CommandOutput[managementapi.VolumeSync]{
 				TextDescription: "One field per line describing the sync and, when available, its result or error.",
 				Examples: []CommandExample{{
 					Description: "Inspect a sync.",
@@ -121,7 +111,7 @@ var commandVolumeSync = Command{
 				"terminal sync is returned unchanged, and an artifact already published by a READY sync " +
 				"is not removed.",
 			Flags: VolumeSyncIDFlags{},
-			Output: &CommandOutput[VolumeSync]{
+			Output: &CommandOutput[managementapi.VolumeSync]{
 				TextDescription: "One field per line describing the sync after the cancellation request.",
 				Examples: []CommandExample{{
 					Description: "Request cancellation of a sync.",
@@ -163,38 +153,6 @@ type VolumeSyncListFlags struct {
 	Destination string `flag:"destination" desc:"Only return syncs whose destination exactly matches this ref."`
 }
 
-// VolumeSync is the public state of one durable remote-to-BDN transfer.
-// Authentication configuration is intentionally absent from server responses.
-type VolumeSync struct {
-	SyncID          string                `json:"sync_id"`
-	Status          string                `json:"status"`
-	Source          VolumeSyncSource      `json:"source"`
-	Destination     VolumeSyncDestination `json:"destination"`
-	VolumeVersionID *string               `json:"volume_version_id"`
-	VersionRef      *string               `json:"version_ref"`
-	ContentDigest   *string               `json:"content_digest"`
-	TotalSizeBytes  *int64                `json:"total_size_bytes"`
-	CreatedAt       time.Time             `json:"created_at"`
-	CompletedAt     *time.Time            `json:"completed_at"`
-	Error           *VolumeSyncError      `json:"error"`
-}
-
-type VolumeSyncSource struct {
-	Type    string   `json:"type"`
-	URI     string   `json:"uri"`
-	Include []string `json:"include"`
-	Exclude []string `json:"exclude"`
-}
-
-type VolumeSyncDestination struct {
-	Ref string `json:"ref"`
-}
-
-type VolumeSyncError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
 type VolumeSyncList struct {
-	Items []VolumeSync `json:"items"`
+	Items []managementapi.VolumeSync `json:"items"`
 }

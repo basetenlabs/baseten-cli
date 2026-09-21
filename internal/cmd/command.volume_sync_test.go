@@ -34,7 +34,7 @@ func volumeSyncPayload(id, status string) map[string]any {
 func Test_Volume_Sync_Start_BuildsSourceRequest(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/volumes/syncs", http.StatusAccepted, volumeSyncPayload("vsync-1", "PENDING"))
+	m.SetRoute("POST", "/v1/volumes/syncs", http.StatusOK, volumeSyncPayload("vsync-1", "PENDING"))
 
 	err := h.Execute("volume", "sync", "start",
 		"--source", "hf://org/model",
@@ -131,6 +131,7 @@ func Test_Volume_Sync_Start_WaitPollsToReady(t *testing.T) {
 	m.SetRoute("POST", "/v1/volumes/syncs", 200, volumeSyncPayload("vsync-3", "PENDING"))
 	gets := 0
 	m.SetRouteFunc("GET", "/v1/volumes/syncs/vsync-3", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		gets++
 		status := "SYNCING"
 		payload := volumeSyncPayload("vsync-3", status)
@@ -194,6 +195,7 @@ func Test_Volume_Sync_ListFollowsPagination(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRouteFunc("GET", "/v1/volumes/syncs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		payload := map[string]any{
 			"items":      []any{volumeSyncPayload("vsync-6", "READY")},
 			"pagination": map[string]any{"has_more": true, "cursor": "next"},
