@@ -81,8 +81,8 @@ var commandHarness = Command{
 			Name:    "teardown",
 			Summary: "Restore settings owned by Baseten harness (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Restore settings changed by setup while preserving subsequent user edits. Conflicts are " +
-				"reported for manual resolution. Pass --harness to select which harness to restore.\n\nUse --dry-run to preview restoration or --yes to apply without confirmation. Saved " +
+				"Restore managed settings to their values before the first setup, including settings changed afterward. " +
+				"Unrelated settings are preserved. Pass --harness to select which harness to restore.\n\nUse --dry-run to preview restoration or --yes to apply without confirmation. Saved " +
 				"routes keys are retained and are not revoked. Teardown remains available after an upgrade or " +
 				"executable removal.",
 			Flags: HarnessTeardownFlags{},
@@ -112,12 +112,11 @@ var commandHarness = Command{
 }
 
 type HarnessPlanResult struct {
-	Replaced  []string `json:"replaced_settings,omitempty"`
-	Managed   bool     `json:"managed"`
-	Path      string   `json:"config"`
-	Keys      []string `json:"settings"`
-	Changed   bool     `json:"changed"`
-	Conflicts []string `json:"conflicts,omitempty"`
+	Replaced []string `json:"replaced_settings,omitempty"`
+	Managed  bool     `json:"managed"`
+	Path     string   `json:"config"`
+	Keys     []string `json:"settings"`
+	Changed  bool     `json:"changed"`
 }
 
 type HarnessPlansResult struct {

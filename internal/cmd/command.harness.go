@@ -35,10 +35,7 @@ func harnessPlanOutput(ctx *CommandContext, p *harness.Plan) {
 	ctx.Outputf("Config: %s\nSettings: %s\nChanged: %t\n", p.Path, strings.Join(p.Keys, ", "), p.Changed)
 	if len(p.Replaced) > 0 {
 		ctx.Outputf("Settings to replace: %s\n", strings.Join(p.Replaced, ", "))
-		ctx.OutputLine("Original settings are backed up when applied and can be restored with harness teardown.")
-	}
-	if len(p.Conflicts) > 0 {
-		ctx.Outputf("Preserved user edits: %s\n", strings.Join(p.Conflicts, ", "))
+		ctx.OutputLine("These managed settings changed after setup and will be restored to their original values.")
 	}
 }
 
@@ -280,16 +277,6 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	if ctx.JSON {
 		harnessPlansOutput(ctx, plans)
 	}
-	conflicts := []string{}
-	for _, p := range plans {
-		conflicts = append(conflicts, p.Conflicts...)
-	}
-	if len(conflicts) > 0 {
-		if ctx.JSON {
-			ctx.SuppressJSONError()
-		}
-		return fmt.Errorf("user edits preserved; ownership journal retained for: %s", strings.Join(conflicts, ", "))
-	}
 	return nil
 }
 
@@ -312,7 +299,7 @@ func harnessPlansOutput(ctx *CommandContext, plans []*harness.Plan) {
 }
 
 func harnessPlanResult(p *harness.Plan) cmd.HarnessPlanResult {
-	return cmd.HarnessPlanResult{Replaced: p.Replaced, Managed: p.Managed, Path: p.Path, Keys: p.Keys, Changed: p.Changed, Conflicts: p.Conflicts}
+	return cmd.HarnessPlanResult{Replaced: p.Replaced, Managed: p.Managed, Path: p.Path, Keys: p.Keys, Changed: p.Changed}
 }
 
 // Keep unavailable installations visible without offering choices that setup

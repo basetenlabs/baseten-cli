@@ -77,8 +77,8 @@ func TestCodexCatalogDriftAndInterruptedInstall(t *testing.T) {
 	plans, e = PrepareHarnessTeardown("codex", path)
 	require.NoError(t, e)
 	require.NoError(t, ApplyPlans(plans))
-	require.NotEmpty(t, plans[1].Conflicts)
-	require.FileExists(t, CatalogPath(path))
+	require.Contains(t, plans[1].Replaced, "models")
+	require.NoFileExists(t, CatalogPath(path))
 }
 func TestAdaptersRejectInvalidNamesAndUnsupportedOptions(t *testing.T) {
 	dir := t.TempDir()

@@ -44,7 +44,6 @@ type Plan struct {
 	Path                      string   `json:"config"`
 	Keys                      []string `json:"settings"`
 	Changed                   bool     `json:"changed"`
-	Conflicts                 []string `json:"conflicts,omitempty"`
 	snapshot, journalSnapshot *safefile.Snapshot
 	data                      []byte
 	journal                   *Journal
@@ -259,20 +258,18 @@ func PrepareTeardown(path string) (*Plan, error) {
 	remaining := *j
 	remaining.Settings = nil
 	p.journal = &remaining
+	original, err := decodeConfig(s.Path, j.Original)
+	if err != nil {
+		return nil, err
+	}
 	for _, v := range j.Settings {
 		current := get(d, v.Path)
-		if same(current, v.Before) {
+		before := get(original, v.Path)
+		if same(current, before) {
 			continue
 		}
 		if !same(current, v.Installed) && !(j.Pending && same(current, v.Previous)) {
-			remaining.Settings = append(remaining.Settings, v)
-			p.Conflicts = append(p.Conflicts, pathKey(v.Path))
-			continue
-		}
-		original, _ := decodeConfig(s.Path, j.Original)
-		before := v.Before
-		if value := get(original, v.Path); same(value, before) {
-			before = value
+			p.Replaced = append(p.Replaced, pathKey(v.Path))
 		}
 		if err := put(d, v.Path, before); err != nil {
 			return nil, err
@@ -283,7 +280,6 @@ func PrepareTeardown(path string) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	original, err := decodeConfig(s.Path, j.Original)
 	// JSONC restoration uses the patched current document so later comments survive.
 	if err == nil && same(Value{Data: original}, Value{Data: d}) && (filepath.Ext(s.Path) != ".jsonc" || !j.Existed) {
 		p.data = j.Original
