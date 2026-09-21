@@ -43,8 +43,8 @@ func harnessPlanOutput(ctx *CommandContext, p *harness.Plan) {
 
 func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	interactive := ctx.IsInteractive() && !ctx.JSON
-	if !interactive && (f.Harness == "" || (f.Model == "" && f.Harness != "claude-code")) {
-		return cmd.NewErrUsagef("pass --harness and --model when not interactive (--model is optional for Claude Code)")
+	if !interactive && f.Harness == "" {
+		return cmd.NewErrUsagef("pass --harness when not interactive")
 	}
 	names := []string{f.Harness}
 	if f.Harness == "" {
@@ -102,19 +102,10 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		return err
 	}
 	selections := make([]harness.Selection, len(detections))
-	for i, d := range detections {
+	for i := range detections {
 		selection := harness.Selection{Primary: f.Model, Background: f.BackgroundModel, Subagent: f.SubagentModel, Fallback: f.FallbackModel}
-		if selection.Primary == "" && d.Name == "claude-code" {
-			selection.Primary = routes[0].Name
-		}
 		if selection.Primary == "" {
-			options := make([]huh.Option[string], 0, len(routes))
-			for _, route := range routes {
-				options = append(options, huh.NewOption(route.DisplayName+" ("+route.Name+")", route.Name))
-			}
-			if err := harnessPrompt(ctx, huh.NewSelect[string]().Title("Primary Route for "+d.Name).Options(options...).Value(&selection.Primary)); err != nil {
-				return err
-			}
+			selection.Primary = routes[0].Name
 		}
 		selections[i] = selection
 	}
@@ -155,6 +146,9 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		keyAction = "create a key when changes are applied"
 	}
 	ctx.Logf("Team: %s\nRoutes key: %s (%s)\n", credential.scope.TeamID, credential.scope.Name, keyAction)
+	for i, d := range detections {
+		ctx.Logf("%s default Route: %s\n", d.Name, selections[i].Primary)
+	}
 	if f.DryRun {
 		harnessPlansOutput(ctx, plans)
 		return nil

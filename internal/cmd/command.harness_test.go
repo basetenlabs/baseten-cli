@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/BurntSushi/toml"
+
 	public "github.com/basetenlabs/baseten-cli/cmd"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 )
@@ -92,9 +94,6 @@ func Test_Harness_Setup_RequiresExplicitNoninteractiveChoices(t *testing.T) {
 			args := []string{"harness", "setup", "--output", output}
 			h.Require.Error(h.Execute(args...))
 			h.Require.Contains(h.Stderr.String(), "pass --harness")
-			args = append(args, "--harness", "codex")
-			h.Require.Error(h.Execute(args...))
-			h.Require.Contains(h.Stderr.String(), "pass --harness and --model")
 		})
 	}
 }
@@ -190,7 +189,14 @@ type harnessFakeExecer struct{}
 
 func (harnessFakeExecer) LookPath(name string) (string, error) { return "/fake/" + name, nil }
 func (harnessFakeExecer) Exec(command *exec.Cmd) error {
-	_, err := fmt.Fprintln(command.Stdout, "2.1.272 (Claude Code)")
+	version := "2.1.272 (Claude Code)"
+	switch filepath.Base(command.Path) {
+	case "codex":
+		version = "codex-cli 0.134.0"
+	case "opencode":
+		version = "1.18.31"
+	}
+	_, err := fmt.Fprintln(command.Stdout, version)
 	return err
 }
 
@@ -278,4 +284,46 @@ func Test_Harness_Setup_ConfirmedReplacementOfManagedModel(t *testing.T) {
 	h.Require.NoError(err)
 	h.Require.NoError(json.Unmarshal(restored, &config))
 	h.Require.Equal("opus", config["model"])
+}
+
+func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {
+	for _, name := range []string{"claude-code", "codex", "opencode"} {
+		for _, override := range []string{"", "acme/second"} {
+			t.Run(name+"/"+override, func(t *testing.T) {
+				h, api := productionHarness(t)
+				api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+					"items": []any{
+						map[string]any{"id": "first", "name": "acme/z-first", "team_id": "team-a", "display_name": "First", "invoke_url": api.URL},
+						map[string]any{"id": "second", "name": "acme/second", "team_id": "team-a", "display_name": "Second", "invoke_url": api.URL},
+					},
+					"pagination": map[string]any{"has_more": false},
+				})
+				filename := "settings.json"
+				if name == "codex" {
+					filename = "config.toml"
+				}
+				path := filepath.Join(t.TempDir(), filename)
+				args := []string{"harness", "setup", "--harness", name, "--team", "team-a", "--config", path, "--yes"}
+				expected := "acme/z-first"
+				if override != "" {
+					args = append(args, "--model", override)
+					expected = override
+				}
+				h.Require.NoError(h.Execute(args...))
+				h.Require.Contains(h.Stderr.String(), name+" default Route: "+expected)
+				data, err := os.ReadFile(path)
+				h.Require.NoError(err)
+				var config map[string]any
+				if name == "codex" {
+					h.Require.NoError(toml.Unmarshal(data, &config))
+				} else {
+					h.Require.NoError(json.Unmarshal(data, &config))
+				}
+				if name == "opencode" {
+					expected = "baseten-harness/" + expected
+				}
+				h.Require.Equal(expected, config["model"])
+			})
+		}
+	}
 }
