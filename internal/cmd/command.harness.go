@@ -425,7 +425,7 @@ func harnessSetupSummary(ctx *CommandContext, credential *harnessAuth, routes []
 		}
 		ctx.Outputf("  Result         %s\n", result)
 		if replaced {
-			ctx.OutputLine("  Existing integration settings will be replaced and backed up for teardown.")
+			ctx.OutputLine("  Existing integration settings will be replaced. Teardown restores settings from the first setup.")
 		}
 	}
 	ctx.VerboseLogf("Routes API key name: %s\n", credential.scope.Name)
