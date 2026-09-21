@@ -16,7 +16,7 @@ import (
 const routesKeyService = "baseten-harness-routes"
 
 // ErrRoutesKeyRejected marks a definitive API rejection before key creation.
-var ErrRoutesKeyRejected = errors.New("Routes key creation rejected")
+var ErrRoutesKeyRejected = errors.New("routes key creation rejected")
 
 // RoutesKeyScope separates saved keys by issuing endpoint, authenticated user,
 // profile, team and installation name. It never stores the login credential.
@@ -48,17 +48,17 @@ func (s *Store) GetRoutesKey(scope RoutesKeyScope) (string, error) {
 		return "", nil
 	}
 	if err != nil {
-		return "", errors.New("cannot read Routes key from system keyring")
+		return "", errors.New("cannot read routes key from system keyring")
 	}
 	var record routesKeyRecord
 	if json.Unmarshal([]byte(raw), &record) != nil {
-		return "", errors.New("invalid Routes key record in system keyring")
+		return "", errors.New("invalid routes key record in system keyring")
 	}
 	if record.Pending {
-		return "", fmt.Errorf("a previous Routes key creation attempt is unresolved; review keys named %q in Baseten before removing keyring entry %s/%s and retrying", scope.Name, routesKeyService, scope.account())
+		return "", fmt.Errorf("a previous routes key creation attempt is unresolved; review keys named %q in Baseten before removing keyring entry %s/%s and retrying", scope.Name, routesKeyService, scope.account())
 	}
 	if !validRoutesKey(record.Key) {
-		return "", errors.New("invalid Routes key in system keyring")
+		return "", errors.New("invalid routes key in system keyring")
 	}
 	return record.Key, nil
 }
@@ -70,7 +70,7 @@ func validRoutesKey(key string) bool { return key != "" && !strings.ContainsAny(
 // crash, ambiguous API failure or failed save cannot cause automatic reminting.
 func (s *Store) EnsureRoutesKey(scope RoutesKeyScope, create func() (string, error)) (created bool, err error) {
 	if scope.ManagementURL == "" || scope.UserID == "" || scope.TeamID == "" || scope.Name == "" {
-		return false, errors.New("incomplete Routes key scope")
+		return false, errors.New("incomplete routes key scope")
 	}
 	if err := os.MkdirAll(s.dir, 0700); err != nil {
 		return false, err
@@ -78,7 +78,7 @@ func (s *Store) EnsureRoutesKey(scope RoutesKeyScope, create func() (string, err
 	lock := filepath.Join(s.dir, "routes-key-"+scope.account()+".lock")
 	f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
-		return false, fmt.Errorf("Routes key setup is locked; check for another setup before removing %s", lock)
+		return false, fmt.Errorf("routes key setup is locked; check for another setup before removing %s", lock)
 	}
 	_ = f.Close()
 	defer os.Remove(lock)
@@ -90,7 +90,7 @@ func (s *Store) EnsureRoutesKey(scope RoutesKeyScope, create func() (string, err
 		return false, nil
 	}
 	if err := keyring.Set(routesKeyService, scope.account(), `{"pending":true}`); err != nil {
-		return false, errors.New("cannot write to system keyring; no Routes key was created")
+		return false, errors.New("cannot write to system keyring; no routes key was created")
 	}
 	key, err = create()
 	if err != nil {
@@ -103,11 +103,11 @@ func (s *Store) EnsureRoutesKey(scope RoutesKeyScope, create func() (string, err
 		return false, fmt.Errorf("%w; automatic retry is blocked until this attempt is reviewed", err)
 	}
 	if !validRoutesKey(key) {
-		return false, errors.New("API returned an invalid Routes key; creation may have succeeded, so review the attempt before retrying")
+		return false, errors.New("API returned an invalid routes key; creation may have succeeded, so review the attempt before retrying")
 	}
 	data, _ := json.Marshal(routesKeyRecord{Key: key})
 	if err := keyring.Set(routesKeyService, scope.account(), string(data)); err != nil {
-		return false, fmt.Errorf("Routes key %q was created but could not be saved; revoke it in Baseten before resolving the pending keyring entry", scope.Name)
+		return false, fmt.Errorf("routes key %q was created but could not be saved; revoke it in Baseten before resolving the pending keyring entry", scope.Name)
 	}
 	return true, nil
 }

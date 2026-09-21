@@ -76,7 +76,7 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 		// Subagents inherit the primary model unless the user configures a role.
 		// Preserve explicit user roles instead of claiming a universal override.
 		if s.Subagent != s.Primary {
-			return nil, errors.New("Codex subagents inherit the primary Route; separate --subagent-model requires a verified role-file adapter")
+			return nil, errors.New("Codex subagents inherit the primary route; separate --subagent-model requires a verified role-file adapter")
 		}
 	default:
 		return nil, fmt.Errorf("unknown harness %s", name)
@@ -115,7 +115,7 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 		models = append(models, map[string]any{
 			"slug":                         r.Name,
 			"display_name":                 r.DisplayName,
-			"description":                  "Baseten Route",
+			"description":                  "Baseten route",
 			"base_instructions":            codexNativeInstructions,
 			"default_reasoning_level":      nil,
 			"supported_reasoning_levels":   []any{},

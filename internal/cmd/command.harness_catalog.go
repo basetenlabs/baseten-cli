@@ -21,18 +21,18 @@ func listHarnessRoutes(ctx *CommandContext, teamID string) ([]managementapi.Rout
 // Use Route names and display labels only; model metadata is a follow-up.
 func harnessCatalog(managementURL string, listed []managementapi.Route) ([]harness.Route, string, error) {
 	if len(listed) == 0 {
-		return nil, "", cmd.NewErrValidation(errors.New("no accessible Routes"))
+		return nil, "", cmd.NewErrValidation(errors.New("no accessible routes"))
 	}
 	endpoint := strings.TrimRight(listed[0].InvokeUrl, "/")
 	for _, route := range listed {
 		if strings.TrimRight(route.InvokeUrl, "/") != endpoint {
-			return nil, "", cmd.NewErrValidation(errors.New("selected team has Routes with different invoke URLs"))
+			return nil, "", cmd.NewErrValidation(errors.New("selected team has routes with different invoke URLs"))
 		}
 	}
 	// RouteV1 currently returns this fixed production origin. Permit loopback only
 	// when both management and inference use an explicit local development server.
 	if endpoint != "https://coding.baseten.co" && !(harness.FixtureEndpoint(managementURL) == nil && harness.FixtureEndpoint(endpoint) == nil) {
-		return nil, "", cmd.NewErrValidation(errors.New("Routes API returned an unsupported invoke URL"))
+		return nil, "", cmd.NewErrValidation(errors.New("routes API returned an unsupported invoke URL"))
 	}
 	routes := make([]harness.Route, 0, len(listed))
 	for _, route := range listed {

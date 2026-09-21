@@ -70,7 +70,7 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*har
 	if flags.KeyName == "" || strings.IndexFunc(flags.KeyName, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-')
 	}) >= 0 {
-		return nil, cmd.NewErrUsagef("Routes key name can only contain lowercase letters, numbers, and hyphens")
+		return nil, cmd.NewErrUsagef("routes key name can only contain lowercase letters, numbers, and hyphens")
 	}
 	transport, remote, err := ctx.AuthTransport()
 	if err != nil {
@@ -82,7 +82,7 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*har
 		return nil, cmd.NewErrUsagef("invalid management API endpoint")
 	}
 	if u.Scheme != "https" && harness.FixtureEndpoint(endpoint) != nil {
-		return nil, cmd.NewErrUsagef("Routes key creation requires HTTPS or an explicit loopback development endpoint")
+		return nil, cmd.NewErrUsagef("routes key creation requires HTTPS or an explicit loopback development endpoint")
 	}
 	if _, err := transport.Credential(ctx); err != nil {
 		return nil, cmd.NewErrAuth(err)

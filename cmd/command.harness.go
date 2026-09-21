@@ -6,14 +6,14 @@ const harnessPreRelease = "PRE-RELEASE: Harness commands are not GA yet. " +
 var commandHarness = Command{
 	Name:        "harness",
 	Summary:     "Configure Baseten harness integrations (PRE-RELEASE)",
-	Description: harnessPreRelease + "Configure Claude Code, Codex CLI, and OpenCode CLI to use Baseten Routes.",
+	Description: harnessPreRelease + "Configure Claude Code, Codex CLI, and OpenCode CLI to use Baseten routes.",
 	Hidden:      true,
 	Children: []Command{
 		{
 			Name:    "setup",
 			Summary: "Set up harness authentication and configuration (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Configure one or more installed harnesses using a team's Routes. Each harness uses the first returned Route by default; --model overrides it. Setup " +
+				"Configure one or more installed harnesses using a team's routes. Each harness uses the first returned route by default; --model overrides it. Setup " +
 				"shows installed versions and config paths, then previews changes before asking for " +
 				"confirmation. A sole available team is selected automatically. " +
 				"With multiple teams, pass --team with a team name or ID.\n\nExisting prompts, plugins, " +
@@ -22,8 +22,8 @@ var commandHarness = Command{
 				"preview without creating a key or writing files. For scripts, pass --harness and " +
 				"--yes. Pass --team when multiple teams are available. A missing key for the selected " +
 				"team is created automatically. Saved keys for other teams are retained. Unlike route list, " +
-				"setup includes only the selected team's Routes.\n\n" +
-				"Restart the harness after setup. Rerun setup to refresh available Routes. " +
+				"setup includes only the selected team's routes.\n\n" +
+				"Restart the harness after setup. Rerun setup to refresh available routes. " +
 				"Supported harnesses are Claude Code, Codex CLI, and OpenCode CLI on supported versions of " +
 				"macOS.",
 			Flags: HarnessSetupFlags{},
@@ -90,7 +90,7 @@ var commandHarness = Command{
 			Description: harnessPreRelease +
 				"Restore settings changed by setup while preserving subsequent user edits. Conflicts are " +
 				"reported for manual resolution. Pass --harness to select which harness to restore.\n\nUse --dry-run to preview restoration or --yes to apply without confirmation. Saved " +
-				"Routes keys are retained and are not revoked. Teardown remains available after an upgrade or " +
+				"routes keys are retained and are not revoked. Teardown remains available after an upgrade or " +
 				"executable removal.",
 			Flags: HarnessTeardownFlags{},
 			Output: &CommandOutput[HarnessPlanResult]{
@@ -153,13 +153,13 @@ type HarnessFlags struct {
 type HarnessSetupFlags struct {
 	CommandFlags
 	Team            string `flag:"team" desc:"Team name or ID; required when multiple teams are available"`
-	KeyName         string `flag:"key-name" desc:"Routes key name; defaults to baseten-harness-<normalized-hostname>"`
+	KeyName         string `flag:"key-name" desc:"routes key name; defaults to baseten-harness-<normalized-hostname>"`
 	Harness         string `flag:"harness" desc:"Harness to configure; prompts when omitted" enum:"claude-code,codex,opencode"`
 	Config          string `flag:"config" desc:"Explicit settings file for a single harness; defaults to its native config path"`
-	Model           string `flag:"model" desc:"Default Route name; defaults to the first returned Route"`
-	BackgroundModel string `flag:"background-model" desc:"Route for OpenCode lightweight tasks (defaults to deepseek-ai/DeepSeek-V4.1-Flash)"`
-	SubagentModel   string `flag:"subagent-model" desc:"Optional subagent default Route (Claude/OpenCode)"`
-	FallbackModel   string `flag:"fallback-model" desc:"Fallback Route for Claude Code (defaults to initial Route)"`
+	Model           string `flag:"model" desc:"Default route name; defaults to the first returned route"`
+	BackgroundModel string `flag:"background-model" desc:"route for OpenCode lightweight tasks (defaults to deepseek-ai/DeepSeek-V4.1-Flash)"`
+	SubagentModel   string `flag:"subagent-model" desc:"Optional subagent default route (Claude/OpenCode)"`
+	FallbackModel   string `flag:"fallback-model" desc:"Fallback route for Claude Code (defaults to initial route)"`
 	DryRun          bool   `flag:"dry-run" desc:"Preview setting names without writing files"`
 	Yes             bool   `flag:"yes" desc:"Apply the displayed configuration plan without prompting"`
 }

@@ -191,13 +191,13 @@ func Test_Harness_Setup_CredentialsReportsAPIValidationMessage(t *testing.T) {
 	h, api := productionHarness(t)
 	api.SetRoute("POST", "/v1/api_keys", 400, map[string]any{
 		"code":    "VALIDATION_ERROR",
-		"message": "Routes keys require membership in the selected team.",
+		"message": "routes keys require membership in the selected team.",
 		"details": map[string]string{"api_key": "secret-in-details"},
 		"api_key": "secret-in-body",
 	})
 	h.Require.Error(executeHarnessSetup(t, h, "--team", "Engineering"))
 	h.Require.Contains(h.Stderr.String(), "HTTP 400")
-	h.Require.Contains(h.Stderr.String(), "Routes keys require membership in the selected team.")
+	h.Require.Contains(h.Stderr.String(), "routes keys require membership in the selected team.")
 	h.Require.NotContains(h.Stderr.String()+h.Stdout.String(), "secret-in-")
 	api.SetRoute("POST", "/v1/api_keys", 400, map[string]string{"message": "Invalid credential test-key"})
 	h.Require.Error(executeHarnessSetup(t, h, "--team", "Engineering"))
