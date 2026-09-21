@@ -160,12 +160,12 @@ type HarnessSetupFlags struct {
 	BackgroundModel string `flag:"background-model" desc:"route for OpenCode lightweight tasks (defaults to deepseek-ai/DeepSeek-V4.1-Flash)"`
 	SubagentModel   string `flag:"subagent-model" desc:"Optional subagent default route (Claude/OpenCode)"`
 	FallbackModel   string `flag:"fallback-model" desc:"Fallback route for Claude Code (defaults to initial route)"`
-	DryRun          bool   `flag:"dry-run" desc:"Preview setting names without writing files"`
-	Yes             bool   `flag:"yes" desc:"Apply the displayed configuration plan without prompting"`
+	DryRun          bool   `flag:"dry-run" desc:"Preview routes and configuration without writing files or creating a routes API key"`
+	Yes             bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
 type HarnessTeardownFlags struct {
 	HarnessFlags
 	DryRun bool `flag:"dry-run" desc:"Preview restoration without writing files"`
-	Yes    bool `flag:"yes" desc:"Restore the selected config without prompting"`
+	Yes    bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }

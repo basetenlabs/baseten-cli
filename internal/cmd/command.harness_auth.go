@@ -131,7 +131,13 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*har
 	if err != nil {
 		return nil, err
 	}
-	scope := auth.RoutesKeyScope{ManagementURL: endpoint, Profile: transport.Session.ProfileName(), UserID: user.UserId, TeamID: teamID, Name: flags.KeyName}
+	scope := auth.RoutesKeyScope{
+		ManagementURL: endpoint,
+		Profile:       transport.Session.ProfileName(),
+		UserID:        user.UserId,
+		TeamID:        teamID,
+		Name:          flags.KeyName,
+	}
 	saved, err := store.GetRoutesKey(scope)
 	if err != nil {
 		return nil, err
@@ -152,7 +158,14 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*har
 			}
 		}
 	}
-	return &harnessAuth{store: store, scope: scope, saved: saved, teamName: teamName, transport: transport, api: cl.API()}, nil
+	return &harnessAuth{
+		store:     store,
+		scope:     scope,
+		saved:     saved,
+		teamName:  teamName,
+		transport: transport,
+		api:       cl.API(),
+	}, nil
 }
 
 func (a *harnessAuth) ensure(ctx context.Context) (string, bool, error) {

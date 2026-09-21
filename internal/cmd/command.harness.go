@@ -27,18 +27,6 @@ func harnessConfirm(ctx *CommandContext, yes bool, question string) error {
 	}
 	return ctx.ConfirmYesNo(question)
 }
-func harnessPlanOutput(ctx *CommandContext, p *harness.Plan) {
-	if ctx.JSON {
-		ctx.OutputJSON(harnessPlanResult(p))
-		return
-	}
-	ctx.Outputf("Config: %s\nSettings: %s\nChanged: %t\n", p.Path, strings.Join(p.Keys, ", "), p.Changed)
-	if len(p.Replaced) > 0 {
-		ctx.Outputf("Settings to replace: %s\n", strings.Join(p.Replaced, ", "))
-		ctx.OutputLine("These managed settings changed after setup and will be restored to their original values.")
-	}
-}
-
 func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	interactive := ctx.IsInteractive() && !ctx.JSON
 	if !interactive && f.Harness == "" {
@@ -64,12 +52,17 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 			return cmd.NewErrUsagef("no supported harnesses are installed:\n%s", summary)
 		}
 		names = nil
-		if err := harnessPrompt(ctx, huh.NewMultiSelect[string]().Title("Detected harnesses: select which to configure").Description(summary).Options(options...).Value(&names).Validate(func(names []string) error {
-			if len(names) == 0 {
-				return fmt.Errorf("choose at least one harness")
-			}
-			return nil
-		})); err != nil {
+		if err := harnessPrompt(ctx, huh.NewMultiSelect[string]().
+			Title("Detected harnesses: select which to configure").
+			Description(summary).
+			Options(options...).
+			Value(&names).
+			Validate(func(names []string) error {
+				if len(names) == 0 {
+					return fmt.Errorf("choose at least one harness")
+				}
+				return nil
+			})); err != nil {
 			return err
 		}
 	}
@@ -101,7 +94,12 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	}
 	selections := make([]harness.Selection, len(detections))
 	for i := range detections {
-		selection := harness.Selection{Primary: f.Model, Background: f.BackgroundModel, Subagent: f.SubagentModel, Fallback: f.FallbackModel}
+		selection := harness.Selection{
+			Primary:    f.Model,
+			Background: f.BackgroundModel,
+			Subagent:   f.SubagentModel,
+			Fallback:   f.FallbackModel,
+		}
 		if selection.Primary == "" {
 			selection.Primary = routes[0].Name
 		}
@@ -187,7 +185,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	} else {
 		ctx.OutputLine("Configuration saved. Restart the configured harnesses to load the changes.")
 		for _, d := range detections {
-			ctx.Outputf("Restore settings: baseten harness teardown --harness %s\n", d.Name)
+			ctx.Outputf("Restore settings: %s\n", harnessFollowupCommand("teardown", d, f.Config != ""))
 		}
 	}
 	return nil
@@ -204,12 +202,25 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessFlags) error {
 	if ctx.JSON {
 		details := make([]cmd.HarnessRouteSummary, 0, len(r.RouteDetails))
 		for _, route := range r.RouteDetails {
-			details = append(details, cmd.HarnessRouteSummary{Name: route.Name, DisplayName: route.DisplayName})
+			details = append(details, cmd.HarnessRouteSummary{
+				Name:        route.Name,
+				DisplayName: route.DisplayName,
+			})
 		}
 		ctx.OutputJSON(cmd.HarnessStatusResult{
-			DefaultRoute: r.DefaultRoute, SmallTaskModel: r.SmallTaskModel, RouteDetails: details,
-			Name: r.Name, Path: r.Path, Installed: r.Installed, Version: r.Version, Supported: r.Supported,
-			State: r.State, Managed: r.Managed, Drift: r.Drift, Routes: r.Routes, Note: r.Note,
+			DefaultRoute:   r.DefaultRoute,
+			SmallTaskModel: r.SmallTaskModel,
+			RouteDetails:   details,
+			Name:           r.Name,
+			Path:           r.Path,
+			Installed:      r.Installed,
+			Version:        r.Version,
+			Supported:      r.Supported,
+			State:          r.State,
+			Managed:        r.Managed,
+			Drift:          r.Drift,
+			Routes:         r.Routes,
+			Note:           r.Note,
 		})
 	} else {
 		ctx.Outputf("%s: %s\n", r.Name, r.State)
@@ -230,7 +241,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessFlags) error {
 		}
 		ctx.OutputLine("")
 		harnessRouteTable(ctx, "Configured routes", r.RouteDetails)
-		ctx.Outputf("\nLocal configuration only; key validity and live routes were not checked.\nRefresh: baseten harness setup --harness %s (add --team <team> if needed), then restart the harness.\n", r.Name)
+		ctx.Outputf("\nLocal configuration only; key validity and live routes were not checked.\nRefresh: %s (add --team <team> if needed), then restart the harness.\n", harnessFollowupCommand("setup", d, f.Config != ""))
 		if len(r.Managed) > 0 {
 			ctx.VerboseLogf("Managed settings: %s\n", strings.Join(r.Managed, ", "))
 		}
@@ -246,7 +257,11 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	if err != nil {
 		return err
 	}
-	name := map[string]string{"claude-code": "Claude Code", "codex": "Codex", "opencode": "OpenCode"}[f.Harness]
+	name := map[string]string{
+		"claude-code": "Claude Code",
+		"codex":       "Codex",
+		"opencode":    "OpenCode",
+	}[f.Harness]
 	managed := false
 	for _, p := range plans {
 		managed = managed || p.Managed
@@ -289,26 +304,36 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	return nil
 }
 
+// harnessFollowupCommand keeps commands pointed at an explicit configuration.
+// Quote paths for the supported macOS shells, including literal apostrophes.
+func harnessFollowupCommand(action string, d harness.Detection, explicitConfig bool) string {
+	command := "baseten harness " + action + " --harness " + d.Name
+	if explicitConfig {
+		command += " --config '" + strings.ReplaceAll(d.Path, "'", "'\\''") + "'"
+	}
+	return command
+}
+
 func harnessPlansOutput(ctx *CommandContext, plans []*harness.Plan) {
 	if len(plans) == 1 {
-		harnessPlanOutput(ctx, plans[0])
+		ctx.OutputJSON(harnessPlanResult(plans[0]))
 		return
 	}
-	if ctx.JSON {
-		results := make([]cmd.HarnessPlanResult, 0, len(plans))
-		for _, plan := range plans {
-			results = append(results, harnessPlanResult(plan))
-		}
-		ctx.OutputJSON(cmd.HarnessPlansResult{Changes: results})
-		return
+	results := make([]cmd.HarnessPlanResult, 0, len(plans))
+	for _, plan := range plans {
+		results = append(results, harnessPlanResult(plan))
 	}
-	for _, p := range plans {
-		harnessPlanOutput(ctx, p)
-	}
+	ctx.OutputJSON(cmd.HarnessPlansResult{Changes: results})
 }
 
 func harnessPlanResult(p *harness.Plan) cmd.HarnessPlanResult {
-	return cmd.HarnessPlanResult{Replaced: p.Replaced, Managed: p.Managed, Path: p.Path, Keys: p.Keys, Changed: p.Changed}
+	return cmd.HarnessPlanResult{
+		Replaced: p.Replaced,
+		Managed:  p.Managed,
+		Path:     p.Path,
+		Keys:     p.Keys,
+		Changed:  p.Changed,
+	}
 }
 
 // Keep unavailable installations visible without offering choices that setup
@@ -373,7 +398,10 @@ func harnessRouteTable(ctx *CommandContext, title string, routes []harness.Route
 	for _, route := range routes {
 		rows = append(rows, []string{route.Name, route.DisplayName})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "DISPLAY NAME"}, Rows: rows})
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"NAME", "DISPLAY NAME"},
+		Rows:    rows,
+	})
 }
 
 func harnessSetupSummary(ctx *CommandContext, credential *harnessAuth, routes []harness.Route, detections []harness.Detection, selections []harness.Selection, plans []*harness.Plan) {
