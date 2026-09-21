@@ -4,10 +4,11 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"github.com/basetenlabs/baseten-cli/internal/safefile"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/basetenlabs/baseten-cli/internal/safefile"
 )
 
 // The native fallback prompt captured from an isolated Codex 0.134.0 request.
@@ -65,14 +66,40 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 		for _, r := range routes {
 			models[r.Name] = map[string]any{"name": r.DisplayName}
 		}
-		values = []Setting{desired([]string{"model"}, providerID+"/"+s.Primary), desired([]string{"small_model"}, providerID+"/"+s.Background), desired([]string{"provider", providerID}, map[string]any{"npm": "@ai-sdk/openai-compatible", "name": "Baseten harness", "options": map[string]any{"baseURL": strings.TrimRight(endpoint, "/") + "/v1", "apiKey": token}, "models": models})}
+		values = []Setting{
+			desired([]string{"model"}, providerID+"/"+s.Primary),
+			desired([]string{"small_model"}, providerID+"/"+s.Background),
+			desired([]string{"provider", providerID}, map[string]any{
+				"npm":  "@ai-sdk/openai-compatible",
+				"name": "Baseten harness",
+				"options": map[string]any{
+					"baseURL": strings.TrimRight(endpoint, "/") + "/v1",
+					"apiKey":  token,
+				},
+				"models": models,
+			}),
+		}
 		if explicitSubagent {
 			for _, role := range []string{"general", "explore"} {
 				values = append(values, desired([]string{"agent", role, "model"}, providerID+"/"+s.Subagent))
 			}
 		}
 	case "codex":
-		values = []Setting{desired([]string{"model"}, s.Primary), desired([]string{"model_provider"}, providerID), desired([]string{"model_catalog_json"}, CatalogPath(path)), desired([]string{"review_model"}, s.Subagent), desired([]string{"memories", "extract_model"}, s.Background), desired([]string{"memories", "consolidation_model"}, s.Background), desired([]string{"model_providers", providerID}, map[string]any{"name": "Baseten harness", "base_url": strings.TrimRight(endpoint, "/") + "/v1", "wire_api": "responses", "requires_openai_auth": false, "experimental_bearer_token": token})}
+		values = []Setting{
+			desired([]string{"model"}, s.Primary),
+			desired([]string{"model_provider"}, providerID),
+			desired([]string{"model_catalog_json"}, CatalogPath(path)),
+			desired([]string{"review_model"}, s.Subagent),
+			desired([]string{"memories", "extract_model"}, s.Background),
+			desired([]string{"memories", "consolidation_model"}, s.Background),
+			desired([]string{"model_providers", providerID}, map[string]any{
+				"name":                      "Baseten harness",
+				"base_url":                  strings.TrimRight(endpoint, "/") + "/v1",
+				"wire_api":                  "responses",
+				"requires_openai_auth":      false,
+				"experimental_bearer_token": token,
+			}),
+		}
 		// Subagents inherit the primary model unless the user configures a role.
 		// Preserve explicit user roles instead of claiming a universal override.
 		if s.Subagent != s.Primary {
@@ -86,7 +113,6 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 			if _, ok := data["profile"]; ok {
 				return nil, errors.New("resolve the active Codex profile before setup")
 			}
-
 		}
 		if name == "opencode" {
 			if _, ok := data["providers"]; ok {
@@ -127,7 +153,10 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 			"support_verbosity":            false,
 			"default_verbosity":            nil,
 			"apply_patch_tool_type":        nil,
-			"truncation_policy":            map[string]any{"mode": "tokens", "limit": 10000},
+			"truncation_policy": map[string]any{
+				"mode":  "tokens",
+				"limit": 10000,
+			},
 			"supports_parallel_tool_calls": false,
 			"experimental_supported_tools": []any{},
 		})
