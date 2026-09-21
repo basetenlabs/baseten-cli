@@ -59,6 +59,44 @@ func TestE2EVolumeLifecycle(t *testing.T) {
 // idempotent terminal behavior without racing or discarding the artifact used
 // by the other assertions.
 func testE2EVolumeSync(t *testing.T) {
+	s := newVolumeSyncLifecycle(t)
+	steps := []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"Start", s.Start},
+		{"Describe", s.Describe},
+		{"List", s.List},
+		{"Stat", s.Stat},
+		{"ListEntries", s.ListEntries},
+		{"Cat", s.Cat},
+		{"Pull", s.Pull},
+		{"Versions", s.Versions},
+		{"Deploy", s.Deploy},
+		{"Predict", s.Predict},
+		{"Cancel", s.Cancel},
+	}
+	for _, step := range steps {
+		if !t.Run(step.name, step.run) {
+			t.FailNow()
+		}
+	}
+}
+
+type volumeSyncLifecycle struct {
+	baseRef            string
+	destination        string
+	started            e2eVolumeSync
+	versionRef         string
+	configOut          string
+	sourceConfig       map[string]any
+	modelName          string
+	modelID            string
+	modelCleanupNeeded bool
+}
+
+func newVolumeSyncLifecycle(t *testing.T) *volumeSyncLifecycle {
+	t.Helper()
 	apiKey := os.Getenv("BASETEN_E2E_TEST_API_KEY")
 	if apiKey == "" {
 		t.Skip("BASETEN_E2E_TEST_API_KEY not set")
@@ -72,61 +110,86 @@ func testE2EVolumeSync(t *testing.T) {
 	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
 
 	suffix := randomSuffix(t)
-	baseRef := "bdn:" + e2eVolumeNamespace + "/sync-" + suffix
-	destination := baseRef + ":e2e"
+	s := &volumeSyncLifecycle{
+		baseRef:      "bdn:" + e2eVolumeNamespace + "/sync-" + suffix,
+		modelName:    "cli-e2e-volume-sync-" + suffix,
+		sourceConfig: make(map[string]any),
+	}
+	s.destination = s.baseRef + ":e2e"
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if _, errOut, err := cliCtx(t, ctx,
-			"volume", "rm", "--recursive", "--yes", baseRef); err != nil {
-			t.Logf("cleanup delete of volume %s failed: %v\nstderr: %s", baseRef, err, errOut)
+			"volume", "rm", "--recursive", "--yes", s.baseRef); err != nil {
+			t.Logf("cleanup delete of volume %s failed: %v\nstderr: %s", s.baseRef, err, errOut)
 		}
 	})
+	t.Cleanup(func() {
+		if !s.modelCleanupNeeded {
+			return
+		}
+		dumpModelLogsIfFailure(t, s.modelName)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if s.modelID == "" {
+			s.modelID = lookupModelIDByName(t, ctx, s.modelName)
+		}
+		if s.modelID == "" {
+			return
+		}
+		if _, errOut, err := cliCtx(t, ctx,
+			"model", "delete", "--model-id", s.modelID, "--yes"); err != nil {
+			t.Logf("cleanup delete of model %s failed: %v\nstderr: %s", s.modelID, err, errOut)
+		}
+	})
+	return s
+}
 
+func (s *volumeSyncLifecycle) Start(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-
-	step(t, "start and wait for anonymous Hugging Face volume sync")
 	startOut := mustCLICtx(t, ctx,
 		"volume", "sync", "start",
 		"--source", e2eVolumeSyncSource,
-		"--destination", destination,
+		"--destination", s.destination,
 		"--include", "config.json",
 		"--exclude", "*.md",
 		"--wait",
 		"--output", "json")
-	started := parseVolumeSync(t, startOut)
-	require.Equal(t, "READY", started.Status)
-	require.Equal(t, e2eVolumeSyncSource, started.Source.URI)
-	require.Equal(t, []string{"config.json"}, started.Source.Include)
-	require.Equal(t, []string{"*.md"}, started.Source.Exclude)
-	require.Equal(t, destination, started.Destination.Ref)
-	require.NotEmpty(t, started.SyncID)
-	require.NotNil(t, started.VolumeVersionID)
-	require.NotEmpty(t, *started.VolumeVersionID)
-	require.NotNil(t, started.VersionRef)
-	require.NotEmpty(t, *started.VersionRef)
-	require.NotNil(t, started.ContentDigest)
-	require.Regexp(t, `^b3:[0-9a-f]{64}$`, *started.ContentDigest)
-	require.NotNil(t, started.TotalSizeBytes)
-	require.Positive(t, *started.TotalSizeBytes)
-	require.NotNil(t, started.CompletedAt)
-	require.Nil(t, started.Error)
-	versionRef := *started.VersionRef
+	s.started = parseVolumeSync(t, startOut)
+	require.Equal(t, "READY", s.started.Status)
+	require.Equal(t, e2eVolumeSyncSource, s.started.Source.URI)
+	require.Equal(t, []string{"config.json"}, s.started.Source.Include)
+	require.Equal(t, []string{"*.md"}, s.started.Source.Exclude)
+	require.Equal(t, s.destination, s.started.Destination.Ref)
+	require.NotEmpty(t, s.started.SyncID)
+	require.NotNil(t, s.started.VolumeVersionID)
+	require.NotEmpty(t, *s.started.VolumeVersionID)
+	require.NotNil(t, s.started.VersionRef)
+	require.NotEmpty(t, *s.started.VersionRef)
+	require.NotNil(t, s.started.ContentDigest)
+	require.Regexp(t, `^b3:[0-9a-f]{64}$`, *s.started.ContentDigest)
+	require.NotNil(t, s.started.TotalSizeBytes)
+	require.Positive(t, *s.started.TotalSizeBytes)
+	require.NotNil(t, s.started.CompletedAt)
+	require.Nil(t, s.started.Error)
+	s.versionRef = *s.started.VersionRef
+}
 
-	step(t, "describe completed volume sync")
+func (s *volumeSyncLifecycle) Describe(t *testing.T) {
 	described := parseVolumeSync(t, mustCLI(t,
 		"volume", "sync", "describe",
-		"--volume-sync-id", started.SyncID,
+		"--volume-sync-id", s.started.SyncID,
 		"--output", "json"))
-	require.Equal(t, started.SyncID, described.SyncID)
+	require.Equal(t, s.started.SyncID, described.SyncID)
 	require.Equal(t, "READY", described.Status)
-	require.Equal(t, started.VersionRef, described.VersionRef)
+	require.Equal(t, s.started.VersionRef, described.VersionRef)
+}
 
-	step(t, "find completed volume sync by exact destination")
+func (s *volumeSyncLifecycle) List(t *testing.T) {
 	listOut := mustCLI(t,
 		"volume", "sync", "list",
-		"--destination", destination,
+		"--destination", s.destination,
 		"--output", "json")
 	var listed struct {
 		Items []e2eVolumeSync `json:"items"`
@@ -135,46 +198,54 @@ func testE2EVolumeSync(t *testing.T) {
 	require.NotEmpty(t, listed.Items)
 	found := false
 	for _, item := range listed.Items {
-		if item.SyncID == started.SyncID {
+		if item.SyncID == s.started.SyncID {
 			require.Equal(t, "READY", item.Status)
-			require.Equal(t, destination, item.Destination.Ref)
+			require.Equal(t, s.destination, item.Destination.Ref)
 			found = true
 			break
 		}
 	}
-	require.True(t, found, "sync %q not in destination-filtered listing", started.SyncID)
+	require.True(t, found, "sync %q not in destination-filtered listing", s.started.SyncID)
+}
 
-	step(t, "read synced artifact through volume commands")
-	statOut := mustCLI(t, "volume", "stat", versionRef, "--output", "json")
+func (s *volumeSyncLifecycle) Stat(t *testing.T) {
+	statOut := mustCLI(t, "volume", "stat", s.versionRef, "--output", "json")
 	var stat struct {
 		VersionRef    string `json:"version_ref"`
 		ContentDigest string `json:"digest"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(statOut), &stat))
-	require.Equal(t, versionRef, stat.VersionRef)
-	require.Equal(t, *started.ContentDigest, stat.ContentDigest)
+	require.Equal(t, s.versionRef, stat.VersionRef)
+	require.Equal(t, *s.started.ContentDigest, stat.ContentDigest)
+}
 
+func (s *volumeSyncLifecycle) ListEntries(t *testing.T) {
 	entries := parseVolumeEntryList(t, mustCLI(t,
-		"volume", "ls", "--recursive", versionRef, "--output", "json"))
-	require.Equal(t, versionRef, entries.VersionRef)
+		"volume", "ls", "--recursive", s.versionRef, "--output", "json"))
+	require.Equal(t, s.versionRef, entries.VersionRef)
 	require.Equal(t, "file", volumeEntryKinds(entries)["/config.json"])
+}
 
-	configOut := mustCLI(t, "volume", "cat", versionRef+"/config.json")
-	var sourceConfig map[string]any
-	require.NoError(t, json.Unmarshal([]byte(configOut), &sourceConfig))
-	require.NotEmpty(t, sourceConfig["model_type"])
+func (s *volumeSyncLifecycle) Cat(t *testing.T) {
+	s.configOut = mustCLI(t, "volume", "cat", s.versionRef+"/config.json")
+	require.NoError(t, json.Unmarshal([]byte(s.configOut), &s.sourceConfig))
+	require.NotEmpty(t, s.sourceConfig["model_type"])
+}
 
+func (s *volumeSyncLifecycle) Pull(t *testing.T) {
 	pullDir := t.TempDir()
-	pullOut := mustCLI(t, "volume", "pull", versionRef, pullDir, "--output", "json")
+	pullOut := mustCLI(t, "volume", "pull", s.versionRef, pullDir, "--output", "json")
 	var pulled volumePullResult
 	require.NoError(t, json.Unmarshal([]byte(pullOut), &pulled))
-	require.Equal(t, versionRef, pulled.VersionRef)
+	require.Equal(t, s.versionRef, pulled.VersionRef)
 	require.Equal(t, int64(1), pulled.Files)
 	pulledConfig, err := os.ReadFile(filepath.Join(pullDir, "config.json"))
 	require.NoError(t, err)
-	require.JSONEq(t, configOut, string(pulledConfig))
+	require.JSONEq(t, s.configOut, string(pulledConfig))
+}
 
-	versionsOut := mustCLI(t, "volume", "versions", baseRef, "--output", "json")
+func (s *volumeSyncLifecycle) Versions(t *testing.T) {
+	versionsOut := mustCLI(t, "volume", "versions", s.baseRef, "--output", "json")
 	var versions struct {
 		Versions []struct {
 			VersionRef string `json:"version_ref"`
@@ -183,33 +254,17 @@ func testE2EVolumeSync(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(versionsOut), &versions))
 	versionFound := false
 	for _, version := range versions.Versions {
-		if version.VersionRef == versionRef {
+		if version.VersionRef == s.versionRef {
 			versionFound = true
 			break
 		}
 	}
-	require.True(t, versionFound, "version %q not in volume history", versionRef)
+	require.True(t, versionFound, "version %q not in volume history", s.versionRef)
+}
 
-	step(t, "deploy model with synced immutable BDN volume mounted")
-	modelName := "cli-e2e-volume-sync-" + suffix
-	modelDir := writeVolumeSyncModel(t, modelName, versionRef)
-	modelID := ""
-	t.Cleanup(func() {
-		dumpModelLogsIfFailure(t, modelName)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if modelID == "" {
-			modelID = lookupModelIDByName(t, ctx, modelName)
-		}
-		if modelID == "" {
-			return
-		}
-		if _, errOut, err := cliCtx(t, ctx,
-			"model", "delete", "--model-id", modelID, "--yes"); err != nil {
-			t.Logf("cleanup delete of model %s failed: %v\nstderr: %s", modelID, err, errOut)
-		}
-	})
-
+func (s *volumeSyncLifecycle) Deploy(t *testing.T) {
+	modelDir := writeVolumeSyncModel(t, s.modelName, s.versionRef)
+	s.modelCleanupNeeded = true
 	pushCtx, pushCancel := context.WithTimeout(t.Context(), pushCLITimeout)
 	defer pushCancel()
 	pushOut := mustCLICtx(t, pushCtx,
@@ -220,14 +275,15 @@ func testE2EVolumeSync(t *testing.T) {
 		"--output", "json")
 	var deployment pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(pushOut), &deployment))
-	require.Equal(t, modelName, deployment.Model.Name)
+	require.Equal(t, s.modelName, deployment.Model.Name)
 	require.Equal(t, "ACTIVE", deployment.Deployment.Status)
-	modelID = deployment.Model.ID
+	s.modelID = deployment.Model.ID
+}
 
-	step(t, "invoke model and verify synced file is mounted")
+func (s *volumeSyncLifecycle) Predict(t *testing.T) {
 	predictOut := mustCLI(t,
 		"model", "predict",
-		"--model-id", modelID,
+		"--model-id", s.modelID,
 		"--data", `{}`,
 		"--output", "json")
 	var prediction struct {
@@ -236,15 +292,16 @@ func testE2EVolumeSync(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(predictOut), &prediction))
 	require.True(t, prediction.Mounted)
-	require.Equal(t, sourceConfig["model_type"], prediction.ModelType)
+	require.Equal(t, s.sourceConfig["model_type"], prediction.ModelType)
+}
 
-	step(t, "cancel completed volume sync idempotently")
+func (s *volumeSyncLifecycle) Cancel(t *testing.T) {
 	canceled := parseVolumeSync(t, mustCLI(t,
 		"volume", "sync", "cancel",
-		"--volume-sync-id", started.SyncID,
+		"--volume-sync-id", s.started.SyncID,
 		"--output", "json"))
 	require.Equal(t, "READY", canceled.Status)
-	require.Equal(t, started.VersionRef, canceled.VersionRef)
+	require.Equal(t, s.started.VersionRef, canceled.VersionRef)
 }
 
 // e2eVolumeSync mirrors the fields asserted from every volume-sync command.
