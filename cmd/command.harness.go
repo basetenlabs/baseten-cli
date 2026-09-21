@@ -67,7 +67,7 @@ var commandHarness = Command{
 			Summary: "Inspect local harness configuration and drift (PRE-RELEASE)",
 			Description: harnessPreRelease +
 				"Show the installed version, configuration path, managed settings, and changes made since setup. " +
-				"Defaults to Claude Code; pass --harness to inspect Codex or OpenCode. Status remains available " +
+				"Pass --harness to select which harness to inspect. Status remains available " +
 				"after an upgrade or executable removal.",
 			Flags: HarnessFlags{},
 			Output: &CommandOutput[HarnessStatusResult]{
@@ -89,8 +89,7 @@ var commandHarness = Command{
 			Summary: "Restore settings owned by Baseten harness (PRE-RELEASE)",
 			Description: harnessPreRelease +
 				"Restore settings changed by setup while preserving subsequent user edits. Conflicts are " +
-				"reported for manual resolution. Defaults to Claude Code; pass --harness to restore Codex or " +
-				"OpenCode.\n\nUse --dry-run to preview restoration or --yes to apply without confirmation. Saved " +
+				"reported for manual resolution. Pass --harness to select which harness to restore.\n\nUse --dry-run to preview restoration or --yes to apply without confirmation. Saved " +
 				"Routes keys are retained and are not revoked. Teardown remains available after an upgrade or " +
 				"executable removal.",
 			Flags: HarnessTeardownFlags{},
@@ -147,7 +146,7 @@ type HarnessStatusResult struct {
 
 type HarnessFlags struct {
 	CommandFlags
-	Harness string `flag:"harness" desc:"Harness to configure or inspect" default:"claude-code" enum:"claude-code,codex,opencode"`
+	Harness string `flag:"harness" desc:"Harness to inspect or restore" required:"true" enum:"claude-code,codex,opencode"`
 	Config  string `flag:"config" desc:"Explicit harness settings file"`
 }
 
