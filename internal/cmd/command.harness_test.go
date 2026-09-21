@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -222,7 +223,7 @@ func Test_Harness_Setup_ReplacementPreviewConfirmationAndRestore(t *testing.T) {
 	checkUnchanged()
 	h.Require.Error(h.Execute(args...))
 	h.Require.Contains(h.Stderr.String(), "pass --yes")
-	h.Require.Contains(h.Stdout.String(), "Settings to replace: model")
+	h.Require.Contains(h.Stdout.String(), "Existing integration settings will be replaced")
 	h.Require.Contains(h.Stdout.String(), "backed up")
 	checkUnchanged()
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
@@ -270,7 +271,7 @@ func Test_Harness_Setup_ConfirmedReplacementOfManagedModel(t *testing.T) {
 	journalBefore, err := os.ReadFile(path + ".baseten-harness.json")
 	h.Require.NoError(err)
 	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
-	h.Require.Contains(h.Stdout.String(), "Settings to replace: model")
+	h.Require.Contains(h.Stdout.String(), "Existing integration settings will be replaced")
 	h.Require.Error(h.Execute(args...))
 	unchanged, err := os.ReadFile(path)
 	h.Require.NoError(err)
@@ -310,7 +311,7 @@ func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {
 					expected = override
 				}
 				h.Require.NoError(h.Execute(args...))
-				h.Require.Contains(h.Stderr.String(), name+" default route: "+expected)
+				h.Require.Contains(h.Stdout.String(), "Default route  "+expected)
 				data, err := os.ReadFile(path)
 				h.Require.NoError(err)
 				var config map[string]any
@@ -323,6 +324,29 @@ func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {
 					expected = "baseten-harness/" + expected
 				}
 				h.Require.Equal(expected, config["model"])
+				setupOutput := h.Stdout.String()
+				h.Require.Equal(1, strings.Count(setupOutput, "Available routes: 2"))
+				h.Require.Equal(1, strings.Count(setupOutput, "Configuration saved."))
+				for _, value := range []string{"NAME", "DISPLAY NAME", "acme/z-first", "First", "acme/second", "Second"} {
+					h.Require.Contains(setupOutput, value)
+				}
+				h.Require.NotContains(setupOutput+h.Stderr.String(), "created-routes-secret")
+				h.Require.NotContains(setupOutput, "ANTHROPIC_AUTH_TOKEN")
+				calls := len(api.Calls())
+				h.Require.NoError(h.Execute("harness", "status", "--harness", name, "--config", path))
+				h.Require.Equal(calls, len(api.Calls()))
+				for _, value := range []string{"Configured routes: 2", "acme/z-first", "First", "acme/second", "Second", "Local configuration only", "Refresh: baseten harness setup --harness " + name} {
+					h.Require.Contains(h.Stdout.String(), value)
+				}
+				h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "created-routes-secret")
+				h.Require.NoError(h.Execute("harness", "status", "--harness", name, "--config", path, "--output", "json"))
+				var status public.HarnessStatusResult
+				h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &status))
+				h.Require.Len(status.RouteDetails, 2)
+				h.Require.Equal("First", status.RouteDetails[0].DisplayName)
+				h.Require.Equal(strings.TrimPrefix(expected, "baseten-harness/"), status.DefaultRoute)
+				h.Require.Equal(calls, len(api.Calls()))
+
 			})
 		}
 	}

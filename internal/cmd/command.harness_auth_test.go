@@ -272,7 +272,7 @@ func Test_Harness_Setup_TeamSwitchReusesPreviousKey(t *testing.T) {
 		h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "secret-")
 	}
 	h.Require.Equal([]string{"team-a", "team-b"}, minted)
-	h.Require.Contains(h.Stderr.String(), "reuse saved key")
+	h.Require.Contains(h.Stdout.String(), "Reuse saved key")
 	for _, team := range []string{"team-a", "team-b"} {
 		key, err := configDirStore(t).GetRoutesKey(auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: team, Name: "laptop"})
 		h.Require.NoError(err)

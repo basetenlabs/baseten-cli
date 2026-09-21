@@ -21,7 +21,7 @@ var commandHarness = Command{
 				"Use --dry-run to preview or --yes to skip confirmation. Restart the harness after setup.",
 			Flags: HarnessSetupFlags{},
 			Output: &CommandOutput[HarnessPlanResult]{
-				TextDescription: "Set up harness authentication and configuration. Reports paths and setting names without credential values.",
+				TextDescription: "Preview available routes and configuration before setup. Use --verbose for setting names.",
 				Examples: []CommandExample{
 					{
 						Description: "Configure installed harnesses interactively.",
@@ -64,7 +64,7 @@ var commandHarness = Command{
 				"after an upgrade or executable removal.",
 			Flags: HarnessFlags{},
 			Output: &CommandOutput[HarnessStatusResult]{
-				TextDescription: "Inspect local harness configuration and drift. Reports paths and setting names without credential values.",
+				TextDescription: "Show local configuration, configured routes, and changed settings. Use --verbose for managed setting names.",
 				Examples: []CommandExample{
 					{
 						Description: "Inspect Codex configuration.",
@@ -124,17 +124,25 @@ type HarnessPlansResult struct {
 	Changes []HarnessPlanResult `json:"changes"`
 }
 
+type HarnessRouteSummary struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+}
+
 type HarnessStatusResult struct {
-	Name      string   `json:"harness"`
-	Path      string   `json:"config"`
-	Installed bool     `json:"installed"`
-	Version   string   `json:"version"`
-	Supported bool     `json:"supported"`
-	State     string   `json:"state"`
-	Managed   []string `json:"managed_settings,omitempty"`
-	Drift     []string `json:"drift,omitempty"`
-	Routes    []string `json:"routes,omitempty"`
-	Note      string   `json:"note"`
+	DefaultRoute   string                `json:"default_route,omitempty"`
+	SmallTaskModel string                `json:"small_task_model,omitempty"`
+	RouteDetails   []HarnessRouteSummary `json:"route_details,omitempty"`
+	Name           string                `json:"harness"`
+	Path           string                `json:"config"`
+	Installed      bool                  `json:"installed"`
+	Version        string                `json:"version"`
+	Supported      bool                  `json:"supported"`
+	State          string                `json:"state"`
+	Managed        []string              `json:"managed_settings,omitempty"`
+	Drift          []string              `json:"drift,omitempty"`
+	Routes         []string              `json:"routes,omitempty"`
+	Note           string                `json:"note"`
 }
 
 type HarnessFlags struct {

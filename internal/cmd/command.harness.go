@@ -141,20 +141,16 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
-	keyAction := "reuse saved key"
-	if credential.saved == "" {
-		keyAction = "create a key when changes are applied"
-	}
-	ctx.Logf("Team: %s\nRoutes key: %s (%s)\n", credential.scope.TeamID, credential.scope.Name, keyAction)
-	for i, d := range detections {
-		ctx.Logf("%s default route: %s\n", d.Name, selections[i].Primary)
+	if !ctx.JSON {
+		harnessSetupSummary(ctx, credential, routes, detections, selections, plans)
 	}
 	if f.DryRun {
-		harnessPlansOutput(ctx, plans)
+		if ctx.JSON {
+			harnessPlansOutput(ctx, plans)
+		} else {
+			ctx.OutputLine("Preview only. No files changed or routes API key created.")
+		}
 		return nil
-	}
-	if !ctx.JSON {
-		harnessPlansOutput(ctx, plans)
 	}
 	paths := make([]string, len(detections))
 	for i, d := range detections {
@@ -191,7 +187,10 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if ctx.JSON {
 		harnessPlansOutput(ctx, plans)
 	} else {
-		ctx.OutputLine("Harness configured. Restart the harness; rerun setup to refresh routes.")
+		ctx.OutputLine("Configuration saved. Restart the configured harnesses to load the changes.")
+		for _, d := range detections {
+			ctx.Outputf("Restore settings: baseten harness teardown --harness %s\n", d.Name)
+		}
 	}
 	return nil
 }
@@ -205,15 +204,37 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessFlags) error {
 		return err
 	}
 	if ctx.JSON {
+		details := make([]cmd.HarnessRouteSummary, 0, len(r.RouteDetails))
+		for _, route := range r.RouteDetails {
+			details = append(details, cmd.HarnessRouteSummary{Name: route.Name, DisplayName: route.DisplayName})
+		}
 		ctx.OutputJSON(cmd.HarnessStatusResult{
+			DefaultRoute: r.DefaultRoute, SmallTaskModel: r.SmallTaskModel, RouteDetails: details,
 			Name: r.Name, Path: r.Path, Installed: r.Installed, Version: r.Version, Supported: r.Supported,
 			State: r.State, Managed: r.Managed, Drift: r.Drift, Routes: r.Routes, Note: r.Note,
 		})
 	} else {
-		ctx.Outputf("%s: %s\nConfig: %s\nVersion: %s (supported=%t)\n", r.Name, r.State, r.Path, r.Version, r.Supported)
-		ctx.OutputLine(r.Note)
+		ctx.Outputf("%s: %s\n", r.Name, r.State)
+		ctx.Outputf("  Config         %s\n  Version        %s\n", harnessDisplayPath(r.Path), r.Version)
+		if !r.Installed {
+			ctx.OutputLine("  Installation   Not found on PATH")
+		} else if !r.Supported {
+			ctx.OutputLine("  Compatibility  Version or platform not supported for setup")
+		}
+		if r.DefaultRoute != "" {
+			ctx.Outputf("  Default route  %s\n", r.DefaultRoute)
+		}
+		if r.SmallTaskModel != "" {
+			ctx.Outputf("  %s  %s\n", harnessSmallTaskLabel(r.Name), r.SmallTaskModel)
+		}
 		if len(r.Drift) > 0 {
-			ctx.Outputf("Changed settings: %s\n", strings.Join(r.Drift, ", "))
+			ctx.Outputf("  Changed settings  %s\n", strings.Join(r.Drift, ", "))
+		}
+		ctx.OutputLine("")
+		harnessRouteTable(ctx, "Configured routes", r.RouteDetails)
+		ctx.Outputf("\nLocal configuration only; key validity and live routes were not checked.\nRefresh: baseten harness setup --harness %s (add --team <team> if needed), then restart the harness.\n", r.Name)
+		if len(r.Managed) > 0 {
+			ctx.VerboseLogf("Managed settings: %s\n", strings.Join(r.Managed, ", "))
 		}
 	}
 	return nil
@@ -331,4 +352,82 @@ func harnessDetectionLabel(d harness.Detection) string {
 		return label + " (unsupported version/platform)"
 	}
 	return label
+}
+
+func harnessDisplayPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		relative, err := filepath.Rel(home, path)
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative) {
+			return filepath.Join("~", relative)
+		}
+	}
+	return path
+}
+
+func harnessSmallTaskLabel(name string) string {
+	if name == "claude-code" {
+		return "Haiku model  "
+	}
+	return "Small tasks  "
+}
+
+func harnessRouteTable(ctx *CommandContext, title string, routes []harness.Route) {
+	ctx.Outputf("%s: %d\n", title, len(routes))
+	if len(routes) == 0 {
+		return
+	}
+	rows := make([][]string, 0, len(routes))
+	for _, route := range routes {
+		rows = append(rows, []string{route.Name, route.DisplayName})
+	}
+	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "DISPLAY NAME"}, Rows: rows})
+}
+
+func harnessSetupSummary(ctx *CommandContext, credential *harnessAuth, routes []harness.Route, detections []harness.Detection, selections []harness.Selection, plans []*harness.Plan) {
+	ctx.Outputf("Team: %s\n\n", credential.scope.TeamID)
+	harnessRouteTable(ctx, "Available routes", routes)
+	keyAction := "Reuse saved key"
+	if credential.saved == "" {
+		keyAction = "Create on confirmation"
+	}
+	for i, d := range detections {
+		ctx.Outputf("\n%s\n  Config         %s\n  Default route  %s\n", d.Name, harnessDisplayPath(d.Path), selections[i].Primary)
+		if small := harness.SmallTaskModel(d.Name, selections[i]); small != "" {
+			ctx.Outputf("  %s  %s\n", harnessSmallTaskLabel(d.Name), small)
+		}
+		if selections[i].Subagent != "" {
+			ctx.Outputf("  Subagents      %s\n", selections[i].Subagent)
+		}
+		if d.Name == "claude-code" {
+			fallback := selections[i].Fallback
+			if fallback == "" {
+				fallback = selections[i].Primary
+			}
+			ctx.Outputf("  Fallback route %s\n", fallback)
+		}
+		ctx.Outputf("  Routes API key %s\n", keyAction)
+		changed, replaced := false, false
+		for _, p := range plans {
+			if p.Path != d.Path && (d.Name != "codex" || p.Path != harness.CatalogPath(d.Path)) {
+				continue
+			}
+			changed = changed || p.Changed
+			replaced = replaced || len(p.Replaced) > 0
+			ctx.VerboseLogf("Config: %s\nSettings: %s\n", p.Path, strings.Join(p.Keys, ", "))
+			if len(p.Replaced) > 0 {
+				ctx.VerboseLogf("Settings to replace: %s\n", strings.Join(p.Replaced, ", "))
+			}
+		}
+		result := "Already configured"
+		if changed {
+			result = "Changes ready to apply"
+		}
+		ctx.Outputf("  Result         %s\n", result)
+		if replaced {
+			ctx.OutputLine("  Existing integration settings will be replaced and backed up for teardown.")
+		}
+	}
+	ctx.VerboseLogf("Routes API key name: %s\n", credential.scope.Name)
+	ctx.OutputLine("")
 }
