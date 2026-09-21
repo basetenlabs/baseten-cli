@@ -284,7 +284,8 @@ func PrepareTeardown(path string) (*Plan, error) {
 		return nil, err
 	}
 	original, err := decodeConfig(s.Path, j.Original)
-	if err == nil && same(Value{Data: original}, Value{Data: d}) {
+	// JSONC restoration uses the patched current document so later comments survive.
+	if err == nil && same(Value{Data: original}, Value{Data: d}) && (filepath.Ext(s.Path) != ".jsonc" || !j.Existed) {
 		p.data = j.Original
 	}
 	if len(p.Keys) == 0 {
@@ -447,8 +448,9 @@ func Inspect(d Detection) (Status, error) {
 			}
 		}
 	}
+	var codexCatalog map[string]any
 	if d.Name == "codex" {
-		_, _, _, catalog, err := Read(CatalogPath(d.Path))
+		_, contents, _, catalog, err := Read(CatalogPath(d.Path))
 		if err != nil {
 			return r, err
 		}
@@ -456,10 +458,19 @@ func Inspect(d Detection) (Status, error) {
 			r.State = "drifted"
 			r.Drift = append(r.Drift, "model catalog missing")
 		} else {
-			r.Routes = append(r.Routes, catalog.Routes...)
-			_, contents, _, _, err := Read(CatalogPath(d.Path))
-			if err != nil {
-				return r, err
+			codexCatalog = contents
+			if models, ok := contents["models"].([]any); ok {
+				for _, model := range models {
+					if row, ok := model.(map[string]any); ok {
+						name, _ := row["slug"].(string)
+						for _, managed := range catalog.Routes {
+							if name == managed {
+								r.Routes = append(r.Routes, name)
+								break
+							}
+						}
+					}
+				}
 			}
 			for _, v := range catalog.Settings {
 				if !same(get(contents, v.Path), v.Installed) {
@@ -487,11 +498,7 @@ func Inspect(d Detection) (Status, error) {
 			labels[name] = label
 		}
 	case "codex":
-		_, catalogData, _, _, err := Read(CatalogPath(d.Path))
-		if err != nil {
-			return r, err
-		}
-		if models, ok := catalogData["models"].([]any); ok {
+		if models, ok := codexCatalog["models"].([]any); ok {
 			for _, model := range models {
 				if row, ok := model.(map[string]any); ok {
 					name, _ := row["slug"].(string)

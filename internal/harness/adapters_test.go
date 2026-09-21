@@ -190,7 +190,13 @@ func TestOpenCodeJSONCLifecycle(t *testing.T) {
 			restored, err := os.ReadFile(path)
 			require.NoError(t, err)
 			if !edit {
-				require.Equal(t, original, restored)
+				before, err := decodeConfig(path, original)
+				require.NoError(t, err)
+				after, err := decodeConfig(path, restored)
+				require.NoError(t, err)
+				require.Equal(t, before, after)
+				require.Contains(t, string(restored), "Keep my comment")
+				require.Contains(t, string(restored), "keep provider")
 			} else {
 				require.Contains(t, string(restored), "Keep my comment")
 				require.Contains(t, string(restored), "keep provider")
@@ -213,4 +219,14 @@ func TestOpenCodeInvalidJSONCUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, original, data)
 	require.NoFileExists(t, JournalPath(path))
+}
+
+func TestOpenCodePolicyPathsMatchPlatform(t *testing.T) {
+	require.ElementsMatch(t, []string{
+		"/Library/Application Support/opencode/opencode.json",
+		"/Library/Application Support/opencode/opencode.jsonc",
+		"/Library/Managed Preferences/test-user/ai.opencode.managed.plist",
+		"/Library/Managed Preferences/ai.opencode.managed.plist",
+	}, openCodePolicyPaths("darwin", "test-user"))
+	require.ElementsMatch(t, []string{"/etc/opencode/opencode.json", "/etc/opencode/opencode.jsonc"}, openCodePolicyPaths("linux", ""))
 }

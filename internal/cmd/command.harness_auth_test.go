@@ -302,3 +302,15 @@ func Test_Harness_Setup_SummaryTeamName(t *testing.T) {
 		})
 	}
 }
+
+func Test_Harness_Setup_KeyUsesCLIUserAgent(t *testing.T) {
+	h, api := productionHarness(t)
+	var agent string
+	api.SetRouteFunc("POST", "/v1/api_keys", func(w http.ResponseWriter, r *http.Request) {
+		agent = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"api_key": "created-routes-secret"})
+	})
+	h.Require.NoError(executeHarnessSetup(t, h, "--team", "team-a"))
+	h.Require.Contains(agent, "baseten-cli/", "key creation should use the same client metadata as neighboring commands")
+}

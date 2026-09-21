@@ -125,6 +125,7 @@ func Test_Harness_Setup_FailureNeverMints(t *testing.T) {
 	}{
 		{"unavailable", 404, map[string]any{}, "HTTP 404"},
 		{"empty", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}}, "no accessible routes"},
+		{"wrong team", 200, map[string]any{"items": []any{map[string]any{"id": "r", "name": "other/route", "display_name": "Other", "team_id": "other", "invoke_url": "https://coding.baseten.co"}}, "pagination": map[string]any{"has_more": false}}, "out-of-team"},
 		{"pagination", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": true}}, "pagination cursor"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
