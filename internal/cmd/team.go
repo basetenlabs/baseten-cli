@@ -14,27 +14,33 @@ import (
 // An exact match on Id wins over a name match: this lets users always pass
 // an ID without colliding with a same-spelled name.
 func ResolveTeam(ctx context.Context, api *managementapi.Client, input string) (string, error) {
+	team, err := resolveTeam(ctx, api, input)
+	return team.Id, err
+}
+
+// resolveTeam retains the SDK team for callers that also display its name.
+func resolveTeam(ctx context.Context, api *managementapi.Client, input string) (managementapi.Team, error) {
 	if input == "" {
-		return "", nil
+		return managementapi.Team{}, nil
 	}
 	resp, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
 	if err != nil {
-		return "", fmt.Errorf("list teams: %w", err)
+		return managementapi.Team{}, fmt.Errorf("list teams: %w", err)
 	}
-	found := ""
+	var found managementapi.Team
 	for _, t := range resp.Teams {
 		if t.Id == input {
-			return t.Id, nil
+			return t, nil
 		}
 		if t.Name == input {
-			if found != "" {
-				return "", fmt.Errorf("multiple teams named %q; pass the team ID instead", input)
+			if found.Id != "" {
+				return managementapi.Team{}, fmt.Errorf("multiple teams named %q; pass the team ID instead", input)
 			}
-			found = t.Id
+			found = t
 		}
 	}
-	if found == "" {
-		return "", fmt.Errorf("no team matched %q", input)
+	if found.Id == "" {
+		return managementapi.Team{}, fmt.Errorf("no team matched %q", input)
 	}
 	return found, nil
 }

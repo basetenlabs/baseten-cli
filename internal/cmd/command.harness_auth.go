@@ -47,6 +47,7 @@ type harnessAuth struct {
 	store     *auth.Store
 	scope     auth.RoutesKeyScope
 	saved     string
+	teamName  string
 	transport *auth.Transport
 }
 
@@ -91,7 +92,7 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*har
 	if err != nil {
 		return nil, err
 	}
-	var teamID string
+	var teamID, teamName string
 	if flags.Team == "" {
 		teams, err := cl.API().GetTeams(ctx, managementapi.GetV1TeamsParams{})
 		if err != nil {
@@ -102,6 +103,7 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*har
 		}
 		if len(teams.Teams) == 1 {
 			teamID = teams.Teams[0].Id
+			teamName = teams.Teams[0].Name
 		} else {
 			available := make([]string, 0, len(teams.Teams))
 			for _, team := range teams.Teams {
@@ -111,10 +113,11 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*har
 		}
 		flags.Team = teamID
 	} else {
-		teamID, err = ResolveTeam(ctx, cl.API(), flags.Team)
+		team, err := resolveTeam(ctx, cl.API(), flags.Team)
 		if err != nil {
 			return nil, err
 		}
+		teamID, teamName = team.Id, team.Name
 	}
 	user, err := cl.API().GetUsersMe(ctx)
 	if err != nil {
@@ -148,7 +151,7 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*har
 			}
 		}
 	}
-	return &harnessAuth{store: store, scope: scope, saved: saved, transport: transport}, nil
+	return &harnessAuth{store: store, scope: scope, saved: saved, teamName: teamName, transport: transport}, nil
 }
 
 func (a *harnessAuth) ensure(ctx context.Context) (string, bool, error) {
