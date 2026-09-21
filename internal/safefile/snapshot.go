@@ -81,10 +81,23 @@ func (s *Snapshot) Check() error {
 	return nil
 }
 func (s *Snapshot) Write(data []byte) error {
+	mode := os.FileMode(0600)
+	if s.Info != nil {
+		mode = s.Info.Mode().Perm()
+	}
+	return s.write(data, mode)
+}
+
+// WritePrivate installs the replacement with owner-only permissions before rename.
+func (s *Snapshot) WritePrivate(data []byte) error {
+	return s.write(data, 0600)
+}
+
+func (s *Snapshot) write(data []byte, mode os.FileMode) error {
 	if err := s.Check(); err != nil {
 		return err
 	}
-	if s.Info != nil && bytes.Equal(s.Data, data) {
+	if s.Info != nil && bytes.Equal(s.Data, data) && s.Info.Mode().Perm() == mode {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(s.Target), 0700); err != nil {
@@ -95,10 +108,6 @@ func (s *Snapshot) Write(data []byte) error {
 		return err
 	}
 	defer os.Remove(f.Name())
-	mode := os.FileMode(0600)
-	if s.Info != nil {
-		mode = s.Info.Mode().Perm()
-	}
 	if err = f.Chmod(mode); err == nil {
 		_, err = f.Write(data)
 	}

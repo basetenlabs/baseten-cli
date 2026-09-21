@@ -346,3 +346,28 @@ func Test_Harness_StatusAndTeardown_RequireHarness(t *testing.T) {
 		}
 	}
 }
+
+func Test_Harness_Setup_PrivateConfigOnApplyOnly(t *testing.T) {
+	h, api := productionHarness(t)
+	path := filepath.Join(t.TempDir(), "opencode.jsonc")
+	original := []byte("{\n // User config\n \"$schema\": \"https://opencode.ai/config.json\",\n}\n")
+	h.Require.NoError(os.WriteFile(path, original, 0644))
+	h.Require.NoError(os.Chmod(path, 0644))
+	args := []string{"harness", "setup", "--harness", "opencode", "--config", path, "--team", "team-a"}
+	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
+	info, err := os.Stat(path)
+	h.Require.NoError(err)
+	h.Require.Equal(os.FileMode(0644), info.Mode().Perm())
+	data, err := os.ReadFile(path)
+	h.Require.NoError(err)
+	h.Require.Equal(original, data)
+	h.Require.Nil(api.FindCall("POST", "/v1/api_keys"))
+	h.Require.NoError(h.Execute(append(args, "--yes")...))
+	info, err = os.Stat(path)
+	h.Require.NoError(err)
+	h.Require.Equal(os.FileMode(0600), info.Mode().Perm())
+	data, err = os.ReadFile(path)
+	h.Require.NoError(err)
+	h.Require.Contains(string(data), "User config")
+	h.Require.Contains(string(data), "created-routes-secret")
+}
