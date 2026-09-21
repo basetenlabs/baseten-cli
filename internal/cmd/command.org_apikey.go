@@ -37,7 +37,7 @@ func commandOrgAPIKeyList(ctx *CommandContext, _ *cmd.OrgAPIKeyListFlags) error 
 		return err
 	}
 
-	keys, err := cl.API().GetApiKeys(ctx)
+	keys, err := cl.API().GetApiKeys(ctx, managementapi.GetV1ApiKeysParams{})
 	if err != nil {
 		return fmt.Errorf("listing API keys: %w", err)
 	}
@@ -129,7 +129,7 @@ func commandOrgAPIKeyDelete(ctx *CommandContext, flags *cmd.OrgAPIKeyDeleteFlags
 	// Resolve --name to a prefix by listing; --prefix is passed through.
 	prefix := flags.Prefix
 	if flags.Name != "" {
-		keys, err := cl.API().GetApiKeys(ctx)
+		keys, err := cl.API().GetApiKeys(ctx, managementapi.GetV1ApiKeysParams{})
 		if err != nil {
 			return fmt.Errorf("listing API keys: %w", err)
 		}
