@@ -3,6 +3,8 @@
 package harness
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -156,4 +158,59 @@ func TestOpenCodeSmallTaskDefaultAndOverride(t *testing.T) {
 			require.True(t, get(data, []string{"provider", "baseten-harness", "models", expected}).Exists)
 		})
 	}
+}
+
+func TestOpenCodeJSONCLifecycle(t *testing.T) {
+	for _, edit := range []bool{false, true} {
+		t.Run(fmt.Sprint(edit), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "opencode.jsonc")
+			original := []byte("{\n // Keep my comment\n \"$schema\": \"https://opencode.ai/config.json\",\n \"theme\": \"dark\",\n \"provider\": { /* keep provider */ \"user/custom~provider\": {\"name\":\"Mine\"}, },\n}\n")
+			require.NoError(t, os.WriteFile(path, original, 0600))
+			plans, err := PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+			require.NoError(t, err)
+			require.NoError(t, ApplyPlans(plans))
+			installed, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Contains(t, string(installed), "Keep my comment")
+			require.Contains(t, string(installed), "keep provider")
+			data, err := decodeConfig(path, installed)
+			require.NoError(t, err)
+			require.Equal(t, "dark", data["theme"])
+			require.Equal(t, "baseten-harness/acme/primary", data["model"])
+			plans, err = PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+			require.NoError(t, err)
+			require.False(t, plans[0].Changed)
+			if edit {
+				installed = bytes.Replace(installed, []byte(`"dark"`), []byte(`"light"`), 1)
+				require.NoError(t, os.WriteFile(path, installed, 0600))
+			}
+			plans, err = PrepareHarnessTeardown("opencode", path)
+			require.NoError(t, err)
+			require.NoError(t, ApplyPlans(plans))
+			restored, err := os.ReadFile(path)
+			require.NoError(t, err)
+			if !edit {
+				require.Equal(t, original, restored)
+			} else {
+				require.Contains(t, string(restored), "Keep my comment")
+				require.Contains(t, string(restored), "keep provider")
+				data, err = decodeConfig(path, restored)
+				require.NoError(t, err)
+				require.Equal(t, "light", data["theme"])
+				require.NotContains(t, data, "model")
+			}
+		})
+	}
+}
+
+func TestOpenCodeInvalidJSONCUnchanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "opencode.jsonc")
+	original := []byte("{ // comment\n invalid }")
+	require.NoError(t, os.WriteFile(path, original, 0600))
+	_, err := PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+	require.ErrorContains(t, err, "invalid settings JSONC")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, original, data)
+	require.NoFileExists(t, JournalPath(path))
 }

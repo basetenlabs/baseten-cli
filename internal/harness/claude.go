@@ -71,6 +71,11 @@ func Detect(ctx context.Context, executor Execer, name, path string) (Detection,
 				dir = filepath.Join(home, ".config")
 			}
 			d.Path = filepath.Join(dir, "opencode", "opencode.json")
+			if _, err := os.Stat(d.Path + "c"); err == nil {
+				d.Path += "c"
+			} else if !os.IsNotExist(err) {
+				return d, err
+			}
 		}
 	}
 	var err error
