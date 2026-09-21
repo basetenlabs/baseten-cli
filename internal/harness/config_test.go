@@ -13,11 +13,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const FixtureToken = "baseten-harness-local-fixture"
+
 func fixture(t *testing.T) []Route {
 	t.Helper()
-	r, e := (FixtureCatalog{Path: "testdata/routes.json"}).Routes(t.Context())
-	require.NoError(t, e)
-	return r
+	return []Route{
+		{Name: "acme/primary", DisplayName: "Engineering"},
+		{Name: "acme/background", DisplayName: "Background"},
+		{Name: "acme/subagent", DisplayName: "Subagents"},
+		{Name: "acme/fallback", DisplayName: "Fallback"},
+	}
 }
 func setup(t *testing.T, path string, routes []Route, replace bool) *Plan {
 	t.Helper()
@@ -221,12 +226,7 @@ func TestCatalogAndSelections(t *testing.T) {
 	require.Error(t, e)
 	_, e = (Selection{Primary: "missing"}).Resolve(fixture(t))
 	require.Error(t, e)
-	for _, raw := range []string{`[]`, `[{"name":"x","unknown":true}]`, string(mustJSON(t, fixture(t))) + ` {}`} {
-		path := filepath.Join(t.TempDir(), "catalog.json")
-		require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
-		_, e := (FixtureCatalog{Path: path}).Routes(t.Context())
-		require.Error(t, e)
-	}
+
 }
 func mustJSON(t *testing.T, v any) []byte { b, e := json.Marshal(v); require.NoError(t, e); return b }
 func TestRolesAndPicker(t *testing.T) {

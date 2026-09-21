@@ -21,8 +21,6 @@ const TestedClaudeVersion = "2.1.272"
 
 var TestedVersions = map[string]string{"claude-code": TestedClaudeVersion, "codex": "0.134.0", "opencode": "1.18.31"}
 
-const FixtureToken = "baseten-harness-local-fixture"
-
 type Detection struct {
 	Name      string `json:"harness"`
 	Path      string `json:"config"`
