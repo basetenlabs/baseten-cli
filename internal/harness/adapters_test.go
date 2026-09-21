@@ -22,7 +22,7 @@ func TestAdaptersLifecycle(t *testing.T) {
 				original = []byte("{\"theme\":\"dark\",\"model\":\"previous\"}\n")
 			}
 			path := filepath.Join(t.TempDir(), filename)
-			require.NoError(t, os.WriteFile(path, original, 0600))
+			require.NoError(t, os.WriteFile(path, original, 0644))
 			plans, e := PrepareHarness(name, path, fixture(t), Selection{Primary: "acme/primary", Background: "acme/background"}, "http://127.0.0.1:1234", FixtureToken, false, true)
 			require.NoError(t, e)
 			require.NoError(t, ApplyPlans(plans))
@@ -100,7 +100,7 @@ func TestPreservesNativeInstructionsAndAgentSettings(t *testing.T) {
 	require.Greater(t, len(codexNativeInstructions), 10000)
 	path := filepath.Join(t.TempDir(), "config.toml")
 	original := []byte("model_instructions_file = \"custom.md\"\n[agents.reviewer]\nconfig_file = \"reviewer.toml\"\n")
-	require.NoError(t, os.WriteFile(path, original, 0600))
+	require.NoError(t, os.WriteFile(path, original, 0644))
 	plans, e := PrepareHarness("codex", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
 	require.NoError(t, e)
 	require.NoError(t, ApplyPlans(plans))
@@ -165,7 +165,7 @@ func TestOpenCodeJSONCLifecycle(t *testing.T) {
 		t.Run(fmt.Sprint(edit), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "opencode.jsonc")
 			original := []byte("{\n // Keep my comment\n \"$schema\": \"https://opencode.ai/config.json\",\n \"theme\": \"dark\",\n \"provider\": { /* keep provider */ \"user/custom~provider\": {\"name\":\"Mine\"}, },\n}\n")
-			require.NoError(t, os.WriteFile(path, original, 0600))
+			require.NoError(t, os.WriteFile(path, original, 0644))
 			plans, err := PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
 			require.NoError(t, err)
 			require.NoError(t, ApplyPlans(plans))
@@ -206,7 +206,7 @@ func TestOpenCodeJSONCLifecycle(t *testing.T) {
 func TestOpenCodeInvalidJSONCUnchanged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.jsonc")
 	original := []byte("{ // comment\n invalid }")
-	require.NoError(t, os.WriteFile(path, original, 0600))
+	require.NoError(t, os.WriteFile(path, original, 0644))
 	_, err := PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
 	require.ErrorContains(t, err, "invalid settings JSONC")
 	data, err := os.ReadFile(path)

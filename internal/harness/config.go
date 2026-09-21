@@ -173,11 +173,6 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 	if err != nil {
 		return nil, err
 	}
-	// Static credentials make private files mandatory. Do not silently change a
-	// user's file mode or expose a credential through a world-readable config.
-	if s.Info != nil && s.Info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("settings file must be private (0600) before installing a harness credential")
-	}
 	settings, err := build(d, prior)
 	if err != nil {
 		return nil, err
@@ -236,7 +231,7 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 	if reflect.DeepEqual(original, d) {
 		p.data = s.Data
 	}
-	p.Changed = !bytes.Equal(p.data, s.Data)
+	p.Changed = !bytes.Equal(p.data, s.Data) || (s.Info != nil && s.Info.Mode().Perm() != 0600)
 	return p, nil
 }
 func PrepareTeardown(path string) (*Plan, error) {
@@ -331,8 +326,14 @@ func (p *Plan) Apply() error {
 		if err := os.Remove(p.snapshot.Target); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-	} else if err := p.snapshot.Write(p.data); err != nil {
-		return fmt.Errorf("configuration write interrupted; ownership journal retained for teardown: %w", err)
+	} else {
+		write := p.snapshot.Write
+		if !p.teardown {
+			write = p.snapshot.WritePrivate
+		}
+		if err := write(p.data); err != nil {
+			return fmt.Errorf("configuration write interrupted; ownership journal retained for teardown: %w", err)
+		}
 	}
 	// Commit ownership after the config write. A crash before this point leaves
 	// a pending journal accepting both the previous and newly installed values.
