@@ -5,36 +5,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
-	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
-func readRoutes(ctx context.Context, api *managementapi.Client, teamID string) ([]managementapi.Route, error) {
-	requestCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
+// listRoutes follows pagination for both route commands and harness discovery.
+func listRoutes(ctx context.Context, api *managementapi.Client, params managementapi.GetV1RoutesParams) ([]managementapi.Route, error) {
 	var routes []managementapi.Route
-	params := managementapi.GetV1RoutesParams{TeamId: &teamID}
 	cursors := map[string]bool{}
-	names := map[string]bool{}
 	for {
-		page, err := api.GetRoutes(requestCtx, params)
+		page, err := api.GetRoutes(ctx, params)
 		if err != nil {
 			return nil, fmt.Errorf("listing routes: %w", err)
 		}
-		for _, route := range page.Items {
-			if route.Id == "" || route.Name == "" || route.DisplayName == "" || route.InvokeUrl == "" || route.TeamId != teamID || names[route.Name] {
-				return nil, cmd.NewErrServer(errors.New("routes API returned incomplete, duplicate, or out-of-team routes"))
-			}
-			names[route.Name] = true
-			routes = append(routes, route)
-		}
+		routes = append(routes, page.Items...)
 		if !page.Pagination.HasMore {
-			break
+			return routes, nil
 		}
 		cursor := page.Pagination.Cursor
 		if cursor == nil || *cursor == "" || cursors[*cursor] {
@@ -43,24 +32,11 @@ func readRoutes(ctx context.Context, api *managementapi.Client, teamID string) (
 		cursors[*cursor] = true
 		params.Cursor = cursor
 	}
-	if len(routes) == 0 {
-		return nil, cmd.NewErrValidation(errors.New("no accessible routes in the selected team; create a route before running harness setup"))
-	}
-	return routes, nil
 }
 
 // Creation is not known to be idempotent. Only definitive API rejections allow
 // the credential store to clear its pending record and permit another attempt.
-func createRoutesKey(ctx context.Context, transport *auth.Transport, endpoint, name, teamID string) (string, error) {
-	token, err := transport.Credential(ctx)
-	if err != nil {
-		return "", cmd.NewErrAuth(err)
-	}
-	api := &managementapi.Client{
-		BaseURL:    endpoint,
-		HTTPClient: transport,
-		Headers:    http.Header{"Authorization": []string{"Bearer " + token}},
-	}
+func createRoutesKey(ctx context.Context, api *managementapi.Client, token, name, teamID string) (string, error) {
 	result, err := api.PostApiKeys(ctx, managementapi.CreateAPIKeyRequest{
 		Type:   managementapi.APIKeyCategory_ROUTES,
 		Name:   &name,

@@ -49,6 +49,7 @@ type harnessAuth struct {
 	saved     string
 	teamName  string
 	transport *auth.Transport
+	api       *managementapi.Client
 }
 
 func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*harnessAuth, error) {
@@ -151,7 +152,7 @@ func prepareHarnessAuth(ctx *CommandContext, flags *cmd.HarnessSetupFlags) (*har
 			}
 		}
 	}
-	return &harnessAuth{store: store, scope: scope, saved: saved, teamName: teamName, transport: transport}, nil
+	return &harnessAuth{store: store, scope: scope, saved: saved, teamName: teamName, transport: transport, api: cl.API()}, nil
 }
 
 func (a *harnessAuth) ensure(ctx context.Context) (string, bool, error) {
@@ -161,7 +162,11 @@ func (a *harnessAuth) ensure(ctx context.Context) (string, bool, error) {
 	createCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	created, err := a.store.EnsureRoutesKey(a.scope, func() (string, error) {
-		return createRoutesKey(createCtx, a.transport, a.scope.ManagementURL, a.scope.Name, a.scope.TeamID)
+		token, err := a.transport.Credential(createCtx)
+		if err != nil {
+			return "", cmd.NewErrAuth(err)
+		}
+		return createRoutesKey(createCtx, a.api, token, a.scope.Name, a.scope.TeamID)
 	})
 	if err != nil {
 		return "", false, err

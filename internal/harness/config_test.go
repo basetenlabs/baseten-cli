@@ -3,6 +3,7 @@
 package harness
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -387,4 +388,34 @@ func TestRefreshKeepsFirstSetupRestorePoint(t *testing.T) {
 			require.Equal(t, "light", restored["theme"])
 		})
 	}
+}
+
+func TestTeardownPreservesJSONCCommentOnlyEdit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "opencode.jsonc")
+	require.NoError(t, os.WriteFile(path, []byte("{\n // original comment\n \"theme\": \"dark\",\n}\n"), 0600))
+	plans, err := PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, bytes.Replace(data, []byte("original comment"), []byte("updated user comment"), 1), 0600))
+	plans, err = PrepareHarnessTeardown("opencode", path)
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans))
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "updated user comment")
+}
+
+func TestCodexStatusReadsActualCatalog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	plans, err := PrepareHarness("codex", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans))
+	save(t, CatalogPath(path), map[string]any{"models": []any{}})
+	status, err := Inspect(Detection{Name: "codex", Path: path})
+	require.NoError(t, err)
+	require.Equal(t, "drifted", status.State)
+	require.Empty(t, status.Routes, "no configured routes remain in the actual catalog")
+	require.Empty(t, status.RouteDetails)
 }

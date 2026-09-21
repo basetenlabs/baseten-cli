@@ -339,12 +339,7 @@ func harnessDetectionLabel(d harness.Detection) string {
 	if version == "" {
 		version = "unknown"
 	}
-	path := d.Path
-	if home, err := os.UserHomeDir(); err == nil {
-		if relative, err := filepath.Rel(home, path); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative) {
-			path = filepath.Join("~", relative)
-		}
-	}
+	path := harnessDisplayPath(d.Path)
 	label := fmt.Sprintf("%-12s  %-10s  %s", d.Name, version, path)
 	if d.Version == "" {
 		return label + " (version unavailable)"

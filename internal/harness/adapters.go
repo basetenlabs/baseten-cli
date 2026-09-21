@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/basetenlabs/baseten-cli/internal/safefile"
@@ -119,7 +121,11 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 				return nil, errors.New("OpenCode V2 providers require a separately verified adapter")
 			}
 		}
-		for _, policy := range policyPaths(name, path) {
+		policies, err := policyPaths(name, path)
+		if err != nil {
+			return nil, err
+		}
+		for _, policy := range policies {
 			if _, e := os.Stat(policy); e == nil {
 				return nil, fmt.Errorf("managed policy detected at %s", policy)
 			} else if !os.IsNotExist(e) {
@@ -169,11 +175,38 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 	}
 	return []*Plan{catalog, p}, nil
 }
-func policyPaths(name, path string) []string {
+func policyPaths(name, path string) ([]string, error) {
 	if name == "codex" {
-		return []string{filepath.Join(filepath.Dir(path), "managed_config.toml"), "/etc/codex/managed_config.toml", "/etc/codex/requirements.toml"}
+		return []string{filepath.Join(filepath.Dir(path), "managed_config.toml"), "/etc/codex/managed_config.toml", "/etc/codex/requirements.toml"}, nil
 	}
-	return []string{"/etc/opencode/opencode.json", "/etc/opencode/opencode.jsonc"}
+	username := ""
+	if runtime.GOOS == "darwin" {
+		current, err := user.Current()
+		if err != nil {
+			return nil, fmt.Errorf("checking OpenCode managed preferences: %w", err)
+		}
+		username = current.Username
+	}
+	return openCodePolicyPaths(runtime.GOOS, username), nil
+}
+
+func openCodePolicyPaths(platform, username string) []string {
+	dir := "/etc/opencode"
+	var paths []string
+	if platform == "darwin" {
+		dir = "/Library/Application Support/opencode"
+		paths = append(paths,
+			filepath.Join("/Library/Managed Preferences", username, "ai.opencode.managed.plist"),
+			"/Library/Managed Preferences/ai.opencode.managed.plist",
+		)
+	} else if platform == "windows" {
+		root := os.Getenv("ProgramData")
+		if root == "" {
+			root = `C:\ProgramData`
+		}
+		dir = filepath.Join(root, "opencode")
+	}
+	return append(paths, filepath.Join(dir, "opencode.json"), filepath.Join(dir, "opencode.jsonc"))
 }
 func PrepareHarnessTeardown(name, path string) ([]*Plan, error) {
 	p, e := PrepareTeardown(path)

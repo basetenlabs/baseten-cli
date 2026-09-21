@@ -15,7 +15,21 @@ func listHarnessRoutes(ctx *CommandContext, teamID string) ([]managementapi.Rout
 		return nil, err
 	}
 	api := cl.API()
-	return readRoutes(ctx, api, teamID)
+	routes, err := listRoutes(ctx, api, managementapi.GetV1RoutesParams{TeamId: &teamID})
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{}
+	for _, route := range routes {
+		if route.Id == "" || route.Name == "" || route.DisplayName == "" || route.InvokeUrl == "" || route.TeamId != teamID || names[route.Name] {
+			return nil, cmd.NewErrServer(errors.New("routes API returned incomplete, duplicate, or out-of-team routes"))
+		}
+		names[route.Name] = true
+	}
+	if len(routes) == 0 {
+		return nil, cmd.NewErrValidation(errors.New("no accessible routes in the selected team; create a route before running harness setup"))
+	}
+	return routes, nil
 }
 
 // Use Route names and display labels only; model metadata is a follow-up.

@@ -29,17 +29,9 @@ func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
 	if team != "" {
 		params.TeamId = &team
 	}
-	var items []managementapi.Route
-	for {
-		resp, err := cl.API().GetRoutes(ctx, params)
-		if err != nil {
-			return fmt.Errorf("list routes: %w", err)
-		}
-		items = append(items, resp.Items...)
-		if !resp.Pagination.HasMore || resp.Pagination.Cursor == nil {
-			break
-		}
-		params.Cursor = resp.Pagination.Cursor
+	items, err := listRoutes(ctx, cl.API(), params)
+	if err != nil {
+		return err
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(cmd.RouteList{Items: items})

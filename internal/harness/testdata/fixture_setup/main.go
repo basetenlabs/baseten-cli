@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -48,7 +47,12 @@ func run() error {
 		if err := harness.FixtureEndpoint(*endpoint); err != nil {
 			return err
 		}
-		routes, err := (harness.FixtureCatalog{Path: *catalog}).Routes(context.Background())
+		data, err := os.ReadFile(*catalog)
+		if err != nil {
+			return err
+		}
+		var routes []harness.Route
+		err = json.Unmarshal(data, &routes)
 		if err != nil {
 			return err
 		}
