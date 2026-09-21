@@ -43,10 +43,10 @@ var commandHarness = Command{
 					},
 				},
 				JQExample: CommandExample{
-					Description: "Inspect structured output.",
+					Description: "Print the configuration file path.",
 					CommandLines: []string{
 						"baseten harness setup --harness claude-code",
-						"--team <team> --model <route-name> --dry-run --jq '.'",
+						"--team <team> --model <route-name> --dry-run --jq '.config'",
 					},
 				},
 				JSONDescription: "Reports changes for one configuration file.",
