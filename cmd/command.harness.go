@@ -87,7 +87,7 @@ var commandHarness = Command{
 				"executable removal.",
 			Flags: HarnessTeardownFlags{},
 			Output: &CommandOutput[HarnessPlanResult]{
-				TextDescription: "Restore settings owned by Baseten harness. Reports paths and setting names without credential values.",
+				TextDescription: "Restore original managed settings. Use --verbose for configuration paths and setting names.",
 				Examples: []CommandExample{
 					{
 						Description: "Preview restoration.",

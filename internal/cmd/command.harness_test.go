@@ -441,7 +441,8 @@ func Test_Harness_Teardown_RestoresManagedEditsAndPreservesUnrelatedSettings(t *
 			write(data)
 			args := []string{"harness", "teardown", "--harness", name, "--config", path}
 			h.Require.NoError(h.Execute(append(args, "--dry-run")...))
-			h.Require.Contains(h.Stdout.String(), "Settings to replace: model")
+			h.Require.Contains(h.Stdout.String(), "Would restore")
+			h.Require.NotContains(h.Stdout.String(), "Settings:")
 			h.Require.Equal(data, read())
 			h.Require.Error(h.Execute(args...)) // Noninteractive apply still requires confirmation.
 			h.Require.Equal(data, read())

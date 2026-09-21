@@ -18,14 +18,14 @@ func init() {
 	Register("harness status", commandHarnessStatus)
 	Register("harness teardown", commandHarnessTeardown)
 }
-func harnessConfirm(ctx *CommandContext, yes bool, path string) error {
+func harnessConfirm(ctx *CommandContext, yes bool, question string) error {
 	if yes {
 		return nil
 	}
 	if !ctx.IsInteractive() || ctx.JSON {
 		return cmd.NewErrUsagef("pass --yes to apply the configuration plan, or --dry-run to preview it")
 	}
-	return ctx.ConfirmYesNo("Apply harness changes to " + path + "?")
+	return ctx.ConfirmYesNo(question)
 }
 func harnessPlanOutput(ctx *CommandContext, p *harness.Plan) {
 	if ctx.JSON {
@@ -154,7 +154,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	for i, d := range detections {
 		paths[i] = d.Path
 	}
-	if err := harnessConfirm(ctx, f.Yes, strings.Join(paths, ", ")); err != nil {
+	if err := harnessConfirm(ctx, f.Yes, "Apply harness changes to "+strings.Join(paths, ", ")+"?"); err != nil {
 		return err
 	}
 	for _, path := range paths {
@@ -246,24 +246,31 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	if err != nil {
 		return err
 	}
-	if f.DryRun {
-		harnessPlansOutput(ctx, plans)
-		return nil
-	}
-	if !ctx.JSON {
-		harnessPlansOutput(ctx, plans)
-	}
+	name := map[string]string{"claude-code": "Claude Code", "codex": "Codex", "opencode": "OpenCode"}[f.Harness]
 	managed := false
 	for _, p := range plans {
 		managed = managed || p.Managed
+		if !ctx.JSON {
+			ctx.VerboseLogf("Config: %s\nSettings: %s\nChanged: %t\n", p.Path, strings.Join(p.Keys, ", "), p.Changed)
+			if len(p.Replaced) > 0 {
+				ctx.VerboseLogf("Settings to replace: %s\n", strings.Join(p.Replaced, ", "))
+			}
+		}
 	}
-	if !managed {
+	if f.DryRun || !managed {
 		if ctx.JSON {
 			harnessPlansOutput(ctx, plans)
+		} else if !managed {
+			ctx.Outputf("%s has no Baseten settings to restore.\n", name)
+		} else {
+			ctx.Outputf("Would restore %s settings from before setup. Unrelated settings will be preserved.\n", name)
 		}
 		return nil
 	}
-	if err := harnessConfirm(ctx, f.Yes, d.Path); err != nil {
+	if !ctx.JSON {
+		ctx.OutputLine("Unrelated settings will be preserved.")
+	}
+	if err := harnessConfirm(ctx, f.Yes, "Restore "+name+" settings from before setup?"); err != nil {
 		return err
 	}
 	unlock, err := harness.Lock(d.Path)
@@ -276,6 +283,8 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	}
 	if ctx.JSON {
 		harnessPlansOutput(ctx, plans)
+	} else {
+		ctx.Outputf("%s settings restored.\n", name)
 	}
 	return nil
 }
