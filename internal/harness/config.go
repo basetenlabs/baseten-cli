@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/basetenlabs/baseten-cli/internal/safefile"
+	"github.com/tailscale/hujson"
 )
 
 type Value struct {
@@ -226,7 +228,7 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 		j.Settings = append(j.Settings, v)
 		p.Keys = append(p.Keys, pathKey(v.Path))
 	}
-	p.data, err = encodeConfig(s.Path, d)
+	p.data, err = encodeConfig(s.Path, d, s.Data)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +272,7 @@ func PrepareTeardown(path string) (*Plan, error) {
 		}
 		p.Keys = append(p.Keys, pathKey(v.Path))
 	}
-	p.data, err = encodeConfig(s.Path, d)
+	p.data, err = encodeConfig(s.Path, d, s.Data)
 	if err != nil {
 		return nil, err
 	}
@@ -442,6 +444,13 @@ func Inspect(d Detection) (Status, error) {
 }
 
 func decodeConfig(path string, b []byte) (map[string]any, error) {
+	if filepath.Ext(path) == ".jsonc" && len(bytes.TrimSpace(b)) > 0 {
+		standardized, err := hujson.Standardize(bytes.Clone(b))
+		if err != nil {
+			return nil, errors.New("invalid settings JSONC; repair it before continuing")
+		}
+		return decode(standardized)
+	}
 	if filepath.Ext(path) != ".toml" {
 		return decode(b)
 	}
@@ -451,11 +460,74 @@ func decodeConfig(path string, b []byte) (map[string]any, error) {
 	}
 	return d, nil
 }
-func encodeConfig(path string, d map[string]any) ([]byte, error) {
+func encodeConfig(path string, d map[string]any, original []byte) ([]byte, error) {
+	if filepath.Ext(path) == ".jsonc" && len(bytes.TrimSpace(original)) > 0 {
+		before, err := decodeConfig(path, original)
+		if err != nil {
+			return nil, err
+		}
+		document, err := hujson.Parse(bytes.Clone(original))
+		if err != nil {
+			return nil, errors.New("invalid settings JSONC")
+		}
+		var operations []map[string]any
+		jsonObjectPatch("", before, d, &operations)
+		if len(operations) == 0 {
+			return original, nil
+		}
+		patch, err := json.Marshal(operations)
+		if err != nil {
+			return nil, err
+		}
+		if err := document.Patch(patch); err != nil {
+			return nil, errors.New("could not update settings JSONC")
+		}
+		document.Format()
+		return document.Pack(), nil
+	}
 	if filepath.Ext(path) != ".toml" {
 		return encode(d)
 	}
 	var b bytes.Buffer
 	err := toml.NewEncoder(&b).Encode(d)
 	return b.Bytes(), err
+}
+
+// Patch only changed object members so unrelated JSONC comments survive setup and teardown.
+func jsonObjectPatch(path string, before, after map[string]any, operations *[]map[string]any) {
+	keys := make([]string, 0, len(before)+len(after))
+	for key := range before {
+		keys = append(keys, key)
+	}
+	for key := range after {
+		if _, exists := before[key]; !exists {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		pointer := path + "/" + strings.ReplaceAll(strings.ReplaceAll(key, "~", "~0"), "/", "~1")
+		old, existed := before[key]
+		value, exists := after[key]
+		if !exists {
+			*operations = append(*operations, map[string]any{"op": "remove", "path": pointer})
+			continue
+		}
+		if existed {
+			if same(Value{Data: old}, Value{Data: value}) {
+				continue
+			}
+			oldObject, oldOK := old.(map[string]any)
+			newObject, newOK := value.(map[string]any)
+			if oldOK && newOK {
+				jsonObjectPatch(pointer, oldObject, newObject, operations)
+				continue
+			}
+		}
+		op := "add"
+		if existed {
+			op = "replace"
+		}
+		*operations = append(*operations, map[string]any{"op": op, "path": pointer, "value": value})
+	}
 }

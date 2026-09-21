@@ -39,8 +39,8 @@ class H(http.server.BaseHTTPRequestHandler):
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),H);threading.Thread(target=server.serve_forever,daemon=True).start()
 with tempfile.TemporaryDirectory(prefix='harness-extra-') as tmp:
  p=pathlib.Path(tmp);(p/'codex').mkdir();(p/'config').mkdir();base=f'http://127.0.0.1:{server.server_port}/v1'
- env={k:v for k,v in os.environ.items() if k in ['PATH','TMPDIR','LANG']};env.update(HOME=tmp,CODEX_HOME=str(p/'codex'),XDG_CONFIG_HOME=str(p/'config'),XDG_DATA_HOME=str(p/'data'),XDG_CACHE_HOME=str(p/'cache'),XDG_STATE_HOME=str(p/'state'),OPENCODE_CONFIG=str(p/'opencode.json'),OPENCODE_DISABLE_MODELS_FETCH='true',OPENCODE_DISABLE_AUTOUPDATE='true')
- for name,config in [('codex',p/'codex/config.toml'),('opencode',p/'opencode.json')]:
+ env={k:v for k,v in os.environ.items() if k in ['PATH','TMPDIR','LANG']};env.update(HOME=tmp,CODEX_HOME=str(p/'codex'),XDG_CONFIG_HOME=str(p/'config'),XDG_DATA_HOME=str(p/'data'),XDG_CACHE_HOME=str(p/'cache'),XDG_STATE_HOME=str(p/'state'),OPENCODE_CONFIG=str(p/'opencode.jsonc'),OPENCODE_DISABLE_MODELS_FETCH='true',OPENCODE_DISABLE_AUTOUPDATE='true')
+ for name,config in [('codex',p/'codex/config.toml'),('opencode',p/'opencode.jsonc')]:
   setup=[cli,'harness','setup','--harness',name,'--config',str(config),'--catalog-fixture',catalog,'--fixture-endpoint',base.removesuffix('/v1'),'--model','acme/primary','--yes','--output','json']
   if name=='opencode':setup+=['--subagent-model','acme/subagent']
   for repeat in range(2):
@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix='harness-extra-') as tmp:
    else:assert 'LOCAL_ROUTE_OK' in r.stdout,(args,r.stdout,r.stderr)
    print(json.dumps({'args':args,'exit':r.returncode}),flush=True)
   except subprocess.TimeoutExpired:raise AssertionError('mock inference timed out: '+str(args))
- for name,config in [('codex',p/'codex/config.toml'),('opencode',p/'opencode.json')]:
+ for name,config in [('codex',p/'codex/config.toml'),('opencode',p/'opencode.jsonc')]:
   r=subprocess.run([cli,'harness','teardown','--harness',name,'--config',str(config),'--yes'],env=env,cwd=tmp,capture_output=True,text=True)
   assert r.returncode==0,(r.stdout,r.stderr)
   # Native harnesses can add their own unrelated settings during use.

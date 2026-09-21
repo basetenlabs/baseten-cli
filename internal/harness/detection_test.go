@@ -3,6 +3,7 @@ package harness
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -51,4 +52,26 @@ func TestDetection(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestDetectionOpenCodeJSONC(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	executor := detectionExecer{version: TestedVersions["opencode"]}
+	detection, err := Detect(t.Context(), executor, "opencode", "")
+	require.NoError(t, err)
+	jsonPath := filepath.Join(dir, "opencode", "opencode.json")
+	require.Equal(t, jsonPath, detection.Path)
+	require.NoError(t, os.MkdirAll(filepath.Dir(jsonPath), 0700))
+	require.NoError(t, os.WriteFile(jsonPath+"c", []byte("{}"), 0600))
+	detection, err = Detect(t.Context(), executor, "opencode", "")
+	require.NoError(t, err)
+	require.Equal(t, jsonPath+"c", detection.Path)
+	require.NoError(t, os.WriteFile(jsonPath, []byte("{}"), 0600))
+	detection, err = Detect(t.Context(), executor, "opencode", "")
+	require.NoError(t, err)
+	require.Equal(t, jsonPath+"c", detection.Path)
+	detection, err = Detect(t.Context(), executor, "opencode", jsonPath)
+	require.NoError(t, err)
+	require.Equal(t, jsonPath, detection.Path)
 }

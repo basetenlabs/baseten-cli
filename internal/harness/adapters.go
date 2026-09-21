@@ -51,8 +51,8 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 	if name == "codex" && filepath.Ext(path) != ".toml" {
 		return nil, errors.New("Codex --config must name a .toml file")
 	}
-	if name == "opencode" && filepath.Ext(path) != ".json" {
-		return nil, errors.New("OpenCode currently supports strict .json configs; JSONC requires a separate adapter")
+	if name == "opencode" && filepath.Ext(path) != ".json" && filepath.Ext(path) != ".jsonc" {
+		return nil, errors.New("OpenCode --config must name a .json or .jsonc file")
 	}
 	var values []Setting
 	switch name {
@@ -144,7 +144,7 @@ func policyPaths(name, path string) []string {
 	if name == "codex" {
 		return []string{filepath.Join(filepath.Dir(path), "managed_config.toml"), "/etc/codex/managed_config.toml", "/etc/codex/requirements.toml"}
 	}
-	return []string{filepath.Join(filepath.Dir(path), "opencode.jsonc"), "/etc/opencode/opencode.json", "/etc/opencode/opencode.jsonc"}
+	return []string{"/etc/opencode/opencode.json", "/etc/opencode/opencode.jsonc"}
 }
 func PrepareHarnessTeardown(name, path string) ([]*Plan, error) {
 	p, e := PrepareTeardown(path)
