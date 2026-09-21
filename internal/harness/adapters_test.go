@@ -139,3 +139,21 @@ func TestClaudePolicyDoesNotBlockOtherHarnesses(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenCodeSmallTaskDefaultAndOverride(t *testing.T) {
+	for _, background := range []string{"", "acme/background"} {
+		t.Run(background, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "opencode.json")
+			plans, err := PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary", Background: background}, "http://127.0.0.1:1234", FixtureToken, false, true)
+			require.NoError(t, err)
+			require.NoError(t, ApplyPlans(plans))
+			data := load(t, path)
+			expected := background
+			if expected == "" {
+				expected = "deepseek-ai/DeepSeek-V4.1-Flash"
+			}
+			require.Equal(t, "baseten-harness/"+expected, data["small_model"])
+			require.True(t, get(data, []string{"provider", "baseten-harness", "models", expected}).Exists)
+		})
+	}
+}
