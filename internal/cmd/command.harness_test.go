@@ -224,7 +224,7 @@ func Test_Harness_Setup_ReplacementPreviewConfirmationAndRestore(t *testing.T) {
 	h.Require.Error(h.Execute(args...))
 	h.Require.Contains(h.Stderr.String(), "pass --yes")
 	h.Require.Contains(h.Stdout.String(), "Existing integration settings will be replaced")
-	h.Require.Contains(h.Stdout.String(), "backed up")
+	h.Require.Contains(h.Stdout.String(), "Teardown restores settings from the first setup")
 	checkUnchanged()
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
 	data, err := os.ReadFile(path)
@@ -258,6 +258,8 @@ func Test_Harness_Setup_ReplacementRejectsConcurrentEdit(t *testing.T) {
 func Test_Harness_Setup_ConfirmedReplacementOfManagedModel(t *testing.T) {
 	h, _ := productionHarness(t)
 	path := filepath.Join(t.TempDir(), "settings.json")
+	original := []byte(`{"model":"original-model"}`)
+	h.Require.NoError(os.WriteFile(path, original, 0600))
 	args := []string{"harness", "setup", "--harness", "claude-code", "--team", "team-a", "--model", "acme/primary", "--config", path}
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
 	data, err := os.ReadFile(path)
@@ -283,8 +285,7 @@ func Test_Harness_Setup_ConfirmedReplacementOfManagedModel(t *testing.T) {
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config", path, "--yes"))
 	restored, err := os.ReadFile(path)
 	h.Require.NoError(err)
-	h.Require.NoError(json.Unmarshal(restored, &config))
-	h.Require.Equal("opus", config["model"])
+	h.Require.Equal(original, restored)
 }
 
 func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {

@@ -185,24 +185,27 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 		j.Original = prior.Original
 		j.Existed = prior.Existed
 	}
+	originalSettings, err := decodeConfig(s.Path, j.Original)
+	if err != nil {
+		return nil, err
+	}
 	p := &Plan{Path: s.Path, Managed: true, snapshot: s, journalSnapshot: js, journal: j}
+	managed := map[string]bool{}
 	for _, v := range settings {
+		managed[pathKey(v.Path)] = true
 		current := get(d, v.Path)
-		v.Before = current
+		// The first setup is the restore point, including settings managed later.
+		v.Before = get(originalSettings, v.Path)
 		v.Previous = current
 		owned := false
 		if prior != nil {
 			for _, old := range prior.Settings {
 				if reflect.DeepEqual(old.Path, v.Path) {
 					owned = true
-					v.Before = old.Before
 					if !same(current, old.Installed) && !(prior.Pending && same(current, old.Previous)) {
 						if !replaceExisting {
 							return nil, fmt.Errorf("user changed %s; replacement is disabled for this plan", pathKey(v.Path))
 						}
-						// A confirmed replacement restores the value present at this preview,
-						// not the older value captured by the first setup.
-						v.Before = current
 					}
 				}
 			}
@@ -222,6 +225,15 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 		}
 		j.Settings = append(j.Settings, v)
 		p.Keys = append(p.Keys, pathKey(v.Path))
+	}
+	// Optional settings omitted on refresh remain owned so teardown can restore them.
+	if prior != nil {
+		for _, old := range prior.Settings {
+			if !managed[pathKey(old.Path)] {
+				old.Before = get(originalSettings, old.Path)
+				j.Settings = append(j.Settings, old)
+			}
+		}
 	}
 	p.data, err = encodeConfig(s.Path, d, s.Data)
 	if err != nil {

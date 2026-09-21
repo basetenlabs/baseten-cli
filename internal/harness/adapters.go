@@ -71,7 +71,7 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 			desired([]string{"small_model"}, providerID+"/"+s.Background),
 			desired([]string{"provider", providerID}, map[string]any{
 				"npm":  "@ai-sdk/openai-compatible",
-				"name": "Baseten harness",
+				"name": "Baseten",
 				"options": map[string]any{
 					"baseURL": strings.TrimRight(endpoint, "/") + "/v1",
 					"apiKey":  token,
@@ -93,7 +93,7 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 			desired([]string{"memories", "extract_model"}, s.Background),
 			desired([]string{"memories", "consolidation_model"}, s.Background),
 			desired([]string{"model_providers", providerID}, map[string]any{
-				"name":                      "Baseten harness",
+				"name":                      "Baseten",
 				"base_url":                  strings.TrimRight(endpoint, "/") + "/v1",
 				"wire_api":                  "responses",
 				"requires_openai_auth":      false,

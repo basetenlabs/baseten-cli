@@ -304,7 +304,7 @@ func TestClaudePickerUsesModelAndPreservesCustomRows(t *testing.T) {
 	require.Equal(t, original, load(t, path))
 }
 
-func TestConfirmedRefreshPreservesEditedPickerAndRestoresIt(t *testing.T) {
+func TestConfirmedRefreshPreservesEditedPickerWithoutChangingRestorePoint(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	require.NoError(t, setup(t, path, fixture(t), false).Apply())
 	data := load(t, path)
@@ -318,7 +318,8 @@ func TestConfirmedRefreshPreservesEditedPickerAndRestoresIt(t *testing.T) {
 	teardown, err := PrepareTeardown(path)
 	require.NoError(t, err)
 	require.NoError(t, teardown.Apply())
-	require.Equal(t, edited, get(load(t, path), []string{"modelPicker", "options"}).Data)
+	_, err = os.Stat(path)
+	require.True(t, os.IsNotExist(err)) // No settings file existed before the first setup.
 }
 
 func TestSetupRepairsPermissionsWithoutContentChanges(t *testing.T) {
@@ -340,4 +341,50 @@ func TestSetupRepairsPermissionsWithoutContentChanges(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0600), info.Mode().Perm())
 	require.False(t, setup(t, path, fixture(t), false).Changed)
+}
+
+func TestRefreshKeepsFirstSetupRestorePoint(t *testing.T) {
+	for _, filename := range []string{"settings.json", "opencode.jsonc", "config.toml"} {
+		t.Run(filename, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), filename)
+			original, err := encodeConfig(path, map[string]any{"model": "original", "subagent": "original-subagent", "theme": "dark"}, nil)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, original, 0600))
+			apply := func(settings []Setting) {
+				t.Helper()
+				p, err := prepareSettings(path, []Route{{Name: "updated-route"}}, true, func(map[string]any, *Journal) ([]Setting, error) { return settings, nil })
+				require.NoError(t, err)
+				require.NoError(t, p.Apply())
+				_, _, _, journal, err := Read(path)
+				require.NoError(t, err)
+				require.Equal(t, original, journal.Original)
+			}
+			apply([]Setting{desired([]string{"model"}, "first-route")})
+			// Edits after the first setup must never replace the restore point.
+			_, current, _, _, err := Read(path)
+			require.NoError(t, err)
+			current["model"] = "session-choice"
+			current["subagent"] = "later-choice"
+			current["theme"] = "light"
+			edited, err := encodeConfig(path, current, nil)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, edited, 0600))
+			apply([]Setting{desired([]string{"model"}, "second-route"), desired([]string{"subagent"}, "managed-subagent")})
+			// Omitting a previous optional setting must not lose its restoration record.
+			apply([]Setting{desired([]string{"model"}, "latest-route")})
+			_, current, _, journal, err := Read(path)
+			require.NoError(t, err)
+			require.Equal(t, "latest-route", current["model"])
+			require.Len(t, journal.Settings, 2)
+			p, err := PrepareTeardown(path)
+			require.NoError(t, err)
+			require.Empty(t, p.Conflicts)
+			require.NoError(t, p.Apply())
+			_, restored, _, _, err := Read(path)
+			require.NoError(t, err)
+			require.Equal(t, "original", restored["model"])
+			require.Equal(t, "original-subagent", restored["subagent"])
+			require.Equal(t, "light", restored["theme"])
+		})
+	}
 }

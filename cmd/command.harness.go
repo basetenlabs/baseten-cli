@@ -15,7 +15,7 @@ var commandHarness = Command{
 			Description: harnessPreRelease +
 				"Configure compatible harnesses with your team's routes.\n\n" +
 				"Setup detects installed harnesses, previews changes, and creates or reuses a team-scoped " +
-				"routes API key. Existing settings are backed up before replacement.\n\n" +
+				"routes API key. The first setup backs up existing settings; reruns preserve that restore point.\n\n" +
 				"Pass --team if you belong to multiple teams. Each harness defaults to the first route; " +
 				"use --model to override it.\n\n" +
 				"Use --dry-run to preview or --yes to skip confirmation. Restart the harness after setup.",
