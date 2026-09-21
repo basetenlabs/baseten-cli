@@ -158,7 +158,7 @@ type HarnessSetupFlags struct {
 	Harness         string `flag:"harness" desc:"Harness to configure; prompts when omitted" enum:"claude-code,codex,opencode"`
 	Config          string `flag:"config" desc:"Explicit settings file for a single harness; defaults to its native config path"`
 	Model           string `flag:"model" desc:"Default Route name; defaults to the first returned Route"`
-	BackgroundModel string `flag:"background-model" desc:"Background Route for OpenCode (defaults to initial Route)"`
+	BackgroundModel string `flag:"background-model" desc:"Route for OpenCode lightweight tasks (defaults to deepseek-ai/DeepSeek-V4.1-Flash)"`
 	SubagentModel   string `flag:"subagent-model" desc:"Optional subagent default Route (Claude/OpenCode)"`
 	FallbackModel   string `flag:"fallback-model" desc:"Fallback Route for Claude Code (defaults to initial Route)"`
 	DryRun          bool   `flag:"dry-run" desc:"Preview setting names without writing files"`

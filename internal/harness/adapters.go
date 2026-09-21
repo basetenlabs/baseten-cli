@@ -39,6 +39,7 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 		return nil, errors.New("--fallback-model is currently supported only for Claude Code")
 	}
 	explicitSubagent := s.Subagent != ""
+	defaultOpenCodeBackground := name == "opencode" && s.Background == ""
 	var err error
 	s, err = s.Resolve(routes)
 	if err != nil {
@@ -57,6 +58,10 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 	switch name {
 	case "opencode":
 		models := map[string]any{}
+		if defaultOpenCodeBackground {
+			s.Background = defaultSmallTaskModel
+			models[defaultSmallTaskModel] = map[string]any{"name": "DeepSeek V4.1 Flash"}
+		}
 		for _, r := range routes {
 			models[r.Name] = map[string]any{"name": r.DisplayName}
 		}

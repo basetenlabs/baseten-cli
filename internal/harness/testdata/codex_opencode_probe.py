@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix='harness-extra-') as tmp:
  p=pathlib.Path(tmp);(p/'codex').mkdir();(p/'config').mkdir();base=f'http://127.0.0.1:{server.server_port}/v1'
  env={k:v for k,v in os.environ.items() if k in ['PATH','TMPDIR','LANG']};env.update(HOME=tmp,CODEX_HOME=str(p/'codex'),XDG_CONFIG_HOME=str(p/'config'),XDG_DATA_HOME=str(p/'data'),XDG_CACHE_HOME=str(p/'cache'),XDG_STATE_HOME=str(p/'state'),OPENCODE_CONFIG=str(p/'opencode.json'),OPENCODE_DISABLE_MODELS_FETCH='true',OPENCODE_DISABLE_AUTOUPDATE='true')
  for name,config in [('codex',p/'codex/config.toml'),('opencode',p/'opencode.json')]:
-  setup=[cli,'harness','setup','--harness',name,'--config',str(config),'--catalog-fixture',catalog,'--fixture-endpoint',base.removesuffix('/v1'),'--model','acme/primary','--background-model','acme/background','--yes','--output','json']
+  setup=[cli,'harness','setup','--harness',name,'--config',str(config),'--catalog-fixture',catalog,'--fixture-endpoint',base.removesuffix('/v1'),'--model','acme/primary','--yes','--output','json']
   if name=='opencode':setup+=['--subagent-model','acme/subagent']
   for repeat in range(2):
    run=subprocess.run(setup,env=env,cwd=tmp,capture_output=True,text=True)
@@ -83,6 +83,6 @@ with tempfile.TemporaryDirectory(prefix='harness-extra-') as tmp:
  assert not (p/'codex/config.toml.baseten-models.json').exists()
 assert ('/v1/responses','acme/primary') in seen,seen
 assert ('/v1/chat/completions','acme/primary') in seen,seen
-assert ('/v1/chat/completions','acme/background') in seen,seen
+assert ('/v1/chat/completions','deepseek-ai/DeepSeek-V4.1-Flash') in seen,seen
 assert ('/v1/chat/completions','acme/subagent') in seen,seen
 print(json.dumps(seen));server.shutdown()
