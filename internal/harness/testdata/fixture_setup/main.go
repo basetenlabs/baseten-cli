@@ -32,7 +32,6 @@ func run() error {
 	subagent := flags.String("subagent-model", "", "")
 	fallback := flags.String("fallback-model", "", "")
 	replace := flags.Bool("replace-existing", false, "")
-	picker := flags.Bool("replace-picker", false, "")
 	dry := flags.Bool("dry-run", false, "")
 	flags.Bool("yes", false, "")
 	flags.String("output", "json", "")
@@ -53,7 +52,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		plans, err = harness.PrepareHarness(*name, *path, routes, harness.Selection{Primary: *primary, Background: *background, Subagent: *subagent, Fallback: *fallback}, *endpoint, harness.FixtureToken, *picker, *replace)
+		plans, err = harness.PrepareHarness(*name, *path, routes, harness.Selection{Primary: *primary, Background: *background, Subagent: *subagent, Fallback: *fallback}, *endpoint, harness.FixtureToken, *name == "claude-code", *replace)
 		if err != nil {
 			return err
 		}

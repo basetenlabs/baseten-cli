@@ -45,7 +45,7 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 		return nil, err
 	}
 	if replacePicker {
-		return nil, errors.New("--replace-picker is Claude-specific; Codex catalogs replace built-ins and OpenCode adds a provider")
+		return nil, errors.New("picker replacement is Claude-specific; Codex catalogs replace built-ins and OpenCode adds a provider")
 	}
 	if name == "codex" && filepath.Ext(path) != ".toml" {
 		return nil, errors.New("Codex --config must name a .toml file")
