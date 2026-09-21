@@ -232,6 +232,12 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 	return nil
 }
 
+func openBrowserURL(url string) error {
+	browser.Stdout = io.Discard
+	browser.Stderr = io.Discard
+	return browser.OpenURL(url)
+}
+
 func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) error {
 	mgmtURL := remote.ManagementURL()
 	cfg := OAuthConfig(mgmtURL)
@@ -245,9 +251,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 	if verificationURI == "" {
 		verificationURI = devResp.VerificationURI
 	}
-	browser.Stdout = io.Discard
-	browser.Stderr = io.Discard
-	_ = browser.OpenURL(verificationURI)
+	_ = ctx.OpenURL(verificationURI)
 	ctx.Logf("Browser opened to authenticate...\n\nIf it didn't open, visit:\n  %s\n\n", verificationURI)
 	ctx.Logf("Verification code: %s\n\n", devResp.UserCode)
 	ctx.Logf("Waiting...\n")

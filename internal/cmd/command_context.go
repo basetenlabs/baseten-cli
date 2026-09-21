@@ -39,6 +39,7 @@ type CommandContext struct {
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ExitWithCode func(int)
+	OpenURL      func(string) error
 	// JQQuery is a compiled --jq expression installed by the framework. When
 	// non-nil, [OutputJSON] and [JSONArrayWriter.Write] route their input
 	// through the query before encoding. Leaves should not set this directly.

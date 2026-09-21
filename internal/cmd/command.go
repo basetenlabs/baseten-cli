@@ -63,6 +63,8 @@ type ExecuteOptions struct {
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ExitWithCode func(int)
+	// OpenURL overrides the system browser opener.
+	OpenURL func(string) error
 	// StrictOutputChecks panics on output that is malformed in a way a user
 	// would see but the code cannot detect for itself, such as a table row whose
 	// cell count does not match its headers. Tests set it; production renders
@@ -82,6 +84,9 @@ func (o *ExecuteOptions) applyDefaults() {
 	}
 	if o.Stderr == nil {
 		o.Stderr = os.Stderr
+	}
+	if o.OpenURL == nil {
+		o.OpenURL = openBrowserURL
 	}
 	if o.ExitWithCode == nil {
 		o.ExitWithCode = os.Exit
@@ -226,6 +231,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				Stdout:       options.Stdout,
 				Stderr:       options.Stderr,
 				ExitWithCode: options.ExitWithCode,
+				OpenURL:      options.OpenURL,
 				strictOutput: options.StrictOutputChecks,
 				authInfo:     authInfo{profileFlag: cmdFlags.Profile},
 			}
