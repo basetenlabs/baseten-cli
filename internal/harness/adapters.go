@@ -1,7 +1,6 @@
 package harness
 
 import (
-	_ "embed"
 	"errors"
 	"fmt"
 	"os"
@@ -12,12 +11,6 @@ import (
 
 	"github.com/basetenlabs/baseten-cli/internal/safefile"
 )
-
-// The native fallback prompt captured from an isolated Codex 0.134.0 request.
-// Keep version-pinned: updating Codex requires recapturing and verifying it.
-//
-//go:embed templates/codex-0.134.0-prompt.txt
-var codexNativeInstructions string
 
 const providerID = "baseten-harness"
 
@@ -145,10 +138,11 @@ func PrepareHarness(name, path string, routes []Route, s Selection, endpoint, to
 		// Required Codex catalog fields use conservative defaults. Model-specific
 		// capabilities and limits are intentionally left to a follow-up.
 		models = append(models, map[string]any{
-			"slug":                         r.Name,
-			"display_name":                 r.DisplayName,
-			"description":                  "Baseten route",
-			"base_instructions":            codexNativeInstructions,
+			"slug":         r.Name,
+			"display_name": r.DisplayName,
+			"description":  "Baseten route",
+			// Required by Codex; leave empty until instruction handling is resolved.
+			"base_instructions":            "",
 			"default_reasoning_level":      nil,
 			"supported_reasoning_levels":   []any{},
 			"shell_type":                   "shell_command",

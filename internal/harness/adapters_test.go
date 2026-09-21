@@ -96,8 +96,7 @@ func TestAdaptersRejectInvalidNamesAndUnsupportedOptions(t *testing.T) {
 	}
 }
 
-func TestPreservesNativeInstructionsAndAgentSettings(t *testing.T) {
-	require.Greater(t, len(codexNativeInstructions), 10000)
+func TestCodexEmptyCatalogInstructionsPreservesUserInstructionsAndAgents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	original := []byte("model_instructions_file = \"custom.md\"\n[agents.reviewer]\nconfig_file = \"reviewer.toml\"\n")
 	require.NoError(t, os.WriteFile(path, original, 0644))
@@ -110,7 +109,7 @@ func TestPreservesNativeInstructionsAndAgentSettings(t *testing.T) {
 	require.Equal(t, "reviewer.toml", get(data, []string{"agents", "reviewer", "config_file"}).Data)
 	catalog := load(t, CatalogPath(path))
 	model := catalog["models"].([]any)[0].(map[string]any)
-	require.Equal(t, codexNativeInstructions, model["base_instructions"])
+	require.Equal(t, "", model["base_instructions"])
 }
 func TestClaudePreservesSubagentAndAdvisorChoicesByDefault(t *testing.T) {
 	current := map[string]any{"advisorModel": "existing-advisor", "env": map[string]any{"CLAUDE_CODE_SUBAGENT_MODEL": "existing-subagent"}}
