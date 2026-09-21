@@ -397,3 +397,60 @@ func Test_Harness_Setup_PrivateConfigOnApplyOnly(t *testing.T) {
 	h.Require.Contains(string(data), "User config")
 	h.Require.Contains(string(data), "created-routes-secret")
 }
+
+func Test_Harness_Teardown_RestoresManagedEditsAndPreservesUnrelatedSettings(t *testing.T) {
+	for _, name := range []string{"claude-code", "codex", "opencode"} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := productionHarness(t)
+			filename := "settings.json"
+			if name == "codex" {
+				filename = "config.toml"
+			}
+			path := filepath.Join(t.TempDir(), filename)
+			write := func(data map[string]any) {
+				t.Helper()
+				var raw []byte
+				var err error
+				if name == "codex" {
+					raw, err = toml.Marshal(data)
+				} else {
+					raw, err = json.Marshal(data)
+				}
+				h.Require.NoError(err)
+				h.Require.NoError(os.WriteFile(path, raw, 0600))
+			}
+			read := func() map[string]any {
+				t.Helper()
+				raw, err := os.ReadFile(path)
+				h.Require.NoError(err)
+				var data map[string]any
+				if name == "codex" {
+					err = toml.Unmarshal(raw, &data)
+				} else {
+					err = json.Unmarshal(raw, &data)
+				}
+				h.Require.NoError(err)
+				return data
+			}
+			write(map[string]any{"model": "original-model", "user_setting": "original"})
+			h.Require.NoError(h.Execute("harness", "setup", "--harness", name, "--config", path, "--team", "team-a", "--yes"))
+			data := read()
+			data["model"] = "changed-by-harness"
+			data["user_setting"] = "keep-this-edit"
+			data["new_setting"] = "also-keep"
+			write(data)
+			args := []string{"harness", "teardown", "--harness", name, "--config", path}
+			h.Require.NoError(h.Execute(append(args, "--dry-run")...))
+			h.Require.Contains(h.Stdout.String(), "Settings to replace: model")
+			h.Require.Equal(data, read())
+			h.Require.Error(h.Execute(args...)) // Noninteractive apply still requires confirmation.
+			h.Require.Equal(data, read())
+			h.Require.NoError(h.Execute(append(args, "--yes")...))
+			h.Require.Equal(map[string]any{"model": "original-model", "user_setting": "keep-this-edit", "new_setting": "also-keep"}, read())
+			h.Require.NoFileExists(path + ".baseten-harness.json")
+			if name == "codex" {
+				h.Require.NoFileExists(path + ".baseten-models.json")
+			}
+		})
+	}
+}

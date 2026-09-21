@@ -75,7 +75,6 @@ func TestLifecycleRefreshRestoresOriginalAndPreservesUnrelatedEdits(t *testing.T
 	save(t, path, d)
 	p, err = PrepareTeardown(path)
 	require.NoError(t, err)
-	require.Empty(t, p.Conflicts)
 	require.NoError(t, p.Apply())
 	d = load(t, path)
 	require.Equal(t, "light", d["theme"])
@@ -107,7 +106,7 @@ func TestTeardownRestoresBytesOrRemovesNewFile(t *testing.T) {
 		})
 	}
 }
-func TestDriftIsPreservedAndBackupRetained(t *testing.T) {
+func TestTeardownRestoresDriftedManagedSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	require.NoError(t, setup(t, path, fixture(t), false).Apply())
 	d := load(t, path)
@@ -121,12 +120,13 @@ func TestDriftIsPreservedAndBackupRetained(t *testing.T) {
 	require.Contains(t, r.Drift, "model")
 	p, e := PrepareTeardown(path)
 	require.NoError(t, e)
-	require.Contains(t, p.Conflicts, "model")
+	require.Contains(t, p.Replaced, "model")
 	require.NoError(t, p.Apply())
-	require.Equal(t, "user-edit", load(t, path)["model"])
+	_, e = os.Stat(path)
+	require.True(t, os.IsNotExist(e))
 	_, _, _, j, e := Read(path)
 	require.NoError(t, e)
-	require.Len(t, j.Settings, 1)
+	require.Nil(t, j)
 }
 func TestPreexistingIdenticalValuesAreNotOwned(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
@@ -159,7 +159,6 @@ func TestInterruptedRefreshCanRestorePreviousManagedValues(t *testing.T) {
 	require.NoError(t, p.journalSnapshot.Write(b))
 	teardown, e := PrepareTeardown(path)
 	require.NoError(t, e)
-	require.Empty(t, teardown.Conflicts)
 	require.NoError(t, teardown.Apply())
 	_, e = os.Stat(path)
 	require.True(t, os.IsNotExist(e))
@@ -245,7 +244,7 @@ func TestRolesAndPicker(t *testing.T) {
 	require.False(t, strings.Contains(b, "claude-sonnet"))
 }
 
-func TestPickerEditBlocksRefreshAndSurvivesTeardown(t *testing.T) {
+func TestPickerEditBlocksUnconfirmedRefreshButRestoresOnTeardown(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	require.NoError(t, setup(t, path, fixture(t), false).Apply())
 	d := load(t, path)
@@ -255,9 +254,10 @@ func TestPickerEditBlocksRefreshAndSurvivesTeardown(t *testing.T) {
 	require.ErrorContains(t, e, "user changed modelPicker.options")
 	p, e := PrepareTeardown(path)
 	require.NoError(t, e)
-	require.Contains(t, p.Conflicts, "modelPicker.options")
+	require.Contains(t, p.Replaced, "modelPicker.options")
 	require.NoError(t, p.Apply())
-	require.Equal(t, "user/custom", get(load(t, path), []string{"modelPicker", "options"}).Data.([]any)[0].(map[string]any)["model"])
+	_, e = os.Stat(path)
+	require.True(t, os.IsNotExist(e))
 }
 
 func TestClaudePickerUsesModelAndPreservesCustomRows(t *testing.T) {
@@ -379,7 +379,6 @@ func TestRefreshKeepsFirstSetupRestorePoint(t *testing.T) {
 			require.Len(t, journal.Settings, 2)
 			p, err := PrepareTeardown(path)
 			require.NoError(t, err)
-			require.Empty(t, p.Conflicts)
 			require.NoError(t, p.Apply())
 			_, restored, _, _, err := Read(path)
 			require.NoError(t, err)

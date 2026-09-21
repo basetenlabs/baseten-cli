@@ -213,9 +213,6 @@ func PrepareHarnessTeardown(name, path string) ([]*Plan, error) {
 		if e != nil {
 			return nil, e
 		}
-		if len(p.Conflicts) > 0 {
-			return nil, errors.New("Codex settings have user edits; resolve them before removing its managed catalog")
-		}
 		plans = append(plans, catalog)
 	}
 	return plans, nil
