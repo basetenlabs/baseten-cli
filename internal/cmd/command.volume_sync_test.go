@@ -179,16 +179,16 @@ func Test_Volume_Sync_DescribeAndCancel(t *testing.T) {
 	m.SetRoute("GET", "/v1/volumes/syncs/vsync-5", 200, volumeSyncPayload("vsync-5", "SYNCING"))
 	m.SetRoute("POST", "/v1/volumes/syncs/vsync-5/cancel", 200, volumeSyncPayload("vsync-5", "CANCELED"))
 
-	h.Require.NoError(h.Execute("volume", "sync", "describe", "--volume-sync-id", "vsync-5"))
+	h.Require.NoError(h.Execute("volume", "sync", "describe", "--sync-id", "vsync-5"))
 	h.Require.Contains(h.Stdout.String(), "Status:      SYNCING")
-	h.Require.NoError(h.Execute("volume", "sync", "cancel", "--volume-sync-id", "vsync-5"))
+	h.Require.NoError(h.Execute("volume", "sync", "cancel", "--sync-id", "vsync-5"))
 	h.Require.Contains(h.Stdout.String(), "Status:      CANCELED")
 }
 
-func Test_Volume_Sync_Describe_RejectsOldSyncIDFlag(t *testing.T) {
+func Test_Volume_Sync_Describe_RejectsOldVolumeSyncIDFlag(t *testing.T) {
 	h := NewCommandHarness(t)
-	err := h.Execute("volume", "sync", "describe", "--sync-id", "vsync-5")
-	h.Require.ErrorContains(err, "unknown flag: --sync-id")
+	err := h.Execute("volume", "sync", "describe", "--volume-sync-id", "vsync-5")
+	h.Require.ErrorContains(err, "unknown flag: --volume-sync-id")
 }
 
 func Test_Volume_Sync_Start_RejectsOldDestinationFlag(t *testing.T) {

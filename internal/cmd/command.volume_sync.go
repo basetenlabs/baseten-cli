@@ -55,9 +55,9 @@ func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags
 }
 
 func commandVolumeSyncDescribe(ctx *CommandContext, flags *cmd.VolumeSyncIDFlags) error {
-	sync, err := getVolumeSync(ctx, flags.VolumeSyncID)
+	sync, err := getVolumeSync(ctx, flags.SyncID)
 	if err != nil {
-		return fmt.Errorf("describing volume sync %s: %w", flags.VolumeSyncID, err)
+		return fmt.Errorf("describing volume sync %s: %w", flags.SyncID, err)
 	}
 	outputVolumeSync(ctx, sync)
 	return nil
@@ -68,9 +68,9 @@ func commandVolumeSyncCancel(ctx *CommandContext, flags *cmd.VolumeSyncIDFlags) 
 	if err != nil {
 		return err
 	}
-	sync, err := cl.API().PostVolumesSyncsCancel(ctx, flags.VolumeSyncID)
+	sync, err := cl.API().PostVolumesSyncsCancel(ctx, flags.SyncID)
 	if err != nil {
-		return fmt.Errorf("canceling volume sync %s: %w", flags.VolumeSyncID, err)
+		return fmt.Errorf("canceling volume sync %s: %w", flags.SyncID, err)
 	}
 	outputVolumeSync(ctx, *sync)
 	return nil

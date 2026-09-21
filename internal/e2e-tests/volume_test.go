@@ -179,7 +179,7 @@ func (s *volumeSyncLifecycle) Start(t *testing.T) {
 func (s *volumeSyncLifecycle) Describe(t *testing.T) {
 	described := parseVolumeSync(t, mustCLI(t,
 		"volume", "sync", "describe",
-		"--volume-sync-id", s.started.SyncID,
+		"--sync-id", s.started.SyncID,
 		"--output", "json"))
 	require.Equal(t, s.started.SyncID, described.SyncID)
 	require.Equal(t, "READY", described.Status)
@@ -298,7 +298,7 @@ func (s *volumeSyncLifecycle) Predict(t *testing.T) {
 func (s *volumeSyncLifecycle) Cancel(t *testing.T) {
 	canceled := parseVolumeSync(t, mustCLI(t,
 		"volume", "sync", "cancel",
-		"--volume-sync-id", s.started.SyncID,
+		"--sync-id", s.started.SyncID,
 		"--output", "json"))
 	require.Equal(t, "READY", canceled.Status)
 	require.Equal(t, s.started.VersionRef, canceled.VersionRef)

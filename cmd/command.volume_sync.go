@@ -69,11 +69,11 @@ var commandVolumeSync = Command{
 				TextDescription: "One field per line describing the sync and, when available, its result or error.",
 				Examples: []CommandExample{{
 					Description: "Inspect a sync.",
-					Command:     "baseten volume sync describe --volume-sync-id <volume-sync-id>",
+					Command:     "baseten volume sync describe --sync-id <sync-id>",
 				}},
 				JQExample: CommandExample{
 					Description: "Print the sync status.",
-					Command:     "baseten volume sync describe --volume-sync-id <volume-sync-id> --jq '.status'",
+					Command:     "baseten volume sync describe --sync-id <sync-id> --jq '.status'",
 				},
 			},
 		},
@@ -115,11 +115,11 @@ var commandVolumeSync = Command{
 				TextDescription: "One field per line describing the sync after the cancellation request.",
 				Examples: []CommandExample{{
 					Description: "Request cancellation of a sync.",
-					Command:     "baseten volume sync cancel --volume-sync-id <volume-sync-id>",
+					Command:     "baseten volume sync cancel --sync-id <sync-id>",
 				}},
 				JQExample: CommandExample{
 					Description: "Request cancellation and print the resulting status.",
-					Command:     "baseten volume sync cancel --volume-sync-id <volume-sync-id> --jq '.status'",
+					Command:     "baseten volume sync cancel --sync-id <sync-id> --jq '.status'",
 				},
 			},
 		},
@@ -144,7 +144,7 @@ type VolumeSyncStartFlags struct {
 type VolumeSyncIDFlags struct {
 	CommandFlags
 
-	VolumeSyncID string `flag:"volume-sync-id" desc:"ID of the volume sync operation." required:"true"`
+	SyncID string `flag:"sync-id" desc:"ID of the volume sync operation." required:"true"`
 }
 
 type VolumeSyncListFlags struct {
