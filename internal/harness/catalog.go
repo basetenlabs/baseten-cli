@@ -98,3 +98,17 @@ func (s Selection) Resolve(routes []Route) (Selection, error) {
 	}
 	return s, nil
 }
+
+// SmallTaskModel returns the setup default used by the harness's lightweight tasks.
+func SmallTaskModel(name string, selection Selection) string {
+	if name == "claude-code" {
+		return defaultSmallTaskModel
+	}
+	if name == "opencode" {
+		if selection.Background != "" {
+			return selection.Background
+		}
+		return defaultSmallTaskModel
+	}
+	return ""
+}

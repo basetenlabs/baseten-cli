@@ -359,11 +359,14 @@ func (p *Plan) Apply() error {
 
 type Status struct {
 	Detection
-	State   string   `json:"state"`
-	Managed []string `json:"managed_settings,omitempty"`
-	Drift   []string `json:"drift,omitempty"`
-	Routes  []string `json:"routes,omitempty"`
-	Note    string   `json:"note"`
+	DefaultRoute   string   `json:"default_route,omitempty"`
+	SmallTaskModel string   `json:"small_task_model,omitempty"`
+	RouteDetails   []Route  `json:"route_details,omitempty"`
+	State          string   `json:"state"`
+	Managed        []string `json:"managed_settings,omitempty"`
+	Drift          []string `json:"drift,omitempty"`
+	Routes         []string `json:"routes,omitempty"`
+	Note           string   `json:"note"`
 }
 
 func Inspect(d Detection) (Status, error) {
@@ -371,6 +374,19 @@ func Inspect(d Detection) (Status, error) {
 	_, data, _, j, err := Read(d.Path)
 	if err != nil {
 		return r, err
+	}
+	if model, ok := get(data, []string{"model"}).Data.(string); ok {
+		r.DefaultRoute = model
+	}
+	if d.Name == "opencode" {
+		r.DefaultRoute = strings.TrimPrefix(r.DefaultRoute, providerID+"/")
+		if model, ok := get(data, []string{"small_model"}).Data.(string); ok {
+			r.SmallTaskModel = strings.TrimPrefix(model, providerID+"/")
+		}
+	} else if d.Name == "claude-code" {
+		if model, ok := get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string); ok {
+			r.SmallTaskModel = model
+		}
 	}
 	if j == nil {
 		if d.Name == "codex" {
@@ -401,7 +417,7 @@ func Inspect(d Detection) (Status, error) {
 	if options, ok := get(data, []string{"modelPicker", "options"}).Data.([]any); ok {
 		for _, o := range options {
 			if m, ok := o.(map[string]any); ok {
-				if id, ok := m["id"].(string); ok {
+				if id, ok := m["model"].(string); ok {
 					for _, route := range j.Routes {
 						if id == route {
 							r.Routes = append(r.Routes, id)
@@ -441,6 +457,42 @@ func Inspect(d Detection) (Status, error) {
 			}
 		}
 	}
+	labels := map[string]string{}
+	switch d.Name {
+	case "claude-code":
+		if options, ok := get(data, []string{"modelPicker", "options"}).Data.([]any); ok {
+			for _, option := range options {
+				if row, ok := option.(map[string]any); ok {
+					name, _ := row["model"].(string)
+					label, _ := row["label"].(string)
+					labels[name] = label
+				}
+			}
+		}
+	case "opencode":
+		for _, name := range r.Routes {
+			label, _ := get(data, []string{"provider", providerID, "models", name, "name"}).Data.(string)
+			labels[name] = label
+		}
+	case "codex":
+		_, catalogData, _, _, err := Read(CatalogPath(d.Path))
+		if err != nil {
+			return r, err
+		}
+		if models, ok := catalogData["models"].([]any); ok {
+			for _, model := range models {
+				if row, ok := model.(map[string]any); ok {
+					name, _ := row["slug"].(string)
+					label, _ := row["display_name"].(string)
+					labels[name] = label
+				}
+			}
+		}
+	}
+	for _, name := range r.Routes {
+		r.RouteDetails = append(r.RouteDetails, Route{Name: name, DisplayName: labels[name]})
+	}
+
 	return r, nil
 }
 
