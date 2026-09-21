@@ -1,2 +1,0 @@
-# Keep the native Codex prompt snapshot byte-for-byte, including trailing spaces.
-internal/harness/templates/codex-0.134.0-prompt.txt whitespace=-blank-at-eol
