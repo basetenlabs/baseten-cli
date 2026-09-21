@@ -212,7 +212,16 @@ func ClaudeSettings(routes []Route, selection Selection, endpoint, token string,
 		desired([]string{"modelPicker", "replaceBuiltInOptions"}, replacePicker),
 		desired([]string{"availableModels"}, allowed),
 	}
-	for _, kv := range [][2]string{{"ANTHROPIC_BASE_URL", endpoint}, {"ANTHROPIC_AUTH_TOKEN", token}, {"ANTHROPIC_DEFAULT_SONNET_MODEL", s.Primary}, {"ANTHROPIC_DEFAULT_OPUS_MODEL", s.Primary}, {"ANTHROPIC_DEFAULT_FABLE_MODEL", s.Primary}, {"ANTHROPIC_DEFAULT_HAIKU_MODEL", defaultSmallTaskModel}, {"ANTHROPIC_SMALL_FAST_MODEL", defaultSmallTaskModel}, {"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"}} {
+	for _, kv := range [][2]string{
+		{"ANTHROPIC_BASE_URL", endpoint},
+		{"ANTHROPIC_AUTH_TOKEN", token},
+		{"ANTHROPIC_DEFAULT_SONNET_MODEL", s.Primary},
+		{"ANTHROPIC_DEFAULT_OPUS_MODEL", s.Primary},
+		{"ANTHROPIC_DEFAULT_FABLE_MODEL", s.Primary},
+		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", defaultSmallTaskModel},
+		{"ANTHROPIC_SMALL_FAST_MODEL", defaultSmallTaskModel},
+		{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"},
+	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
 	if explicitSubagent {
