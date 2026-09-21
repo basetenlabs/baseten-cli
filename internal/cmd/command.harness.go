@@ -147,7 +147,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	}
 	ctx.Logf("Team: %s\nRoutes key: %s (%s)\n", credential.scope.TeamID, credential.scope.Name, keyAction)
 	for i, d := range detections {
-		ctx.Logf("%s default Route: %s\n", d.Name, selections[i].Primary)
+		ctx.Logf("%s default route: %s\n", d.Name, selections[i].Primary)
 	}
 	if f.DryRun {
 		harnessPlansOutput(ctx, plans)
@@ -191,7 +191,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if ctx.JSON {
 		harnessPlansOutput(ctx, plans)
 	} else {
-		ctx.OutputLine("Harness configured. Restart the harness; rerun setup to refresh Routes.")
+		ctx.OutputLine("Harness configured. Restart the harness; rerun setup to refresh routes.")
 	}
 	return nil
 }

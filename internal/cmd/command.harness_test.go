@@ -123,7 +123,7 @@ func Test_Harness_Setup_FailureNeverMints(t *testing.T) {
 		want   string
 	}{
 		{"unavailable", 404, map[string]any{}, "HTTP 404"},
-		{"empty", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}}, "no accessible Routes"},
+		{"empty", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}}, "no accessible routes"},
 		{"pagination", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": true}}, "pagination cursor"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -310,7 +310,7 @@ func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {
 					expected = override
 				}
 				h.Require.NoError(h.Execute(args...))
-				h.Require.Contains(h.Stderr.String(), name+" default Route: "+expected)
+				h.Require.Contains(h.Stderr.String(), name+" default route: "+expected)
 				data, err := os.ReadFile(path)
 				h.Require.NoError(err)
 				var config map[string]any

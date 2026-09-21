@@ -46,20 +46,20 @@ func (f FixtureCatalog) Routes(ctx context.Context) ([]Route, error) {
 }
 func ValidateCatalog(routes []Route) ([]Route, error) {
 	if len(routes) == 0 {
-		return nil, errors.New("no accessible Routes in catalog")
+		return nil, errors.New("no accessible routes in catalog")
 	}
 	seen := map[string]bool{}
 	for _, r := range routes {
 		if r.Name == "" || strings.TrimSpace(r.Name) != r.Name || strings.ContainsAny(r.Name, "\r\n\t []") || seen[r.Name] {
-			return nil, errors.New("catalog has an invalid or duplicate Route name")
+			return nil, errors.New("catalog has an invalid or duplicate route name")
 		}
 		// Claude's built-in keywords are interpreted before sending a model ID.
 		switch r.Name {
 		case "default", "inherit", "opus", "sonnet", "haiku", "fable", "opusplan", "best":
-			return nil, fmt.Errorf("Route %q conflicts with a Claude model keyword", r.Name)
+			return nil, fmt.Errorf("route %q conflicts with a Claude model keyword", r.Name)
 		}
 		if strings.TrimSpace(r.DisplayName) == "" {
-			return nil, fmt.Errorf("Route %q has no display name", r.Name)
+			return nil, fmt.Errorf("route %q has no display name", r.Name)
 		}
 		seen[r.Name] = true
 	}
@@ -73,7 +73,7 @@ type Selection struct{ Primary, Background, Subagent, Fallback string }
 
 func (s Selection) Resolve(routes []Route) (Selection, error) {
 	if s.Primary == "" {
-		return s, errors.New("choose an initial Route with --model")
+		return s, errors.New("choose an initial route with --model")
 	}
 	if s.Background == "" {
 		s.Background = s.Primary
@@ -93,7 +93,7 @@ func (s Selection) Resolve(routes []Route) (Selection, error) {
 			}
 		}
 		if !found {
-			return s, fmt.Errorf("selected Route %q is absent from the accessible catalog", name)
+			return s, fmt.Errorf("selected route %q is absent from the accessible catalog", name)
 		}
 	}
 	return s, nil

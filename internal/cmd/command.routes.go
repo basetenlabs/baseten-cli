@@ -24,11 +24,11 @@ func readRoutes(ctx context.Context, api *managementapi.Client, teamID string) (
 	for {
 		page, err := api.GetRoutes(requestCtx, params)
 		if err != nil {
-			return nil, fmt.Errorf("listing Routes: %w", err)
+			return nil, fmt.Errorf("listing routes: %w", err)
 		}
 		for _, route := range page.Items {
 			if route.Id == "" || route.Name == "" || route.DisplayName == "" || route.InvokeUrl == "" || route.TeamId != teamID || names[route.Name] {
-				return nil, cmd.NewErrServer(errors.New("Routes API returned incomplete, duplicate, or out-of-team Routes"))
+				return nil, cmd.NewErrServer(errors.New("routes API returned incomplete, duplicate, or out-of-team routes"))
 			}
 			names[route.Name] = true
 			routes = append(routes, route)
@@ -38,13 +38,13 @@ func readRoutes(ctx context.Context, api *managementapi.Client, teamID string) (
 		}
 		cursor := page.Pagination.Cursor
 		if cursor == nil || *cursor == "" || cursors[*cursor] {
-			return nil, cmd.NewErrServer(errors.New("Routes API returned an invalid pagination cursor"))
+			return nil, cmd.NewErrServer(errors.New("routes API returned an invalid pagination cursor"))
 		}
 		cursors[*cursor] = true
 		params.Cursor = cursor
 	}
 	if len(routes) == 0 {
-		return nil, cmd.NewErrValidation(errors.New("no accessible Routes in the selected team; create a Route before running harness setup"))
+		return nil, cmd.NewErrValidation(errors.New("no accessible routes in the selected team; create a route before running harness setup"))
 	}
 	return routes, nil
 }
@@ -71,7 +71,7 @@ func createRoutesKey(ctx context.Context, transport *auth.Transport, endpoint, n
 	}
 	var response *managementapi.ResponseError
 	if !errors.As(err, &response) {
-		return "", cmd.NewErrServer(errors.New("Routes key creation failed; check your login and connection"))
+		return "", cmd.NewErrServer(errors.New("routes key creation failed; check your login and connection"))
 	}
 	// Only retain the API's message, never arbitrary response details that may
 	// include credentials. Keep the SDK error type for standard CLI classification.

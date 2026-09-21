@@ -366,7 +366,7 @@ type Status struct {
 }
 
 func Inspect(d Detection) (Status, error) {
-	r := Status{Detection: d, State: "not-configured", Note: "Local configuration only; no API authorization or inference was checked. Rerun setup to refresh Routes, then restart the harness."}
+	r := Status{Detection: d, State: "not-configured", Note: "Local configuration only; no API authorization or inference was checked. Rerun setup to refresh routes, then restart the harness."}
 	_, data, _, j, err := Read(d.Path)
 	if err != nil {
 		return r, err
