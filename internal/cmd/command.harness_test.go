@@ -46,13 +46,13 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 	h.Require.Contains(string(b), `"replaceBuiltInOptions": true`)
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
 	h.Require.Contains(h.Stdout.String(), `"changed": false`)
-	h.Require.NoError(h.Execute("harness", "status", "--config", path, "--output", "json"))
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "claude-code", "--config", path, "--output", "json"))
 	h.Require.Contains(h.Stdout.String(), `"state": "configured"`)
 	h.Require.NotContains(h.Stdout.String(), "baseten-harness-local-fixture")
-	h.Require.NoError(h.Execute("harness", "teardown", "--config", path, "--yes", "--output", "json"))
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config", path, "--yes", "--output", "json"))
 	_, err = os.Stat(path)
 	h.Require.True(os.IsNotExist(err))
-	h.Require.NoError(h.Execute("harness", "status", "--config", path, "--output", "json"))
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "claude-code", "--config", path, "--output", "json"))
 	h.Require.Contains(h.Stdout.String(), `"state": "not-configured"`)
 }
 func Test_Harness_Setup_FixtureFlagsRemoved(t *testing.T) {
@@ -230,7 +230,7 @@ func Test_Harness_Setup_ReplacementPreviewConfirmationAndRestore(t *testing.T) {
 	h.Require.NoError(err)
 	h.Require.Contains(string(data), "acme/primary")
 	h.Require.Contains(string(data), "dark")
-	h.Require.NoError(h.Execute("harness", "teardown", "--config", path, "--yes"))
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config", path, "--yes"))
 	restored, err := os.ReadFile(path)
 	h.Require.NoError(err)
 	h.Require.JSONEq(string(original), string(restored))
@@ -279,7 +279,7 @@ func Test_Harness_Setup_ConfirmedReplacementOfManagedModel(t *testing.T) {
 	h.Require.NoError(err)
 	h.Require.Equal(journalBefore, journalAfter)
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
-	h.Require.NoError(h.Execute("harness", "teardown", "--config", path, "--yes"))
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config", path, "--yes"))
 	restored, err := os.ReadFile(path)
 	h.Require.NoError(err)
 	h.Require.NoError(json.Unmarshal(restored, &config))
@@ -323,6 +323,25 @@ func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {
 					expected = "baseten-harness/" + expected
 				}
 				h.Require.Equal(expected, config["model"])
+			})
+		}
+	}
+}
+
+func Test_Harness_StatusAndTeardown_RequireHarness(t *testing.T) {
+	for _, command := range []string{"status", "teardown"} {
+		for _, output := range []string{"text", "json"} {
+			t.Run(command+"/"+output, func(t *testing.T) {
+				h := NewCommandHarness(t)
+				path := filepath.Join(t.TempDir(), "settings.json")
+				original := []byte(`{"model":"user-model"}`)
+				h.Require.NoError(os.WriteFile(path, original, 0600))
+				h.Require.Error(h.Execute("harness", command, "--config", path, "--output", output))
+				h.Require.Contains(h.Stderr.String(), "harness")
+				h.Require.Contains(h.Stderr.String(), `Required flag(s) "harness" not set`)
+				data, err := os.ReadFile(path)
+				h.Require.NoError(err)
+				h.Require.Equal(original, data)
 			})
 		}
 	}
