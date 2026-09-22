@@ -313,6 +313,7 @@ var commandVolume = Command{
 				},
 			},
 		},
+		commandVolumeSync,
 	},
 }
 

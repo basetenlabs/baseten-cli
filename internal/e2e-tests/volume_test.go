@@ -3,11 +3,13 @@
 package e2etests
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -16,6 +18,8 @@ import (
 // into existence on first push and cannot be removed, so this is a fixed name
 // rather than a per-run one; the volume within it is what varies.
 const e2eVolumeNamespace = "cli-e2e"
+
+const e2eVolumeSyncSource = "hf://hf-internal-testing/tiny-random-bert"
 
 // The tree pushed and read back. Nested so a listing has a directory to
 // derive, a pull has one to recreate, and slash-boundary matching has depth to
@@ -30,12 +34,13 @@ var e2eVolumeFiles = map[string]string{
 // TestE2EVolumeLifecycle pushes a directory as a volume version, reads it back
 // through every volume command, pulls it whole and narrowed, re-pushes to
 // confirm the second push reuses what the first stored, and then deletes and
-// restores its way back to an empty volume. Skips when the required env vars
-// are absent.
+// restores its way back to an empty volume. It also syncs a remote source and
+// verifies the resulting immutable version through the volume CLI. Skips when
+// the required env vars are absent.
 //
-// The organization behind the e2e key needs volumes enabled and the key needs
-// organization-level model management permission. A missing prerequisite fails
-// rather than skips, so a misconfigured environment does not read as a pass.
+// The organization behind the e2e key needs volumes enabled. A missing
+// prerequisite fails rather than skips, so a misconfigured environment does
+// not read as a pass.
 func TestE2EVolumeLifecycle(t *testing.T) {
 	v := newVolumeLifecycle(t)
 	t.Run("Push", v.Push)
@@ -44,6 +49,230 @@ func TestE2EVolumeLifecycle(t *testing.T) {
 	t.Run("Pull", v.Pull)
 	t.Run("Repush", v.Repush)
 	t.Run("Delete", v.Delete)
+	t.Run("Sync", testE2EVolumeSync)
+}
+
+// testE2EVolumeSync starts a small anonymous Hugging Face sync and exercises
+// the complete volume-sync CLI surface against the resulting durable job.
+// Cancel is sent after the job is READY, which verifies the endpoint's
+// idempotent terminal behavior without racing or discarding the artifact used
+// by the other assertions.
+func testE2EVolumeSync(t *testing.T) {
+	s := newVolumeSyncLifecycle(t)
+	steps := []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"Start", s.Start},
+		{"Describe", s.Describe},
+		{"List", s.List},
+		{"Stat", s.Stat},
+		{"ListEntries", s.ListEntries},
+		{"Cat", s.Cat},
+		{"Pull", s.Pull},
+		{"Versions", s.Versions},
+		{"Cancel", s.Cancel},
+	}
+	for _, step := range steps {
+		if !t.Run(step.name, step.run) {
+			t.FailNow()
+		}
+	}
+}
+
+type volumeSyncLifecycle struct {
+	baseRef     string
+	destination string
+	started     e2eVolumeSync
+	versionRef  string
+	configOut   string
+}
+
+func newVolumeSyncLifecycle(t *testing.T) *volumeSyncLifecycle {
+	t.Helper()
+	apiKey := os.Getenv("BASETEN_E2E_TEST_API_KEY")
+	if apiKey == "" {
+		t.Skip("BASETEN_E2E_TEST_API_KEY not set")
+	}
+	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
+	require.NotEmpty(t, remoteURL,
+		"BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
+
+	t.Setenv("BASETEN_API_KEY", apiKey)
+	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
+	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
+
+	suffix := randomSuffix(t)
+	s := &volumeSyncLifecycle{
+		baseRef: "bdn:" + e2eVolumeNamespace + "/sync-" + suffix,
+	}
+	s.destination = s.baseRef + ":e2e"
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, errOut, err := cliCtx(t, ctx,
+			"volume", "rm", "--recursive", "--yes", s.baseRef); err != nil {
+			t.Logf("cleanup delete of volume %s failed: %v\nstderr: %s", s.baseRef, err, errOut)
+		}
+	})
+	return s
+}
+
+func (s *volumeSyncLifecycle) Start(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+	defer cancel()
+	startOut := mustCLICtx(t, ctx,
+		"volume", "sync", "start",
+		"--source", e2eVolumeSyncSource,
+		"--dest", s.destination,
+		"--include", "config.json",
+		"--exclude", "*.md",
+		"--wait",
+		"--output", "json")
+	s.started = parseVolumeSync(t, startOut)
+	require.Equal(t, "READY", s.started.Status)
+	require.Equal(t, e2eVolumeSyncSource, s.started.Source.URI)
+	require.Equal(t, []string{"config.json"}, s.started.Source.Include)
+	require.Equal(t, []string{"*.md"}, s.started.Source.Exclude)
+	require.Equal(t, s.destination, s.started.Destination.Ref)
+	require.NotEmpty(t, s.started.SyncID)
+	require.NotNil(t, s.started.VolumeVersionID)
+	require.NotEmpty(t, *s.started.VolumeVersionID)
+	require.NotNil(t, s.started.VersionRef)
+	require.NotEmpty(t, *s.started.VersionRef)
+	require.NotNil(t, s.started.ContentDigest)
+	require.Regexp(t, `^b3:[0-9a-f]{64}$`, *s.started.ContentDigest)
+	require.NotNil(t, s.started.TotalSizeBytes)
+	require.Positive(t, *s.started.TotalSizeBytes)
+	require.NotNil(t, s.started.CompletedAt)
+	require.Nil(t, s.started.Error)
+	s.versionRef = *s.started.VersionRef
+}
+
+func (s *volumeSyncLifecycle) Describe(t *testing.T) {
+	described := parseVolumeSync(t, mustCLI(t,
+		"volume", "sync", "describe",
+		"--sync-id", s.started.SyncID,
+		"--output", "json"))
+	require.Equal(t, s.started.SyncID, described.SyncID)
+	require.Equal(t, "READY", described.Status)
+	require.Equal(t, s.started.VersionRef, described.VersionRef)
+}
+
+func (s *volumeSyncLifecycle) List(t *testing.T) {
+	listOut := mustCLI(t,
+		"volume", "sync", "list",
+		"--dest", s.destination,
+		"--output", "json")
+	var listed struct {
+		Items []e2eVolumeSync `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(listOut), &listed))
+	require.NotEmpty(t, listed.Items)
+	found := false
+	for _, item := range listed.Items {
+		if item.SyncID == s.started.SyncID {
+			require.Equal(t, "READY", item.Status)
+			require.Equal(t, s.destination, item.Destination.Ref)
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "sync %q not in destination-filtered listing", s.started.SyncID)
+}
+
+func (s *volumeSyncLifecycle) Stat(t *testing.T) {
+	statOut := mustCLI(t, "volume", "stat", s.versionRef, "--output", "json")
+	var stat struct {
+		VersionRef    string `json:"version_ref"`
+		ContentDigest string `json:"digest"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(statOut), &stat))
+	require.Equal(t, s.versionRef, stat.VersionRef)
+	require.Equal(t, *s.started.ContentDigest, stat.ContentDigest)
+}
+
+func (s *volumeSyncLifecycle) ListEntries(t *testing.T) {
+	entries := parseVolumeEntryList(t, mustCLI(t,
+		"volume", "ls", "--recursive", s.versionRef, "--output", "json"))
+	require.Equal(t, s.versionRef, entries.VersionRef)
+	require.Equal(t, "file", volumeEntryKinds(entries)["/config.json"])
+}
+
+func (s *volumeSyncLifecycle) Cat(t *testing.T) {
+	s.configOut = mustCLI(t, "volume", "cat", s.versionRef+"/config.json")
+	var sourceConfig map[string]any
+	require.NoError(t, json.Unmarshal([]byte(s.configOut), &sourceConfig))
+	require.NotEmpty(t, sourceConfig["model_type"])
+}
+
+func (s *volumeSyncLifecycle) Pull(t *testing.T) {
+	pullDir := t.TempDir()
+	pullOut := mustCLI(t, "volume", "pull", s.versionRef, pullDir, "--output", "json")
+	var pulled volumePullResult
+	require.NoError(t, json.Unmarshal([]byte(pullOut), &pulled))
+	require.Equal(t, s.versionRef, pulled.VersionRef)
+	require.Equal(t, int64(1), pulled.Files)
+	pulledConfig, err := os.ReadFile(filepath.Join(pullDir, "config.json"))
+	require.NoError(t, err)
+	require.JSONEq(t, s.configOut, string(pulledConfig))
+}
+
+func (s *volumeSyncLifecycle) Versions(t *testing.T) {
+	versionsOut := mustCLI(t, "volume", "versions", s.baseRef, "--output", "json")
+	var versions struct {
+		Versions []struct {
+			VersionRef string `json:"version_ref"`
+		} `json:"versions"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(versionsOut), &versions))
+	versionFound := false
+	for _, version := range versions.Versions {
+		if version.VersionRef == s.versionRef {
+			versionFound = true
+			break
+		}
+	}
+	require.True(t, versionFound, "version %q not in volume history", s.versionRef)
+}
+
+func (s *volumeSyncLifecycle) Cancel(t *testing.T) {
+	canceled := parseVolumeSync(t, mustCLI(t,
+		"volume", "sync", "cancel",
+		"--sync-id", s.started.SyncID,
+		"--output", "json"))
+	require.Equal(t, "READY", canceled.Status)
+	require.Equal(t, s.started.VersionRef, canceled.VersionRef)
+}
+
+// e2eVolumeSync mirrors the fields asserted from every volume-sync command.
+type e2eVolumeSync struct {
+	SyncID string `json:"sync_id"`
+	Status string `json:"status"`
+	Source struct {
+		URI     string   `json:"uri"`
+		Include []string `json:"include"`
+		Exclude []string `json:"exclude"`
+	} `json:"source"`
+	Destination struct {
+		Ref string `json:"ref"`
+	} `json:"destination"`
+	VolumeVersionID *string `json:"volume_version_id"`
+	VersionRef      *string `json:"version_ref"`
+	ContentDigest   *string `json:"content_digest"`
+	TotalSizeBytes  *int64  `json:"total_size_bytes"`
+	CompletedAt     *string `json:"completed_at"`
+	Error           *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func parseVolumeSync(t *testing.T, out string) e2eVolumeSync {
+	t.Helper()
+	var sync e2eVolumeSync
+	require.NoError(t, json.Unmarshal([]byte(out), &sync))
+	return sync
 }
 
 // volumeLifecycle holds the state shared across the volume sub-tests. Created
