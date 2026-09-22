@@ -39,9 +39,10 @@ func TestDetection(t *testing.T) {
 			installed, supported bool
 		}{
 			{"missing", detectionExecer{missing: true}, false, false},
-			{"failed", detectionExecer{fail: true}, true, false},
-			{"unknown", detectionExecer{version: "unknown"}, true, false},
-			{"control", detectionExecer{version: "1.0\nextra"}, true, false},
+			{"failed", detectionExecer{fail: true}, true, runtime.GOOS == "darwin"},
+			{"unknown", detectionExecer{version: "unknown"}, true, runtime.GOOS == "darwin"},
+			{"control", detectionExecer{version: "1.0\nextra"}, true, runtime.GOOS == "darwin"},
+			{"different-version", detectionExecer{version: "9.9.9"}, true, runtime.GOOS == "darwin"},
 			{"tested", detectionExecer{version: TestedVersions[name]}, true, runtime.GOOS == "darwin"},
 		} {
 			t.Run(name+"/"+tc.label, func(t *testing.T) {

@@ -76,7 +76,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 			return cmd.NewErrUsagef("%s is not installed or not on PATH", name)
 		}
 		if !d.Supported {
-			return cmd.NewErrUsagef("%s; tested version is %s on macOS", harnessDetectionLabel(d), harness.TestedVersions[name])
+			return cmd.NewErrUsagef("%s setup is currently supported only on macOS", name)
 		}
 		detections = append(detections, d)
 	}
@@ -228,7 +228,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessFlags) error {
 		if !r.Installed {
 			ctx.OutputLine("  Installation   Not found on PATH")
 		} else if !r.Supported {
-			ctx.OutputLine("  Compatibility  Version or platform not supported for setup")
+			ctx.OutputLine("  Compatibility  Platform not supported for setup")
 		}
 		if r.DefaultRoute != "" {
 			ctx.Outputf("  Default route  %s\n", r.DefaultRoute)
@@ -366,7 +366,7 @@ func harnessDetectionLabel(d harness.Detection) string {
 		return label + " (version unavailable)"
 	}
 	if !d.Supported {
-		return label + " (unsupported version/platform)"
+		return label + " (unsupported platform)"
 	}
 	return label
 }
