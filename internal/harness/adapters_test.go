@@ -23,63 +23,65 @@ func TestAdaptersLifecycle(t *testing.T) {
 			}
 			path := filepath.Join(t.TempDir(), filename)
 			require.NoError(t, os.WriteFile(path, original, 0644))
-			plans, e := PrepareHarness(name, path, fixture(t), Selection{Primary: "acme/primary", Background: "acme/background"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+			plans, e := adapter(t, name).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 			require.NoError(t, e)
-			require.NoError(t, ApplyPlans(plans))
-			plans, e = PrepareHarness(name, path, fixture(t), Selection{Primary: "acme/primary", Background: "acme/background"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+			require.NoError(t, ApplyPlans(plans, FixtureToken))
+			plans, e = adapter(t, name).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 			require.NoError(t, e)
 			for _, p := range plans {
 				require.False(t, p.Changed)
 			}
-			require.NoError(t, ApplyPlans(plans))
-			status, e := Inspect(Detection{Name: name, Path: path})
+			require.NoError(t, ApplyPlans(plans, FixtureToken))
+			status, e := adapter(t, name).Inspect(Detection{Name: name, Path: path})
 			require.NoError(t, e)
 			require.Equal(t, "configured", status.State)
 			require.Len(t, status.Routes, 4)
 			routes := fixture(t)[:2]
-			plans, e = PrepareHarness(name, path, routes, Selection{Primary: "acme/primary", Background: "acme/background"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+			plans, e = adapter(t, name).Prepare(path, routes, Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 			require.NoError(t, e)
-			require.NoError(t, ApplyPlans(plans))
-			status, e = Inspect(Detection{Name: name, Path: path})
+			require.NoError(t, ApplyPlans(plans, FixtureToken))
+			status, e = adapter(t, name).Inspect(Detection{Name: name, Path: path})
 			require.NoError(t, e)
 			require.Len(t, status.Routes, 2)
-			plans, e = PrepareHarnessTeardown(name, path)
+			plans, e = adapter(t, name).Teardown(path)
 			require.NoError(t, e)
-			require.NoError(t, ApplyPlans(plans))
+			require.NoError(t, ApplyPlans(plans, FixtureToken))
 			b, e := os.ReadFile(path)
 			require.NoError(t, e)
 			require.Equal(t, original, b)
 			if name == "codex" {
-				_, e = os.Stat(CatalogPath(path))
+				_, e = os.Stat(catalogPath(path))
 				require.True(t, os.IsNotExist(e))
 			}
 		})
 	}
 }
+
 func TestCodexCatalogDriftAndInterruptedInstall(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	plans, e := PrepareHarness("codex", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+	plans, e := adapter(t, Codex).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 	require.NoError(t, e)
 	// Catalog succeeds, config is never written. Teardown must find the orphan.
-	require.NoError(t, plans[0].Apply())
-	plans, e = PrepareHarnessTeardown("codex", path)
+	require.NoError(t, ApplyPlans(plans[:1], FixtureToken))
+	plans, e = adapter(t, Codex).Teardown(path)
 	require.NoError(t, e)
-	require.NoError(t, ApplyPlans(plans))
-	_, e = os.Stat(CatalogPath(path))
+	require.NoError(t, ApplyPlans(plans, FixtureToken))
+	_, e = os.Stat(catalogPath(path))
 	require.True(t, os.IsNotExist(e))
-	plans, e = PrepareHarness("codex", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+	plans, e = adapter(t, Codex).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 	require.NoError(t, e)
-	require.NoError(t, ApplyPlans(plans))
-	save(t, CatalogPath(path), map[string]any{"models": []any{map[string]any{"slug": "user-edit"}}})
-	status, e := Inspect(Detection{Name: "codex", Path: path})
+	require.NoError(t, ApplyPlans(plans, FixtureToken))
+	save(t, catalogPath(path), map[string]any{"models": []any{map[string]any{"slug": "user-edit"}}})
+	status, e := adapter(t, Codex).Inspect(Detection{Name: Codex, Path: path})
 	require.NoError(t, e)
 	require.Equal(t, "drifted", status.State)
-	plans, e = PrepareHarnessTeardown("codex", path)
+	plans, e = adapter(t, Codex).Teardown(path)
 	require.NoError(t, e)
-	require.NoError(t, ApplyPlans(plans))
+	require.NoError(t, ApplyPlans(plans, FixtureToken))
 	require.Contains(t, plans[1].Replaced, "models")
-	require.NoFileExists(t, CatalogPath(path))
+	require.NoFileExists(t, catalogPath(path))
 }
+
 func TestAdaptersRejectInvalidNamesAndUnsupportedOptions(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"codex", "opencode"} {
@@ -89,9 +91,9 @@ func TestAdaptersRejectInvalidNamesAndUnsupportedOptions(t *testing.T) {
 		}
 		routes := fixture(t)
 		routes[0].Name = ""
-		_, e := PrepareHarness(name, path, routes, Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+		_, e := adapter(t, name).Prepare(path, routes, Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 		require.Error(t, e)
-		_, e = PrepareHarness(name, path, fixture(t), Selection{Primary: "acme/primary", Fallback: "acme/fallback"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+		_, e = adapter(t, name).Prepare(path, fixture(t), Selection{Primary: "acme/primary", Fallback: "acme/fallback"}, "http://127.0.0.1:1234", FixtureToken)
 		require.ErrorContains(t, e, "only for Claude")
 	}
 }
@@ -100,20 +102,21 @@ func TestCodexEmptyCatalogInstructionsPreservesUserInstructionsAndAgents(t *test
 	path := filepath.Join(t.TempDir(), "config.toml")
 	original := []byte("model_instructions_file = \"custom.md\"\n[agents.reviewer]\nconfig_file = \"reviewer.toml\"\n")
 	require.NoError(t, os.WriteFile(path, original, 0644))
-	plans, e := PrepareHarness("codex", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+	plans, e := adapter(t, Codex).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 	require.NoError(t, e)
-	require.NoError(t, ApplyPlans(plans))
-	_, data, _, _, e := Read(path)
+	require.NoError(t, ApplyPlans(plans, FixtureToken))
+	_, data, _, _, e := readConfig(path)
 	require.NoError(t, e)
 	require.Equal(t, "custom.md", data["model_instructions_file"])
 	require.Equal(t, "reviewer.toml", get(data, []string{"agents", "reviewer", "config_file"}).Data)
-	catalog := load(t, CatalogPath(path))
+	catalog := load(t, catalogPath(path))
 	model := catalog["models"].([]any)[0].(map[string]any)
 	require.Equal(t, "", model["base_instructions"])
 }
+
 func TestClaudePreservesSubagentAndAdvisorChoicesByDefault(t *testing.T) {
 	current := map[string]any{"advisorModel": "existing-advisor", "env": map[string]any{"CLAUDE_CODE_SUBAGENT_MODEL": "existing-subagent"}}
-	settings, e := ClaudeSettings(fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, current, nil)
+	settings, e := claudeSettings(fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, current)
 	require.NoError(t, e)
 	for _, s := range settings {
 		require.NotEqual(t, "advisorModel", pathKey(s.Path))
@@ -131,7 +134,7 @@ func TestClaudePolicyDoesNotBlockOtherHarnesses(t *testing.T) {
 			if name == "codex" {
 				filename = "config.toml"
 			}
-			_, err := PrepareHarness(name, filepath.Join(dir, filename), fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, false)
+			_, err := adapter(t, name).Prepare(filepath.Join(dir, filename), fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 			if name == "claude-code" {
 				require.ErrorContains(t, err, "managed policy")
 			} else {
@@ -145,9 +148,9 @@ func TestOpenCodeSmallTaskDefaultAndOverride(t *testing.T) {
 	for _, background := range []string{"", "acme/background"} {
 		t.Run(background, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "opencode.json")
-			plans, err := PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary", Background: background}, "http://127.0.0.1:1234", FixtureToken, false, true)
+			plans, err := adapter(t, OpenCode).Prepare(path, fixture(t), Selection{Primary: "acme/primary", Background: background}, "http://127.0.0.1:1234", FixtureToken)
 			require.NoError(t, err)
-			require.NoError(t, ApplyPlans(plans))
+			require.NoError(t, ApplyPlans(plans, FixtureToken))
 			data := load(t, path)
 			expected := background
 			if expected == "" {
@@ -165,9 +168,9 @@ func TestOpenCodeJSONCLifecycle(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "opencode.jsonc")
 			original := []byte("{\n // Keep my comment\n \"$schema\": \"https://opencode.ai/config.json\",\n \"theme\": \"dark\",\n \"provider\": { /* keep provider */ \"user/custom~provider\": {\"name\":\"Mine\"}, },\n}\n")
 			require.NoError(t, os.WriteFile(path, original, 0644))
-			plans, err := PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+			plans, err := adapter(t, OpenCode).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 			require.NoError(t, err)
-			require.NoError(t, ApplyPlans(plans))
+			require.NoError(t, ApplyPlans(plans, FixtureToken))
 			installed, err := os.ReadFile(path)
 			require.NoError(t, err)
 			require.Contains(t, string(installed), "Keep my comment")
@@ -176,16 +179,16 @@ func TestOpenCodeJSONCLifecycle(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "dark", data["theme"])
 			require.Equal(t, "baseten-harness/acme/primary", data["model"])
-			plans, err = PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+			plans, err = adapter(t, OpenCode).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 			require.NoError(t, err)
 			require.False(t, plans[0].Changed)
 			if edit {
 				installed = bytes.Replace(installed, []byte(`"dark"`), []byte(`"light"`), 1)
 				require.NoError(t, os.WriteFile(path, installed, 0600))
 			}
-			plans, err = PrepareHarnessTeardown("opencode", path)
+			plans, err = adapter(t, OpenCode).Teardown(path)
 			require.NoError(t, err)
-			require.NoError(t, ApplyPlans(plans))
+			require.NoError(t, ApplyPlans(plans, FixtureToken))
 			restored, err := os.ReadFile(path)
 			require.NoError(t, err)
 			if !edit {
@@ -212,12 +215,12 @@ func TestOpenCodeInvalidJSONCUnchanged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.jsonc")
 	original := []byte("{ // comment\n invalid }")
 	require.NoError(t, os.WriteFile(path, original, 0644))
-	_, err := PrepareHarness("opencode", path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken, false, true)
+	_, err := adapter(t, OpenCode).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 	require.ErrorContains(t, err, "invalid settings JSONC")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, original, data)
-	require.NoFileExists(t, JournalPath(path))
+	require.NoFileExists(t, journalPath(path))
 }
 
 func TestOpenCodePolicyPathsMatchPlatform(t *testing.T) {

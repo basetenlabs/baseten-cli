@@ -1,140 +1,45 @@
 package harness
 
 import (
-	"bytes"
-	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
-	"strconv"
 	"strings"
-	"time"
 )
 
-const TestedClaudeVersion = "2.1.272"
+type claudeHarness struct{ baseHarness }
 
-var TestedVersions = map[string]string{
-	"claude-code": TestedClaudeVersion,
-	"codex":       "0.134.0",
-	"opencode":    "1.18.31",
-}
-
-type Detection struct {
-	Name      string `json:"harness"`
-	Path      string `json:"config"`
-	Installed bool   `json:"installed"`
-	Version   string `json:"version"`
-	Supported bool   `json:"supported"`
-}
-
-// Execer is satisfied by the CLI's shared subprocess executor.
-type Execer interface {
-	LookPath(string) (string, error)
-	Exec(*exec.Cmd) error
-}
-
-func Detect(ctx context.Context, executor Execer, name, path string) (Detection, error) {
-	d := Detection{Name: name, Path: path}
-	binaryName := name
-	switch name {
-	case "claude-code":
-		binaryName = "claude"
-	case "codex", "opencode":
-	default:
-		return d, fmt.Errorf("unknown harness %s", name)
-	}
-	if path == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return d, err
-		}
-		switch name {
-		case "claude-code":
-			dir := os.Getenv("CLAUDE_CONFIG_DIR")
-			if dir == "" {
-				dir = filepath.Join(home, ".claude")
-			}
-			d.Path = filepath.Join(dir, "settings.json")
-		case "codex":
-			dir := os.Getenv("CODEX_HOME")
-			if dir == "" {
-				dir = filepath.Join(home, ".codex")
-			}
-			d.Path = filepath.Join(dir, "config.toml")
-		case "opencode":
-			dir := os.Getenv("XDG_CONFIG_HOME")
-			if dir == "" {
-				dir = filepath.Join(home, ".config")
-			}
-			d.Path = filepath.Join(dir, "opencode", "opencode.json")
-			if _, err := os.Stat(d.Path + "c"); err == nil {
-				d.Path += "c"
-			} else if !os.IsNotExist(err) {
-				return d, err
-			}
-		}
-	}
-	var err error
-	d.Path, err = filepath.Abs(d.Path)
-	if err != nil {
-		return d, err
-	}
-	binary, err := executor.LookPath(binaryName)
-	if err != nil {
-		return d, nil
-	}
-	d.Installed = true
-	// Version detection is informational; setup is currently supported on macOS.
-	d.Supported = runtime.GOOS == "darwin"
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	var out bytes.Buffer
-	command := exec.CommandContext(ctx, binary, "--version")
-	command.Stdout = &out
-	err = executor.Exec(command)
-	if err != nil {
-		return d, nil
-	}
-	v := strings.TrimSpace(out.String())
-	if len(v) > 100 || strings.ContainsAny(v, "\r\n\x1b") {
-		return d, nil
-	}
-	d.Version = strings.TrimPrefix(strings.TrimSuffix(v, " (Claude Code)"), "codex-cli ")
-	return d, nil
-}
-func FixtureEndpoint(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || u.Port() == "" {
-		return errors.New("fixture endpoint must use loopback HTTP: http://127.0.0.1:<port> or http://[::1]:<port>")
-	}
-	port, err := strconv.Atoi(u.Port())
-	if err != nil || port < 1 || port > 65535 {
-		return errors.New("fixture endpoint requires a valid port")
-	}
-	ip := net.ParseIP(u.Hostname())
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("fixture endpoint must use a literal loopback IP")
-	}
-	return nil
-}
-
-func ClaudeSettings(routes []Route, selection Selection, endpoint, token string, replacePicker bool, current map[string]any, prior *Journal) ([]Setting, error) {
-	if _, err := ValidateCatalog(routes); err != nil {
+func (h claudeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
+	if err := checkClaudePolicy(path); err != nil {
 		return nil, err
+	}
+	p, err := prepareSettings(path, routes, func(data map[string]any) ([]setting, error) {
+		return claudeSettings(routes, s, endpoint, token, data)
+	})
+	if err != nil {
+		return nil, err
+	}
+	p.credentialPath = []string{"env", "ANTHROPIC_AUTH_TOKEN"}
+	return []*Plan{p}, nil
+}
+
+func (h claudeHarness) SmallTaskModel(s Selection) string { return defaultSmallTaskModel }
+
+func claudeSettings(routes []Route, selection Selection, endpoint, token string, current map[string]any) ([]setting, error) {
+	for _, route := range routes {
+		switch route.Name {
+		case "default", "inherit", "opus", "sonnet", "haiku", "fable", "opusplan", "best":
+			return nil, fmt.Errorf("route %q conflicts with a Claude model keyword", route.Name)
+		}
+	}
+	if selection.Background != "" {
+		return nil, errors.New("--background-route is supported only for OpenCode")
 	}
 
 	explicitSubagent := selection.Subagent != ""
-	if selection.Primary == "" {
-		selection.Primary = routes[0].Name
-	}
-	selection.Background = "" // Claude uses the temporary Haiku model below.
-	s, err := selection.Resolve(routes)
+	s, err := selection.resolve(routes)
 	if err != nil {
 		return nil, err
 	}
@@ -154,100 +59,18 @@ func ClaudeSettings(routes []Route, selection Selection, endpoint, token string,
 	}
 	options := []any{}
 	allowed := []any{}
-	// Refresh only entries owned by the previous route catalog. The current
-	// arrays may also contain user entries added after the original setup.
-	for _, item := range []struct {
-		path []string
-		dst  *[]any
-	}{
-		{
-			path: []string{"modelPicker", "options"},
-			dst:  &options,
-		},
-		{
-			path: []string{"availableModels"},
-			dst:  &allowed,
-		},
-	} {
-		v := get(current, item.path)
-		var before Value
-		var managed []string
-		if prior != nil {
-			for _, p := range prior.Settings {
-				if pathKey(p.Path) == pathKey(item.path) {
-					managed = append(managed, prior.Routes...)
-					managed = append(managed, defaultSmallTaskModel)
-					before = p.Before
-					if prior.Pending {
-						// The pending journal already names the new routes. Also
-						// remove entries the interrupted refresh planned to remove.
-						previous, _ := p.Previous.Data.([]any)
-						installed, _ := p.Installed.Data.([]any)
-						for _, entry := range previous {
-							name := claudeModelName(entry)
-							if !slices.ContainsFunc(installed, func(value any) bool {
-								return claudeModelName(value) == name
-							}) {
-								managed = append(managed, name)
-							}
-						}
-					}
-				}
-			}
-		}
-		if v.Exists {
-			a, ok := v.Data.([]any)
-			if !ok {
-				return nil, fmt.Errorf("%s must be an array", pathKey(item.path))
-			}
-			original, _ := before.Data.([]any)
-			for _, entry := range a {
-				name := claudeModelName(entry)
-				wasUserEntry := slices.ContainsFunc(original, func(value any) bool {
-					return claudeModelName(value) == name
-				})
-				if !wasUserEntry && slices.Contains(managed, name) {
-					continue
-				}
-				*item.dst = append(*item.dst, entry)
-			}
-		}
-	}
 	for _, r := range routes {
-		found := false
-		for _, o := range options {
-			m, ok := o.(map[string]any)
-			if !ok {
-				return nil, errors.New("invalid existing picker entry")
-			}
-			if m["model"] == r.Name {
-				found = true
-			}
-		}
-		if !found {
-			options = append(options, map[string]any{"model": r.Name, "label": r.DisplayName})
-		}
-		found = false
-		for _, a := range allowed {
-			if _, ok := a.(string); !ok {
-				return nil, errors.New("availableModels must contain strings")
-			}
-			if a == r.Name {
-				found = true
-			}
-		}
-		if !found {
-			allowed = append(allowed, r.Name)
-		}
+		options = append(options, map[string]any{"model": r.Name, "label": r.DisplayName})
+		allowed = append(allowed, r.Name)
 	}
 	if !slices.Contains(allowed, any(defaultSmallTaskModel)) {
 		allowed = append(allowed, defaultSmallTaskModel)
 	}
-	values := []Setting{
+	values := []setting{
 		desired([]string{"model"}, s.Primary),
 		desired([]string{"fallbackModel"}, []string{s.Fallback}),
 		desired([]string{"modelPicker", "options"}, options),
-		desired([]string{"modelPicker", "replaceBuiltInOptions"}, replacePicker),
+		desired([]string{"modelPicker", "replaceBuiltInOptions"}, true),
 		desired([]string{"availableModels"}, allowed),
 	}
 	for _, kv := range [][2]string{
@@ -268,24 +91,7 @@ func ClaudeSettings(routes []Route, selection Selection, endpoint, token string,
 	return values, nil
 }
 
-// Claude stores picker entries as objects and available models as strings.
-func claudeModelName(entry any) string {
-	switch value := entry.(type) {
-	case string:
-		return value
-	case map[string]any:
-		if model, ok := value["model"].(string); ok {
-			return model
-		}
-		// Recognize entries generated by the previous adapter during migration.
-		model, _ := value["id"].(string)
-		return model
-	default:
-		return ""
-	}
-}
-
-func CheckPolicy(path string) error {
+func checkClaudePolicy(path string) error {
 	for _, p := range []string{filepath.Join(filepath.Dir(path), "managed-settings.json"), "/Library/Application Support/ClaudeCode/managed-settings.json", "/etc/claude-code/managed-settings.json"} {
 		if _, err := os.Stat(p); err == nil {
 			return fmt.Errorf("managed policy detected at %s; ask your administrator to configure the harness", p)
@@ -294,4 +100,24 @@ func CheckPolicy(path string) error {
 		}
 	}
 	return nil
+}
+
+func (h claudeHarness) Inspect(d Detection) (Status, error) {
+	r, data, j, err := inspectConfig(d)
+	if err != nil {
+		return r, err
+	}
+	r.SmallTaskModel, _ = get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string)
+	labels := map[string]string{}
+	if options, ok := get(data, []string{"modelPicker", "options"}).Data.([]any); ok {
+		for _, option := range options {
+			if row, ok := option.(map[string]any); ok {
+				name, _ := row["model"].(string)
+				label, _ := row["label"].(string)
+				labels[name] = label
+			}
+		}
+	}
+	r.addRoutes(j, labels)
+	return r, nil
 }

@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -332,5 +334,27 @@ func routeTargetFields(value any) (kind, model, secret string, err error) {
 		return t.Type, t.Model, t.SecretName, nil
 	default:
 		return "", "", "", fmt.Errorf("unsupported route target %T", value)
+	}
+}
+
+// listRoutes follows pagination for both route commands and harness discovery.
+func listRoutes(ctx context.Context, api *managementapi.Client, params managementapi.GetV1RoutesParams) ([]managementapi.Route, error) {
+	var routes []managementapi.Route
+	cursors := map[string]bool{}
+	for {
+		page, err := api.GetRoutes(ctx, params)
+		if err != nil {
+			return nil, fmt.Errorf("listing routes: %w", err)
+		}
+		routes = append(routes, page.Items...)
+		if !page.Pagination.HasMore {
+			return routes, nil
+		}
+		cursor := page.Pagination.Cursor
+		if cursor == nil || *cursor == "" || cursors[*cursor] {
+			return nil, cmd.NewErrServer(errors.New("routes API returned an invalid pagination cursor"))
+		}
+		cursors[*cursor] = true
+		params.Cursor = cursor
 	}
 }
