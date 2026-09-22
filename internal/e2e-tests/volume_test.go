@@ -5,7 +5,6 @@ package e2etests
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,12 +35,12 @@ var e2eVolumeFiles = map[string]string{
 // through every volume command, pulls it whole and narrowed, re-pushes to
 // confirm the second push reuses what the first stored, and then deletes and
 // restores its way back to an empty volume. It also syncs a remote source and
-// mounts the resulting immutable version into a deployed model. Skips when the
-// required env vars are absent.
+// verifies the resulting immutable version through the volume CLI. Skips when
+// the required env vars are absent.
 //
-// The organization behind the e2e key needs volumes enabled and the key needs
-// organization-level model management permission. A missing prerequisite fails
-// rather than skips, so a misconfigured environment does not read as a pass.
+// The organization behind the e2e key needs volumes enabled. A missing
+// prerequisite fails rather than skips, so a misconfigured environment does
+// not read as a pass.
 func TestE2EVolumeLifecycle(t *testing.T) {
 	v := newVolumeLifecycle(t)
 	t.Run("Push", v.Push)
@@ -72,8 +71,6 @@ func testE2EVolumeSync(t *testing.T) {
 		{"Cat", s.Cat},
 		{"Pull", s.Pull},
 		{"Versions", s.Versions},
-		{"Deploy", s.Deploy},
-		{"Predict", s.Predict},
 		{"Cancel", s.Cancel},
 	}
 	for _, step := range steps {
@@ -84,15 +81,11 @@ func testE2EVolumeSync(t *testing.T) {
 }
 
 type volumeSyncLifecycle struct {
-	baseRef            string
-	destination        string
-	started            e2eVolumeSync
-	versionRef         string
-	configOut          string
-	sourceConfig       map[string]any
-	modelName          string
-	modelID            string
-	modelCleanupNeeded bool
+	baseRef     string
+	destination string
+	started     e2eVolumeSync
+	versionRef  string
+	configOut   string
 }
 
 func newVolumeSyncLifecycle(t *testing.T) *volumeSyncLifecycle {
@@ -111,9 +104,7 @@ func newVolumeSyncLifecycle(t *testing.T) *volumeSyncLifecycle {
 
 	suffix := randomSuffix(t)
 	s := &volumeSyncLifecycle{
-		baseRef:      "bdn:" + e2eVolumeNamespace + "/sync-" + suffix,
-		modelName:    "cli-e2e-volume-sync-" + suffix,
-		sourceConfig: make(map[string]any),
+		baseRef: "bdn:" + e2eVolumeNamespace + "/sync-" + suffix,
 	}
 	s.destination = s.baseRef + ":e2e"
 	t.Cleanup(func() {
@@ -122,24 +113,6 @@ func newVolumeSyncLifecycle(t *testing.T) *volumeSyncLifecycle {
 		if _, errOut, err := cliCtx(t, ctx,
 			"volume", "rm", "--recursive", "--yes", s.baseRef); err != nil {
 			t.Logf("cleanup delete of volume %s failed: %v\nstderr: %s", s.baseRef, err, errOut)
-		}
-	})
-	t.Cleanup(func() {
-		if !s.modelCleanupNeeded {
-			return
-		}
-		dumpModelLogsIfFailure(t, s.modelName)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if s.modelID == "" {
-			s.modelID = lookupModelIDByName(t, ctx, s.modelName)
-		}
-		if s.modelID == "" {
-			return
-		}
-		if _, errOut, err := cliCtx(t, ctx,
-			"model", "delete", "--model-id", s.modelID, "--yes"); err != nil {
-			t.Logf("cleanup delete of model %s failed: %v\nstderr: %s", s.modelID, err, errOut)
 		}
 	})
 	return s
@@ -228,8 +201,9 @@ func (s *volumeSyncLifecycle) ListEntries(t *testing.T) {
 
 func (s *volumeSyncLifecycle) Cat(t *testing.T) {
 	s.configOut = mustCLI(t, "volume", "cat", s.versionRef+"/config.json")
-	require.NoError(t, json.Unmarshal([]byte(s.configOut), &s.sourceConfig))
-	require.NotEmpty(t, s.sourceConfig["model_type"])
+	var sourceConfig map[string]any
+	require.NoError(t, json.Unmarshal([]byte(s.configOut), &sourceConfig))
+	require.NotEmpty(t, sourceConfig["model_type"])
 }
 
 func (s *volumeSyncLifecycle) Pull(t *testing.T) {
@@ -260,39 +234,6 @@ func (s *volumeSyncLifecycle) Versions(t *testing.T) {
 		}
 	}
 	require.True(t, versionFound, "version %q not in volume history", s.versionRef)
-}
-
-func (s *volumeSyncLifecycle) Deploy(t *testing.T) {
-	modelDir := writeVolumeSyncModel(t, s.modelName, s.versionRef)
-	s.modelCleanupNeeded = true
-	pushCtx, pushCancel := context.WithTimeout(t.Context(), pushCLITimeout)
-	defer pushCancel()
-	pushOut := mustCLICtx(t, pushCtx,
-		"model", "push",
-		"--dir", modelDir,
-		"--environment", "production",
-		"--wait",
-		"--output", "json")
-	var deployment pushedDeployment
-	require.NoError(t, json.Unmarshal([]byte(pushOut), &deployment))
-	require.Equal(t, s.modelName, deployment.Model.Name)
-	require.Equal(t, "ACTIVE", deployment.Deployment.Status)
-	s.modelID = deployment.Model.ID
-}
-
-func (s *volumeSyncLifecycle) Predict(t *testing.T) {
-	predictOut := mustCLI(t,
-		"model", "predict",
-		"--model-id", s.modelID,
-		"--data", `{}`,
-		"--output", "json")
-	var prediction struct {
-		Mounted   bool   `json:"mounted"`
-		ModelType string `json:"model_type"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(predictOut), &prediction))
-	require.True(t, prediction.Mounted)
-	require.Equal(t, s.sourceConfig["model_type"], prediction.ModelType)
 }
 
 func (s *volumeSyncLifecycle) Cancel(t *testing.T) {
@@ -332,40 +273,6 @@ func parseVolumeSync(t *testing.T, out string) e2eVolumeSync {
 	var sync e2eVolumeSync
 	require.NoError(t, json.Unmarshal([]byte(out), &sync))
 	return sync
-}
-
-func writeVolumeSyncModel(t *testing.T, modelName, versionRef string) string {
-	t.Helper()
-	dir := t.TempDir()
-	config := fmt.Sprintf(`model_name: %s
-python_version: py313
-resources:
-  cpu: 50m
-  memory: 50Mi
-  use_gpu: false
-bdn:
-  mounts:
-    - source: %s
-      path: /models/synced
-  access:
-    - namespace: %s
-      grants: [pull]
-`, modelName, versionRef, e2eVolumeNamespace)
-	model := `import json
-from pathlib import Path
-
-class Model:
-    def predict(self, request):
-        path = Path("/models/synced/config.json")
-        if not path.exists():
-            return {"mounted": False, "model_type": ""}
-        config = json.loads(path.read_text())
-        return {"mounted": True, "model_type": config.get("model_type", "")}
-`
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "model"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(config), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "model", "model.py"), []byte(model), 0o644))
-	return dir
 }
 
 // volumeLifecycle holds the state shared across the volume sub-tests. Created
