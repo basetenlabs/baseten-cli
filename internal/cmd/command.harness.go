@@ -112,21 +112,23 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
-	listed, err := listRoutes(ctx, api, managementapi.GetV1RoutesParams{TeamId: &team.Id})
+	listed, err := readHarnessRoutes(ctx, api.HTTPClient, api.BaseURL, api.Headers, team.Id)
 	if err != nil {
 		return err
 	}
-	if len(listed) == 0 {
-		return fmt.Errorf("team %s has no routes; create one with 'baseten route create'", team.Name)
-	}
 	// One provider configuration serves every route, so they must share an endpoint.
-	endpoint := strings.TrimRight(listed[0].InvokeUrl, "/")
-	routes := make([]harness.Route, 0, len(listed))
+	endpoint := strings.TrimRight(listed[0].InvokeURL, "/")
 	for _, r := range listed {
-		if strings.TrimRight(r.InvokeUrl, "/") != endpoint {
+		if strings.TrimRight(r.InvokeURL, "/") != endpoint {
 			return fmt.Errorf("team %s has routes with different invoke URLs", team.Name)
 		}
-		routes = append(routes, harness.Route{Name: r.Name, DisplayName: r.DisplayName})
+	}
+	routes, skipped, err := harnessCatalog(listed, f.Route)
+	if err != nil {
+		return err
+	}
+	if len(skipped) > 0 {
+		ctx.Logf("Routes omitted because their model metadata is missing or unusable: %s\nSet a Route's metadata with: baseten route update --name <route> --metadata <slug>\n", strings.Join(skipped, ", "))
 	}
 	mcpServers, err := listHarnessMCPServers(ctx, team.Id)
 	if err != nil {
@@ -151,6 +153,18 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		Background: f.BackgroundRoute,
 		Subagent:   f.SubagentRoute,
 		Fallback:   f.FallbackRoute,
+	}
+	for _, choice := range selected {
+		switch choice.Name() {
+		case harness.ClaudeCode:
+			if excluded := harness.RoutesWithoutMessages(routes); len(excluded) > 0 {
+				ctx.Logf("Routes hidden from the Claude Code model picker because they lack Messages support: %s\n", strings.Join(excluded, ", "))
+			}
+		case harness.Codex:
+			if responses, chat, err := harness.WireFamilies(routes, selection); err == nil && responses && chat {
+				ctx.Logf("Selected Routes span both Responses and Chat Completions; in-session model switching across families requires switching model_provider\n")
+			}
+		}
 	}
 	var plans []*harness.Plan
 	for _, choice := range selected {

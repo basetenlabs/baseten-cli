@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -53,7 +54,17 @@ func (openCodeHarness) Prepare(path string, routes []Route, mcpServers []MCPServ
 		models[defaultBackgroundRoute] = map[string]any{"name": "DeepSeek V4.1 Flash"}
 	}
 	for _, r := range routes {
-		models[r.Name] = map[string]any{"name": r.DisplayName}
+		if !r.ChatCompletions || r.ContextWindow <= 0 || r.OutputLimit <= 0 || r.OutputLimit >= r.ContextWindow {
+			return nil, fmt.Errorf("Route %q requires Chat Completions and explicit context/output limits", r.Name)
+		}
+		if len(r.InputModalities) == 0 {
+			return nil, fmt.Errorf("Route %q requires explicit input modalities", r.Name)
+		}
+		variants := map[string]any{}
+		for _, level := range r.ReasoningLevels {
+			variants[level] = map[string]any{"reasoningEffort": level}
+		}
+		models[r.Name] = map[string]any{"name": r.DisplayName, "limit": map[string]any{"context": r.ContextWindow, "output": r.OutputLimit}, "tool_call": r.Tools, "modalities": map[string]any{"input": r.InputModalities, "output": []string{"text"}}, "reasoning": len(r.ReasoningLevels) > 0, "variants": variants}
 	}
 	values := []setting{
 		desired([]string{"model"}, providerID+"/"+s.Primary),
@@ -79,7 +90,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, mcpServers []MCPServ
 			values = append(values, desired(path, providerID+"/"+s.Subagent))
 		}
 	}
-	credential := []string{"provider", providerID, "options", "apiKey"}
+	credential := [][]string{{"provider", providerID, "options", "apiKey"}}
 	p, err := prepareSettings(path, credential, token, func(current map[string]any) ([]setting, error) {
 		if explicitSubagent {
 			return values, nil

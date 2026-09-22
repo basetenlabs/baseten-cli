@@ -56,7 +56,10 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"items":      []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": r.URL.Query().Get("team_id"), "display_name": "Primary", "invoke_url": invokeURL}},
+			"items": []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": r.URL.Query().Get("team_id"), "display_name": "Primary", "invoke_url": invokeURL, "metadata": map[string]any{
+				"context_window": 128000, "max_output_tokens": 4096, "input_modalities": []string{"text"}, "tools": true,
+				"supported_api_formats": map[string]any{"messages": true, "responses": true, "chat_completions": true},
+			}}},
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
@@ -219,6 +222,43 @@ func Test_Harness_ConfigDirRequiresOneHarness(t *testing.T) {
 			})
 		}
 	}
+}
+
+func Test_Harness_Setup_MissingMetadataNeverMints(t *testing.T) {
+	h, api := fakeHarnessAPI(t)
+	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+		"items":      []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": "team-a", "display_name": "Primary", "invoke_url": api.URL, "metadata": nil}},
+		"pagination": map[string]any{"has_more": false, "cursor": nil},
+	})
+	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/primary", "--team", "team-a", "--config-dir", t.TempDir(), "--yes"))
+	h.Require.Contains(h.Stderr.String(), "baseten route update --name acme/primary --metadata")
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+}
+
+func Test_Harness_Setup_PaginationAndReuse(t *testing.T) {
+	h, api := fakeHarnessAPI(t)
+	pages := 0
+	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+		h.Require.Equal("team-a", r.URL.Query().Get("team_id"))
+		pages++
+		cursor := r.URL.Query().Get("cursor")
+		if cursor == "" {
+			json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": true, "cursor": "page-two"}})
+			return
+		}
+		h.Require.Equal("page-two", cursor)
+		json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": "team-a", "display_name": "Primary", "invoke_url": api.URL, "metadata": map[string]any{
+			"context_window": 128000, "max_output_tokens": 4096, "input_modalities": []string{"text"}, "tools": true,
+			"supported_api_formats": map[string]any{"messages": true, "responses": true, "chat_completions": true},
+		}}}, "pagination": map[string]any{"has_more": false}})
+	})
+	args := []string{"harness", "setup", "--harness", "claude-code", "--route", "acme/primary", "--team", "team-a", "--key-name", "reuse", "--config-dir", t.TempDir(), "--yes", "--output", "json"}
+	h.Require.NoError(h.Execute(args...))
+	h.Require.NoError(h.Execute(args...))
+	h.Require.Contains(h.Stdout.String(), `"changed": false`)
+	h.Require.NotContains(h.Stdout.String(), "secret-team-a")
+	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	h.Require.Equal(4, pages)
 }
 
 func Test_Harness_Setup_NotInstalledFailsBeforeAPI(t *testing.T) {

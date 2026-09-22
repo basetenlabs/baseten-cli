@@ -3,9 +3,11 @@ package harness
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 )
 
 type claudeCodeHarness struct{}
@@ -24,6 +26,7 @@ var claudePaths = [][]string{
 	{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}, {"env", "ANTHROPIC_DEFAULT_FABLE_MODEL"},
 	{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}, {"env", "ANTHROPIC_SMALL_FAST_MODEL"},
 	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"},
+	{"env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"}, {"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"},
 }
 
 func (claudeCodeHarness) Name() string { return ClaudeCode }
@@ -41,7 +44,7 @@ func (claudeCodeHarness) BackgroundRoute(s Selection) string {
 }
 
 func (h claudeCodeHarness) Prepare(path string, routes []Route, mcpServers []MCPServer, s Selection, endpoint, token string) ([]*Plan, error) {
-	p, err := prepareSettings(path, []string{"env", "ANTHROPIC_AUTH_TOKEN"}, token, func(data map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, [][]string{{"env", "ANTHROPIC_AUTH_TOKEN"}}, token, func(data map[string]any) ([]setting, error) {
 		return claudeSettings(routes, s, endpoint, token, data)
 	})
 	if err != nil {
@@ -88,10 +91,18 @@ func claudeSettings(routes []Route, selection Selection, endpoint, token string,
 	if err != nil {
 		return nil, err
 	}
+	for _, name := range []string{s.Primary, s.Background, s.Subagent, s.Fallback} {
+		if r, ok := routeByName(routes, name); ok && !r.Messages {
+			return nil, fmt.Errorf("Route %q lacks verified Messages support", r.Name)
+		}
+	}
 	background := cmp.Or(s.Background, defaultBackgroundRoute)
 	options := []any{}
 	allowed := []any{}
 	for _, r := range routes {
+		if !r.Messages {
+			continue
+		}
 		options = append(options, map[string]any{"model": r.Name, "label": r.DisplayName})
 		allowed = append(allowed, r.Name)
 	}
@@ -117,6 +128,14 @@ func claudeSettings(routes []Route, selection Selection, endpoint, token string,
 		{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
+	}
+	if primary, ok := routeByName(routes, s.Primary); ok {
+		if primary.ContextWindow > 0 {
+			values = append(values, desired([]string{"env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"}, strconv.Itoa(primary.ContextWindow)))
+		}
+		if primary.OutputLimit > 0 {
+			values = append(values, desired([]string{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}, strconv.Itoa(primary.OutputLimit)))
+		}
 	}
 	if selection.Subagent != "" {
 		values = append(values, desired(claudeSubagentPath, s.Subagent))
