@@ -146,7 +146,7 @@ type HarnessStatusResult struct {
 
 type HarnessFlags struct {
 	CommandFlags
-	Harness string `flag:"harness" desc:"Harness to inspect or restore" required:"true" enum:"claude-code,codex,opencode"`
+	Harness []string `flag:"harness" desc:"Harness to inspect or restore or tear down" enum:"claude-code,codex,opencode"`
 	Config  string `flag:"config" desc:"Explicit harness settings file"`
 }
 
