@@ -157,13 +157,13 @@ func TestRefreshKeepsFirstSetupRestorePoint(t *testing.T) {
 }
 
 func TestSymlinkSetupPreservesLinkAndRestoresTarget(t *testing.T) {
-	for _, name := range []string{ClaudeCode, Codex, OpenCode} {
+	for _, name := range []string{ClaudeCode, codexName, openCodeName} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			target := filepath.Join(dir, "dotfile")
 			filename := "config.json"
 			original := []byte(`{"model":"old","theme":"dark"}`)
-			if name == Codex {
+			if name == codexName {
 				filename = "config.toml"
 				original = []byte("model = \"old\"\ntheme = \"dark\"\n")
 			}

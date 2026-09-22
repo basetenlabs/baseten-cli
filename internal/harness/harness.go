@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	ClaudeCode = "claude-code"
-	Codex      = "codex"
-	OpenCode   = "opencode"
-	providerID = "baseten-harness"
+	ClaudeCode   = "claude-code"
+	codexName    = "codex"
+	openCodeName = "opencode"
+	providerID   = "baseten-harness"
 )
 
 // Harness owns the configuration behavior of one native integration. API access,
@@ -27,7 +27,7 @@ type Harness interface {
 }
 
 func All() []Harness {
-	return []Harness{claudeHarness{baseHarness{ClaudeCode}}, codexHarness{baseHarness{Codex}}, openCodeHarness{baseHarness{OpenCode}}}
+	return []Harness{claudeHarness{baseHarness{ClaudeCode}}, codexHarness{baseHarness{codexName}}, openCodeHarness{baseHarness{openCodeName}}}
 }
 
 func Find(name string) (Harness, error) {

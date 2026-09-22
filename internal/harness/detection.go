@@ -33,7 +33,7 @@ func (h baseHarness) Detect(ctx context.Context, executor Execer, path string) (
 	switch name {
 	case ClaudeCode:
 		binaryName = "claude"
-	case Codex, OpenCode:
+	case codexName, openCodeName:
 	default:
 		return d, fmt.Errorf("unknown harness %s", name)
 	}
@@ -49,13 +49,13 @@ func (h baseHarness) Detect(ctx context.Context, executor Execer, path string) (
 				dir = filepath.Join(home, ".claude")
 			}
 			d.Path = filepath.Join(dir, "settings.json")
-		case Codex:
+		case codexName:
 			dir := os.Getenv("CODEX_HOME")
 			if dir == "" {
 				dir = filepath.Join(home, ".codex")
 			}
 			d.Path = filepath.Join(dir, "config.toml")
-		case OpenCode:
+		case openCodeName:
 			dir := os.Getenv("XDG_CONFIG_HOME")
 			if dir == "" {
 				dir = filepath.Join(home, ".config")
