@@ -13,12 +13,12 @@ import (
 func Test_Harness_Setup_HarnessSetupOptions(t *testing.T) {
 	options, summary := internalcmd.HarnessSetupOptionsForTest([]harness.Detection{
 		{Name: "claude-code", Installed: true, Version: "2.1.272", Supported: true, Path: "/test/settings.json"},
-		{Name: "codex", Installed: true, Version: "0.135.0"},
+		{Name: "codex", Installed: true, Version: "0.151.0", Supported: true},
 		{Name: "opencode"},
 	})
-	require.Len(t, options, 1)
+	require.Len(t, options, 2)
 	require.Equal(t, "claude-code   2.1.272     /test/settings.json", options[0].String())
-	require.Contains(t, summary, "codex         0.135.0")
+	require.Contains(t, options[1].String(), "codex         0.151.0")
 	require.Contains(t, summary, "[-] opencode      not installed or not on PATH")
 }
 

@@ -90,6 +90,8 @@ func Detect(ctx context.Context, executor Execer, name, path string) (Detection,
 		return d, nil
 	}
 	d.Installed = true
+	// Version detection is informational; setup is currently supported on macOS.
+	d.Supported = runtime.GOOS == "darwin"
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	var out bytes.Buffer
@@ -104,7 +106,6 @@ func Detect(ctx context.Context, executor Execer, name, path string) (Detection,
 		return d, nil
 	}
 	d.Version = strings.TrimPrefix(strings.TrimSuffix(v, " (Claude Code)"), "codex-cli ")
-	d.Supported = d.Version == TestedVersions[name] && runtime.GOOS == "darwin"
 	return d, nil
 }
 func FixtureEndpoint(raw string) error {

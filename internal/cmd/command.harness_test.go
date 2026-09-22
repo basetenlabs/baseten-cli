@@ -191,12 +191,12 @@ type harnessFakeExecer struct{}
 
 func (harnessFakeExecer) LookPath(name string) (string, error) { return "/fake/" + name, nil }
 func (harnessFakeExecer) Exec(command *exec.Cmd) error {
-	version := "2.1.272 (Claude Code)"
+	version := "2.1.278 (Claude Code)"
 	switch filepath.Base(command.Path) {
 	case "codex":
-		version = "codex-cli 0.134.0"
+		version = "codex-cli 0.151.0"
 	case "opencode":
-		version = "1.18.31"
+		version = "1.18.21"
 	}
 	_, err := fmt.Fprintln(command.Stdout, version)
 	return err
