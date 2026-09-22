@@ -654,3 +654,36 @@ func Test_Route_Create_DefaultTeam(t *testing.T) {
 		})
 	}
 }
+
+func Test_Route_List_Pagination(t *testing.T) {
+	h := NewCommandHarness(t)
+	api := h.MockManagementAPI()
+	calls := 0
+	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			h.Require.Empty(r.URL.Query().Get("cursor"))
+			json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": true, "cursor": "next"}})
+		} else {
+			h.Require.Equal("next", r.URL.Query().Get("cursor"))
+			json.NewEncoder(w).Encode(map[string]any{"items": []any{routeFixture(nil)}, "pagination": map[string]any{"has_more": false}})
+		}
+	})
+	h.Require.NoError(h.Execute("route", "list", "--output", "json"))
+	h.Require.Equal(2, calls)
+	h.Require.Contains(h.Stdout.String(), "acme/assistant")
+}
+
+func Test_Route_List_InvalidPaginationStops(t *testing.T) {
+	for _, cursor := range []any{nil, "repeat"} {
+		t.Run(fmt.Sprint(cursor), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			api := h.MockManagementAPI()
+			api.SetRoute("GET", "/v1/routes", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": true, "cursor": cursor}})
+			h.Require.Error(h.Execute("route", "list"))
+			h.Require.Contains(h.Stderr.String(), "pagination cursor")
+			h.Require.LessOrEqual(len(api.Calls()), 2)
+		})
+	}
+}

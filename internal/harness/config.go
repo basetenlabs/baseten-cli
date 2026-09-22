@@ -8,79 +8,99 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/basetenlabs/baseten-cli/internal/safefile"
 	"github.com/tailscale/hujson"
 )
 
-type Value struct {
+type value struct {
 	Exists bool `json:"exists"`
 	Data   any  `json:"data,omitempty"`
 }
-type Setting struct {
+
+type setting struct {
 	Path      []string `json:"path"`
-	Before    Value    `json:"before"`
-	Installed Value    `json:"installed"`
-	Previous  Value    `json:"previous"`
+	Installed value    `json:"installed"`
 }
-type Journal struct {
+
+type journal struct {
 	Routes   []string  `json:"routes"`
 	Version  int       `json:"version"`
 	Path     string    `json:"path"`
 	Original []byte    `json:"original"`
 	Existed  bool      `json:"existed"`
-	Pending  bool      `json:"pending"`
-	Settings []Setting `json:"settings"`
+	Settings []setting `json:"settings"`
 }
 
+// A private .baseten-harness.json journal sits beside each configuration file.
+// It retains the complete original document from the FIRST setup, plus the paths
+// and last installed values of settings this integration manages. Refresh replaces
+// those settings wholesale, including the picker, without changing the restore
+// point. Optional settings managed by earlier runs stay tracked for teardown.
+// Teardown restores only those paths from the original document, so unrelated
+// edits survive. The original document also covers settings first managed later.
+//
+// The journal is saved before configuration writes and removed only after a
+// successful teardown. An interrupted setup can therefore be retried or torn
+// down without a separate pending state or persistent lock. Files are replaced
+// atomically, but a multi-file/multi-harness operation is not a transaction.
+//
 // Plan exposes paths and key names only: configuration and backups may contain
 // credentials. Never include their values in JSON output or error messages.
 type Plan struct {
+	Harness                   string   `json:"harness"`
 	Replaced                  []string `json:"replaced_settings,omitempty"`
 	Managed                   bool     `json:"managed"`
 	Path                      string   `json:"config"`
 	Keys                      []string `json:"settings"`
 	Changed                   bool     `json:"changed"`
-	snapshot, journalSnapshot *safefile.Snapshot
+	snapshot, journalSnapshot *configFile
 	data                      []byte
-	journal                   *Journal
+	config                    map[string]any
+	credentialPath            []string
+	journal                   *journal
 	teardown                  bool
 }
 
-func JournalPath(path string) string { return path + ".baseten-harness.json" }
-func pathKey(p []string) string      { return strings.Join(p, ".") }
-func desired(p []string, v any) Setting {
-	return Setting{
+func journalPath(path string) string { return path + ".baseten-harness.json" }
+
+func pathKey(p []string) string { return strings.Join(p, ".") }
+
+func desired(p []string, v any) setting {
+	return setting{
 		Path: p,
-		Installed: Value{
+		Installed: value{
 			Exists: true,
 			Data:   v,
 		},
 	}
 }
-func same(a, b Value) bool {
+
+func same(a, b value) bool {
 	aa, _ := json.Marshal(a)
 	bb, _ := json.Marshal(b)
 	return bytes.Equal(aa, bb)
 }
-func get(d map[string]any, p []string) Value {
+
+func get(d map[string]any, p []string) value {
 	for _, k := range p[:len(p)-1] {
 		child, ok := d[k].(map[string]any)
 		if !ok {
-			return Value{}
+			return value{}
 		}
 		d = child
 	}
 	v, ok := d[p[len(p)-1]]
-	return Value{
+	return value{
 		Exists: ok,
 		Data:   v,
 	}
 }
-func put(d map[string]any, p []string, v Value) error {
+
+func put(d map[string]any, p []string, v value) error {
 	if len(p) == 1 {
 		if v.Exists {
 			d[p[0]] = v.Data
@@ -108,6 +128,7 @@ func put(d map[string]any, p []string, v Value) error {
 	}
 	return nil
 }
+
 func decode(b []byte) (map[string]any, error) {
 	d := map[string]any{}
 	if len(bytes.TrimSpace(b)) == 0 {
@@ -124,12 +145,14 @@ func decode(b []byte) (map[string]any, error) {
 	}
 	return d, nil
 }
+
 func encode(d any) ([]byte, error) {
 	b, err := json.MarshalIndent(d, "", "  ")
 	return append(b, '\n'), err
 }
-func Read(path string) (*safefile.Snapshot, map[string]any, *safefile.Snapshot, *Journal, error) {
-	s, err := safefile.ReadSnapshot(path)
+
+func readConfig(path string) (*configFile, map[string]any, *configFile, *journal, error) {
+	s, err := readFile(path)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -137,7 +160,7 @@ func Read(path string) (*safefile.Snapshot, map[string]any, *safefile.Snapshot, 
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	js, err := safefile.ReadSnapshot(JournalPath(s.Target))
+	js, err := readFile(journalPath(s.Target))
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -147,7 +170,7 @@ func Read(path string) (*safefile.Snapshot, map[string]any, *safefile.Snapshot, 
 	if js.Info.Mode().Perm()&0077 != 0 {
 		return nil, nil, nil, nil, errors.New("harness journal must be private (0600)")
 	}
-	var j Journal
+	var j journal
 	decoder := json.NewDecoder(bytes.NewReader(js.Data))
 	decoder.UseNumber()
 	if decoder.Decode(&j) != nil || j.Version != 1 || j.Path != s.Target {
@@ -168,29 +191,20 @@ func Read(path string) (*safefile.Snapshot, map[string]any, *safefile.Snapshot, 
 	return s, d, js, &j, nil
 }
 
-func Prepare(path string, routes []Route, selection Selection, endpoint, token string, replacePicker, replaceExisting bool) (*Plan, error) {
-	if err := CheckPolicy(path); err != nil {
-		return nil, err
-	}
-	return prepareSettings(path, routes, replaceExisting, func(data map[string]any, j *Journal) ([]Setting, error) {
-		return ClaudeSettings(routes, selection, endpoint, token, replacePicker, data, j)
-	})
-}
-func prepareSettings(path string, routes []Route, replaceExisting bool, build func(map[string]any, *Journal) ([]Setting, error)) (*Plan, error) {
-	s, d, js, prior, err := Read(path)
+func prepareSettings(path string, routes []Route, build func(map[string]any) ([]setting, error)) (*Plan, error) {
+	s, d, js, prior, err := readConfig(path)
 	if err != nil {
 		return nil, err
 	}
-	settings, err := build(d, prior)
+	settings, err := build(d)
 	if err != nil {
 		return nil, err
 	}
-	j := &Journal{
+	j := &journal{
 		Version:  1,
 		Path:     s.Target,
 		Original: s.Data,
 		Existed:  s.Info != nil,
-		Pending:  true,
 	}
 	for _, route := range routes {
 		j.Routes = append(j.Routes, route.Name)
@@ -198,10 +212,6 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 	if prior != nil {
 		j.Original = prior.Original
 		j.Existed = prior.Existed
-	}
-	originalSettings, err := decodeConfig(s.Path, j.Original)
-	if err != nil {
-		return nil, err
 	}
 	p := &Plan{
 		Path:            s.Path,
@@ -214,29 +224,6 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 	for _, v := range settings {
 		managed[pathKey(v.Path)] = true
 		current := get(d, v.Path)
-		// The first setup is the restore point, including settings managed later.
-		v.Before = get(originalSettings, v.Path)
-		v.Previous = current
-		owned := false
-		if prior != nil {
-			for _, old := range prior.Settings {
-				if reflect.DeepEqual(old.Path, v.Path) {
-					owned = true
-					if !same(current, old.Installed) && !(prior.Pending && same(current, old.Previous)) {
-						if !replaceExisting {
-							return nil, fmt.Errorf("user changed %s; replacement is disabled for this plan", pathKey(v.Path))
-						}
-					}
-				}
-			}
-		}
-		if !owned && same(current, v.Installed) {
-			continue
-		} // Pre-existing matching values stay user-owned.
-		merge := pathKey(v.Path) == "modelPicker.options" || pathKey(v.Path) == "availableModels"
-		if !owned && current.Exists && !merge && !replaceExisting {
-			return nil, fmt.Errorf("existing %s conflicts; replacement is disabled for this plan", pathKey(v.Path))
-		}
 		if current.Exists && !same(current, v.Installed) {
 			p.Replaced = append(p.Replaced, pathKey(v.Path))
 		}
@@ -250,11 +237,11 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 	if prior != nil {
 		for _, old := range prior.Settings {
 			if !managed[pathKey(old.Path)] {
-				old.Before = get(originalSettings, old.Path)
 				j.Settings = append(j.Settings, old)
 			}
 		}
 	}
+	p.config = d
 	p.data, err = encodeConfig(s.Path, d, s.Data)
 	if err != nil {
 		return nil, err
@@ -266,8 +253,9 @@ func prepareSettings(path string, routes []Route, replaceExisting bool, build fu
 	p.Changed = !bytes.Equal(p.data, s.Data) || (s.Info != nil && s.Info.Mode().Perm() != 0600)
 	return p, nil
 }
-func PrepareTeardown(path string) (*Plan, error) {
-	s, d, js, j, err := Read(path)
+
+func prepareTeardown(path string) (*Plan, error) {
+	s, d, js, j, err := readConfig(path)
 	if err != nil {
 		return nil, err
 	}
@@ -282,9 +270,7 @@ func PrepareTeardown(path string) (*Plan, error) {
 		return p, nil
 	}
 	p.Managed = true
-	remaining := *j
-	remaining.Settings = nil
-	p.journal = &remaining
+	p.journal = j
 	original, err := decodeConfig(s.Path, j.Original)
 	if err != nil {
 		return nil, err
@@ -295,7 +281,7 @@ func PrepareTeardown(path string) (*Plan, error) {
 		if same(current, before) {
 			continue
 		}
-		if !same(current, v.Installed) && !(j.Pending && same(current, v.Previous)) {
+		if !same(current, v.Installed) {
 			p.Replaced = append(p.Replaced, pathKey(v.Path))
 		}
 		if err := put(d, v.Path, before); err != nil {
@@ -303,12 +289,13 @@ func PrepareTeardown(path string) (*Plan, error) {
 		}
 		p.Keys = append(p.Keys, pathKey(v.Path))
 	}
+	p.config = d
 	p.data, err = encodeConfig(s.Path, d, s.Data)
 	if err != nil {
 		return nil, err
 	}
 	// JSONC restoration uses the patched current document so later comments survive.
-	if err == nil && same(Value{Data: original}, Value{Data: d}) && (filepath.Ext(s.Path) != ".jsonc" || !j.Existed) {
+	if same(value{Data: original}, value{Data: d}) && (filepath.Ext(s.Path) != ".jsonc" || !j.Existed) {
 		p.data = j.Original
 	}
 	if len(p.Keys) == 0 {
@@ -318,31 +305,7 @@ func PrepareTeardown(path string) (*Plan, error) {
 	return p, nil
 }
 
-// Lock uses the resolved target so two symlink spellings share ownership and
-// serialize mutations. Dry runs and status never create files or directories.
-func Lock(path string) (func(), error) {
-	s, err := safefile.ReadSnapshot(path)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(filepath.Dir(s.Target), 0700); err != nil {
-		return nil, err
-	}
-	name := JournalPath(s.Target) + ".lock"
-	f, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("harness config is locked; check for another setup or teardown before removing %s", name)
-	}
-	_ = f.Close()
-	return func() { _ = os.Remove(name) }, nil
-}
-func (p *Plan) Apply() error {
-	if err := p.snapshot.Check(); err != nil {
-		return err
-	}
-	if err := p.journalSnapshot.Check(); err != nil {
-		return err
-	}
+func (p *Plan) apply() error {
 	if p.journal == nil {
 		return nil
 	}
@@ -351,198 +314,58 @@ func (p *Plan) Apply() error {
 		if err != nil {
 			return err
 		}
-		if err := p.journalSnapshot.Write(data); err != nil {
+		if err := p.journalSnapshot.writeExisting(data); err != nil {
 			return err
 		}
 	}
-	if p.teardown && !p.journal.Existed && len(p.data) == 0 && len(p.journal.Settings) == 0 {
-		if err := p.snapshot.Check(); err != nil {
-			return err
-		}
+	if p.teardown && !p.journal.Existed && len(p.data) == 0 {
 		if err := os.Remove(p.snapshot.Target); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	} else {
-		write := p.snapshot.Write
+		write := p.snapshot.writeExisting
 		if !p.teardown {
-			write = p.snapshot.WritePrivate
+			write = p.snapshot.writePrivate
 		}
 		if err := write(p.data); err != nil {
 			return fmt.Errorf("configuration write interrupted; ownership journal retained for teardown: %w", err)
 		}
 	}
-	// Commit ownership after the config write. A crash before this point leaves
-	// a pending journal accepting both the previous and newly installed values.
-	js, err := safefile.ReadSnapshot(p.journalSnapshot.Path)
+	if p.teardown {
+		return os.Remove(p.journalSnapshot.Target)
+	}
+	return nil
+}
+
+// setCredential updates only the credential field of an already validated plan.
+// Configuration is planned once, before confirmation or API key creation.
+func (p *Plan) setCredential(token string) error {
+	if len(p.credentialPath) == 0 {
+		return nil
+	}
+	if err := put(p.config, p.credentialPath, value{Exists: true, Data: token}); err != nil {
+		return err
+	}
+	for i := range p.journal.Settings {
+		v := &p.journal.Settings[i]
+		if slices.Equal(v.Path, p.credentialPath[:min(len(v.Path), len(p.credentialPath))]) {
+			v.Installed = get(p.config, v.Path)
+		}
+	}
+	data, err := encodeConfig(p.Path, p.config, p.snapshot.Data)
 	if err != nil {
 		return err
 	}
-	if p.teardown && len(p.journal.Settings) == 0 {
-		if err := js.Check(); err != nil {
-			return err
-		}
-		return os.Remove(js.Target)
-	}
-	if !p.teardown {
-		p.journal.Pending = false
-	}
-	data, err := encode(p.journal)
+	original, err := decodeConfig(p.Path, p.snapshot.Data)
 	if err != nil {
 		return err
 	}
-	return js.Write(data)
-}
-
-type Status struct {
-	Detection
-	DefaultRoute   string   `json:"default_route,omitempty"`
-	SmallTaskModel string   `json:"small_task_model,omitempty"`
-	RouteDetails   []Route  `json:"route_details,omitempty"`
-	State          string   `json:"state"`
-	Managed        []string `json:"managed_settings,omitempty"`
-	Drift          []string `json:"drift,omitempty"`
-	Routes         []string `json:"routes,omitempty"`
-	Note           string   `json:"note"`
-}
-
-func Inspect(d Detection) (Status, error) {
-	r := Status{
-		Detection: d,
-		State:     "not-configured",
-		Note:      "Local configuration only; no API authorization or inference was checked. Rerun setup to refresh routes, then restart the harness.",
+	if reflect.DeepEqual(original, p.config) {
+		data = p.snapshot.Data
 	}
-	_, data, _, j, err := Read(d.Path)
-	if err != nil {
-		return r, err
-	}
-	if model, ok := get(data, []string{"model"}).Data.(string); ok {
-		r.DefaultRoute = model
-	}
-	if d.Name == "opencode" {
-		r.DefaultRoute = strings.TrimPrefix(r.DefaultRoute, providerID+"/")
-		if model, ok := get(data, []string{"small_model"}).Data.(string); ok {
-			r.SmallTaskModel = strings.TrimPrefix(model, providerID+"/")
-		}
-	} else if d.Name == "claude-code" {
-		if model, ok := get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string); ok {
-			r.SmallTaskModel = model
-		}
-	}
-	if j == nil {
-		if d.Name == "codex" {
-			_, _, _, catalog, err := Read(CatalogPath(d.Path))
-			if err != nil {
-				return r, err
-			}
-			if catalog != nil {
-				r.State = "interrupted"
-				r.Drift = []string{"orphaned model catalog"}
-			}
-		}
-		return r, nil
-	}
-	r.State = "configured"
-	if j.Pending {
-		r.State = "interrupted"
-	}
-	for _, v := range j.Settings {
-		r.Managed = append(r.Managed, pathKey(v.Path))
-		if !same(get(data, v.Path), v.Installed) {
-			r.Drift = append(r.Drift, pathKey(v.Path))
-		}
-	}
-	if len(r.Drift) > 0 {
-		r.State = "drifted"
-	}
-	if options, ok := get(data, []string{"modelPicker", "options"}).Data.([]any); ok {
-		for _, o := range options {
-			if m, ok := o.(map[string]any); ok {
-				if id, ok := m["model"].(string); ok {
-					for _, route := range j.Routes {
-						if id == route {
-							r.Routes = append(r.Routes, id)
-							break
-						}
-					}
-				}
-			}
-		}
-	}
-	if d.Name == "opencode" {
-		for _, route := range j.Routes {
-			if get(data, []string{"provider", providerID, "models", route}).Exists {
-				r.Routes = append(r.Routes, route)
-			}
-		}
-	}
-	var codexCatalog map[string]any
-	if d.Name == "codex" {
-		_, contents, _, catalog, err := Read(CatalogPath(d.Path))
-		if err != nil {
-			return r, err
-		}
-		if catalog == nil {
-			r.State = "drifted"
-			r.Drift = append(r.Drift, "model catalog missing")
-		} else {
-			codexCatalog = contents
-			if models, ok := contents["models"].([]any); ok {
-				for _, model := range models {
-					if row, ok := model.(map[string]any); ok {
-						name, _ := row["slug"].(string)
-						for _, managed := range catalog.Routes {
-							if name == managed {
-								r.Routes = append(r.Routes, name)
-								break
-							}
-						}
-					}
-				}
-			}
-			for _, v := range catalog.Settings {
-				if !same(get(contents, v.Path), v.Installed) {
-					r.State = "drifted"
-					r.Drift = append(r.Drift, "model catalog changed")
-				}
-			}
-		}
-	}
-	labels := map[string]string{}
-	switch d.Name {
-	case "claude-code":
-		if options, ok := get(data, []string{"modelPicker", "options"}).Data.([]any); ok {
-			for _, option := range options {
-				if row, ok := option.(map[string]any); ok {
-					name, _ := row["model"].(string)
-					label, _ := row["label"].(string)
-					labels[name] = label
-				}
-			}
-		}
-	case "opencode":
-		for _, name := range r.Routes {
-			label, _ := get(data, []string{"provider", providerID, "models", name, "name"}).Data.(string)
-			labels[name] = label
-		}
-	case "codex":
-		if models, ok := codexCatalog["models"].([]any); ok {
-			for _, model := range models {
-				if row, ok := model.(map[string]any); ok {
-					name, _ := row["slug"].(string)
-					label, _ := row["display_name"].(string)
-					labels[name] = label
-				}
-			}
-		}
-	}
-	for _, name := range r.Routes {
-		r.RouteDetails = append(r.RouteDetails, Route{
-			Name:        name,
-			DisplayName: labels[name],
-		})
-	}
-
-	return r, nil
+	p.data = data
+	p.Changed = !bytes.Equal(data, p.snapshot.Data) || (p.snapshot.Info != nil && p.snapshot.Info.Mode().Perm() != 0600)
+	return nil
 }
 
 func decodeConfig(path string, b []byte) (map[string]any, error) {
@@ -562,6 +385,7 @@ func decodeConfig(path string, b []byte) (map[string]any, error) {
 	}
 	return d, nil
 }
+
 func encodeConfig(path string, d map[string]any, original []byte) ([]byte, error) {
 	if filepath.Ext(path) == ".jsonc" && len(bytes.TrimSpace(original)) > 0 {
 		before, err := decodeConfig(path, original)
@@ -610,17 +434,17 @@ func jsonObjectPatch(path string, before, after map[string]any, operations *[]ma
 	for _, key := range keys {
 		pointer := path + "/" + strings.ReplaceAll(strings.ReplaceAll(key, "~", "~0"), "/", "~1")
 		old, existed := before[key]
-		value, exists := after[key]
+		nextValue, exists := after[key]
 		if !exists {
 			*operations = append(*operations, map[string]any{"op": "remove", "path": pointer})
 			continue
 		}
 		if existed {
-			if same(Value{Data: old}, Value{Data: value}) {
+			if same(value{Data: old}, value{Data: nextValue}) {
 				continue
 			}
 			oldObject, oldOK := old.(map[string]any)
-			newObject, newOK := value.(map[string]any)
+			newObject, newOK := nextValue.(map[string]any)
 			if oldOK && newOK {
 				jsonObjectPatch(pointer, oldObject, newObject, operations)
 				continue
@@ -630,6 +454,6 @@ func jsonObjectPatch(path string, before, after map[string]any, operations *[]ma
 		if existed {
 			op = "replace"
 		}
-		*operations = append(*operations, map[string]any{"op": op, "path": pointer, "value": value})
+		*operations = append(*operations, map[string]any{"op": op, "path": pointer, "value": nextValue})
 	}
 }
