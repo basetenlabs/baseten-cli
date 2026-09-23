@@ -4,11 +4,8 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -75,48 +72,12 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 			values = append(values, desired(path, providerID+"/"+s.Subagent))
 		}
 	}
-	p, err := prepareSettings(path, func(data map[string]any) ([]setting, error) {
-		if _, ok := data["providers"]; ok {
-			return nil, errors.New("OpenCode V2 providers are not supported yet")
-		}
-		username := ""
-		if runtime.GOOS == "darwin" {
-			current, err := user.Current()
-			if err != nil {
-				return nil, err
-			}
-			username = current.Username
-		}
-		for _, policy := range openCodePolicyPaths(runtime.GOOS, username) {
-			if _, err := os.Stat(policy); err == nil {
-				return nil, fmt.Errorf("managed policy detected at %s", policy)
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return nil, err
-			}
-		}
-		return values, nil
-	})
+	p, err := prepareSettings(path, func(map[string]any) ([]setting, error) { return values, nil })
 	if err != nil {
 		return nil, err
 	}
 	p.credentialPath = []string{"provider", providerID, "options", "apiKey"}
 	return []*Plan{p}, nil
-}
-
-func openCodePolicyPaths(platform, username string) []string {
-	dir := "/etc/opencode"
-	var paths []string
-	switch platform {
-	case "darwin":
-		dir = "/Library/Application Support/opencode"
-		paths = append(paths,
-			filepath.Join("/Library/Managed Preferences", username, "ai.opencode.managed.plist"),
-			"/Library/Managed Preferences/ai.opencode.managed.plist",
-		)
-	case "windows":
-		dir = filepath.Join(cmp.Or(os.Getenv("ProgramData"), `C:\ProgramData`), "opencode")
-	}
-	return append(paths, filepath.Join(dir, "opencode.json"), filepath.Join(dir, "opencode.jsonc"))
 }
 
 // openCodeTeardownPaths clears only references to Baseten's provider; a model

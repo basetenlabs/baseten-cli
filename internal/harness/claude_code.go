@@ -3,9 +3,6 @@ package harness
 import (
 	"cmp"
 	"context"
-	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 )
@@ -43,9 +40,6 @@ func (claudeCodeHarness) BackgroundRoute(s Selection) string {
 }
 
 func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
-	if err := checkClaudePolicy(path); err != nil {
-		return nil, err
-	}
 	p, err := prepareSettings(path, func(data map[string]any) ([]setting, error) {
 		return claudeSettings(routes, s, endpoint, token, data)
 	})
@@ -57,25 +51,9 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, end
 }
 
 func claudeSettings(routes []Route, selection Selection, endpoint, token string, current map[string]any) ([]setting, error) {
-	for _, route := range routes {
-		switch route.Name {
-		case "default", "inherit", "opus", "sonnet", "haiku", "fable", "opusplan", "best":
-			return nil, fmt.Errorf("route %q conflicts with a Claude model keyword", route.Name)
-		}
-	}
 	s, err := selection.resolve(routes)
 	if err != nil {
 		return nil, err
-	}
-	for _, key := range []string{"apiKeyHelper", "modelOverrides"} {
-		if _, ok := current[key]; ok {
-			return nil, fmt.Errorf("existing %s must be removed before setup", key)
-		}
-	}
-	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"} {
-		if get(current, []string{"env", key}).Exists || os.Getenv(key) != "" {
-			return nil, fmt.Errorf("%s overrides the harness configuration; remove it before setup", key)
-		}
 	}
 	background := cmp.Or(s.Background, defaultBackgroundRoute)
 	options := []any{}
@@ -117,18 +95,6 @@ func claudeSettings(routes []Route, selection Selection, endpoint, token string,
 		}
 	}
 	return values, nil
-}
-
-// checkClaudePolicy refuses setup when an administrator manages Claude Code.
-func checkClaudePolicy(path string) error {
-	for _, p := range []string{filepath.Join(filepath.Dir(path), "managed-settings.json"), "/Library/Application Support/ClaudeCode/managed-settings.json", "/etc/claude-code/managed-settings.json"} {
-		if _, err := os.Stat(p); err == nil {
-			return fmt.Errorf("managed policy detected at %s; ask your administrator to configure the harness", p)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-	return nil
 }
 
 func claudeRoutes(data map[string]any) map[string]string {

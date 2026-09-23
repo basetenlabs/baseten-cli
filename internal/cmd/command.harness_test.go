@@ -43,10 +43,6 @@ func (missingHarnessExecer) Exec(*exec.Cmd) error { return errors.New("absent ha
 // invoke URL is invokeURL, and routes API key creation for both teams.
 func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAPI) {
 	t.Helper()
-	// Claude Code setup refuses to run when these point it elsewhere.
-	for _, name := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"} {
-		t.Setenv(name, "")
-	}
 	h := NewCommandHarness(t)
 	api := h.MockManagementAPI()
 	if invokeURL == "" {

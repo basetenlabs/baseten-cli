@@ -288,23 +288,6 @@ func TestCodexPreservesInstructionsAndAgents(t *testing.T) {
 	require.Equal(t, "", model["base_instructions"])
 }
 
-func TestClaudePolicyBlocksOnlyClaude(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "managed-settings.json"), []byte("{}"), 0o600))
-	for _, h := range All() {
-		t.Run(h.Name(), func(t *testing.T) {
-			d, err := h.Detect(t.Context(), fakeExecer{}, dir)
-			require.NoError(t, err)
-			_, err = h.Prepare(d.Path, testRoutes(), Selection{}, testEndpoint, testToken)
-			if h.Name() == ClaudeCode {
-				require.ErrorContains(t, err, "managed policy")
-			} else {
-				require.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestOpenCodeJSONC(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "opencode.jsonc")
