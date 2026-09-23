@@ -12,13 +12,13 @@ import (
 	"sync"
 	"time"
 
+	"charm.land/huh/v2"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client"
-	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/itchyny/gojq"
@@ -365,8 +365,12 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 	if !c.IsInteractive() {
 		return cmd.NewErrUsagef("cannot confirm: stdin is not a terminal; pass --yes to skip the prompt")
 	}
-	var ok bool
-	if err := huh.NewConfirm().Title(title).Value(&ok).Run(); err != nil {
+	ok := false
+	if err := huh.NewSelect[bool]().
+		Title(title).
+		Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
+		Value(&ok).
+		Run(); err != nil {
 		return err
 	}
 	if !ok {

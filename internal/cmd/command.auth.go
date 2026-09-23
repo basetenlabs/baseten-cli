@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"strings"
 
+	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
-	"github.com/charmbracelet/huh"
 	"github.com/cli/browser"
 )
 
