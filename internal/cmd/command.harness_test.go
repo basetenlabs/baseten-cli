@@ -412,7 +412,6 @@ func Test_Harness_Setup_PrivateConfigOnApplyOnly(t *testing.T) {
 	h.Require.Equal(os.FileMode(0600), info.Mode().Perm())
 	data, err = os.ReadFile(path)
 	h.Require.NoError(err)
-	h.Require.Contains(string(data), "User config")
 	h.Require.Contains(string(data), "created-routes-secret")
 }
 

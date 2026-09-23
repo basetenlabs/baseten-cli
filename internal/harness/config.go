@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -201,7 +200,7 @@ func (p *Plan) encode() error {
 	}
 	p.data = p.snapshot.Data
 	if !reflect.DeepEqual(original, p.config) {
-		p.data, err = encodeConfig(p.Path, p.config, p.snapshot.Data)
+		p.data, err = encodeConfig(p.Path, p.config)
 		if err != nil {
 			return err
 		}
@@ -240,10 +239,11 @@ func (p *Plan) setCredential(token string) error {
 }
 
 func decodeConfig(path string, b []byte) (map[string]any, error) {
-	if filepath.Ext(path) == ".jsonc" && len(bytes.TrimSpace(b)) > 0 {
+	// Standardize also accepts plain JSON, so .json and .jsonc share one reader.
+	if filepath.Ext(path) != ".toml" && len(bytes.TrimSpace(b)) > 0 {
 		standardized, err := hujson.Standardize(bytes.Clone(b))
 		if err != nil {
-			return nil, errors.New("invalid settings JSONC; repair it before continuing")
+			return nil, errors.New("invalid settings JSON; repair it before continuing")
 		}
 		return decode(standardized)
 	}
@@ -257,74 +257,12 @@ func decodeConfig(path string, b []byte) (map[string]any, error) {
 	return d, nil
 }
 
-func encodeConfig(path string, d map[string]any, original []byte) ([]byte, error) {
-	if filepath.Ext(path) == ".jsonc" && len(bytes.TrimSpace(original)) > 0 {
-		before, err := decodeConfig(path, original)
-		if err != nil {
-			return nil, err
-		}
-		document, err := hujson.Parse(bytes.Clone(original))
-		if err != nil {
-			return nil, errors.New("invalid settings JSONC")
-		}
-		var operations []map[string]any
-		jsonObjectPatch("", before, d, &operations)
-		if len(operations) == 0 {
-			return original, nil
-		}
-		patch, err := json.Marshal(operations)
-		if err != nil {
-			return nil, err
-		}
-		if err := document.Patch(patch); err != nil {
-			return nil, errors.New("could not update settings JSONC")
-		}
-		document.Format()
-		return document.Pack(), nil
-	}
+func encodeConfig(path string, d map[string]any) ([]byte, error) {
+	// JSONC comments are not preserved; plain JSON is still valid JSONC.
 	if filepath.Ext(path) != ".toml" {
 		return encode(d)
 	}
 	var b bytes.Buffer
 	err := toml.NewEncoder(&b).Encode(d)
 	return b.Bytes(), err
-}
-
-// Patch only changed object members so unrelated JSONC comments survive setup and teardown.
-func jsonObjectPatch(path string, before, after map[string]any, operations *[]map[string]any) {
-	keys := make([]string, 0, len(before)+len(after))
-	for key := range before {
-		keys = append(keys, key)
-	}
-	for key := range after {
-		if _, exists := before[key]; !exists {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		pointer := path + "/" + strings.ReplaceAll(strings.ReplaceAll(key, "~", "~0"), "/", "~1")
-		old, existed := before[key]
-		nextValue, exists := after[key]
-		if !exists {
-			*operations = append(*operations, map[string]any{"op": "remove", "path": pointer})
-			continue
-		}
-		if existed {
-			if same(value{Data: old}, value{Data: nextValue}) {
-				continue
-			}
-			oldObject, oldOK := old.(map[string]any)
-			newObject, newOK := nextValue.(map[string]any)
-			if oldOK && newOK {
-				jsonObjectPatch(pointer, oldObject, newObject, operations)
-				continue
-			}
-		}
-		op := "add"
-		if existed {
-			op = "replace"
-		}
-		*operations = append(*operations, map[string]any{"op": op, "path": pointer, "value": nextValue})
-	}
 }

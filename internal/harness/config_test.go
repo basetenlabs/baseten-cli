@@ -51,7 +51,7 @@ func TestTeardownOnlyRemovesIntegrationSettings(t *testing.T) {
 			}
 			original := map[string]any{"model": "original-model", "theme": "dark"}
 			writeConfig := func(d map[string]any) {
-				b, err := encodeConfig(path, d, nil)
+				b, err := encodeConfig(path, d)
 				require.NoError(t, err)
 				require.NoError(t, os.WriteFile(path, b, 0600))
 			}
@@ -225,7 +225,7 @@ func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 				require.NoError(t, put(d, []string{"provider", "other"}, value{Exists: true, Data: map[string]any{"name": "Other"}}))
 				require.NoError(t, put(d, []string{"agent", "general", "model"}, value{Exists: true, Data: "other/subagent"}))
 			}
-			b, err := encodeConfig(path, d, nil)
+			b, err := encodeConfig(path, d)
 			require.NoError(t, err)
 			require.NoError(t, os.WriteFile(path, b, 0600))
 			status, err := h.Inspect(Detection{Name: name, Path: path})
