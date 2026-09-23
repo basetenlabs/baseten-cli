@@ -57,6 +57,9 @@ type AuthFile struct {
 	// flag or environment.
 	Current  string             `json:"current,omitempty"`
 	Profiles map[string]Profile `json:"profiles"`
+	// InsecureRoutesKeys holds routes API keys by scope hash. Only populated
+	// when the keyring is unavailable.
+	InsecureRoutesKeys map[string]string `json:"routes_keys,omitempty"`
 }
 
 // Store manages reading and writing auth.json and keyring secrets.

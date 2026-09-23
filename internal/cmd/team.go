@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/basetenlabs/baseten-go/client/managementapi"
@@ -14,33 +15,41 @@ import (
 // An exact match on Id wins over a name match: this lets users always pass
 // an ID without colliding with a same-spelled name.
 func ResolveTeam(ctx context.Context, api *managementapi.Client, input string) (string, error) {
+	if input == "" {
+		return "", nil
+	}
 	team, err := resolveTeam(ctx, api, input)
-	return team.Id, err
+	if err != nil {
+		return "", err
+	}
+	return team.Id, nil
 }
 
-// resolveTeam retains the SDK team for callers that also display its name.
-func resolveTeam(ctx context.Context, api *managementapi.Client, input string) (managementapi.Team, error) {
-	if input == "" {
-		return managementapi.Team{}, nil
-	}
+// resolveTeam is ResolveTeam for callers that also need the team's name. An
+// empty input selects the organization's default team.
+func resolveTeam(ctx context.Context, api *managementapi.Client, input string) (*managementapi.Team, error) {
 	resp, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
 	if err != nil {
-		return managementapi.Team{}, fmt.Errorf("list teams: %w", err)
+		return nil, fmt.Errorf("list teams: %w", err)
 	}
-	var found managementapi.Team
-	for _, t := range resp.Teams {
-		if t.Id == input {
+	var found *managementapi.Team
+	for i := range resp.Teams {
+		t := &resp.Teams[i]
+		switch {
+		case input == "" && t.Default, input != "" && t.Id == input:
 			return t, nil
-		}
-		if t.Name == input {
-			if found.Id != "" {
-				return managementapi.Team{}, fmt.Errorf("multiple teams named %q; pass the team ID instead", input)
+		case input != "" && t.Name == input:
+			if found != nil {
+				return nil, fmt.Errorf("multiple teams named %q; pass the team ID instead", input)
 			}
 			found = t
 		}
 	}
-	if found.Id == "" {
-		return managementapi.Team{}, fmt.Errorf("no team matched %q", input)
+	if found != nil {
+		return found, nil
 	}
-	return found, nil
+	if input == "" {
+		return nil, errors.New("the organization has no default team; pass --team")
+	}
+	return nil, fmt.Errorf("no team matched %q", input)
 }
