@@ -53,8 +53,7 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), `"state": "configured"`)
 	h.Require.NotContains(h.Stdout.String(), "baseten-harness-local-fixture")
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config", path, "--yes", "--output", "json"))
-	_, err = os.Stat(path)
-	h.Require.True(os.IsNotExist(err))
+	h.Require.FileExists(path)
 	h.Require.NoError(h.Execute("harness", "status", "--harness", "claude-code", "--config", path, "--output", "json"))
 	h.Require.Contains(h.Stdout.String(), `"state": "not-configured"`)
 }
@@ -203,7 +202,7 @@ func (harnessFakeExecer) Exec(command *exec.Cmd) error {
 	return err
 }
 
-func Test_Harness_Setup_ReplacementPreviewConfirmationAndRestore(t *testing.T) {
+func Test_Harness_Setup_ReplacementPreviewConfirmationAndReset(t *testing.T) {
 	h, api := productionHarness(t)
 	path := filepath.Join(t.TempDir(), "settings.json")
 	original := []byte(`{"model":"my-old-model","theme":"dark"}`)
@@ -226,7 +225,7 @@ func Test_Harness_Setup_ReplacementPreviewConfirmationAndRestore(t *testing.T) {
 	h.Require.Error(h.Execute(args...))
 	h.Require.Contains(h.Stderr.String(), "pass --yes")
 	h.Require.Contains(h.Stdout.String(), "Existing integration settings will be replaced")
-	h.Require.Contains(h.Stdout.String(), "Teardown restores settings from the first setup")
+	h.Require.Contains(h.Stdout.String(), "Teardown uses native defaults; previous values are not saved or restored")
 	checkUnchanged()
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
 	data, err := os.ReadFile(path)
@@ -236,7 +235,7 @@ func Test_Harness_Setup_ReplacementPreviewConfirmationAndRestore(t *testing.T) {
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config", path, "--yes"))
 	restored, err := os.ReadFile(path)
 	h.Require.NoError(err)
-	h.Require.JSONEq(string(original), string(restored))
+	h.Require.JSONEq(`{"theme":"dark"}`, string(restored))
 }
 
 func Test_Harness_Setup_ReplacementRejectsConcurrentEdit(t *testing.T) {
@@ -272,22 +271,19 @@ func Test_Harness_Setup_ConfirmedReplacementOfManagedModel(t *testing.T) {
 	edited, err := json.Marshal(config)
 	h.Require.NoError(err)
 	h.Require.NoError(os.WriteFile(path, edited, 0600))
-	journalBefore, err := os.ReadFile(path + ".baseten-harness.json")
-	h.Require.NoError(err)
+	h.Require.NoFileExists(path + ".baseten-harness.json")
 	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
 	h.Require.Contains(h.Stdout.String(), "Existing integration settings will be replaced")
 	h.Require.Error(h.Execute(args...))
 	unchanged, err := os.ReadFile(path)
 	h.Require.NoError(err)
 	h.Require.Equal(edited, unchanged)
-	journalAfter, err := os.ReadFile(path + ".baseten-harness.json")
-	h.Require.NoError(err)
-	h.Require.Equal(journalBefore, journalAfter)
+	h.Require.NoFileExists(path + ".baseten-harness.json")
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config", path, "--yes"))
 	restored, err := os.ReadFile(path)
 	h.Require.NoError(err)
-	h.Require.Equal(original, restored)
+	h.Require.JSONEq(`{}`, string(restored))
 }
 
 func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {
@@ -367,7 +363,7 @@ func Test_Harness_Setup_DefaultRouteAndOverride(t *testing.T) {
 				h.Require.Len(statuses.Harnesses, 1)
 				status := statuses.Harnesses[0]
 				h.Require.Len(status.RouteDetails, 2)
-				h.Require.Equal("First", status.RouteDetails[0].DisplayName)
+				h.Require.Contains(status.RouteDetails, public.HarnessRouteSummary{Name: "acme/z-first", DisplayName: "First"})
 				h.Require.Equal(strings.TrimPrefix(expected, "baseten-harness/"), status.DefaultRoute)
 				h.Require.Equal(calls, len(api.Calls()))
 
@@ -420,7 +416,7 @@ func Test_Harness_Setup_PrivateConfigOnApplyOnly(t *testing.T) {
 	h.Require.Contains(string(data), "created-routes-secret")
 }
 
-func Test_Harness_Teardown_RestoresManagedEditsAndPreservesUnrelatedSettings(t *testing.T) {
+func Test_Harness_Teardown_ResetsManagedSettingsAndPreservesUnrelatedEdits(t *testing.T) {
 	for _, name := range []string{"claude-code", "codex", "opencode"} {
 		t.Run(name, func(t *testing.T) {
 			h, _ := productionHarness(t)
@@ -458,18 +454,21 @@ func Test_Harness_Teardown_RestoresManagedEditsAndPreservesUnrelatedSettings(t *
 			h.Require.NoError(h.Execute("harness", "setup", "--harness", name, "--config", path, "--team", "team-a", "--yes"))
 			data := read()
 			data["model"] = "changed-by-harness"
+			if name == "opencode" {
+				data["model"] = "baseten-harness/changed-by-harness"
+			}
 			data["user_setting"] = "keep-this-edit"
 			data["new_setting"] = "also-keep"
 			write(data)
 			args := []string{"harness", "teardown", "--harness", name, "--config", path}
 			h.Require.NoError(h.Execute(append(args, "--dry-run")...))
-			h.Require.Contains(h.Stdout.String(), "Would restore")
+			h.Require.Contains(h.Stdout.String(), "Would remove")
 			h.Require.NotContains(h.Stdout.String(), "Settings:")
 			h.Require.Equal(data, read())
 			h.Require.Error(h.Execute(args...)) // Noninteractive apply still requires confirmation.
 			h.Require.Equal(data, read())
 			h.Require.NoError(h.Execute(append(args, "--yes")...))
-			h.Require.Equal(map[string]any{"model": "original-model", "user_setting": "keep-this-edit", "new_setting": "also-keep"}, read())
+			h.Require.Equal(map[string]any{"user_setting": "keep-this-edit", "new_setting": "also-keep"}, read())
 			h.Require.NoFileExists(path + ".baseten-harness.json")
 			if name == "codex" {
 				h.Require.NoFileExists(path + ".baseten-models.json")
@@ -802,9 +801,9 @@ func (missingHarnessExecer) Exec(*exec.Cmd) error {
 func Test_Harness_MultipleSelectionAndDefaultDiscovery(t *testing.T) {
 	h, api := productionHarness(t)
 	paths := isolateHarnessConfigs(t)
-	// Unmanaged, even malformed config must not be offered for teardown.
+	// Unmanaged config must not be offered for teardown.
 	h.Require.NoError(os.MkdirAll(filepath.Dir(paths["opencode"]), 0700))
-	h.Require.NoError(os.WriteFile(paths["opencode"], []byte("not json"), 0600))
+	h.Require.NoError(os.WriteFile(paths["opencode"], []byte(`{"theme":"dark"}`), 0600))
 	args := []string{"harness", "setup", "--harness", "claude-code", "--harness", "codex", "--team", "team-a", "--yes", "--output", "json"}
 	h.Require.NoError(h.Execute(args...))
 	var setup public.HarnessPlansResult
@@ -812,7 +811,7 @@ func Test_Harness_MultipleSelectionAndDefaultDiscovery(t *testing.T) {
 	h.Require.Len(setup.Changes, 3) // Two configs and Codex's model catalog.
 	h.Require.NotContains(h.Stdout.String(), "created-routes-secret")
 	calls := len(api.Calls())
-	// Detection no longer finds executables, but backups still identify integrations.
+	// Detection no longer finds executables, but native settings still identify integrations.
 	h.Context = internalcmd.WithExecer(h.Context, missingHarnessExecer{})
 	h.Require.NoError(h.Execute("harness", "status", "--output", "json"))
 	var statuses public.HarnessStatusesResult
@@ -830,12 +829,12 @@ func Test_Harness_MultipleSelectionAndDefaultDiscovery(t *testing.T) {
 	h.Require.FileExists(paths["codex"])
 	h.Require.Error(h.Execute("harness", "teardown"))
 	h.Require.FileExists(paths["claude-code"])
-	// A filter only restores the chosen harness, and an omitted filter restores the remainder.
+	// A filter only removes the chosen integration; an omitted filter removes the remainder.
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "codex", "--yes", "--output", "json"))
-	h.Require.NoFileExists(paths["codex"])
+	h.Require.FileExists(paths["codex"])
 	h.Require.FileExists(paths["claude-code"])
 	h.Require.NoError(h.Execute("harness", "teardown", "--yes", "--output", "json"))
-	h.Require.NoFileExists(paths["claude-code"])
+	h.Require.FileExists(paths["claude-code"])
 	h.Require.NoError(h.Execute("harness", "status", "--output", "json"))
 	h.Require.JSONEq(`{"harnesses":[]}`, h.Stdout.String())
 	h.Require.NoError(h.Execute("harness", "teardown", "--output", "json"))
@@ -843,10 +842,10 @@ func Test_Harness_MultipleSelectionAndDefaultDiscovery(t *testing.T) {
 	h.Require.Equal(calls, len(api.Calls()), "status and teardown remain local")
 	unmanaged, err := os.ReadFile(paths["opencode"])
 	h.Require.NoError(err)
-	h.Require.Equal("not json", string(unmanaged))
+	h.Require.Equal(`{"theme":"dark"}`, string(unmanaged))
 }
 
-func Test_Harness_Setup_ReplacesWholePickerAndRestoresOriginal(t *testing.T) {
+func Test_Harness_Setup_ReplacesWholePickerAndTeardownRemovesIt(t *testing.T) {
 	h, _ := productionHarness(t)
 	path := filepath.Join(t.TempDir(), "settings.json")
 	original := `{"model":"previous","theme":"dark","availableModels":["my/model"],"modelPicker":{"options":[{"model":"my/model","label":"Custom"}],"replaceBuiltInOptions":false}}`
@@ -872,10 +871,10 @@ func Test_Harness_Setup_ReplacesWholePickerAndRestoresOriginal(t *testing.T) {
 	h.Require.NoError(h.Execute(args...))
 	h.Require.Equal([]any{map[string]any{"model": "acme/primary", "label": "Primary"}}, read()["modelPicker"].(map[string]any)["options"])
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config", path, "--yes"))
-	h.Require.Equal(map[string]any{"options": []any{map[string]any{"model": "my/model", "label": "Custom"}}, "replaceBuiltInOptions": false}, read()["modelPicker"])
-	h.Require.Equal("previous", read()["model"])
+	h.Require.NotContains(read(), "modelPicker")
+	h.Require.NotContains(read(), "model")
 	h.Require.Equal("light", read()["theme"])
-	h.Require.Equal([]any{"my/model"}, read()["availableModels"])
+	h.Require.NotContains(read(), "availableModels")
 }
 
 func Test_Harness_Setup_ConfigAndInstallationErrorsPrecedeAPI(t *testing.T) {

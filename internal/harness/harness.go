@@ -1,10 +1,9 @@
-// Package harness configures native coding harnesses and restores their original settings.
+// Package harness configures native coding harnesses and removes its integration settings.
 package harness
 
 import (
 	"context"
 	"fmt"
-	"os"
 )
 
 const (
@@ -45,23 +44,12 @@ func (h baseHarness) Name() string { return h.name }
 
 func (h baseHarness) SmallTaskModel(Selection) string { return "" }
 
-func (h baseHarness) Teardown(path string) ([]*Plan, error) {
-	p, err := prepareTeardown(path)
-	if err != nil {
-		return nil, err
-	}
-	return []*Plan{p}, nil
-}
-
 // ApplyPlans checks the preview once before writing. There are no persistent
 // locks: concurrent invocations are not supported. Catalogs precede configs on
-// setup; teardown reverses that order. A failure leaves backups for recovery.
+// setup; teardown reverses that order. Rerun an interrupted operation to finish it.
 func ApplyPlans(plans []*Plan, token string) error {
 	for _, p := range plans {
 		if err := p.snapshot.check(); err != nil {
-			return err
-		}
-		if err := p.journalSnapshot.check(); err != nil {
 			return err
 		}
 		if !p.teardown {
@@ -78,15 +66,12 @@ func ApplyPlans(plans []*Plan, token string) error {
 	return nil
 }
 
-// Configured discovers backups even if the harness is no longer installed.
+// Configured discovers integrations from native settings, even without an executable.
 func (h baseHarness) Configured(path string) (bool, error) {
-	target, err := resolveConfigPath(path)
+	adapter, err := Find(h.name)
 	if err != nil {
 		return false, err
 	}
-	_, err = os.Stat(journalPath(target))
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return err == nil, err
+	status, err := adapter.Inspect(Detection{Name: h.name, Path: path})
+	return status.State != "not-configured", err
 }

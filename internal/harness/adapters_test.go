@@ -48,7 +48,9 @@ func TestAdaptersLifecycle(t *testing.T) {
 			require.NoError(t, ApplyPlans(plans, FixtureToken))
 			b, e := os.ReadFile(path)
 			require.NoError(t, e)
-			require.Equal(t, original, b)
+			data, err := decodeConfig(path, b)
+			require.NoError(t, err)
+			require.Equal(t, map[string]any{"theme": "dark"}, data)
 			if name == "codex" {
 				_, e = os.Stat(catalogPath(path))
 				require.True(t, os.IsNotExist(e))
@@ -57,7 +59,7 @@ func TestAdaptersLifecycle(t *testing.T) {
 	}
 }
 
-func TestCodexCatalogDriftAndInterruptedInstall(t *testing.T) {
+func TestCodexCatalogMissingAndInterruptedInstall(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	plans, e := adapter(t, codexName).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 	require.NoError(t, e)
@@ -71,14 +73,13 @@ func TestCodexCatalogDriftAndInterruptedInstall(t *testing.T) {
 	plans, e = adapter(t, codexName).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 	require.NoError(t, e)
 	require.NoError(t, ApplyPlans(plans, FixtureToken))
-	save(t, catalogPath(path), map[string]any{"models": []any{map[string]any{"slug": "user-edit"}}})
+	require.NoError(t, os.Remove(catalogPath(path)))
 	status, e := adapter(t, codexName).Inspect(Detection{Name: codexName, Path: path})
 	require.NoError(t, e)
-	require.Equal(t, "drifted", status.State)
+	require.Equal(t, "incomplete", status.State)
 	plans, e = adapter(t, codexName).Teardown(path)
 	require.NoError(t, e)
 	require.NoError(t, ApplyPlans(plans, FixtureToken))
-	require.Contains(t, plans[1].Replaced, "models")
 	require.NoFileExists(t, catalogPath(path))
 }
 
@@ -105,7 +106,7 @@ func TestCodexEmptyCatalogInstructionsPreservesUserInstructionsAndAgents(t *test
 	plans, e := adapter(t, codexName).Prepare(path, fixture(t), Selection{Primary: "acme/primary"}, "http://127.0.0.1:1234", FixtureToken)
 	require.NoError(t, e)
 	require.NoError(t, ApplyPlans(plans, FixtureToken))
-	_, data, _, _, e := readConfig(path)
+	_, data, e := readConfig(path)
 	require.NoError(t, e)
 	require.Equal(t, "custom.md", data["model_instructions_file"])
 	require.Equal(t, "reviewer.toml", get(data, []string{"agents", "reviewer", "config_file"}).Data)
@@ -220,7 +221,7 @@ func TestOpenCodeInvalidJSONCUnchanged(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, original, data)
-	require.NoFileExists(t, journalPath(path))
+	require.NoFileExists(t, path+".baseten-harness.json")
 }
 
 func TestOpenCodePolicyPathsMatchPlatform(t *testing.T) {

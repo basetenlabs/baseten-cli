@@ -29,7 +29,7 @@ type selectedHarness struct {
 }
 
 // Setup offers installed harnesses. Status and teardown discover configured
-// integrations from their backups, even after their executable is removed.
+// integrations from their native settings, even after their executable is removed.
 func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([]selectedHarness, error) {
 	if flags.Config != "" && len(flags.Harness) != 1 {
 		return nil, cmd.NewErrUsagef("--config requires exactly one explicit --harness")
@@ -257,7 +257,6 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 				Supported:       r.Supported,
 				State:           r.State,
 				ManagedSettings: r.Managed,
-				Drift:           r.Drift,
 				Routes:          r.Routes,
 				Note:            r.Note,
 			})
@@ -274,9 +273,6 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 			}
 			if r.SmallTaskModel != "" {
 				ctx.Outputf("  %s  %s\n", harnessSmallTaskLabel(r.Name), r.SmallTaskModel)
-			}
-			if len(r.Drift) > 0 {
-				ctx.Outputf("  Changed settings  %s\n", strings.Join(r.Drift, ", "))
 			}
 			ctx.OutputLine("")
 			harnessRouteTable(ctx, "Configured routes", r.RouteDetails)
@@ -322,20 +318,20 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	}
 	if !ctx.JSON {
 		if len(names) == 0 {
-			ctx.OutputLine("No Baseten settings to restore.")
+			ctx.OutputLine("No Baseten settings to remove.")
 		} else {
-			ctx.Outputf("Would restore %s settings from before setup. Unrelated settings will be preserved.\n", strings.Join(names, ", "))
+			ctx.Outputf("Would remove %s integration settings and use native defaults. Previous values will not be restored; unrelated settings will be preserved.\n", strings.Join(names, ", "))
 		}
 	}
 	if !f.DryRun && len(names) > 0 {
-		if err := harnessConfirm(ctx, f.Yes, "Restore original settings for "+strings.Join(names, ", ")+"?"); err != nil {
+		if err := harnessConfirm(ctx, f.Yes, "Remove Baseten settings and use native defaults for "+strings.Join(names, ", ")+"?"); err != nil {
 			return err
 		}
 		if err := harness.ApplyPlans(plans, ""); err != nil {
 			return err
 		}
 		if !ctx.JSON {
-			ctx.OutputLine("Original harness settings restored.")
+			ctx.OutputLine("Baseten integration settings removed. Native defaults now apply.")
 		}
 	}
 	if ctx.JSON {
@@ -446,7 +442,7 @@ func harnessSetupSummary(ctx *CommandContext, credential *harnessAuth, routes []
 		}
 		ctx.Outputf("  Result         %s\n", accent.Render(result))
 		if replaced {
-			ctx.OutputLine("  Existing integration settings will be replaced. Teardown restores settings from the first setup.")
+			ctx.OutputLine("  Existing integration settings will be replaced. Teardown uses native defaults; previous values are not saved or restored.")
 		}
 	}
 	ctx.VerboseLogf("Routes API key name: %s\n", credential.scope.Name)

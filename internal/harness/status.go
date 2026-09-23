@@ -1,5 +1,7 @@
 package harness
 
+import "sort"
+
 type Status struct {
 	Detection
 	DefaultRoute   string
@@ -7,42 +9,39 @@ type Status struct {
 	RouteDetails   []Route
 	State          string
 	Managed        []string
-	Drift          []string
 	Routes         []string
 	Note           string
 }
 
-// inspectConfig reports changes to managed settings without exposing values.
-func inspectConfig(d Detection) (Status, map[string]any, *journal, error) {
+// Status describes the current configuration; no previous values are retained
+// to compare against. Native harness defaults apply once our settings are removed.
+func inspectConfig(d Detection) (Status, map[string]any, error) {
 	r := Status{Detection: d, State: "not-configured", Note: "Local configuration only; no API authorization or inference was checked. Rerun setup to refresh routes, then restart the harness."}
-	_, data, _, j, err := readConfig(d.Path)
+	_, data, err := readConfig(d.Path)
 	if err != nil {
-		return r, nil, nil, err
+		return r, nil, err
 	}
 	r.DefaultRoute, _ = data["model"].(string)
-	if j != nil {
-		r.State = "configured"
-		for _, v := range j.Settings {
-			r.Managed = append(r.Managed, pathKey(v.Path))
-			if !same(get(data, v.Path), v.Installed) {
-				r.Drift = append(r.Drift, pathKey(v.Path))
-			}
-		}
-		if len(r.Drift) > 0 {
-			r.State = "drifted"
-		}
-	}
-	return r, data, j, nil
+	return r, data, nil
 }
 
-func (r *Status) addRoutes(j *journal, labels map[string]string) {
-	if j == nil {
-		return
-	}
-	for _, name := range j.Routes {
-		if label, ok := labels[name]; ok {
-			r.Routes = append(r.Routes, name)
-			r.RouteDetails = append(r.RouteDetails, Route{Name: name, DisplayName: label})
+func (r *Status) managed(data map[string]any, paths [][]string) {
+	for _, path := range paths {
+		if get(data, path).Exists {
+			r.Managed = append(r.Managed, pathKey(path))
 		}
+	}
+	if len(r.Managed) > 0 {
+		r.State = "configured"
+	}
+}
+
+func (r *Status) addRoutes(labels map[string]string) {
+	for name := range labels {
+		r.Routes = append(r.Routes, name)
+	}
+	sort.Strings(r.Routes)
+	for _, name := range r.Routes {
+		r.RouteDetails = append(r.RouteDetails, Route{Name: name, DisplayName: labels[name]})
 	}
 }

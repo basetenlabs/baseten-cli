@@ -13,11 +13,11 @@ import (
 )
 
 type Detection struct {
-	Name      string `json:"harness"`
-	Path      string `json:"config"`
-	Installed bool   `json:"installed"`
-	Version   string `json:"version"`
-	Supported bool   `json:"supported"`
+	Name      string
+	Path      string
+	Installed bool
+	Version   string
+	Supported bool
 }
 
 // Execer is satisfied by the CLI's shared subprocess executor.

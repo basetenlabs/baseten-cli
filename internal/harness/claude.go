@@ -11,11 +11,60 @@ import (
 
 type claudeHarness struct{ baseHarness }
 
+// Claude has no named provider block. This marker identifies our shared settings
+// without retaining a backup or any previous setting values.
+const claudeMarker = "BASETEN_HARNESS"
+
+var claudePaths = [][]string{
+	{"model"}, {"fallbackModel"}, {"modelPicker", "options"},
+	{"modelPicker", "replaceBuiltInOptions"}, {"availableModels"},
+	{"env", claudeMarker}, {"env", "ANTHROPIC_BASE_URL"},
+	{"env", "ANTHROPIC_AUTH_TOKEN"}, {"env", "ANTHROPIC_DEFAULT_SONNET_MODEL"},
+	{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}, {"env", "ANTHROPIC_DEFAULT_FABLE_MODEL"},
+	{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}, {"env", "ANTHROPIC_SMALL_FAST_MODEL"},
+	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"},
+}
+
+func claudeRoutes(data map[string]any) map[string]string {
+	labels := map[string]string{}
+	if options, ok := get(data, []string{"modelPicker", "options"}).Data.([]any); ok {
+		for _, option := range options {
+			if row, ok := option.(map[string]any); ok {
+				name, _ := row["model"].(string)
+				labels[name], _ = row["label"].(string)
+			}
+		}
+	}
+	return labels
+}
+
+func claudeTeardownPaths(data map[string]any) [][]string {
+	if get(data, []string{"env", claudeMarker}).Data != "1" {
+		return nil
+	}
+	paths := append([][]string{}, claudePaths...)
+	// Optional subagent settings are only ours while referencing a configured
+	// route. Leave native or independently configured subagents alone.
+	subagent, _ := get(data, []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}).Data.(string)
+	if _, ok := claudeRoutes(data)[subagent]; ok {
+		paths = append(paths, []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"})
+	}
+	return paths
+}
+
+func (h claudeHarness) Teardown(path string) ([]*Plan, error) {
+	p, err := prepareTeardown(path, claudeTeardownPaths)
+	if err != nil {
+		return nil, err
+	}
+	return []*Plan{p}, nil
+}
+
 func (h claudeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
 	if err := checkClaudePolicy(path); err != nil {
 		return nil, err
 	}
-	p, err := prepareSettings(path, routes, func(data map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, func(data map[string]any) ([]setting, error) {
 		return claudeSettings(routes, s, endpoint, token, data)
 	})
 	if err != nil {
@@ -74,6 +123,7 @@ func claudeSettings(routes []Route, selection Selection, endpoint, token string,
 		desired([]string{"availableModels"}, allowed),
 	}
 	for _, kv := range [][2]string{
+		{claudeMarker, "1"},
 		{"ANTHROPIC_BASE_URL", endpoint},
 		{"ANTHROPIC_AUTH_TOKEN", token},
 		{"ANTHROPIC_DEFAULT_SONNET_MODEL", s.Primary},
@@ -87,6 +137,14 @@ func claudeSettings(routes []Route, selection Selection, endpoint, token string,
 	}
 	if explicitSubagent {
 		values = append(values, desired([]string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}, s.Subagent))
+	} else if get(current, []string{"env", claudeMarker}).Data == "1" {
+		// A refresh may retire the route used by an earlier --subagent-route.
+		// Clear that stale reference instead of carrying it outside the catalog.
+		key := []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}
+		previous, _ := get(current, key).Data.(string)
+		if _, owned := claudeRoutes(current)[previous]; owned && !slices.Contains(allowed, any(previous)) {
+			values = append(values, setting{Path: key})
+		}
 	}
 	return values, nil
 }
@@ -103,21 +161,15 @@ func checkClaudePolicy(path string) error {
 }
 
 func (h claudeHarness) Inspect(d Detection) (Status, error) {
-	r, data, j, err := inspectConfig(d)
+	r, data, err := inspectConfig(d)
 	if err != nil {
 		return r, err
 	}
-	r.SmallTaskModel, _ = get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string)
-	labels := map[string]string{}
-	if options, ok := get(data, []string{"modelPicker", "options"}).Data.([]any); ok {
-		for _, option := range options {
-			if row, ok := option.(map[string]any); ok {
-				name, _ := row["model"].(string)
-				label, _ := row["label"].(string)
-				labels[name] = label
-			}
-		}
+	r.managed(data, claudeTeardownPaths(data))
+	if r.State == "not-configured" {
+		return r, nil
 	}
-	r.addRoutes(j, labels)
+	r.SmallTaskModel, _ = get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string)
+	r.addRoutes(claudeRoutes(data))
 	return r, nil
 }
