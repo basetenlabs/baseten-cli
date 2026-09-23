@@ -58,7 +58,8 @@ type Harness interface {
 	// or in the harness's native configuration directory when configDir is empty.
 	Detect(ctx context.Context, execer Execer, configDir string) (Detection, error)
 	// Prepare plans setup of the settings file at path. ApplyPlans replaces
-	// token, so previews can pass a placeholder.
+	// token; an empty token keeps the file's current credential, so a preview
+	// doesn't report it as changed.
 	Prepare(path string, routes []Route, selection Selection, endpoint, token string) ([]*Plan, error)
 	// Inspect reports the integration state of the detected settings file.
 	Inspect(d Detection) (Status, error)
@@ -302,8 +303,12 @@ func readConfig(path string) (*configFile, map[string]any, error) {
 	return f, d, err
 }
 
-func prepareSettings(path string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
+func prepareSettings(path string, credentialPath []string, token string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
 	f, d, err := readConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	original, err := decodeConfig(path, f.data)
 	if err != nil {
 		return nil, err
 	}
@@ -311,15 +316,24 @@ func prepareSettings(path string, build func(map[string]any) ([]setting, error))
 	if err != nil {
 		return nil, err
 	}
-	p := &Plan{Path: path, Managed: true, file: f, config: d}
+	p := &Plan{Path: path, Managed: true, file: f, config: d, credentialPath: credentialPath}
 	for _, v := range settings {
-		if current := get(d, v.Path); current.Exists && !same(current, v.Installed) {
-			p.Replaced = append(p.Replaced, pathKey(v.Path))
-		}
 		if err := put(d, v.Path, v.Installed); err != nil {
 			return nil, err
 		}
 		p.Keys = append(p.Keys, pathKey(v.Path))
+	}
+	if token == "" && len(credentialPath) > 0 {
+		if current := get(original, credentialPath); current.Exists {
+			if err := put(d, credentialPath, current); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, v := range settings {
+		if before := get(original, v.Path); before.Exists && !same(before, get(d, v.Path)) {
+			p.Replaced = append(p.Replaced, pathKey(v.Path))
+		}
 	}
 	return p, p.encode()
 }

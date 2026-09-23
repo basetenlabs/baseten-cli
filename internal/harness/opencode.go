@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -72,11 +73,24 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 			values = append(values, desired(path, providerID+"/"+s.Subagent))
 		}
 	}
-	p, err := prepareSettings(path, func(map[string]any) ([]setting, error) { return values, nil })
+	credential := []string{"provider", providerID, "options", "apiKey"}
+	p, err := prepareSettings(path, credential, token, func(current map[string]any) ([]setting, error) {
+		if explicitSubagent {
+			return values, nil
+		}
+		// A refresh may retire the route an earlier --subagent-route selected.
+		for _, key := range openCodeSubagentPaths {
+			model, _ := get(current, key).Data.(string)
+			route, ours := strings.CutPrefix(model, providerID+"/")
+			if ours && !slices.ContainsFunc(routes, func(r Route) bool { return r.Name == route }) {
+				values = append(values, setting{Path: key})
+			}
+		}
+		return values, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	p.credentialPath = []string{"provider", providerID, "options", "apiKey"}
 	return []*Plan{p}, nil
 }
 

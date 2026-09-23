@@ -207,6 +207,9 @@ func TestOptionalSubagentCleanup(t *testing.T) {
 				setup(t, h, path, testRoutes(), selection)
 				// A refresh without the flag drops the subagent's route.
 				setup(t, h, path, testRoutes()[:2], Selection{})
+				if explicit {
+					require.False(t, get(load(t, path), key).Exists, "a retired subagent route is cleared on refresh")
+				}
 				teardown(t, h, path)
 				if explicit {
 					require.False(t, get(load(t, path), key).Exists)
