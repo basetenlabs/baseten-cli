@@ -23,8 +23,7 @@ func init() {
 	Register("harness teardown", commandHarnessTeardown)
 }
 
-// pendingHarnessKey stands in for the routes API key in previews, before the
-// key is created.
+// pendingHarnessKey stands in for a routes API key that setup will create.
 const pendingHarnessKey = "baseten-harness-pending-key"
 
 type selectedHarness struct {
@@ -129,13 +128,15 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		}
 		routes = append(routes, harness.Route{Name: r.Name, DisplayName: r.DisplayName})
 	}
+	// A dry run leaves the keyring alone, so its preview keeps the credential
+	// already in each file.
 	var key *harnessKey
-	token := pendingHarnessKey
+	token := ""
 	if !f.DryRun {
 		if key, err = loadHarnessKey(ctx, api, team.Id, f.KeyName); err != nil {
 			return err
 		}
-		token = cmp.Or(key.saved, token)
+		token = cmp.Or(key.saved, pendingHarnessKey)
 	}
 	selection := harness.Selection{
 		Primary:    cmp.Or(f.Route, routes[0].Name),
@@ -263,7 +264,9 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 		}
 		for _, p := range current {
 			p.Harness = choice.Name()
-			ctx.VerboseLogf("Config: %s\nSettings: %s\n", p.Path, strings.Join(p.Keys, ", "))
+			if len(p.Keys) > 0 {
+				ctx.VerboseLogf("Config: %s\nSettings: %s\n", p.Path, strings.Join(p.Keys, ", "))
+			}
 		}
 		if slices.ContainsFunc(current, func(p *harness.Plan) bool { return p.Managed }) {
 			names = append(names, choice.Name())
@@ -321,7 +324,7 @@ func outputHarnessPlansJSON(ctx *CommandContext, plans []*harness.Plan) {
 		items = append(items, cmd.HarnessPlan{
 			Harness:          p.Harness,
 			Config:           p.Path,
-			Settings:         p.Keys,
+			Settings:         append([]string{}, p.Keys...),
 			ReplacedSettings: p.Replaced,
 			Managed:          p.Managed,
 			Changed:          p.Changed,

@@ -152,6 +152,12 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 				h.Require.False(item.Changed, "rerunning setup changes nothing")
 			}
 			h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "the saved key is reused")
+			h.Require.NoError(h.Execute(append(args, "--dry-run")...))
+			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
+			for _, item := range rerun.Items {
+				h.Require.False(item.Changed, "a dry run keeps the configured key")
+				h.Require.Empty(item.ReplacedSettings)
+			}
 
 			calls := len(api.Calls())
 			h.Require.NoError(h.Execute("harness", "status", "--harness", name, "--config-dir", dir, "--output", "json"))
@@ -401,11 +407,13 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"harness test gateway"}}`))
 }
 
-func (g *harnessGateway) saw(model string) bool {
+func (g *harnessGateway) requested() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return slices.Contains(g.models, model)
+	return slices.Clone(g.models)
 }
+
+func (g *harnessGateway) saw(model string) bool { return slices.Contains(g.requested(), model) }
 
 // Test_Harness_Setup_RealHarness configures each installed harness in an
 // isolated directory, runs it, and checks that it asks the gateway for the
@@ -480,7 +488,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 				<-done
 			}
 			if !gateway.saw("acme/primary") {
-				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.models, output.String())
+				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.requested(), output.String())
 			}
 		})
 	}

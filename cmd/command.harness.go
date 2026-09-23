@@ -140,16 +140,18 @@ type HarnessFlags struct {
 	ConfigDir string   `flag:"config-dir" desc:"Harness configuration directory. Requires exactly one --harness. Defaults to the harness's own location."`
 }
 
+// HarnessStatusFlags are the flags for `baseten harness status`.
 type HarnessStatusFlags struct {
 	CommandFlags
 	HarnessFlags
 }
 
+// HarnessSetupFlags are the flags for `baseten harness setup`.
 type HarnessSetupFlags struct {
 	CommandFlags
 	HarnessFlags
 	Team            string `flag:"team" desc:"Team name or ID whose routes to use. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
-	KeyName         string `flag:"key-name" desc:"Name of the routes API key created in Baseten. Defaults to baseten-harness-<hostname>."`
+	KeyName         string `flag:"key-name" desc:"Name of the routes API key created in Baseten; a new name creates a new key. Defaults to baseten-harness-<hostname>."`
 	Route           string `flag:"route" desc:"Default route. Defaults to the team's first route."`
 	BackgroundRoute string `flag:"background-route" desc:"Route for lightweight background tasks (Claude Code and OpenCode). Defaults to deepseek-ai/DeepSeek-V4.1-Flash."`
 	SubagentRoute   string `flag:"subagent-route" desc:"Route for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
@@ -158,6 +160,7 @@ type HarnessSetupFlags struct {
 	Yes             bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
+// HarnessTeardownFlags are the flags for `baseten harness teardown`.
 type HarnessTeardownFlags struct {
 	CommandFlags
 	HarnessFlags

@@ -52,11 +52,11 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, 
 			"experimental_bearer_token": token,
 		}),
 	}
-	p, err := prepareSettings(path, func(map[string]any) ([]setting, error) { return values, nil })
+	credential := []string{"model_providers", providerID, "experimental_bearer_token"}
+	p, err := prepareSettings(path, credential, token, func(map[string]any) ([]setting, error) { return values, nil })
 	if err != nil {
 		return nil, err
 	}
-	p.credentialPath = []string{"model_providers", providerID, "experimental_bearer_token"}
 	models := []any{}
 	for i, r := range routes {
 		// Codex requires every field. Model-specific capabilities and limits are
@@ -81,7 +81,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, 
 			"experimental_supported_tools": []any{},
 		})
 	}
-	catalog, err := prepareSettings(catalogPath(path), func(map[string]any) ([]setting, error) {
+	catalog, err := prepareSettings(catalogPath(path), nil, "", func(map[string]any) ([]setting, error) {
 		return []setting{desired([]string{"models"}, models)}, nil
 	})
 	if err != nil {

@@ -40,13 +40,12 @@ func (claudeCodeHarness) BackgroundRoute(s Selection) string {
 }
 
 func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
-	p, err := prepareSettings(path, func(data map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, []string{"env", "ANTHROPIC_AUTH_TOKEN"}, token, func(data map[string]any) ([]setting, error) {
 		return claudeSettings(routes, s, endpoint, token, data)
 	})
 	if err != nil {
 		return nil, err
 	}
-	p.credentialPath = []string{"env", "ANTHROPIC_AUTH_TOKEN"}
 	return []*Plan{p}, nil
 }
 
