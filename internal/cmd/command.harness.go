@@ -128,6 +128,14 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		}
 		routes = append(routes, harness.Route{Name: r.Name, DisplayName: r.DisplayName})
 	}
+	mcpServers, err := listHarnessMCPServers(ctx, team.Id)
+	if err != nil {
+		return err
+	}
+	mcpServers, err = resolveHarnessMCPServerTokens(ctx, mcpServers)
+	if err != nil {
+		return err
+	}
 	// A dry run leaves the keyring alone, so its preview keeps the credential
 	// already in each file.
 	var key *harnessKey
@@ -146,7 +154,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	}
 	var plans []*harness.Plan
 	for _, choice := range selected {
-		current, err := choice.Prepare(choice.detection.Path, routes, selection, endpoint, token)
+		current, err := choice.Prepare(choice.detection.Path, routes, mcpServers, selection, endpoint, token)
 		if err != nil {
 			return fmt.Errorf("%s: %w", choice.Name(), err)
 		}
