@@ -458,8 +458,19 @@ func loadHarnessKey(ctx *CommandContext, api *managementapi.Client, teamID, name
 		TeamID:        teamID,
 		Name:          name,
 	}}
-	k.saved, err = store.GetRoutesKey(k.scope)
-	return k, err
+	if k.saved, err = store.GetRoutesKey(k.scope); err != nil || k.saved == "" {
+		return k, err
+	}
+	// The saved key may have been revoked, here or on another machine; setup
+	// then creates a new one.
+	keys, err := listHarnessKeys(ctx, api)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.ContainsFunc(keys.Keys, func(key managementapi.APIKeyInfo) bool { return strings.HasPrefix(k.saved, key.Prefix) }) {
+		k.saved = ""
+	}
+	return k, nil
 }
 
 // ensure returns the saved key, creating and saving one if there is none.
