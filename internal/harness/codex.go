@@ -54,7 +54,7 @@ func (h codexHarness) Prepare(path string, routes []Route, s Selection, endpoint
 		}),
 	}
 
-	p, err := prepareSettings(path, routes, func(data map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, func(data map[string]any) ([]setting, error) {
 		if _, ok := data["profile"]; ok {
 			return nil, errors.New("resolve the active Codex profile before setup")
 		}
@@ -99,7 +99,7 @@ func (h codexHarness) Prepare(path string, routes []Route, s Selection, endpoint
 			"experimental_supported_tools": []any{},
 		})
 	}
-	catalog, err := prepareSettings(catalogPath(file.Target), routes, func(map[string]any) ([]setting, error) {
+	catalog, err := prepareSettings(catalogPath(file.Target), func(map[string]any) ([]setting, error) {
 		return []setting{desired([]string{"models"}, models)}, nil
 	})
 	if err != nil {
@@ -108,24 +108,40 @@ func (h codexHarness) Prepare(path string, routes []Route, s Selection, endpoint
 	return []*Plan{catalog, p}, nil
 }
 
+func codexTeardownPaths(data map[string]any, catalog string) [][]string {
+	paths := [][]string{{"model_providers", providerID}}
+	// Only reset shared defaults while our provider is selected. If the user
+	// has switched providers, leave their new model selection alone.
+	if data["model_provider"] == providerID {
+		paths = append(paths, []string{"model_provider"}, []string{"model"}, []string{"review_model"})
+	}
+	if data["model_catalog_json"] == catalog {
+		paths = append(paths, []string{"model_catalog_json"})
+	}
+	return paths
+}
+
 func (h codexHarness) Teardown(path string) ([]*Plan, error) {
 	file, err := readFile(path)
 	if err != nil {
 		return nil, err
 	}
-	config, err := prepareTeardown(path)
+	catalog := catalogPath(file.Target)
+	config, err := prepareTeardown(path, func(data map[string]any) [][]string {
+		return codexTeardownPaths(data, catalog)
+	})
 	if err != nil {
 		return nil, err
 	}
-	catalog, err := prepareTeardown(catalogPath(file.Target))
+	removal, err := prepareRemoval(catalog)
 	if err != nil {
 		return nil, err
 	}
-	return []*Plan{config, catalog}, nil
+	return []*Plan{config, removal}, nil
 }
 
 func (h codexHarness) Inspect(d Detection) (Status, error) {
-	r, _, j, err := inspectConfig(d)
+	r, data, err := inspectConfig(d)
 	if err != nil {
 		return r, err
 	}
@@ -133,50 +149,41 @@ func (h codexHarness) Inspect(d Detection) (Status, error) {
 	if err != nil {
 		return r, err
 	}
-	_, data, _, catalog, err := readConfig(catalogPath(file.Target))
+	catalog := catalogPath(file.Target)
+	r.managed(data, codexTeardownPaths(data, catalog))
+	catalogFile, err := readFile(catalog)
 	if err != nil {
 		return r, err
 	}
-	if j == nil {
-		if catalog != nil {
-			r.State = "interrupted"
-			r.Drift = []string{"orphaned model catalog"}
+	if r.State == "not-configured" {
+		if catalogFile.Info != nil {
+			r.State = "incomplete"
+			r.Note = "Orphaned Baseten model catalog; rerun setup or teardown."
 		}
 		return r, nil
 	}
-	if catalog == nil {
-		r.State = "drifted"
-		r.Drift = append(r.Drift, "model catalog missing")
-		return r, nil
+	if data["model_provider"] != providerID {
+		r.State = "inactive"
 	}
-	for _, v := range catalog.Settings {
-		if !same(get(data, v.Path), v.Installed) {
-			r.State = "drifted"
-			r.Drift = append(r.Drift, "model catalog changed")
-		}
+	if !get(data, []string{"model_providers", providerID}).Exists || catalogFile.Info == nil {
+		r.State = "incomplete"
+	}
+	// A missing or malformed generated catalog can be repaired by setup or
+	// removed by teardown without requiring restoration metadata.
+	models, err := decode(catalogFile.Data)
+	if err != nil {
+		r.State = "incomplete"
+		return r, nil
 	}
 	labels := map[string]string{}
-	if models, ok := data["models"].([]any); ok {
-		for _, model := range models {
-			if row, ok := model.(map[string]any); ok {
+	if entries, ok := models["models"].([]any); ok {
+		for _, entry := range entries {
+			if row, ok := entry.(map[string]any); ok {
 				name, _ := row["slug"].(string)
-				label, _ := row["display_name"].(string)
-				labels[name] = label
+				labels[name], _ = row["display_name"].(string)
 			}
 		}
 	}
-	r.addRoutes(catalog, labels)
+	r.addRoutes(labels)
 	return r, nil
-}
-
-func (h codexHarness) Configured(path string) (bool, error) {
-	configured, err := h.baseHarness.Configured(path)
-	if err != nil || configured {
-		return configured, err
-	}
-	target, err := resolveConfigPath(path)
-	if err != nil {
-		return false, err
-	}
-	return h.baseHarness.Configured(catalogPath(target))
 }

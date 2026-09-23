@@ -58,7 +58,7 @@ func (h openCodeHarness) Prepare(path string, routes []Route, s Selection, endpo
 		}
 	}
 
-	p, err := prepareSettings(path, routes, func(data map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, func(data map[string]any) ([]setting, error) {
 		if _, ok := data["providers"]; ok {
 			return nil, errors.New("OpenCode V2 providers require a separately verified adapter")
 		}
@@ -112,10 +112,40 @@ func openCodePolicyPaths(platform, username string) []string {
 	return append(paths, filepath.Join(dir, "opencode.json"), filepath.Join(dir, "opencode.jsonc"))
 }
 
+// References to another provider belong to the user, even if Baseten was
+// previously selected there. Teardown only clears references to our provider.
+func openCodeTeardownPaths(data map[string]any) [][]string {
+	paths := [][]string{{"provider", providerID}}
+	for _, key := range [][]string{{"model"}, {"small_model"}, {"agent", "general", "model"}, {"agent", "explore", "model"}} {
+		model, _ := get(data, key).Data.(string)
+		if strings.HasPrefix(model, providerID+"/") {
+			paths = append(paths, key)
+		}
+	}
+	return paths
+}
+
+func (h openCodeHarness) Teardown(path string) ([]*Plan, error) {
+	p, err := prepareTeardown(path, openCodeTeardownPaths)
+	if err != nil {
+		return nil, err
+	}
+	return []*Plan{p}, nil
+}
+
 func (h openCodeHarness) Inspect(d Detection) (Status, error) {
-	r, data, j, err := inspectConfig(d)
+	r, data, err := inspectConfig(d)
 	if err != nil {
 		return r, err
+	}
+	r.managed(data, openCodeTeardownPaths(data))
+	if r.State == "not-configured" {
+		return r, nil
+	}
+	if !get(data, []string{"provider", providerID}).Exists {
+		r.State = "incomplete"
+	} else if !strings.HasPrefix(r.DefaultRoute, providerID+"/") {
+		r.State = "inactive"
 	}
 	r.DefaultRoute = strings.TrimPrefix(r.DefaultRoute, providerID+"/")
 	small, _ := data["small_model"].(string)
@@ -123,11 +153,14 @@ func (h openCodeHarness) Inspect(d Detection) (Status, error) {
 	labels := map[string]string{}
 	if models, ok := get(data, []string{"provider", providerID, "models"}).Data.(map[string]any); ok {
 		for name, model := range models {
+			if name == defaultSmallTaskModel {
+				continue
+			}
 			if row, ok := model.(map[string]any); ok {
 				labels[name], _ = row["name"].(string)
 			}
 		}
 	}
-	r.addRoutes(j, labels)
+	r.addRoutes(labels)
 	return r, nil
 }

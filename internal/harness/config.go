@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"sort"
 	"strings"
 
@@ -17,55 +16,38 @@ import (
 )
 
 type value struct {
-	Exists bool `json:"exists"`
-	Data   any  `json:"data,omitempty"`
+	Exists bool
+	Data   any
 }
 
 type setting struct {
-	Path      []string `json:"path"`
-	Installed value    `json:"installed"`
+	Path      []string
+	Installed value
 }
 
-type journal struct {
-	Routes   []string  `json:"routes"`
-	Version  int       `json:"version"`
-	Path     string    `json:"path"`
-	Original []byte    `json:"original"`
-	Existed  bool      `json:"existed"`
-	Settings []setting `json:"settings"`
-}
-
-// A private .baseten-harness.json journal sits beside each configuration file.
-// It retains the complete original document from the FIRST setup, plus the paths
-// and last installed values of settings this integration manages. Refresh replaces
-// those settings wholesale, including the picker, without changing the restore
-// point. Optional settings managed by earlier runs stay tracked for teardown.
-// Teardown restores only those paths from the original document, so unrelated
-// edits survive. The original document also covers settings first managed later.
+// Setup overwrites only each adapter's integration settings. There are no
+// backups or saved previous values. Repeating setup refreshes those same fields.
+// Teardown removes Baseten's provider and resets its shared settings by deleting
+// the keys, letting the harness supply its native defaults. Unrelated settings
+// and edits survive; previous values of overwritten settings are not restored.
+// Each adapter derives its teardown scope from the live configuration.
 //
-// The journal is saved before configuration writes and removed only after a
-// successful teardown. An interrupted setup can therefore be retried or torn
-// down without a separate pending state or persistent lock. Files are replaced
-// atomically, but a multi-file/multi-harness operation is not a transaction.
-//
-// Plan exposes paths and key names only: configuration and backups may contain
-// credentials. Never include their values in JSON output or error messages.
+// Plan previews paths and setting names only, never credential values.
 type Plan struct {
-	Harness                   string   `json:"harness"`
-	Replaced                  []string `json:"replaced_settings,omitempty"`
-	Managed                   bool     `json:"managed"`
-	Path                      string   `json:"config"`
-	Keys                      []string `json:"settings"`
-	Changed                   bool     `json:"changed"`
-	snapshot, journalSnapshot *configFile
-	data                      []byte
-	config                    map[string]any
-	credentialPath            []string
-	journal                   *journal
-	teardown                  bool
-}
+	Harness  string
+	Replaced []string
+	Managed  bool
+	Path     string
+	Keys     []string
+	Changed  bool
 
-func journalPath(path string) string { return path + ".baseten-harness.json" }
+	snapshot       *configFile
+	data           []byte
+	config         map[string]any
+	credentialPath []string
+	teardown       bool
+	remove         bool
+}
 
 func pathKey(p []string) string { return strings.Join(p, ".") }
 
@@ -151,48 +133,17 @@ func encode(d any) ([]byte, error) {
 	return append(b, '\n'), err
 }
 
-func readConfig(path string) (*configFile, map[string]any, *configFile, *journal, error) {
+func readConfig(path string) (*configFile, map[string]any, error) {
 	s, err := readFile(path)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, err
 	}
 	d, err := decodeConfig(s.Path, s.Data)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	js, err := readFile(journalPath(s.Target))
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	if js.Info == nil {
-		return s, d, js, nil, nil
-	}
-	if js.Info.Mode().Perm()&0077 != 0 {
-		return nil, nil, nil, nil, errors.New("harness journal must be private (0600)")
-	}
-	var j journal
-	decoder := json.NewDecoder(bytes.NewReader(js.Data))
-	decoder.UseNumber()
-	if decoder.Decode(&j) != nil || j.Version != 1 || j.Path != s.Target {
-		return nil, nil, nil, nil, errors.New("invalid harness ownership journal")
-	}
-	seen := map[string]bool{}
-	for _, v := range j.Settings {
-		if len(v.Path) == 0 || seen[pathKey(v.Path)] {
-			return nil, nil, nil, nil, errors.New("invalid journal setting path")
-		}
-		seen[pathKey(v.Path)] = true
-		for _, k := range v.Path {
-			if k == "" {
-				return nil, nil, nil, nil, errors.New("invalid journal setting path")
-			}
-		}
-	}
-	return s, d, js, &j, nil
+	return s, d, err
 }
 
-func prepareSettings(path string, routes []Route, build func(map[string]any) ([]setting, error)) (*Plan, error) {
-	s, d, js, prior, err := readConfig(path)
+func prepareSettings(path string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
+	s, d, err := readConfig(path)
 	if err != nil {
 		return nil, err
 	}
@@ -200,29 +151,8 @@ func prepareSettings(path string, routes []Route, build func(map[string]any) ([]
 	if err != nil {
 		return nil, err
 	}
-	j := &journal{
-		Version:  1,
-		Path:     s.Target,
-		Original: s.Data,
-		Existed:  s.Info != nil,
-	}
-	for _, route := range routes {
-		j.Routes = append(j.Routes, route.Name)
-	}
-	if prior != nil {
-		j.Original = prior.Original
-		j.Existed = prior.Existed
-	}
-	p := &Plan{
-		Path:            s.Path,
-		Managed:         true,
-		snapshot:        s,
-		journalSnapshot: js,
-		journal:         j,
-	}
-	managed := map[string]bool{}
+	p := &Plan{Path: s.Path, Managed: true, snapshot: s, config: d}
 	for _, v := range settings {
-		managed[pathKey(v.Path)] = true
 		current := get(d, v.Path)
 		if current.Exists && !same(current, v.Installed) {
 			p.Replaced = append(p.Replaced, pathKey(v.Path))
@@ -230,114 +160,74 @@ func prepareSettings(path string, routes []Route, build func(map[string]any) ([]
 		if err := put(d, v.Path, v.Installed); err != nil {
 			return nil, err
 		}
-		j.Settings = append(j.Settings, v)
 		p.Keys = append(p.Keys, pathKey(v.Path))
 	}
-	// Optional settings omitted on refresh remain owned so teardown can restore them.
-	if prior != nil {
-		for _, old := range prior.Settings {
-			if !managed[pathKey(old.Path)] {
-				j.Settings = append(j.Settings, old)
-			}
-		}
-	}
-	p.config = d
-	p.data, err = encodeConfig(s.Path, d, s.Data)
-	if err != nil {
-		return nil, err
-	}
-	original, _ := decodeConfig(s.Path, s.Data)
-	if reflect.DeepEqual(original, d) {
-		p.data = s.Data
-	}
-	p.Changed = !bytes.Equal(p.data, s.Data) || (s.Info != nil && s.Info.Mode().Perm() != 0600)
-	return p, nil
+	return p, p.encode()
 }
 
-func prepareTeardown(path string) (*Plan, error) {
-	s, d, js, j, err := readConfig(path)
+func prepareTeardown(path string, scope func(map[string]any) [][]string) (*Plan, error) {
+	s, d, err := readConfig(path)
 	if err != nil {
 		return nil, err
 	}
-	p := &Plan{
-		Path:            s.Path,
-		snapshot:        s,
-		journalSnapshot: js,
-		teardown:        true,
-		data:            s.Data,
-	}
-	if j == nil {
-		return p, nil
-	}
-	p.Managed = true
-	p.journal = j
-	original, err := decodeConfig(s.Path, j.Original)
-	if err != nil {
-		return nil, err
-	}
-	for _, v := range j.Settings {
-		current := get(d, v.Path)
-		before := get(original, v.Path)
-		if same(current, before) {
+	p := &Plan{Path: s.Path, snapshot: s, config: d, teardown: true}
+	for _, key := range scope(d) {
+		if !get(d, key).Exists {
 			continue
 		}
-		if !same(current, v.Installed) {
-			p.Replaced = append(p.Replaced, pathKey(v.Path))
-		}
-		if err := put(d, v.Path, before); err != nil {
+		if err := put(d, key, value{}); err != nil {
 			return nil, err
 		}
-		p.Keys = append(p.Keys, pathKey(v.Path))
+		p.Keys = append(p.Keys, pathKey(key))
 	}
-	p.config = d
-	p.data, err = encodeConfig(s.Path, d, s.Data)
+	p.Managed = len(p.Keys) > 0
+	return p, p.encode()
+}
+
+// Only dedicated Baseten files (the Codex catalog) are deleted. A shared config
+// can remain empty after teardown; without backups we don't know who created it.
+func prepareRemoval(path string) (*Plan, error) {
+	s, err := readFile(path)
 	if err != nil {
 		return nil, err
 	}
-	// JSONC restoration uses the patched current document so later comments survive.
-	if same(value{Data: original}, value{Data: d}) && (filepath.Ext(s.Path) != ".jsonc" || !j.Existed) {
-		p.data = j.Original
-	}
-	if len(p.Keys) == 0 {
-		p.data = s.Data
-	}
-	p.Changed = !bytes.Equal(p.data, s.Data)
-	return p, nil
+	return &Plan{Path: path, snapshot: s, Managed: s.Info != nil, Changed: s.Info != nil, teardown: true, remove: true}, nil
 }
 
-func (p *Plan) apply() error {
-	if p.journal == nil {
-		return nil
+func (p *Plan) encode() error {
+	original, err := decodeConfig(p.Path, p.snapshot.Data)
+	if err != nil {
+		return err
 	}
-	if !p.teardown {
-		data, err := encode(p.journal)
+	p.data = p.snapshot.Data
+	if !reflect.DeepEqual(original, p.config) {
+		p.data, err = encodeConfig(p.Path, p.config, p.snapshot.Data)
 		if err != nil {
 			return err
 		}
-		if err := p.journalSnapshot.writeExisting(data); err != nil {
-			return err
-		}
 	}
-	if p.teardown && !p.journal.Existed && len(p.data) == 0 {
-		if err := os.Remove(p.snapshot.Target); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	} else {
-		write := p.snapshot.writeExisting
-		if !p.teardown {
-			write = p.snapshot.writePrivate
-		}
-		if err := write(p.data); err != nil {
-			return fmt.Errorf("configuration write interrupted; ownership journal retained for teardown: %w", err)
-		}
-	}
-	if p.teardown {
-		return os.Remove(p.journalSnapshot.Target)
-	}
+	p.Changed = !bytes.Equal(p.data, p.snapshot.Data) ||
+		(!p.teardown && p.snapshot.Info != nil && p.snapshot.Info.Mode().Perm() != 0600)
 	return nil
 }
 
-// setCredential updates only the credential field of an already validated plan.
+func (p *Plan) apply() error {
+	if !p.Changed {
+		return nil
+	}
+	if p.remove {
+		err := os.Remove(p.snapshot.Target)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if p.teardown {
+		return p.snapshot.writeExisting(p.data)
+	}
+	return p.snapshot.writePrivate(p.data)
+}
+
 // Configuration is planned once, before confirmation or API key creation.
 func (p *Plan) setCredential(token string) error {
 	if len(p.credentialPath) == 0 {
@@ -346,26 +236,7 @@ func (p *Plan) setCredential(token string) error {
 	if err := put(p.config, p.credentialPath, value{Exists: true, Data: token}); err != nil {
 		return err
 	}
-	for i := range p.journal.Settings {
-		v := &p.journal.Settings[i]
-		if slices.Equal(v.Path, p.credentialPath[:min(len(v.Path), len(p.credentialPath))]) {
-			v.Installed = get(p.config, v.Path)
-		}
-	}
-	data, err := encodeConfig(p.Path, p.config, p.snapshot.Data)
-	if err != nil {
-		return err
-	}
-	original, err := decodeConfig(p.Path, p.snapshot.Data)
-	if err != nil {
-		return err
-	}
-	if reflect.DeepEqual(original, p.config) {
-		data = p.snapshot.Data
-	}
-	p.data = data
-	p.Changed = !bytes.Equal(data, p.snapshot.Data) || (p.snapshot.Info != nil && p.snapshot.Info.Mode().Perm() != 0600)
-	return nil
+	return p.encode()
 }
 
 func decodeConfig(path string, b []byte) (map[string]any, error) {

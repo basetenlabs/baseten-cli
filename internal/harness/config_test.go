@@ -3,6 +3,7 @@
 package harness
 
 import (
+	"fmt"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
@@ -41,25 +42,54 @@ func save(t *testing.T, path string, d map[string]any) {
 	require.NoError(t, os.WriteFile(path, b, 0600))
 }
 
-func TestTeardownRestoresBytesOrRemovesNewFile(t *testing.T) {
-	for _, existing := range []bool{false, true} {
-		t.Run(map[bool]string{false: "new", true: "existing"}[existing], func(t *testing.T) {
+func TestTeardownOnlyRemovesIntegrationSettings(t *testing.T) {
+	for _, name := range []string{ClaudeCode, codexName, openCodeName} {
+		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "settings.json")
-			original := []byte("{\"custom\":9007199254740993}\n")
-			if existing {
-				require.NoError(t, os.WriteFile(path, original, 0600))
+			if name == codexName {
+				path = filepath.Join(t.TempDir(), "config.toml")
 			}
-			require.NoError(t, ApplyPlans([]*Plan{setup(t, path, fixture(t))}, FixtureToken))
-			p, e := prepareTeardown(path)
-			require.NoError(t, e)
-			require.NoError(t, ApplyPlans([]*Plan{p}, FixtureToken))
-			b, e := os.ReadFile(path)
-			if existing {
-				require.NoError(t, e)
-				require.Equal(t, original, b)
-			} else {
-				require.True(t, os.IsNotExist(e))
+			original := map[string]any{"model": "original-model", "theme": "dark"}
+			writeConfig := func(d map[string]any) {
+				b, err := encodeConfig(path, d, nil)
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(path, b, 0600))
 			}
+			writeConfig(original)
+			h := adapter(t, name)
+			for i := 0; i < 10; i++ {
+				if i == 3 {
+					_, d, err := readConfig(path)
+					require.NoError(t, err)
+					d["theme"] = "light"
+					d["user-added"] = "keep"
+					writeConfig(d)
+				}
+				plans, err := h.Prepare(path, fixture(t), Selection{Primary: fixture(t)[i%2].Name}, "https://coding.baseten.co", FixtureToken)
+				require.NoError(t, err)
+				require.NoError(t, ApplyPlans(plans, FixtureToken))
+				require.NoFileExists(t, path+".baseten-harness.json")
+			}
+			plans, err := h.Teardown(path)
+			require.NoError(t, err)
+			require.NoError(t, ApplyPlans(plans, ""))
+			_, d, err := readConfig(path)
+			require.NoError(t, err)
+			require.Equal(t, map[string]any{"theme": "light", "user-added": "keep"}, d)
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			plans, err = h.Teardown(path)
+			require.NoError(t, err)
+			for _, p := range plans {
+				require.False(t, p.Changed)
+			}
+			require.NoError(t, ApplyPlans(plans, ""))
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+			configured, err := h.Configured(path)
+			require.NoError(t, err)
+			require.False(t, configured)
 		})
 	}
 }
@@ -69,25 +99,7 @@ func TestConcurrentEditRejectsApply(t *testing.T) {
 	p := setup(t, path, fixture(t))
 	require.NoError(t, os.WriteFile(path, []byte("{}"), 0600))
 	require.ErrorContains(t, ApplyPlans([]*Plan{p}, FixtureToken), "concurrently")
-	_, e := os.Stat(journalPath(path))
-	require.True(t, os.IsNotExist(e))
-}
-
-func TestInterruptedRefreshCanRestorePreviousManagedValues(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.json")
-	require.NoError(t, ApplyPlans([]*Plan{setup(t, path, fixture(t))}, FixtureToken))
-	routes := fixture(t)
-	routes[0].DisplayName = "Changed"
-	p := setup(t, path, routes)
-	// Simulate a crash after journal update, before the settings replacement.
-	b, e := encode(p.journal)
-	require.NoError(t, e)
-	require.NoError(t, p.journalSnapshot.writeExisting(b))
-	teardown, e := prepareTeardown(path)
-	require.NoError(t, e)
-	require.NoError(t, ApplyPlans([]*Plan{teardown}, FixtureToken))
-	_, e = os.Stat(path)
-	require.True(t, os.IsNotExist(e))
+	require.NoFileExists(t, path+".baseten-harness.json")
 }
 
 func TestSetupRepairsPermissionsWithoutContentChanges(t *testing.T) {
@@ -111,52 +123,7 @@ func TestSetupRepairsPermissionsWithoutContentChanges(t *testing.T) {
 	require.False(t, setup(t, path, fixture(t)).Changed)
 }
 
-func TestRefreshKeepsFirstSetupRestorePoint(t *testing.T) {
-	for _, filename := range []string{"settings.json", "opencode.jsonc", "config.toml"} {
-		t.Run(filename, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), filename)
-			original, err := encodeConfig(path, map[string]any{"model": "original", "subagent": "original-subagent", "theme": "dark"}, nil)
-			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(path, original, 0600))
-			apply := func(settings []setting) {
-				t.Helper()
-				p, err := prepareSettings(path, []Route{{Name: "updated-route"}}, func(map[string]any) ([]setting, error) { return settings, nil })
-				require.NoError(t, err)
-				require.NoError(t, ApplyPlans([]*Plan{p}, FixtureToken))
-				_, _, _, journal, err := readConfig(path)
-				require.NoError(t, err)
-				require.Equal(t, original, journal.Original)
-			}
-			apply([]setting{desired([]string{"model"}, "first-route")})
-			// Edits after the first setup must never replace the restore point.
-			_, current, _, _, err := readConfig(path)
-			require.NoError(t, err)
-			current["model"] = "session-choice"
-			current["subagent"] = "later-choice"
-			current["theme"] = "light"
-			edited, err := encodeConfig(path, current, nil)
-			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(path, edited, 0600))
-			apply([]setting{desired([]string{"model"}, "second-route"), desired([]string{"subagent"}, "managed-subagent")})
-			// Omitting a previous optional setting must not lose its restoration record.
-			apply([]setting{desired([]string{"model"}, "latest-route")})
-			_, current, _, journal, err := readConfig(path)
-			require.NoError(t, err)
-			require.Equal(t, "latest-route", current["model"])
-			require.Len(t, journal.Settings, 2)
-			p, err := prepareTeardown(path)
-			require.NoError(t, err)
-			require.NoError(t, ApplyPlans([]*Plan{p}, FixtureToken))
-			_, restored, _, _, err := readConfig(path)
-			require.NoError(t, err)
-			require.Equal(t, "original", restored["model"])
-			require.Equal(t, "original-subagent", restored["subagent"])
-			require.Equal(t, "light", restored["theme"])
-		})
-	}
-}
-
-func TestSymlinkSetupPreservesLinkAndRestoresTarget(t *testing.T) {
+func TestSymlinkSetupAndTeardownPreserveLinkAndUnrelatedSettings(t *testing.T) {
 	for _, name := range []string{ClaudeCode, codexName, openCodeName} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -191,11 +158,128 @@ func TestSymlinkSetupPreservesLinkAndRestoresTarget(t *testing.T) {
 			require.NoError(t, ApplyPlans(plans, ""))
 			restored, err := os.ReadFile(target)
 			require.NoError(t, err)
-			require.Equal(t, original, restored)
+			d, err := decodeConfig(link, restored)
+			require.NoError(t, err)
+			require.Equal(t, map[string]any{"theme": "dark"}, d)
 			info, err = os.Lstat(link)
 			require.NoError(t, err)
 			require.NotZero(t, info.Mode()&os.ModeSymlink)
-			require.NoFileExists(t, journalPath(target))
+			require.NoFileExists(t, target+".baseten-harness.json")
 		})
+	}
+}
+
+func TestTeardownUnconfiguredIsNoop(t *testing.T) {
+	for _, name := range []string{ClaudeCode, codexName, openCodeName} {
+		for _, existing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/existing=%t", name, existing), func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "settings.json")
+				original := []byte(`{"model":"user-model","env":{"ANTHROPIC_BASE_URL":"https://other.example"}}`)
+				if name == codexName {
+					path += ".toml"
+					original = []byte("model = \"user-model\"\nmodel_provider = \"other\"\n[model_providers.other]\nname = \"Other\"\n")
+				}
+				if existing {
+					require.NoError(t, os.WriteFile(path, original, 0600))
+				}
+				plans, err := adapter(t, name).Teardown(path)
+				require.NoError(t, err)
+				for _, p := range plans {
+					require.False(t, p.Changed)
+					require.False(t, p.Managed)
+				}
+				require.NoError(t, ApplyPlans(plans, ""))
+				if existing {
+					b, err := os.ReadFile(path)
+					require.NoError(t, err)
+					require.Equal(t, original, b)
+				} else {
+					require.NoFileExists(t, path)
+				}
+			})
+		}
+	}
+}
+
+func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
+	for _, name := range []string{codexName, openCodeName} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			if name == codexName {
+				path += ".toml"
+			}
+			h := adapter(t, name)
+			plans, err := h.Prepare(path, fixture(t), Selection{}, "https://coding.baseten.co", FixtureToken)
+			require.NoError(t, err)
+			require.NoError(t, ApplyPlans(plans, FixtureToken))
+			_, d, err := readConfig(path)
+			require.NoError(t, err)
+			d["model"] = "other/user-model"
+			if name == codexName {
+				d["model_provider"] = "other"
+				d["review_model"] = "other/reviewer"
+				d["model_catalog_json"] = "/user/custom-catalog.json"
+				require.NoError(t, put(d, []string{"model_providers", "other"}, value{Exists: true, Data: map[string]any{"name": "Other"}}))
+			} else {
+				d["small_model"] = "other/small"
+				require.NoError(t, put(d, []string{"provider", "other"}, value{Exists: true, Data: map[string]any{"name": "Other"}}))
+				require.NoError(t, put(d, []string{"agent", "general", "model"}, value{Exists: true, Data: "other/subagent"}))
+			}
+			b, err := encodeConfig(path, d, nil)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, b, 0600))
+			status, err := h.Inspect(Detection{Name: name, Path: path})
+			require.NoError(t, err)
+			require.Equal(t, "inactive", status.State)
+			plans, err = h.Teardown(path)
+			require.NoError(t, err)
+			require.NoError(t, ApplyPlans(plans, ""))
+			providers := "provider"
+			if name == codexName {
+				providers = "model_providers"
+			}
+			require.NoError(t, put(d, []string{providers, providerID}, value{}))
+			_, after, err := readConfig(path)
+			require.NoError(t, err)
+			require.Equal(t, d, after)
+		})
+	}
+}
+
+func TestOptionalSubagentCleanup(t *testing.T) {
+	for _, name := range []string{ClaudeCode, openCodeName} {
+		for _, explicit := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/explicit=%t", name, explicit), func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "settings.json")
+				key := []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}
+				if name == openCodeName {
+					key = []string{"agent", "general", "model"}
+				}
+				d := map[string]any{}
+				require.NoError(t, put(d, key, value{Exists: true, Data: "user-subagent"}))
+				save(t, path, d)
+				h := adapter(t, name)
+				selection := Selection{}
+				if explicit {
+					selection.Subagent = "acme/subagent"
+				}
+				plans, err := h.Prepare(path, fixture(t), selection, "https://coding.baseten.co", FixtureToken)
+				require.NoError(t, err)
+				require.NoError(t, ApplyPlans(plans, FixtureToken))
+				// Refresh drops this route and omits the optional flag.
+				plans, err = h.Prepare(path, fixture(t)[:2], Selection{}, "https://coding.baseten.co", FixtureToken)
+				require.NoError(t, err)
+				require.NoError(t, ApplyPlans(plans, FixtureToken))
+				plans, err = h.Teardown(path)
+				require.NoError(t, err)
+				require.NoError(t, ApplyPlans(plans, ""))
+				d = load(t, path)
+				if explicit {
+					require.False(t, get(d, key).Exists)
+				} else {
+					require.Equal(t, "user-subagent", get(d, key).Data)
+				}
+			})
+		}
 	}
 }

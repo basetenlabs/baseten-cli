@@ -14,7 +14,7 @@ var commandHarness = Command{
 			Description: harnessPreRelease +
 				"Configure compatible harnesses with your team's routes.\n\n" +
 				"Setup offers a picker of installed harnesses when --harness is omitted, previews changes, and creates or reuses a team-scoped " +
-				"routes API key. Repeat --harness to select multiple integrations. The first setup backs up existing settings; reruns preserve that restore point.\n\n" +
+				"routes API key. Repeat --harness to select multiple integrations. Setup overwrites integration settings without saving previous values; reruns refresh those settings.\n\n" +
 				"Pass --team if you belong to multiple teams. All routes are added to the catalog. The first returned route is the default; " +
 				"use --route to override it.\n\n" +
 				"Setup replaces the complete model picker. Use --dry-run to preview or --yes to skip confirmation. OAuth refresh may update saved login credentials during previews. Restart the harness after setup.",
@@ -53,14 +53,14 @@ var commandHarness = Command{
 		},
 		{
 			Name:    "status",
-			Summary: "Inspect local harness configuration and drift (PRE-RELEASE)",
+			Summary: "Inspect local harness configuration (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Show the installed version, configuration path, managed settings, and changes made since setup. " +
+				"Show the installed version, configuration path, integration settings, and configured routes. " +
 				"Inspect configured harnesses at their default paths, or pass --harness to narrow the selection. Status remains available " +
 				"after an upgrade or executable removal.",
 			Flags: HarnessStatusFlags{},
 			Output: &CommandOutput[HarnessStatusesResult]{
-				TextDescription: "Show local configuration, configured routes, and changed settings. Use --verbose for managed setting names.",
+				TextDescription: "Show local configuration, configured routes, and integration state. Use --verbose for managed setting names.",
 				Examples: []CommandExample{
 					{
 						Description: "Inspect Codex configuration.",
@@ -75,22 +75,22 @@ var commandHarness = Command{
 		},
 		{
 			Name:    "teardown",
-			Summary: "Restore settings owned by Baseten harness (PRE-RELEASE)",
+			Summary: "Remove Baseten harness settings and use native defaults (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Restore managed settings to their values before the first setup, including settings changed afterward. " +
-				"Unrelated settings are preserved. Restore configured harnesses at their default paths, or pass --harness to narrow the selection.\n\nUse --dry-run to preview restoration or --yes to apply without confirmation. Saved " +
+				"Remove Baseten providers and clear their shared settings so native defaults apply. Previous values are not saved or restored. " +
+				"Unrelated settings are preserved. Remove configured integrations at their default paths, or pass --harness to narrow the selection.\n\nUse --dry-run to preview removal or --yes to apply without confirmation. Saved " +
 				"routes keys are retained and are not revoked. Teardown remains available after an upgrade or " +
 				"executable removal.",
 			Flags: HarnessTeardownFlags{},
 			Output: &CommandOutput[HarnessPlansResult]{
-				TextDescription: "Restore original managed settings. Use --verbose for configuration paths and setting names.",
+				TextDescription: "Remove Baseten integration settings. Use --verbose for configuration paths and setting names.",
 				Examples: []CommandExample{
 					{
-						Description: "Preview restoration.",
+						Description: "Preview removal.",
 						Command:     "baseten harness teardown --harness codex --dry-run",
 					},
 					{
-						Description: "Restore configuration without prompting.",
+						Description: "Remove integration settings without prompting.",
 						Command:     "baseten harness teardown --harness codex --yes",
 					},
 				},
@@ -133,7 +133,6 @@ type HarnessStatusResult struct {
 	Supported       bool                  `json:"supported"`
 	State           string                `json:"state"`
 	ManagedSettings []string              `json:"managed_settings,omitempty"`
-	Drift           []string              `json:"drift,omitempty"`
 	Routes          []string              `json:"routes,omitempty"`
 	Note            string                `json:"note"`
 }
@@ -164,6 +163,6 @@ type HarnessSetupFlags struct {
 
 type HarnessTeardownFlags struct {
 	HarnessFlags
-	DryRun bool `flag:"dry-run" desc:"Preview restoration without writing files"`
+	DryRun bool `flag:"dry-run" desc:"Preview removal without writing files"`
 	Yes    bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
