@@ -72,7 +72,9 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		if !setup && len(flags.Harness) == 0 {
 			configured, err := adapter.Configured(d.Path)
 			if err != nil {
-				return nil, err
+				// One broken file shouldn't hide the other harnesses. An explicit --harness still fails.
+				ctx.Logf("warning: skipping %s: settings at %s are misconfigured: %v\n", d.Name, harnessDisplayPath(d.Path), err)
+				continue
 			}
 			if !configured {
 				continue
