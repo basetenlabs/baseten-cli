@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,31 +12,47 @@ import (
 	"strings"
 )
 
-type openCodeHarness struct{ baseHarness }
+type openCodeHarness struct{}
 
-func (h openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
-	explicitSubagent := s.Subagent != ""
-	defaultOpenCodeBackground := s.Background == ""
+var openCodeSubagentPaths = [][]string{{"agent", "general", "model"}, {"agent", "explore", "model"}}
 
-	if len(routes) == 0 {
-		return nil, errors.New("no accessible routes")
+func (openCodeHarness) Name() string { return OpenCode }
+
+func (h openCodeHarness) Detect(ctx context.Context, execer Execer, dir string) (Detection, error) {
+	if dir == "" {
+		base, err := configDir("", "XDG_CONFIG_HOME", ".config")
+		if err != nil {
+			return Detection{}, err
+		}
+		dir = filepath.Join(base, "opencode")
 	}
+	// OpenCode reads opencode.jsonc in preference to opencode.json.
+	path := filepath.Join(dir, "opencode.jsonc")
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		path = filepath.Join(dir, "opencode.json")
+	} else if err != nil {
+		return Detection{}, err
+	}
+	return detect(ctx, execer, h.Name(), "opencode", path)
+}
+
+func (openCodeHarness) BackgroundRoute(s Selection) string {
+	return cmp.Or(s.Background, defaultBackgroundRoute)
+}
+
+func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
 	if s.Fallback != "" {
 		return nil, errors.New("--fallback-route is supported only for Claude Code")
 	}
-	var err error
-	s, err = s.resolve(routes)
+	explicitSubagent := s.Subagent != ""
+	s, err := s.resolve(routes)
 	if err != nil {
 		return nil, err
 	}
-
-	if filepath.Ext(path) != ".json" && filepath.Ext(path) != ".jsonc" {
-		return nil, errors.New("OpenCode --config must name a .json or .jsonc file")
-	}
 	models := map[string]any{}
-	if defaultOpenCodeBackground {
-		s.Background = defaultSmallTaskModel
-		models[defaultSmallTaskModel] = map[string]any{"name": "DeepSeek V4.1 Flash"}
+	if s.Background == "" {
+		s.Background = defaultBackgroundRoute
+		models[defaultBackgroundRoute] = map[string]any{"name": "DeepSeek V4.1 Flash"}
 	}
 	for _, r := range routes {
 		models[r.Name] = map[string]any{"name": r.DisplayName}
@@ -53,14 +71,13 @@ func (h openCodeHarness) Prepare(path string, routes []Route, s Selection, endpo
 		}),
 	}
 	if explicitSubagent {
-		for _, role := range []string{"general", "explore"} {
-			values = append(values, desired([]string{"agent", role, "model"}, providerID+"/"+s.Subagent))
+		for _, path := range openCodeSubagentPaths {
+			values = append(values, desired(path, providerID+"/"+s.Subagent))
 		}
 	}
-
 	p, err := prepareSettings(path, func(data map[string]any) ([]setting, error) {
 		if _, ok := data["providers"]; ok {
-			return nil, errors.New("OpenCode V2 providers require a separately verified adapter")
+			return nil, errors.New("OpenCode V2 providers are not supported yet")
 		}
 		username := ""
 		if runtime.GOOS == "darwin" {
@@ -73,7 +90,7 @@ func (h openCodeHarness) Prepare(path string, routes []Route, s Selection, endpo
 		for _, policy := range openCodePolicyPaths(runtime.GOOS, username) {
 			if _, err := os.Stat(policy); err == nil {
 				return nil, fmt.Errorf("managed policy detected at %s", policy)
-			} else if !os.IsNotExist(err) {
+			} else if !errors.Is(err, os.ErrNotExist) {
 				return nil, err
 			}
 		}
@@ -86,46 +103,35 @@ func (h openCodeHarness) Prepare(path string, routes []Route, s Selection, endpo
 	return []*Plan{p}, nil
 }
 
-func (h openCodeHarness) SmallTaskModel(s Selection) string {
-	if s.Background != "" {
-		return s.Background
-	}
-	return defaultSmallTaskModel
-}
-
 func openCodePolicyPaths(platform, username string) []string {
 	dir := "/etc/opencode"
 	var paths []string
-	if platform == "darwin" {
+	switch platform {
+	case "darwin":
 		dir = "/Library/Application Support/opencode"
 		paths = append(paths,
 			filepath.Join("/Library/Managed Preferences", username, "ai.opencode.managed.plist"),
 			"/Library/Managed Preferences/ai.opencode.managed.plist",
 		)
-	} else if platform == "windows" {
-		root := os.Getenv("ProgramData")
-		if root == "" {
-			root = `C:\ProgramData`
-		}
-		dir = filepath.Join(root, "opencode")
+	case "windows":
+		dir = filepath.Join(cmp.Or(os.Getenv("ProgramData"), `C:\ProgramData`), "opencode")
 	}
 	return append(paths, filepath.Join(dir, "opencode.json"), filepath.Join(dir, "opencode.jsonc"))
 }
 
-// References to another provider belong to the user, even if Baseten was
-// previously selected there. Teardown only clears references to our provider.
+// openCodeTeardownPaths clears only references to Baseten's provider; a model
+// the user pointed at another provider is theirs.
 func openCodeTeardownPaths(data map[string]any) [][]string {
 	paths := [][]string{{"provider", providerID}}
-	for _, key := range [][]string{{"model"}, {"small_model"}, {"agent", "general", "model"}, {"agent", "explore", "model"}} {
-		model, _ := get(data, key).Data.(string)
-		if strings.HasPrefix(model, providerID+"/") {
+	for _, key := range append([][]string{{"model"}, {"small_model"}}, openCodeSubagentPaths...) {
+		if model, _ := get(data, key).Data.(string); strings.HasPrefix(model, providerID+"/") {
 			paths = append(paths, key)
 		}
 	}
 	return paths
 }
 
-func (h openCodeHarness) Teardown(path string) ([]*Plan, error) {
+func (openCodeHarness) Teardown(path string) ([]*Plan, error) {
 	p, err := prepareTeardown(path, openCodeTeardownPaths)
 	if err != nil {
 		return nil, err
@@ -133,32 +139,29 @@ func (h openCodeHarness) Teardown(path string) ([]*Plan, error) {
 	return []*Plan{p}, nil
 }
 
-func (h openCodeHarness) Inspect(d Detection) (Status, error) {
+func (openCodeHarness) Inspect(d Detection) (Status, error) {
 	r, data, err := inspectConfig(d)
 	if err != nil {
 		return r, err
 	}
 	r.managed(data, openCodeTeardownPaths(data))
-	if r.State == "not-configured" {
+	if r.State == StateNotConfigured {
 		return r, nil
 	}
 	if !get(data, []string{"provider", providerID}).Exists {
-		r.State = "incomplete"
+		r.State = StateIncomplete
 	} else if !strings.HasPrefix(r.DefaultRoute, providerID+"/") {
-		r.State = "inactive"
+		r.State = StateInactive
 	}
 	r.DefaultRoute = strings.TrimPrefix(r.DefaultRoute, providerID+"/")
 	small, _ := data["small_model"].(string)
-	r.SmallTaskModel = strings.TrimPrefix(small, providerID+"/")
+	r.BackgroundRoute = strings.TrimPrefix(small, providerID+"/")
 	labels := map[string]string{}
-	if models, ok := get(data, []string{"provider", providerID, "models"}).Data.(map[string]any); ok {
-		for name, model := range models {
-			if name == defaultSmallTaskModel {
-				continue
-			}
-			if row, ok := model.(map[string]any); ok {
-				labels[name], _ = row["name"].(string)
-			}
+	models, _ := get(data, []string{"provider", providerID, "models"}).Data.(map[string]any)
+	for name, model := range models {
+		// The default background model is not a route, so it is not listed.
+		if row, ok := model.(map[string]any); ok && name != defaultBackgroundRoute {
+			labels[name], _ = row["name"].(string)
 		}
 	}
 	r.addRoutes(labels)

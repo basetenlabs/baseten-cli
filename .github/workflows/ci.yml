@@ -25,6 +25,15 @@ jobs:
           go fmt ./...
           git diff --exit-code
 
+      # The harness tests run the installed Claude Code, Codex, and OpenCode
+      # CLIs against a local gateway, and skip any that are missing.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install harnesses
+        run: npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai
+
       - name: Test
         run: go test ./...
 

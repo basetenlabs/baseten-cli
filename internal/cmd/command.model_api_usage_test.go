@@ -189,20 +189,18 @@ func Test_ModelApi_Usage_NoBuckets(t *testing.T) {
 }
 
 func Test_ModelApi_Usage_BucketsRenderInUTC(t *testing.T) {
-	// Buckets are UTC-aligned. Pin a local zone behind UTC so local rendering
-	// would visibly shift the daily bucket onto the previous calendar date.
-	// TZ alone would not do it: time.Local is resolved once per process.
-	// Register restoration before the harness so its HTTP server stops first.
-	local := time.Local
-	time.Local = time.FixedZone("test-behind-utc", -8*60*60)
-	t.Cleanup(func() { time.Local = local })
-
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis/usage", 200, modelAPIUsageBody(
 		modelAPIUsageBucket("2026-08-20T00:00:00Z",
 			modelAPIUsageResult(map[string]any{"model": "llama-3"}, 1, 100, 0, 10),
 		),
 	))
+	// Buckets are UTC-aligned. Pin a local zone behind UTC so local rendering
+	// would visibly shift the daily bucket onto the previous calendar date.
+	// TZ alone would not do it: time.Local is resolved once per process.
+	local := time.Local
+	time.Local = time.FixedZone("test-behind-utc", -8*60*60)
+	t.Cleanup(func() { time.Local = local })
 
 	h.Require.NoError(h.Execute("model-api", "usage"))
 	h.Require.Contains(h.Stdout.String(), "2026-08-20")

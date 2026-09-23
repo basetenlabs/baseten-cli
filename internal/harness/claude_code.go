@@ -1,19 +1,22 @@
 package harness
 
 import (
+	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 )
 
-type claudeHarness struct{ baseHarness }
+type claudeCodeHarness struct{}
 
-// Claude has no named provider block. This marker identifies our shared settings
-// without retaining a backup or any previous setting values.
+// claudeMarker identifies Baseten's settings, since Claude Code has no named
+// provider block to look for.
 const claudeMarker = "BASETEN_HARNESS"
+
+var claudeSubagentPath = []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}
 
 var claudePaths = [][]string{
 	{"model"}, {"fallbackModel"}, {"modelPicker", "options"},
@@ -25,42 +28,21 @@ var claudePaths = [][]string{
 	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"},
 }
 
-func claudeRoutes(data map[string]any) map[string]string {
-	labels := map[string]string{}
-	if options, ok := get(data, []string{"modelPicker", "options"}).Data.([]any); ok {
-		for _, option := range options {
-			if row, ok := option.(map[string]any); ok {
-				name, _ := row["model"].(string)
-				labels[name], _ = row["label"].(string)
-			}
-		}
-	}
-	return labels
-}
+func (claudeCodeHarness) Name() string { return ClaudeCode }
 
-func claudeTeardownPaths(data map[string]any) [][]string {
-	if get(data, []string{"env", claudeMarker}).Data != "1" {
-		return nil
-	}
-	paths := append([][]string{}, claudePaths...)
-	// Optional subagent settings are only ours while referencing a configured
-	// route. Leave native or independently configured subagents alone.
-	subagent, _ := get(data, []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}).Data.(string)
-	if _, ok := claudeRoutes(data)[subagent]; ok {
-		paths = append(paths, []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"})
-	}
-	return paths
-}
-
-func (h claudeHarness) Teardown(path string) ([]*Plan, error) {
-	p, err := prepareTeardown(path, claudeTeardownPaths)
+func (h claudeCodeHarness) Detect(ctx context.Context, execer Execer, dir string) (Detection, error) {
+	dir, err := configDir(dir, "CLAUDE_CONFIG_DIR", ".claude")
 	if err != nil {
-		return nil, err
+		return Detection{}, err
 	}
-	return []*Plan{p}, nil
+	return detect(ctx, execer, h.Name(), "claude", filepath.Join(dir, "settings.json"))
 }
 
-func (h claudeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
+func (claudeCodeHarness) BackgroundRoute(s Selection) string {
+	return cmp.Or(s.Background, defaultBackgroundRoute)
+}
+
+func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
 	if err := checkClaudePolicy(path); err != nil {
 		return nil, err
 	}
@@ -74,8 +56,6 @@ func (h claudeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 	return []*Plan{p}, nil
 }
 
-func (h claudeHarness) SmallTaskModel(s Selection) string { return defaultSmallTaskModel }
-
 func claudeSettings(routes []Route, selection Selection, endpoint, token string, current map[string]any) ([]setting, error) {
 	for _, route := range routes {
 		switch route.Name {
@@ -83,37 +63,29 @@ func claudeSettings(routes []Route, selection Selection, endpoint, token string,
 			return nil, fmt.Errorf("route %q conflicts with a Claude model keyword", route.Name)
 		}
 	}
-	if selection.Background != "" {
-		return nil, errors.New("--background-route is supported only for OpenCode")
-	}
-
-	explicitSubagent := selection.Subagent != ""
 	s, err := selection.resolve(routes)
 	if err != nil {
 		return nil, err
 	}
-	if token == "" || strings.ContainsAny(token, "\r\n\t ") {
-		return nil, errors.New("missing or invalid harness credential")
-	}
 	for _, key := range []string{"apiKeyHelper", "modelOverrides"} {
 		if _, ok := current[key]; ok {
-			return nil, fmt.Errorf("existing %s must be resolved before setup", key)
+			return nil, fmt.Errorf("existing %s must be removed before setup", key)
 		}
 	}
-	blocked := []string{"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"}
-	for _, key := range blocked {
+	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"} {
 		if get(current, []string{"env", key}).Exists || os.Getenv(key) != "" {
-			return nil, fmt.Errorf("%s overrides harness configuration; resolve it before setup", key)
+			return nil, fmt.Errorf("%s overrides the harness configuration; remove it before setup", key)
 		}
 	}
+	background := cmp.Or(s.Background, defaultBackgroundRoute)
 	options := []any{}
 	allowed := []any{}
 	for _, r := range routes {
 		options = append(options, map[string]any{"model": r.Name, "label": r.DisplayName})
 		allowed = append(allowed, r.Name)
 	}
-	if !slices.Contains(allowed, any(defaultSmallTaskModel)) {
-		allowed = append(allowed, defaultSmallTaskModel)
+	if !slices.Contains(allowed, any(background)) {
+		allowed = append(allowed, background)
 	}
 	values := []setting{
 		desired([]string{"model"}, s.Primary),
@@ -129,47 +101,79 @@ func claudeSettings(routes []Route, selection Selection, endpoint, token string,
 		{"ANTHROPIC_DEFAULT_SONNET_MODEL", s.Primary},
 		{"ANTHROPIC_DEFAULT_OPUS_MODEL", s.Primary},
 		{"ANTHROPIC_DEFAULT_FABLE_MODEL", s.Primary},
-		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", defaultSmallTaskModel},
-		{"ANTHROPIC_SMALL_FAST_MODEL", defaultSmallTaskModel},
+		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", background},
+		{"ANTHROPIC_SMALL_FAST_MODEL", background},
 		{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
-	if explicitSubagent {
-		values = append(values, desired([]string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}, s.Subagent))
+	if selection.Subagent != "" {
+		values = append(values, desired(claudeSubagentPath, s.Subagent))
 	} else if get(current, []string{"env", claudeMarker}).Data == "1" {
-		// A refresh may retire the route used by an earlier --subagent-route.
-		// Clear that stale reference instead of carrying it outside the catalog.
-		key := []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}
-		previous, _ := get(current, key).Data.(string)
+		// A refresh may retire the route an earlier --subagent-route selected.
+		previous, _ := get(current, claudeSubagentPath).Data.(string)
 		if _, owned := claudeRoutes(current)[previous]; owned && !slices.Contains(allowed, any(previous)) {
-			values = append(values, setting{Path: key})
+			values = append(values, setting{Path: claudeSubagentPath})
 		}
 	}
 	return values, nil
 }
 
+// checkClaudePolicy refuses setup when an administrator manages Claude Code.
 func checkClaudePolicy(path string) error {
 	for _, p := range []string{filepath.Join(filepath.Dir(path), "managed-settings.json"), "/Library/Application Support/ClaudeCode/managed-settings.json", "/etc/claude-code/managed-settings.json"} {
 		if _, err := os.Stat(p); err == nil {
 			return fmt.Errorf("managed policy detected at %s; ask your administrator to configure the harness", p)
-		} else if !os.IsNotExist(err) {
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
 	return nil
 }
 
-func (h claudeHarness) Inspect(d Detection) (Status, error) {
+func claudeRoutes(data map[string]any) map[string]string {
+	labels := map[string]string{}
+	options, _ := get(data, []string{"modelPicker", "options"}).Data.([]any)
+	for _, option := range options {
+		if row, ok := option.(map[string]any); ok {
+			name, _ := row["model"].(string)
+			labels[name], _ = row["label"].(string)
+		}
+	}
+	return labels
+}
+
+func claudeTeardownPaths(data map[string]any) [][]string {
+	if get(data, []string{"env", claudeMarker}).Data != "1" {
+		return nil
+	}
+	paths := slices.Clone(claudePaths)
+	// A subagent setting is only Baseten's while it names a configured route.
+	subagent, _ := get(data, claudeSubagentPath).Data.(string)
+	if _, ok := claudeRoutes(data)[subagent]; ok {
+		paths = append(paths, claudeSubagentPath)
+	}
+	return paths
+}
+
+func (claudeCodeHarness) Teardown(path string) ([]*Plan, error) {
+	p, err := prepareTeardown(path, claudeTeardownPaths)
+	if err != nil {
+		return nil, err
+	}
+	return []*Plan{p}, nil
+}
+
+func (claudeCodeHarness) Inspect(d Detection) (Status, error) {
 	r, data, err := inspectConfig(d)
 	if err != nil {
 		return r, err
 	}
 	r.managed(data, claudeTeardownPaths(data))
-	if r.State == "not-configured" {
+	if r.State == StateNotConfigured {
 		return r, nil
 	}
-	r.SmallTaskModel, _ = get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string)
+	r.BackgroundRoute, _ = get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string)
 	r.addRoutes(claudeRoutes(data))
 	return r, nil
 }
