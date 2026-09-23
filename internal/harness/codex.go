@@ -3,8 +3,6 @@ package harness
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -54,19 +52,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, 
 			"experimental_bearer_token": token,
 		}),
 	}
-	p, err := prepareSettings(path, func(data map[string]any) ([]setting, error) {
-		if _, ok := data["profile"]; ok {
-			return nil, errors.New("remove the active Codex profile before setup")
-		}
-		for _, policy := range []string{filepath.Join(filepath.Dir(path), "managed_config.toml"), "/etc/codex/managed_config.toml", "/etc/codex/requirements.toml"} {
-			if _, err := os.Stat(policy); err == nil {
-				return nil, fmt.Errorf("managed policy detected at %s", policy)
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return nil, err
-			}
-		}
-		return values, nil
-	})
+	p, err := prepareSettings(path, func(map[string]any) ([]setting, error) { return values, nil })
 	if err != nil {
 		return nil, err
 	}
