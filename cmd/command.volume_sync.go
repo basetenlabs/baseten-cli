@@ -17,7 +17,7 @@ var commandVolumeSync = Command{
 				"scheme selects the provider: hf://, s3://, gs://, azure://, r2://, cw://, or bt://. " +
 				"Repeat --include and --exclude to filter source-relative paths.\n\n" +
 				"Remote credentials must already be stored as a Baseten secret or made available through " +
-				"AWS AssumeRole. The CLI infers the authentication method from the --auth-* flags and never " +
+				"AWS AssumeRole, AWS OIDC, or GCP OIDC. The CLI infers the authentication method from the --auth-* flags and never " +
 				"accepts plaintext credentials. Omit every authentication flag for a public source.\n\n" +
 				"By default the command returns as soon as the server creates the job. Pass --wait to poll " +
 				"until it is READY, FAILED, or CANCELED. Progress is written to stderr and the final result " +
@@ -44,6 +44,26 @@ var commandVolumeSync = Command{
 							"--auth-aws-assume-role-arn <role-arn>",
 							"--auth-aws-assume-role-region <region>",
 							"--wait",
+						},
+					},
+					{
+						Description: "Start an S3 sync using AWS OIDC.",
+						CommandLines: []string{
+							"baseten volume sync start",
+							"--source s3://<bucket>/<prefix>",
+							"--dest bdn:<namespace>/<volume>:<tag>",
+							"--auth-aws-oidc-role-arn <role-arn>",
+							"--auth-aws-oidc-region <region>",
+						},
+					},
+					{
+						Description: "Start a GCS sync using GCP OIDC.",
+						CommandLines: []string{
+							"baseten volume sync start",
+							"--source gs://<bucket>/<prefix>",
+							"--dest bdn:<namespace>/<volume>:<tag>",
+							"--auth-gcp-oidc-service-account <service-account>",
+							"--auth-gcp-oidc-workload-identity-provider <provider-resource-name>",
 						},
 					},
 				},
@@ -134,9 +154,13 @@ type VolumeSyncStartFlags struct {
 	Include     []string `flag:"include" desc:"Glob selecting source-relative files to include. May be repeated."`
 	Exclude     []string `flag:"exclude" desc:"Glob selecting source-relative files to exclude. May be repeated."`
 
-	AuthSecretName          string `flag:"auth-secret-name" desc:"Baseten secret containing source credentials. Supported by hf://, s3://, gs://, azure://, r2://, and cw:// sources." group:"authentication"`
-	AuthAWSAssumeRoleARN    string `flag:"auth-aws-assume-role-arn" desc:"AWS IAM role ARN for an s3:// source. Requires --auth-aws-assume-role-region." group:"authentication"`
-	AuthAWSAssumeRoleRegion string `flag:"auth-aws-assume-role-region" desc:"AWS region for the AssumeRole session. Requires --auth-aws-assume-role-arn." group:"authentication"`
+	AuthSecretName                      string `flag:"auth-secret-name" desc:"Baseten secret containing source credentials. Supported by hf://, s3://, gs://, azure://, r2://, and cw:// sources." group:"authentication"`
+	AuthAWSAssumeRoleARN                string `flag:"auth-aws-assume-role-arn" desc:"AWS IAM role ARN for an s3:// source. Requires --auth-aws-assume-role-region." group:"authentication"`
+	AuthAWSAssumeRoleRegion             string `flag:"auth-aws-assume-role-region" desc:"AWS region for the AssumeRole session. Requires --auth-aws-assume-role-arn." group:"authentication"`
+	AuthAWSOIDCRoleARN                  string `flag:"auth-aws-oidc-role-arn" desc:"AWS IAM role ARN to assume through OIDC for an s3:// source. Requires --auth-aws-oidc-region." group:"authentication"`
+	AuthAWSOIDCRegion                   string `flag:"auth-aws-oidc-region" desc:"AWS region for the OIDC role session. Requires --auth-aws-oidc-role-arn." group:"authentication"`
+	AuthGCPOIDCServiceAccount           string `flag:"auth-gcp-oidc-service-account" desc:"GCP service account to impersonate through OIDC for a gs:// source. Requires --auth-gcp-oidc-workload-identity-provider." group:"authentication"`
+	AuthGCPOIDCWorkloadIdentityProvider string `flag:"auth-gcp-oidc-workload-identity-provider" desc:"Full GCP workload identity provider resource name. Requires --auth-gcp-oidc-service-account." group:"authentication"`
 
 	Wait bool `flag:"wait" desc:"Poll until the sync reaches READY, FAILED, or CANCELED. Does not cancel the server-side job if interrupted."`
 }

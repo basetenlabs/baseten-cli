@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -17,6 +18,26 @@ func init() {
 }
 
 const volumeSyncPollInterval = 2 * time.Second
+
+type volumeSyncAuthenticationAWSOIDC struct {
+	Region  string `json:"region"`
+	RoleARN string `json:"role_arn"`
+}
+
+type volumeSyncAuthenticationGCPOIDC struct {
+	ServiceAccount           string `json:"service_account"`
+	WorkloadIdentityProvider string `json:"workload_identity_provider"`
+}
+
+type volumeSyncSourceS3OIDC struct {
+	managementapi.VolumeSyncSourceS3
+	AWSOIDC volumeSyncAuthenticationAWSOIDC `json:"aws_oidc"`
+}
+
+type volumeSyncSourceGCSOIDC struct {
+	managementapi.VolumeSyncSourceGCS
+	GCPOIDC volumeSyncAuthenticationGCPOIDC `json:"gcp_oidc"`
+}
 
 func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags) error {
 	source, err := volumeSyncSourceFromFlags(flags)
@@ -170,19 +191,47 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 	arn := strings.TrimSpace(flags.AuthAWSAssumeRoleARN)
 	region := strings.TrimSpace(flags.AuthAWSAssumeRoleRegion)
 	secret := strings.TrimSpace(flags.AuthSecretName)
+	awsOIDCRoleARN := strings.TrimSpace(flags.AuthAWSOIDCRoleARN)
+	awsOIDCRegion := strings.TrimSpace(flags.AuthAWSOIDCRegion)
+	gcpOIDCServiceAccount := strings.TrimSpace(flags.AuthGCPOIDCServiceAccount)
+	gcpOIDCWorkloadIdentityProvider := strings.TrimSpace(flags.AuthGCPOIDCWorkloadIdentityProvider)
 	if (arn == "") != (region == "") {
 		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"--auth-aws-assume-role-arn and --auth-aws-assume-role-region must be provided together")
 	}
-	if secret != "" && arn != "" {
+	if (awsOIDCRoleARN == "") != (awsOIDCRegion == "") {
 		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
-			"--auth-secret-name and --auth-aws-assume-role-* are mutually exclusive")
+			"--auth-aws-oidc-role-arn and --auth-aws-oidc-region must be provided together")
+	}
+	if (gcpOIDCServiceAccount == "") != (gcpOIDCWorkloadIdentityProvider == "") {
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
+			"--auth-gcp-oidc-service-account and --auth-gcp-oidc-workload-identity-provider must be provided together")
+	}
+	authMethodCount := 0
+	for _, configured := range []bool{
+		secret != "", arn != "", awsOIDCRoleARN != "", gcpOIDCServiceAccount != "",
+	} {
+		if configured {
+			authMethodCount++
+		}
+	}
+	if authMethodCount > 1 {
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
+			"authentication methods are mutually exclusive")
 	}
 	if arn != "" && sourceType != "S3" {
 		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"--auth-aws-assume-role-* is supported only for an s3:// source")
 	}
-	if secret != "" && sourceType == "BASETEN_TRAINING" {
+	if awsOIDCRoleARN != "" && sourceType != "S3" {
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
+			"--auth-aws-oidc-* is supported only for an s3:// source")
+	}
+	if gcpOIDCServiceAccount != "" && sourceType != "GCS" {
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
+			"--auth-gcp-oidc-* is supported only for a gs:// source")
+	}
+	if authMethodCount > 0 && sourceType == "BASETEN_TRAINING" {
 		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"a bt:// source does not accept authentication flags")
 	}
@@ -206,14 +255,38 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 		if arn != "" {
 			assumeRole = &managementapi.VolumeSyncAuthenticationAWSAssumeRole{RoleArn: arn, Region: region}
 		}
-		err = source.FromVolumeSyncSourceS3(managementapi.VolumeSyncSourceS3{
+		s3Source := managementapi.VolumeSyncSourceS3{
 			Uri: uri, Include: &include, Exclude: &exclude,
 			AuthSecretName: authSecretName, AwsAssumeRole: assumeRole,
-		})
+		}
+		if awsOIDCRoleARN != "" {
+			s3Source.Type = "S3"
+			err = encodeVolumeSyncSource(&source, volumeSyncSourceS3OIDC{
+				VolumeSyncSourceS3: s3Source,
+				AWSOIDC: volumeSyncAuthenticationAWSOIDC{
+					RoleARN: awsOIDCRoleARN,
+					Region:  awsOIDCRegion,
+				},
+			})
+		} else {
+			err = source.FromVolumeSyncSourceS3(s3Source)
+		}
 	case "GCS":
-		err = source.FromVolumeSyncSourceGCS(managementapi.VolumeSyncSourceGCS{
+		gcsSource := managementapi.VolumeSyncSourceGCS{
 			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
-		})
+		}
+		if gcpOIDCServiceAccount != "" {
+			gcsSource.Type = "GCS"
+			err = encodeVolumeSyncSource(&source, volumeSyncSourceGCSOIDC{
+				VolumeSyncSourceGCS: gcsSource,
+				GCPOIDC: volumeSyncAuthenticationGCPOIDC{
+					ServiceAccount:           gcpOIDCServiceAccount,
+					WorkloadIdentityProvider: gcpOIDCWorkloadIdentityProvider,
+				},
+			})
+		} else {
+			err = source.FromVolumeSyncSourceGCS(gcsSource)
+		}
 	case "AZURE":
 		err = source.FromVolumeSyncSourceAzure(managementapi.VolumeSyncSourceAzure{
 			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
@@ -235,6 +308,17 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 		return managementapi.CreateVolumeSyncRequest_Source{}, fmt.Errorf("encoding volume sync source: %w", err)
 	}
 	return source, nil
+}
+
+// encodeVolumeSyncSource bridges fields that are present in the REST API schema but not yet in
+// the generated management client. The union's JSON representation is its wire representation,
+// so this can be removed once baseten-go includes the OIDC source types.
+func encodeVolumeSyncSource(target *managementapi.CreateVolumeSyncRequest_Source, value any) error {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, target)
 }
 
 func volumeSyncDestination(raw string) (string, error) {
