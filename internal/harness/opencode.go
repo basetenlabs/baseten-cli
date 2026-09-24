@@ -14,7 +14,18 @@ type openCodeHarness struct{}
 
 var openCodeSubagentPaths = [][]string{{"agent", "general", "model"}, {"agent", "explore", "model"}}
 
+// openCodeTargetPackages maps route targets to the AI SDK package for their
+// native API. Other targets use the provider's Chat Completions package.
+var openCodeTargetPackages = map[string]string{
+	TargetAnthropic: "@ai-sdk/anthropic",
+	TargetOpenAI:    "@ai-sdk/openai",
+}
+
 var openCodeCredentialPath = []string{"provider", providerID, "options", "apiKey"}
+
+// openCodeBearerPath repeats the credential as a header because @ai-sdk/anthropic
+// sends apiKey as x-api-key, and Baseten authenticates only Authorization.
+var openCodeBearerPath = []string{"provider", providerID, "options", "headers", "Authorization"}
 
 func (openCodeHarness) Credential(path string) (string, error) {
 	return credential(path, openCodeCredentialPath)
@@ -59,8 +70,15 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 		models[defaultBackgroundRoute] = map[string]any{"name": "DeepSeek V4.1 Flash"}
 	}
 	for _, r := range routes {
-		models[r.Name] = map[string]any{"name": r.DisplayName}
+		model := map[string]any{"name": r.DisplayName}
+		// A model's npm overrides the provider's, so first-party routes use their
+		// native API at the same base URL: Messages for Anthropic, Responses for OpenAI.
+		if npm, ok := openCodeTargetPackages[r.Target]; ok {
+			model["provider"] = map[string]any{"npm": npm}
+		}
+		models[r.Name] = model
 	}
+	headers := map[string]any{"Authorization": ""}
 	values := []setting{
 		desired([]string{"model"}, providerID+"/"+s.Primary),
 		desired([]string{"small_model"}, providerID+"/"+s.Background),
@@ -70,6 +88,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 			"options": map[string]any{
 				"baseURL": strings.TrimRight(endpoint, "/") + "/v1",
 				"apiKey":  "",
+				"headers": headers,
 			},
 			"models": models,
 		}),
@@ -80,6 +99,10 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 		}
 	}
 	p, err := prepareSettings(path, openCodeCredentialPath, func(current map[string]any) ([]setting, error) {
+		// Like the API key, keep the file's header until ApplyPlans inserts the real one.
+		if current, ok := get(current, openCodeBearerPath).Data.(string); ok {
+			headers["Authorization"] = current
+		}
 		if explicitSubagent {
 			return values, nil
 		}
@@ -96,6 +119,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 	if err != nil {
 		return nil, err
 	}
+	p.bearerPath = openCodeBearerPath
 	return []*Plan{p}, nil
 }
 

@@ -606,3 +606,27 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 		})
 	}
 }
+
+func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
+	skipUnlessMacOS(t)
+	h, api := fakeHarnessAPI(t)
+	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+		"items": []any{
+			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL,
+				"target": map[string]any{"type": "ANTHROPIC", "model": "claude-opus-5-5", "secret_name": "anthropic-key"}},
+			map[string]any{"id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL,
+				"target": map[string]any{"type": "OPENAI", "model": "gpt-5.5", "secret_name": "openai-key"}},
+			map[string]any{"id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL,
+				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+	dir := t.TempDir()
+	path := harnessSettingsFile("opencode", dir)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"))
+	provider := readHarnessSettings(t, "opencode", path)["provider"].(map[string]any)["baseten-harness"].(map[string]any)
+	models := provider["models"].(map[string]any)
+	h.Require.Equal(map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/claude"].(map[string]any)["provider"])
+	h.Require.Equal(map[string]any{"npm": "@ai-sdk/openai"}, models["acme/gpt"].(map[string]any)["provider"])
+	h.Require.NotContains(models["acme/open"], "provider")
+}
