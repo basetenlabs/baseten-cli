@@ -132,11 +132,12 @@ func volumeLsVolumes(ctx *CommandContext, namespace string) error {
 			volumeTagNames(volume.Tags, volume.TagCount),
 			headSize,
 			fmt.Sprint(volume.VersionsAlive),
+			volumeExpiryText(volume.ExpiresAt),
 			volume.UpdatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers:             []string{"NAME", "TAGS", "HEAD SIZE", "VERSIONS", "UPDATED"},
+		Headers:             []string{"NAME", "TAGS", "HEAD SIZE", "VERSIONS", "EXPIRES", "UPDATED"},
 		Rows:                rows,
 		RightAlignedColumns: []int{2, 3},
 	})
@@ -359,8 +360,15 @@ func volumeStatVolume(ctx *CommandContext, ref client.VolumeRef) error {
 	ctx.Outputf("Ref:         %s\n", volume.VersionRef)
 	ctx.Outputf("Sequence:    %d\n", volume.Sequence)
 	ctx.Outputf("Updated:     %s\n", volume.UpdatedAt.UTC().Format(time.RFC3339))
+	ctx.Outputf("Expires:     %s\n", volumeExpiryDetailText(volume.ExpiresAt))
 	ctx.Outputf("Versions:    %d alive, %d tombstoned, %d untagged\n",
 		volume.VersionsAlive, volume.VersionsTombstoned, volume.VersionsUntagged)
+	if volume.VersionsExpiring == 0 {
+		ctx.OutputLine("Version expiry: none scheduled")
+	} else {
+		ctx.Outputf("Version expiry: %d scheduled, earliest %s\n",
+			volume.VersionsExpiring, volumeExpiryDetailText(volume.VersionsEarliestExpiresAt))
+	}
 	ctx.Outputf("Tags:        %s\n", volumeTagNames(volume.Tags, volume.TagCount))
 	if volume.Head != nil {
 		ctx.Outputf("Head digest: %s\n", volume.Head.Digest)
@@ -397,6 +405,12 @@ func volumeStatVersion(ctx *CommandContext, flags *cmd.VolumeStatFlags, ref clie
 		ctx.Outputf("Entries:          %d\n", *version.EntryCount)
 	}
 	ctx.Outputf("Lifecycle:        %s\n", version.Lifecycle)
+	if version.ExpiresAt != nil {
+		ctx.Outputf("Expires:          %s\n", volumeExpiryDetailText(version.ExpiresAt))
+	}
+	if version.TombstonedAt != nil {
+		ctx.Outputf("Tombstoned:       %s\n", version.TombstonedAt.UTC().Format(time.RFC3339))
+	}
 	if version.DeleteAfter != nil {
 		ctx.Outputf("Restorable until: %s\n", version.DeleteAfter.UTC().Format(time.RFC3339))
 	}
@@ -536,11 +550,12 @@ func commandVolumeVersions(ctx *CommandContext, flags *cmd.VolumeVersionsFlags) 
 			version.Lifecycle,
 			head,
 			volumeJoin(version.Tags),
+			volumeExpiryText(version.ExpiresAt),
 			version.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers:             []string{"SEQUENCE", "DIGEST", "SIZE", "LIFECYCLE", "HEAD", "TAGS", "CREATED"},
+		Headers:             []string{"SEQUENCE", "DIGEST", "SIZE", "LIFECYCLE", "HEAD", "TAGS", "EXPIRES", "CREATED"},
 		Rows:                rows,
 		RightAlignedColumns: []int{0, 2},
 	})
@@ -711,13 +726,31 @@ func volumeRefTextOf(ref string, flags cmd.VolumeRefFlags) string {
 func volumeTagNames(tags []managementapi.VolumeTag, total int) string {
 	names := make([]string, 0, len(tags))
 	for _, tag := range tags {
-		names = append(names, tag.Name)
+		name := tag.Name
+		if tag.ExpiresAt != nil {
+			name += " (expires " + tag.ExpiresAt.UTC().Format(time.RFC3339) + ")"
+		}
+		names = append(names, name)
 	}
 	joined := volumeJoin(names)
 	if total > len(tags) {
 		return fmt.Sprintf("%s (%d of %d)", joined, len(tags), total)
 	}
 	return joined
+}
+
+func volumeExpiryText(expiresAt *time.Time) string {
+	if expiresAt == nil {
+		return "-"
+	}
+	return expiresAt.UTC().Format(time.RFC3339)
+}
+
+func volumeExpiryDetailText(expiresAt *time.Time) string {
+	if expiresAt == nil {
+		return "never"
+	}
+	return expiresAt.UTC().Format(time.RFC3339)
 }
 
 func volumeJoin(values []string) string {

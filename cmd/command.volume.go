@@ -48,7 +48,8 @@ var commandVolume = Command{
 				TextDescription: "For entries, a table with columns: NAME, KIND, MODE, SIZE, MODIFIED, " +
 					"where a directory's name ends in '/' and carries no size. For namespaces, one column: " +
 					"NAMESPACE. For volumes, a table with columns: NAME, TAGS, HEAD SIZE, VERSIONS, " +
-					"UPDATED. Prints what was empty to stderr when a listing has no rows.",
+					"EXPIRES, UPDATED. An expiring tag is annotated with its expiry. Prints what was empty " +
+					"to stderr when a listing has no rows.",
 				JSONDescription: "An object with version_ref and items, one entry per row, when the ref " +
 					"names a volume or a version. The two inventory shapes follow.",
 				JSONAlternatives: []CommandOutputAlternative{
@@ -84,8 +85,9 @@ var commandVolume = Command{
 			Summary: "Describe a volume, a version, or one file (PRE-RELEASE)",
 			Description: volumePreRelease +
 				"Describes what a ref names. A volume ref describes the volume: its tags, head, " +
-				"and version counts. A version ref describes that version: its digest, size, entry " +
-				"count, and when it was created. A ref with a trailing path describes that one entry.\n\n" +
+				"version counts, and scheduled expiry. A version ref describes that version: its digest, " +
+				"size, entry count, lifecycle timestamps, and when it was created. A ref with a trailing " +
+				"path describes that one entry.\n\n" +
 				"A namespace ref is an error, since a namespace has nothing to describe beyond the " +
 				"volumes 'ls' already lists.\n\n" + volumeRefGrammar,
 			ArgsUsage: "REF",
@@ -260,7 +262,7 @@ var commandVolume = Command{
 			Summary: "List the versions of a volume (PRE-RELEASE)",
 			Description: volumePreRelease +
 				"Lists a volume's versions, newest first, with the digest, sequence, size, " +
-				"lifecycle, tags, and which one head points at.\n\n" +
+				"lifecycle, tags, scheduled expiry, and which one head points at.\n\n" +
 				"The ref must name a volume: a selector or a path names one point in the history " +
 				"rather than the history itself.\n\n" + volumeRefGrammar,
 			ArgsUsage: "REF",
@@ -268,7 +270,7 @@ var commandVolume = Command{
 			Flags:     VolumeVersionsFlags{},
 			Output: &CommandOutput[managementapi.ListVolumeVersionsResponse]{
 				TextDescription: "Table with columns: SEQUENCE, DIGEST, SIZE, LIFECYCLE, HEAD, TAGS, " +
-					"CREATED. When the volume has no versions, prints \"No volume versions found.\" " +
+					"EXPIRES, CREATED. When the volume has no versions, prints \"No volume versions found.\" " +
 					"to stderr.",
 				Examples: []CommandExample{
 					{
