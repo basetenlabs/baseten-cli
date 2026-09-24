@@ -364,7 +364,7 @@ func volumeStatVolume(ctx *CommandContext, ref client.VolumeRef) error {
 	ctx.Outputf("Versions:    %d alive, %d tombstoned, %d untagged\n",
 		volume.VersionsAlive, volume.VersionsTombstoned, volume.VersionsUntagged)
 	if volume.VersionsExpiring == 0 {
-		ctx.OutputLine("Version expiry: none scheduled")
+		ctx.OutputLine("Version expiry: -")
 	} else {
 		ctx.Outputf("Version expiry: %d scheduled, earliest %s\n",
 			volume.VersionsExpiring, volumeExpiryText(volume.VersionsEarliestExpiresAt))

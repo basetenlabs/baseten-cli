@@ -416,7 +416,7 @@ func Test_Volume_Stat_Volume_NoExpiration(t *testing.T) {
 	h.Require.NoError(h.Execute("volume", "stat", "bdn:weights/llama"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Expires:     -")
-	h.Require.Contains(out, "Version expiry: none scheduled")
+	h.Require.Contains(out, "Version expiry: -")
 	h.Require.Contains(out, "Tags:        prod")
 	h.Require.NotContains(out, "prod (expires")
 }
