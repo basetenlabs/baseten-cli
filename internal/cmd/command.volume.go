@@ -405,9 +405,7 @@ func volumeStatVersion(ctx *CommandContext, flags *cmd.VolumeStatFlags, ref clie
 		ctx.Outputf("Entries:          %d\n", *version.EntryCount)
 	}
 	ctx.Outputf("Lifecycle:        %s\n", version.Lifecycle)
-	if version.ExpiresAt != nil {
-		ctx.Outputf("Expires:          %s\n", volumeExpiryDetailText(version.ExpiresAt))
-	}
+	ctx.Outputf("Expires:          %s\n", volumeExpiryDetailText(version.ExpiresAt))
 	if version.TombstonedAt != nil {
 		ctx.Outputf("Tombstoned:       %s\n", version.TombstonedAt.UTC().Format(time.RFC3339))
 	}
@@ -748,7 +746,7 @@ func volumeExpiryText(expiresAt *time.Time) string {
 
 func volumeExpiryDetailText(expiresAt *time.Time) string {
 	if expiresAt == nil {
-		return "never"
+		return "none"
 	}
 	return expiresAt.UTC().Format(time.RFC3339)
 }

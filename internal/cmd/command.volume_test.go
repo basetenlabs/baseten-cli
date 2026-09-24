@@ -231,19 +231,28 @@ func Test_Volume_Ls_Volumes(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/volumes", 200, map[string]any{
-		"items": []any{map[string]any{
-			"name": "llama", "namespace": "weights", "sequence": 7,
-			"updated_at": volumeTestTime, "version_ref": "bdn:weights/llama",
-			"versions_alive": 4, "versions_tombstoned": 1, "versions_untagged": 0,
-			"versions_expiring": 2, "versions_earliest_expires_at": versionExpiryTime,
-			"expires_at": volumeExpiryTime,
-			// One readable tag out of three, so the partial count is rendered.
-			"tag_count": 3,
-			"tags": []any{map[string]any{
-				"name": "prod", "digest": "b3:aaa", "expires_at": tagExpiryTime,
-			}},
-			"head": map[string]any{"digest": "b3:aaa", "total_size_bytes": 2048, "created_at": volumeTestTime},
-		}},
+		"items": []any{
+			map[string]any{
+				"name": "llama", "namespace": "weights", "sequence": 7,
+				"updated_at": volumeTestTime, "version_ref": "bdn:weights/llama",
+				"versions_alive": 4, "versions_tombstoned": 1, "versions_untagged": 0,
+				"versions_expiring": 2, "versions_earliest_expires_at": versionExpiryTime,
+				"expires_at": volumeExpiryTime,
+				// One readable tag out of three, so the partial count is rendered.
+				"tag_count": 3,
+				"tags": []any{map[string]any{
+					"name": "prod", "digest": "b3:aaa", "expires_at": tagExpiryTime,
+				}},
+				"head": map[string]any{"digest": "b3:aaa", "total_size_bytes": 2048, "created_at": volumeTestTime},
+			},
+			map[string]any{
+				"name": "mistral", "namespace": "weights", "sequence": 1,
+				"updated_at": volumeTestTime, "version_ref": "bdn:weights/mistral",
+				"versions_alive": 0, "versions_tombstoned": 0, "versions_untagged": 0,
+				"versions_expiring": 0, "versions_earliest_expires_at": nil,
+				"expires_at": nil, "tag_count": 0, "tags": []any{}, "head": nil,
+			},
+		},
 		"pagination": map[string]any{"has_more": false},
 	})
 
@@ -255,6 +264,7 @@ func Test_Volume_Ls_Volumes(t *testing.T) {
 	h.Require.Contains(out, "prod (expires "+tagExpiryTime.Format(time.RFC3339)+") (1 of 3)")
 	h.Require.Contains(out, "2.0 KiB")
 	h.Require.Contains(out, volumeExpiryTime.Format(time.RFC3339))
+	h.Require.Regexp(`mistral\s+-\s+-\s+0\s+-\s+2026-09-08T17:04:05Z`, out)
 	h.Require.Equal("weights", m.FindCall("GET", "/v1/volumes").Query().Get("namespace"))
 }
 
@@ -405,7 +415,7 @@ func Test_Volume_Stat_Volume_NoExpiration(t *testing.T) {
 
 	h.Require.NoError(h.Execute("volume", "stat", "bdn:weights/llama"))
 	out := h.Stdout.String()
-	h.Require.Contains(out, "Expires:     never")
+	h.Require.Contains(out, "Expires:     none")
 	h.Require.Contains(out, "Version expiry: none scheduled")
 	h.Require.Contains(out, "Tags:        prod")
 	h.Require.NotContains(out, "prod (expires")
@@ -441,6 +451,21 @@ func Test_Volume_Stat_Version_TombstoneTimes(t *testing.T) {
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Tombstoned:       "+versionExpiryTime.Format(time.RFC3339))
 	h.Require.Contains(out, "Restorable until: "+deleteAfter.Format(time.RFC3339))
+}
+
+func Test_Volume_Stat_Version_NoExpiration(t *testing.T) {
+	h := NewCommandHarness(t)
+	payload := map[string]any{
+		"namespace": "weights", "volume": "llama", "digest": "b3:aaa",
+		"version_ref": "bdn:weights/llama@aaa", "sequence": 9, "entry_count": 3,
+		"total_size_bytes": 2048, "lifecycle": "ALIVE", "is_head": true,
+		"tags": []string{"prod"}, "created_at": volumeTestTime, "volume_sequence": 9,
+		"expires_at": nil, "tombstoned_at": nil, "delete_after": nil,
+	}
+	h.MockManagementAPI().SetRoute("GET", "/v1/volumes/weights/llama/versions/@b3:aabbccddeeff", 200, payload)
+
+	h.Require.NoError(h.Execute("volume", "stat", "bdn:weights/llama@b3:aabbccddeeff"))
+	h.Require.Contains(h.Stdout.String(), "Expires:          none")
 }
 
 func Test_Volume_Stat_Version_Digest(t *testing.T) {
@@ -552,6 +577,13 @@ func Test_Volume_Versions_Rows(t *testing.T) {
 				"expires_at": nil, "tombstoned_at": versionExpiryTime,
 				"delete_after": volumeExpiryTime,
 			},
+			map[string]any{
+				"namespace": "weights", "volume": "llama", "digest": "b3:ccc",
+				"version_ref": "bdn:weights/llama@ccc", "sequence": 10,
+				"total_size_bytes": 1, "lifecycle": "ALIVE", "is_head": false,
+				"tags": []string{"dev"}, "created_at": volumeTestTime,
+				"expires_at": nil, "tombstoned_at": nil, "delete_after": nil,
+			},
 		},
 	})
 
@@ -562,6 +594,7 @@ func Test_Volume_Versions_Rows(t *testing.T) {
 	h.Require.Contains(out, "TOMBSTONED")
 	h.Require.Contains(out, "prod")
 	h.Require.Contains(out, versionExpiryTime.Format(time.RFC3339))
+	h.Require.Regexp(`10\s+b3:ccc\s+1 B\s+ALIVE\s+dev\s+-\s+2026-09-08T17:04:05Z`, out)
 	// A version committed before the service recorded a sequence or a size
 	// renders as absent rather than as zero.
 	h.Require.Regexp(`-\s+b3:bbb\s+-\s+TOMBSTONED`, out)
