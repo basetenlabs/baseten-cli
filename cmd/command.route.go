@@ -157,7 +157,58 @@ var commandRoute = Command{
 				},
 			},
 		},
+		{
+			Name:        "key",
+			Summary:     "Manage your routes API keys (PRE-RELEASE)",
+			Description: routePrereleaseNotice + "Manage the routes API keys you created, such as with harness setup, across all your machines and teams.",
+			Children: []Command{
+				{
+					Name:        "list",
+					Summary:     "List your routes API keys (PRE-RELEASE)",
+					Description: routePrereleaseNotice + "List the routes API keys you created, across all your machines and teams. Key values are never shown.",
+					Flags:       RouteKeyListFlags{},
+					Output: &CommandOutput[managementapi.APIKeys]{
+						TextDescription: "Table with NAME, PREFIX, TEAM, CREATED, and LAST USED columns.",
+						Examples:        []CommandExample{{Description: "List your routes API keys.", Command: "baseten route key list"}},
+						JQExample:       CommandExample{Description: "Print key prefixes.", Command: "baseten route key list --jq '.keys[].prefix'"},
+					},
+				},
+				{
+					Name:    "revoke",
+					Summary: "Revoke your routes API keys (PRE-RELEASE)",
+					Description: routePrereleaseNotice + "Revoke one routes API key by prefix, or all of them with --all. Harnesses using a revoked key lose access " +
+						"until you rerun harness setup on that machine. Revoke also removes this machine's saved copy, so setup creates a new key.",
+					Flags: RouteKeyRevokeFlags{},
+					Output: &CommandOutput[RouteKeyRevokeResult]{
+						TextDescription: "Each revoked prefix, on stderr.",
+						JSONDescription: "revoked lists the revoked prefixes and failed the ones that could not be revoked. The command fails if any revocation failed.",
+						Examples: []CommandExample{
+							{Description: "Revoke a lost machine's key.", Command: "baseten route key revoke --prefix <prefix>"},
+							{Description: "Revoke all your routes API keys without prompting.", Command: "baseten route key revoke --all --yes"},
+						},
+						JQExample: CommandExample{Description: "Print revoked prefixes.", Command: "baseten route key revoke --prefix <prefix> --yes --jq '.revoked[]'"},
+					},
+				},
+			},
+		},
 	},
+}
+
+// RouteKeyListFlags are the flags for `baseten route key list`.
+type RouteKeyListFlags struct{ CommandFlags }
+
+// RouteKeyRevokeFlags are the flags for `baseten route key revoke`.
+type RouteKeyRevokeFlags struct {
+	CommandFlags
+	Prefix string `flag:"prefix" desc:"Prefix of the key to revoke, as shown by route key list." oneof:"key"`
+	All    bool   `flag:"all" desc:"Revoke all your routes API keys, on every machine and team." oneof:"key"`
+	Yes    bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+}
+
+// RouteKeyRevokeResult is the JSON output of `baseten route key revoke`.
+type RouteKeyRevokeResult struct {
+	Revoked []string `json:"revoked"`
+	Failed  []string `json:"failed"`
 }
 
 type RouteRefFlags struct {

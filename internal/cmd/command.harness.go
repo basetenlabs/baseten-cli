@@ -425,11 +425,7 @@ func loadHarnessKey(ctx *CommandContext, api *managementapi.Client, teamID, name
 	if err != nil {
 		return nil, fmt.Errorf("getting current user: %w", err)
 	}
-	remote, err := ctx.authInfo.Remote()
-	if err != nil {
-		return nil, err
-	}
-	session, err := ctx.authInfo.Session()
+	scope, err := routesKeyScope(ctx, user.UserId, teamID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -437,19 +433,13 @@ func loadHarnessKey(ctx *CommandContext, api *managementapi.Client, teamID, name
 	if err != nil {
 		return nil, err
 	}
-	k := &harnessKey{store: store, scope: auth.RoutesKeyScope{
-		ManagementURL: remote.ManagementURL(),
-		Profile:       session.ProfileName(),
-		UserID:        user.UserId,
-		TeamID:        teamID,
-		Name:          name,
-	}}
+	k := &harnessKey{store: store, scope: scope}
 	if k.saved, err = store.GetRoutesKey(k.scope); err != nil || k.saved == "" {
 		return k, err
 	}
 	// The saved key may have been revoked, here or on another machine; setup
 	// then creates a new one.
-	keys, err := listHarnessKeys(ctx, api)
+	keys, err := listRouteKeys(ctx, api)
 	if err != nil {
 		return nil, err
 	}

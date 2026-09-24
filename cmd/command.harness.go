@@ -1,7 +1,5 @@
 package cmd
 
-import "github.com/basetenlabs/baseten-go/client/managementapi"
-
 const harnessPreRelease = "PRE-RELEASE: Harness commands are not GA yet. " +
 	"Their arguments, flags, and output may change.\n\n"
 
@@ -93,40 +91,6 @@ var commandHarness = Command{
 				},
 			},
 		},
-		{
-			Name:        "key",
-			Summary:     "Manage your routes API keys (PRE-RELEASE)",
-			Description: harnessPreRelease + "Manage the routes API keys you created with harness setup, across all your machines and teams.",
-			Children: []Command{
-				{
-					Name:        "list",
-					Summary:     "List your routes API keys (PRE-RELEASE)",
-					Description: harnessPreRelease + "List the routes API keys you created, across all your machines and teams. Key values are never shown.",
-					Flags:       HarnessKeyListFlags{},
-					Output: &CommandOutput[managementapi.APIKeys]{
-						TextDescription: "Table with NAME, PREFIX, TEAM, CREATED, and LAST USED columns.",
-						Examples:        []CommandExample{{Description: "List your routes API keys.", Command: "baseten harness key list"}},
-						JQExample:       CommandExample{Description: "Print key prefixes.", Command: "baseten harness key list --jq '.keys[].prefix'"},
-					},
-				},
-				{
-					Name:    "revoke",
-					Summary: "Revoke your routes API keys (PRE-RELEASE)",
-					Description: harnessPreRelease + "Revoke one routes API key by prefix, or all of them with --all. Harnesses using a revoked key lose access " +
-						"until you rerun harness setup on that machine. Setup checks the saved key before reusing it and creates a new one if it was revoked.",
-					Flags: HarnessKeyRevokeFlags{},
-					Output: &CommandOutput[HarnessKeyRevokeResult]{
-						TextDescription: "Each revoked prefix, on stderr.",
-						JSONDescription: "revoked lists the revoked prefixes and failed the ones that could not be revoked. The command fails if any revocation failed.",
-						Examples: []CommandExample{
-							{Description: "Revoke a lost machine's key.", Command: "baseten harness key revoke --prefix <prefix>"},
-							{Description: "Revoke all your routes API keys without prompting.", Command: "baseten harness key revoke --all --yes"},
-						},
-						JQExample: CommandExample{Description: "Print revoked prefixes.", Command: "baseten harness key revoke --prefix <prefix> --yes --jq '.revoked[]'"},
-					},
-				},
-			},
-		},
 	},
 }
 
@@ -202,21 +166,4 @@ type HarnessTeardownFlags struct {
 	HarnessFlags
 	DryRun bool `flag:"dry-run" desc:"Preview removal without changing files."`
 	Yes    bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
-}
-
-// HarnessKeyListFlags are the flags for `baseten harness key list`.
-type HarnessKeyListFlags struct{ CommandFlags }
-
-// HarnessKeyRevokeFlags are the flags for `baseten harness key revoke`.
-type HarnessKeyRevokeFlags struct {
-	CommandFlags
-	Prefix string `flag:"prefix" desc:"Prefix of the key to revoke, as shown by harness key list." oneof:"key"`
-	All    bool   `flag:"all" desc:"Revoke all your routes API keys, on every machine and team." oneof:"key"`
-	Yes    bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
-}
-
-// HarnessKeyRevokeResult is the JSON output of `baseten harness key revoke`.
-type HarnessKeyRevokeResult struct {
-	Revoked []string `json:"revoked"`
-	Failed  []string `json:"failed"`
 }

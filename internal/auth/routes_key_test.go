@@ -60,3 +60,28 @@ func TestRoutesKey_InsecureStorageSkipsKeyring(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "file-secret", key)
 }
+
+func TestRoutesKey_Delete(t *testing.T) {
+	keyring.MockInit()
+	store := auth.NewStore(auth.StoreOptions{Dir: t.TempDir()})
+	scope := auth.RoutesKeyScope{ManagementURL: "https://api.example.com", UserID: "u", TeamID: "t", Name: t.Name()}
+	other := scope
+	other.Name = "other"
+	require.NoError(t, store.SetRoutesKey(scope, "saved-secret", nil))
+	require.NoError(t, store.SetRoutesKey(other, "other-secret", nil))
+	require.NoError(t, store.DeleteRoutesKey(scope))
+	require.NoError(t, store.DeleteRoutesKey(scope), "deleting a missing key is a no-op")
+	key, err := store.GetRoutesKey(scope)
+	require.NoError(t, err)
+	require.Empty(t, key)
+	key, err = store.GetRoutesKey(other)
+	require.NoError(t, err)
+	require.Equal(t, "other-secret", key)
+
+	plaintext := auth.NewStore(auth.StoreOptions{Dir: t.TempDir(), InsecureStorage: true})
+	require.NoError(t, plaintext.SetRoutesKey(scope, "file-secret", nil))
+	require.NoError(t, plaintext.DeleteRoutesKey(scope))
+	af, err := plaintext.Load()
+	require.NoError(t, err)
+	require.Empty(t, af.InsecureRoutesKeys)
+}

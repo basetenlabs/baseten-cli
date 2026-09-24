@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/zalando/go-keyring"
@@ -69,4 +70,25 @@ func (s *Store) SetRoutesKey(scope RoutesKeyScope, key string, warnWriter func(s
 	}
 	af.InsecureRoutesKeys[scope.account()] = key
 	return s.saveLocked(af)
+}
+
+// DeleteRoutesKey forgets the routes API key saved for scope, from both the
+// keyring and auth.json.
+func (s *Store) DeleteRoutesKey(scope RoutesKeyScope) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	keyringErr := keyring.Delete(routesKeyService, scope.account())
+	af, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	if _, ok := af.InsecureRoutesKeys[scope.account()]; ok {
+		delete(af.InsecureRoutesKeys, scope.account())
+		return s.saveLocked(af)
+	}
+	if keyringErr != nil && !errors.Is(keyringErr, keyring.ErrNotFound) && !s.insecureStorage {
+		return fmt.Errorf("deleting routes API key from system keyring: %w", keyringErr)
+	}
+	return nil
 }
