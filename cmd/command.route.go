@@ -177,7 +177,7 @@ var commandRoute = Command{
 					Name:    "delete",
 					Summary: "Delete your routes API keys (PRE-RELEASE)",
 					Description: routePrereleaseNotice + "Delete one routes API key by prefix, or all of them with --all. Harnesses using a deleted key lose access " +
-						"until you rerun harness setup on that machine. Delete also removes this machine's saved copy, so setup creates a new key.",
+						"until you rerun harness setup on that machine, which creates a new key.",
 					Flags: RouteAPIKeyDeleteFlags{},
 					Output: &CommandOutput[RouteAPIKeyDeleteResult]{
 						TextDescription: "Each deleted prefix, on stderr.",

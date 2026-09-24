@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	public "github.com/basetenlabs/baseten-cli/cmd"
-	"github.com/basetenlabs/baseten-cli/internal/auth"
 )
 
 func Test_Route_APIKey_List(t *testing.T) {
@@ -73,23 +72,4 @@ func Test_Harness_Setup_ReplacesDeletedKey(t *testing.T) {
 	h.Require.Error(h.Execute(args...))
 	h.Require.Contains(h.Stderr.String(), "listing routes API keys")
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
-}
-
-func Test_Route_APIKey_DeleteForgetsSavedKey(t *testing.T) {
-	skipUnlessMacOS(t)
-	h, api := fakeHarnessAPI(t)
-	api.SetRoute("DELETE", "/v1/api_keys/secret-team-a", 200, map[string]string{"prefix": "secret-team-a"})
-	setup := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--key-name", "laptop", "--yes"}
-	h.Require.NoError(h.Execute(setup...))
-	scope := auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: "team-a", Name: "laptop"}
-	key, err := configDirStore(t).GetRoutesKey(scope)
-	h.Require.NoError(err)
-	h.Require.Equal("secret-team-a", key)
-
-	h.Require.NoError(h.Execute("route", "api-key", "delete", "--prefix", "secret-team-a", "--yes"))
-	key, err = configDirStore(t).GetRoutesKey(scope)
-	h.Require.NoError(err)
-	h.Require.Empty(key, "delete removes this machine's saved copy")
-	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "setup creates a new key")
 }

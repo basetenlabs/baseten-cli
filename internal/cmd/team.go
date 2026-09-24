@@ -18,16 +18,16 @@ func ResolveTeam(ctx context.Context, api *managementapi.Client, input string) (
 	if input == "" {
 		return "", nil
 	}
-	team, err := resolveTeam(ctx, api, input)
+	team, err := resolveTeamOrDefault(ctx, api, input)
 	if err != nil {
 		return "", err
 	}
 	return team.Id, nil
 }
 
-// resolveTeam is ResolveTeam for callers that also need the team's name. An
+// resolveTeamOrDefault is ResolveTeam for callers that also need the team's name. An
 // empty input selects the organization's default team.
-func resolveTeam(ctx context.Context, api *managementapi.Client, input string) (*managementapi.Team, error) {
+func resolveTeamOrDefault(ctx context.Context, api *managementapi.Client, input string) (*managementapi.Team, error) {
 	resp, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
 	if err != nil {
 		return nil, fmt.Errorf("list teams: %w", err)

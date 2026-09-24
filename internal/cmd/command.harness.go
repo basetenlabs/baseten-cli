@@ -115,7 +115,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		return err
 	}
 	api := cl.API()
-	team, err := resolveTeam(ctx, api, f.Team)
+	team, err := resolveTeamOrDefault(ctx, api, f.Team)
 	if err != nil {
 		return err
 	}
@@ -484,6 +484,65 @@ func deleteHarnessKeys(ctx *CommandContext, tokens []string) ([]string, error) {
 		}
 	}
 	return prefixes, nil
+}
+
+// routesKeyScope identifies where a routes API key is saved on this machine.
+func routesKeyScope(ctx *CommandContext, userID, teamID, name string) (auth.RoutesKeyScope, error) {
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return auth.RoutesKeyScope{}, err
+	}
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return auth.RoutesKeyScope{}, err
+	}
+	return auth.RoutesKeyScope{
+		ManagementURL: remote.ManagementURL(),
+		Profile:       session.ProfileName(),
+		UserID:        userID,
+		TeamID:        teamID,
+		Name:          name,
+	}, nil
+}
+
+// forgetRouteAPIKeys removes this machine's saved copies of deleted keys.
+func forgetRouteAPIKeys(ctx *CommandContext, api *managementapi.Client, deleted []managementapi.APIKeyInfo) error {
+	user, err := api.GetUsersMe(ctx)
+	if err != nil {
+		return fmt.Errorf("getting current user: %w", err)
+	}
+	teams, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
+	if err != nil {
+		return fmt.Errorf("list teams: %w", err)
+	}
+	store, err := NewAuthStore(false)
+	if err != nil {
+		return err
+	}
+	for _, k := range deleted {
+		if k.Name == nil || k.TeamName == nil {
+			continue
+		}
+		for _, team := range teams.Teams {
+			if team.Name != *k.TeamName {
+				continue
+			}
+			scope, err := routesKeyScope(ctx, user.UserId, team.Id, *k.Name)
+			if err != nil {
+				return err
+			}
+			saved, err := store.GetRoutesKey(scope)
+			if err != nil {
+				return err
+			}
+			if saved != "" && strings.HasPrefix(saved, k.Prefix) {
+				if err := store.DeleteRoutesKey(scope); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // defaultHarnessKeyName derives a key name from the hostname, which may contain

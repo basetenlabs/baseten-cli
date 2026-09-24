@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
-	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -27,66 +25,6 @@ func listRouteAPIKeys(ctx context.Context, api *managementapi.Client) (*manageme
 		return nil, fmt.Errorf("listing routes API keys: %w", err)
 	}
 	return keys, nil
-}
-
-// routesKeyScope identifies where a routes API key is saved on this machine.
-func routesKeyScope(ctx *CommandContext, userID, teamID, name string) (auth.RoutesKeyScope, error) {
-	remote, err := ctx.authInfo.Remote()
-	if err != nil {
-		return auth.RoutesKeyScope{}, err
-	}
-	session, err := ctx.authInfo.Session()
-	if err != nil {
-		return auth.RoutesKeyScope{}, err
-	}
-	return auth.RoutesKeyScope{
-		ManagementURL: remote.ManagementURL(),
-		Profile:       session.ProfileName(),
-		UserID:        userID,
-		TeamID:        teamID,
-		Name:          name,
-	}, nil
-}
-
-// forgetRouteAPIKeys removes this machine's saved copies of deleted keys, so
-// harness setup creates new ones.
-func forgetRouteAPIKeys(ctx *CommandContext, api *managementapi.Client, deleted []managementapi.APIKeyInfo) error {
-	user, err := api.GetUsersMe(ctx)
-	if err != nil {
-		return fmt.Errorf("getting current user: %w", err)
-	}
-	teams, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
-	if err != nil {
-		return fmt.Errorf("list teams: %w", err)
-	}
-	store, err := NewAuthStore(false)
-	if err != nil {
-		return err
-	}
-	for _, k := range deleted {
-		if k.Name == nil || k.TeamName == nil {
-			continue
-		}
-		for _, team := range teams.Teams {
-			if team.Name != *k.TeamName {
-				continue
-			}
-			scope, err := routesKeyScope(ctx, user.UserId, team.Id, *k.Name)
-			if err != nil {
-				return err
-			}
-			saved, err := store.GetRoutesKey(scope)
-			if err != nil {
-				return err
-			}
-			if saved != "" && strings.HasPrefix(saved, k.Prefix) {
-				if err := store.DeleteRoutesKey(scope); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
 }
 
 func commandRouteAPIKeyList(ctx *CommandContext, _ *cmd.RouteAPIKeyListFlags) error {
@@ -163,21 +101,14 @@ func commandRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.RouteAPIKeyDeleteF
 		}
 	}
 	var errs []error
-	var deleted []managementapi.APIKeyInfo
 	for _, k := range targets {
 		if _, err := cl.API().DeleteApiKeys(ctx, k.Prefix); err != nil {
 			result.Failed = append(result.Failed, k.Prefix)
 			errs = append(errs, fmt.Errorf("deleting routes API key %s: %w", k.Prefix, err))
 			continue
 		}
-		deleted = append(deleted, k)
 		result.Deleted = append(result.Deleted, k.Prefix)
 		ctx.Logf("Deleted routes API key %s\n", k.Prefix)
-	}
-	if len(deleted) > 0 {
-		if err := forgetRouteAPIKeys(ctx, cl.API(), deleted); err != nil {
-			errs = append(errs, fmt.Errorf("removing saved copies of deleted keys: %w", err))
-		}
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(result)
