@@ -170,19 +170,47 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 	arn := strings.TrimSpace(flags.AuthAWSAssumeRoleARN)
 	region := strings.TrimSpace(flags.AuthAWSAssumeRoleRegion)
 	secret := strings.TrimSpace(flags.AuthSecretName)
+	awsOIDCRoleARN := strings.TrimSpace(flags.AuthAWSOIDCRoleARN)
+	awsOIDCRegion := strings.TrimSpace(flags.AuthAWSOIDCRegion)
+	gcpOIDCServiceAccount := strings.TrimSpace(flags.AuthGCPOIDCServiceAccount)
+	gcpOIDCWorkloadIdentityProvider := strings.TrimSpace(flags.AuthGCPOIDCWorkloadIdentityProvider)
 	if (arn == "") != (region == "") {
 		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"--auth-aws-assume-role-arn and --auth-aws-assume-role-region must be provided together")
 	}
-	if secret != "" && arn != "" {
+	if (awsOIDCRoleARN == "") != (awsOIDCRegion == "") {
 		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
-			"--auth-secret-name and --auth-aws-assume-role-* are mutually exclusive")
+			"--auth-aws-oidc-role-arn and --auth-aws-oidc-region must be provided together")
+	}
+	if (gcpOIDCServiceAccount == "") != (gcpOIDCWorkloadIdentityProvider == "") {
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
+			"--auth-gcp-oidc-service-account and --auth-gcp-oidc-workload-identity-provider must be provided together")
+	}
+	authMethodCount := 0
+	for _, configured := range []bool{
+		secret != "", arn != "", awsOIDCRoleARN != "", gcpOIDCServiceAccount != "",
+	} {
+		if configured {
+			authMethodCount++
+		}
+	}
+	if authMethodCount > 1 {
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
+			"authentication methods are mutually exclusive")
 	}
 	if arn != "" && sourceType != "S3" {
 		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"--auth-aws-assume-role-* is supported only for an s3:// source")
 	}
-	if secret != "" && sourceType == "BASETEN_TRAINING" {
+	if awsOIDCRoleARN != "" && sourceType != "S3" {
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
+			"--auth-aws-oidc-* is supported only for an s3:// source")
+	}
+	if gcpOIDCServiceAccount != "" && sourceType != "GCS" {
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
+			"--auth-gcp-oidc-* is supported only for a gs:// source")
+	}
+	if authMethodCount > 0 && sourceType == "BASETEN_TRAINING" {
 		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"a bt:// source does not accept authentication flags")
 	}
@@ -206,13 +234,28 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 		if arn != "" {
 			assumeRole = &managementapi.VolumeSyncAuthenticationAWSAssumeRole{RoleArn: arn, Region: region}
 		}
+		var awsOIDC *managementapi.VolumeSyncAuthenticationAWSOIDC
+		if awsOIDCRoleARN != "" {
+			awsOIDC = &managementapi.VolumeSyncAuthenticationAWSOIDC{
+				RoleArn: awsOIDCRoleARN,
+				Region:  awsOIDCRegion,
+			}
+		}
 		err = source.FromVolumeSyncSourceS3(managementapi.VolumeSyncSourceS3{
 			Uri: uri, Include: &include, Exclude: &exclude,
-			AuthSecretName: authSecretName, AwsAssumeRole: assumeRole,
+			AuthSecretName: authSecretName, AwsAssumeRole: assumeRole, AwsOidc: awsOIDC,
 		})
 	case "GCS":
+		var gcpOIDC *managementapi.VolumeSyncAuthenticationGCPOIDC
+		if gcpOIDCServiceAccount != "" {
+			gcpOIDC = &managementapi.VolumeSyncAuthenticationGCPOIDC{
+				ServiceAccount:           gcpOIDCServiceAccount,
+				WorkloadIdentityProvider: gcpOIDCWorkloadIdentityProvider,
+			}
+		}
 		err = source.FromVolumeSyncSourceGCS(managementapi.VolumeSyncSourceGCS{
 			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
+			GcpOidc: gcpOIDC,
 		})
 	case "AZURE":
 		err = source.FromVolumeSyncSourceAzure(managementapi.VolumeSyncSourceAzure{

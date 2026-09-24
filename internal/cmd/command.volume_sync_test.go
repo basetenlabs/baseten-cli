@@ -83,6 +83,64 @@ func Test_Volume_Sync_Start_InfersAWSAssumeRole(t *testing.T) {
 	h.Require.NotContains(source, "auth_secret_name")
 }
 
+func Test_Volume_Sync_Start_BuildsOIDCAuthentication(t *testing.T) {
+	tests := []struct {
+		name      string
+		sourceURI string
+		args      []string
+		authField string
+		wantAuth  map[string]any
+		wantType  string
+	}{
+		{
+			name:      "AWS OIDC",
+			sourceURI: "s3://bucket/models",
+			args: []string{
+				"--auth-aws-oidc-role-arn", "arn:aws:iam::123:role/sync",
+				"--auth-aws-oidc-region", "us-west-2",
+			},
+			authField: "aws_oidc",
+			wantAuth: map[string]any{
+				"role_arn": "arn:aws:iam::123:role/sync",
+				"region":   "us-west-2",
+			},
+			wantType: "S3",
+		},
+		{
+			name:      "GCP OIDC",
+			sourceURI: "gs://bucket/models",
+			args: []string{
+				"--auth-gcp-oidc-service-account", "sync@project.iam.gserviceaccount.com",
+				"--auth-gcp-oidc-workload-identity-provider", "projects/123/locations/global/workloadIdentityPools/pool/providers/baseten",
+			},
+			authField: "gcp_oidc",
+			wantAuth: map[string]any{
+				"service_account":            "sync@project.iam.gserviceaccount.com",
+				"workload_identity_provider": "projects/123/locations/global/workloadIdentityPools/pool/providers/baseten",
+			},
+			wantType: "GCS",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			m.SetRoute("POST", "/v1/volumes/syncs", http.StatusOK, volumeSyncPayload("vsync-oidc", "PENDING"))
+
+			args := []string{"volume", "sync", "start", "--source", tc.sourceURI,
+				"--dest", "bdn:weights/model"}
+			args = append(args, tc.args...)
+			h.Require.NoError(h.Execute(args...))
+
+			source := m.FindCall("POST", "/v1/volumes/syncs").BodyJSON(t)["source"].(map[string]any)
+			h.Require.Equal(tc.wantType, source["type"])
+			h.Require.Equal(tc.wantAuth, source[tc.authField])
+			h.Require.NotContains(source, "auth_secret_name")
+		})
+	}
+}
+
 func Test_Volume_Sync_Start_ValidatesAuthenticationGroups(t *testing.T) {
 	tests := []struct {
 		name string
@@ -110,6 +168,42 @@ func Test_Volume_Sync_Start_ValidatesAuthenticationGroups(t *testing.T) {
 				"--auth-aws-assume-role-region", "us-west-2",
 			},
 			want: "only for an s3:// source",
+		},
+		{
+			name: "incomplete AWS OIDC",
+			args: []string{"--auth-aws-oidc-role-arn", "arn:aws:iam::123:role/sync"},
+			want: "must be provided together",
+		},
+		{
+			name: "incomplete GCP OIDC",
+			args: []string{"--auth-gcp-oidc-service-account", "sync@project.iam.gserviceaccount.com"},
+			want: "must be provided together",
+		},
+		{
+			name: "conflicting OIDC methods",
+			args: []string{
+				"--auth-aws-oidc-role-arn", "arn:aws:iam::123:role/sync",
+				"--auth-aws-oidc-region", "us-west-2",
+				"--auth-gcp-oidc-service-account", "sync@project.iam.gserviceaccount.com",
+				"--auth-gcp-oidc-workload-identity-provider", "projects/123/locations/global/workloadIdentityPools/pool/providers/baseten",
+			},
+			want: "mutually exclusive",
+		},
+		{
+			name: "AWS OIDC on hugging face",
+			args: []string{
+				"--auth-aws-oidc-role-arn", "arn:aws:iam::123:role/sync",
+				"--auth-aws-oidc-region", "us-west-2",
+			},
+			want: "only for an s3:// source",
+		},
+		{
+			name: "GCP OIDC on hugging face",
+			args: []string{
+				"--auth-gcp-oidc-service-account", "sync@project.iam.gserviceaccount.com",
+				"--auth-gcp-oidc-workload-identity-provider", "projects/123/locations/global/workloadIdentityPools/pool/providers/baseten",
+			},
+			want: "only for a gs:// source",
 		},
 	}
 	for _, tc := range tests {
