@@ -260,7 +260,11 @@ func Test_Harness_Setup_NotInstalledFailsBeforeAPI(t *testing.T) {
 	h, api := fakeHarnessAPI(t)
 	h.Context = internalcmd.WithExecer(h.Context, missingHarnessExecer{})
 	h.Require.Error(h.Execute("harness", "setup", "--harness", "codex", "--dry-run"))
-	h.Require.Contains(h.Stderr.String(), "codex is not installed or not on PATH")
+	want := "codex is not installed or not on PATH"
+	if runtime.GOOS == "darwin" {
+		want = "codex is not installed or not on PATH or in ChatGPT.app or Codex.app"
+	}
+	h.Require.Contains(h.Stderr.String(), want)
 	h.Require.Empty(api.Calls())
 }
 

@@ -101,6 +101,16 @@ func TestCodexDesktopDetection(t *testing.T) {
 	}
 }
 
+func TestCodexDesktopDetectionWithoutHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	chatgpt := filepath.Join("/Applications", "ChatGPT.app", "Contents", "Resources", "codex")
+	execer := &codexDetectionExecer{binaries: map[string]bool{chatgpt: true}}
+	d, err := codexHarness{}.Detect(t.Context(), execer, t.TempDir())
+	require.NoError(t, err)
+	require.Equal(t, runtime.GOOS == "darwin", d.Installed)
+}
+
 // settingsPath is the settings file h uses in a fresh configuration directory.
 func settingsPath(t *testing.T, h Harness) string {
 	t.Helper()

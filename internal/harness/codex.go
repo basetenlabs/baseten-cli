@@ -28,12 +28,12 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 	if err != nil || d.Installed || runtime.GOOS != "darwin" {
 		return d, err
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Detection{}, err
-	}
 	// Desktop installs bundle Codex without adding it to PATH, and share its config.
-	for _, root := range []string{"/Applications", filepath.Join(home, "Applications")} {
+	roots := []string{"/Applications"}
+	if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, filepath.Join(home, "Applications"))
+	}
+	for _, root := range roots {
 		for _, app := range []string{"ChatGPT.app", "Codex.app"} {
 			binary := filepath.Join(root, app, "Contents", "Resources", "codex")
 			d, err = detect(ctx, execer, h.Name(), binary, path)

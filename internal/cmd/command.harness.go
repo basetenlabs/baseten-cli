@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -53,7 +54,11 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		}
 		switch {
 		case setup && !d.Installed && explicit:
-			return nil, fmt.Errorf("%s is not installed or not on PATH", h.Name())
+			searched := "not on PATH"
+			if h.Name() == harness.Codex && runtime.GOOS == "darwin" {
+				searched = "not on PATH or in ChatGPT.app or Codex.app"
+			}
+			return nil, fmt.Errorf("%s is not installed or %s", h.Name(), searched)
 		case setup && !d.Installed:
 			continue
 		case !setup && !explicit:
