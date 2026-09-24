@@ -360,14 +360,14 @@ func volumeStatVolume(ctx *CommandContext, ref client.VolumeRef) error {
 	ctx.Outputf("Ref:         %s\n", volume.VersionRef)
 	ctx.Outputf("Sequence:    %d\n", volume.Sequence)
 	ctx.Outputf("Updated:     %s\n", volume.UpdatedAt.UTC().Format(time.RFC3339))
-	ctx.Outputf("Expires:     %s\n", volumeExpiryDetailText(volume.ExpiresAt))
+	ctx.Outputf("Expires:     %s\n", volumeExpiryText(volume.ExpiresAt))
 	ctx.Outputf("Versions:    %d alive, %d tombstoned, %d untagged\n",
 		volume.VersionsAlive, volume.VersionsTombstoned, volume.VersionsUntagged)
 	if volume.VersionsExpiring == 0 {
 		ctx.OutputLine("Version expiry: none scheduled")
 	} else {
 		ctx.Outputf("Version expiry: %d scheduled, earliest %s\n",
-			volume.VersionsExpiring, volumeExpiryDetailText(volume.VersionsEarliestExpiresAt))
+			volume.VersionsExpiring, volumeExpiryText(volume.VersionsEarliestExpiresAt))
 	}
 	ctx.Outputf("Tags:        %s\n", volumeTagNames(volume.Tags, volume.TagCount))
 	if volume.Head != nil {
@@ -405,7 +405,7 @@ func volumeStatVersion(ctx *CommandContext, flags *cmd.VolumeStatFlags, ref clie
 		ctx.Outputf("Entries:          %d\n", *version.EntryCount)
 	}
 	ctx.Outputf("Lifecycle:        %s\n", version.Lifecycle)
-	ctx.Outputf("Expires:          %s\n", volumeExpiryDetailText(version.ExpiresAt))
+	ctx.Outputf("Expires:          %s\n", volumeExpiryText(version.ExpiresAt))
 	if version.TombstonedAt != nil {
 		ctx.Outputf("Tombstoned:       %s\n", version.TombstonedAt.UTC().Format(time.RFC3339))
 	}
@@ -740,13 +740,6 @@ func volumeTagNames(tags []managementapi.VolumeTag, total int) string {
 func volumeExpiryText(expiresAt *time.Time) string {
 	if expiresAt == nil {
 		return "-"
-	}
-	return expiresAt.UTC().Format(time.RFC3339)
-}
-
-func volumeExpiryDetailText(expiresAt *time.Time) string {
-	if expiresAt == nil {
-		return "never"
 	}
 	return expiresAt.UTC().Format(time.RFC3339)
 }
