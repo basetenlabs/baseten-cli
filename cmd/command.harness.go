@@ -51,7 +51,7 @@ var commandHarness = Command{
 			Description: harnessPreRelease +
 				"Show the installed version, configuration path, and configured routes of each harness. " +
 				"Without --harness, shows every harness configured at its default path. Status reads local files only, " +
-				"so it works after the harness is uninstalled.",
+				"so it works after the harness is uninstalled, but it doesn't check the key or live routes. Rerun setup to refresh routes.",
 			Flags: HarnessStatusFlags{},
 			Output: &CommandOutput[HarnessStatusList]{
 				TextDescription: "Local configuration and configured routes. Use --verbose for setting names.",
@@ -113,7 +113,7 @@ var commandHarness = Command{
 					Name:    "revoke",
 					Summary: "Revoke your routes API keys (PRE-RELEASE)",
 					Description: harnessPreRelease + "Revoke one routes API key by prefix, or all of them with --all. Harnesses using a revoked key lose access " +
-						"until you rerun harness setup on that machine, which creates a new key.",
+						"until you rerun harness setup on that machine. Setup checks the saved key before reusing it and creates a new one if it was revoked.",
 					Flags: HarnessKeyRevokeFlags{},
 					Output: &CommandOutput[HarnessKeyRevokeResult]{
 						TextDescription: "Each revoked prefix, on stderr.",

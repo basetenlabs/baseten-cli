@@ -62,7 +62,7 @@ func Test_Harness_Setup_ReplacesRevokedKey(t *testing.T) {
 	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{}})
 	api.SetRoute("POST", "/v1/teams/team-a/api_keys", 200, map[string]string{"api_key": "secret-team-a-2"})
 	h.Require.NoError(h.Execute(args...))
-	h.Require.Contains(h.Stdout.String(), "Create on confirmation")
+	h.Require.Contains(h.Stderr.String(), "Created routes API key")
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 	h.Require.Equal("secret-team-a-2", readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
 

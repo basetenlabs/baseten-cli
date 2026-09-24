@@ -24,9 +24,6 @@ func init() {
 	Register("harness teardown", commandHarnessTeardown)
 }
 
-// pendingHarnessKey stands in for a routes API key that setup will create.
-const pendingHarnessKey = "baseten-harness-pending-key"
-
 type selectedHarness struct {
 	harness.Harness
 	detection harness.Detection
@@ -133,16 +130,6 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		}
 		routes = append(routes, harness.Route{Name: r.Name, DisplayName: r.DisplayName})
 	}
-	// A dry run leaves the keyring alone, so its preview keeps the credential
-	// already in each file.
-	var key *harnessKey
-	token := ""
-	if !f.DryRun {
-		if key, err = loadHarnessKey(ctx, api, team.Id, f.KeyName); err != nil {
-			return err
-		}
-		token = cmp.Or(key.saved, pendingHarnessKey)
-	}
 	selection := harness.Selection{
 		Primary:    cmp.Or(f.Route, routes[0].Name),
 		Background: f.BackgroundRoute,
@@ -151,7 +138,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	}
 	var plans []*harness.Plan
 	for _, choice := range selected {
-		current, err := choice.Prepare(choice.detection.Path, routes, selection, endpoint, token)
+		current, err := choice.Prepare(choice.detection.Path, routes, selection, endpoint)
 		if err != nil {
 			return fmt.Errorf("%s: %w", choice.Name(), err)
 		}
@@ -161,7 +148,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		plans = append(plans, current...)
 	}
 	if !ctx.JSON {
-		harnessSetupSummary(ctx, team, routes, selected, selection, plans, key)
+		harnessSetupSummary(ctx, team, routes, selected, selection, plans)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -176,7 +163,13 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 			return err
 		}
 	}
-	if token, err = key.ensure(ctx, api); err != nil {
+	// The routes API key is only read or created once the user has confirmed.
+	key, err := loadHarnessKey(ctx, api, team.Id, f.KeyName)
+	if err != nil {
+		return err
+	}
+	token, err := key.ensure(ctx, api)
+	if err != nil {
 		return err
 	}
 	if err := harness.ApplyPlans(plans, token); err != nil {
@@ -251,7 +244,6 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 		ctx.OutputLine("")
 		ctx.VerboseLogf("%s settings: %s\n", r.Harness, strings.Join(r.ManagedSettings, ", "))
 	}
-	ctx.LogLine("Status reads local files only; key validity and live routes were not checked. Rerun setup to refresh routes.")
 	return nil
 }
 
@@ -361,19 +353,12 @@ func harnessRouteTable(ctx *CommandContext, title string, routes []harness.Route
 	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "DISPLAY NAME"}, Rows: rows})
 }
 
-func harnessSetupSummary(ctx *CommandContext, team *managementapi.Team, routes []harness.Route, selected []selectedHarness, s harness.Selection, plans []*harness.Plan, key *harnessKey) {
+func harnessSetupSummary(ctx *CommandContext, team *managementapi.Team, routes []harness.Route, selected []selectedHarness, s harness.Selection, plans []*harness.Plan) {
 	renderer := lipgloss.NewRenderer(ctx.Stdout)
 	accent := renderer.NewStyle().Inherit(inlineCodeStyle)
 	heading := renderer.NewStyle().Bold(true)
 	ctx.Outputf("Team: %s\n\n", accent.Render(team.Name))
 	harnessRouteTable(ctx, "Available routes", routes)
-	keyAction := "Created or reused when applied"
-	switch {
-	case key != nil && key.saved != "":
-		keyAction = "Reuse saved key"
-	case key != nil:
-		keyAction = "Create on confirmation"
-	}
 	for _, choice := range selected {
 		ctx.Outputf("\n%s\n", heading.Render(choice.Name()))
 		ctx.Outputf("  Config            %s\n", harnessDisplayPath(choice.detection.Path))
@@ -387,7 +372,6 @@ func harnessSetupSummary(ctx *CommandContext, team *managementapi.Team, routes [
 		if choice.Name() == harness.ClaudeCode {
 			ctx.Outputf("  Fallback route    %s\n", accent.Render(cmp.Or(s.Fallback, s.Primary)))
 		}
-		ctx.Outputf("  Routes API key    %s\n", keyAction)
 		changed, replaced := false, false
 		for _, p := range plans {
 			if p.Harness != choice.Name() {
@@ -408,9 +392,6 @@ func harnessSetupSummary(ctx *CommandContext, team *managementapi.Team, routes [
 		if replaced {
 			ctx.OutputLine("  Existing integration settings will be overwritten; teardown does not restore them.")
 		}
-	}
-	if key != nil {
-		ctx.VerboseLogf("Routes API key name: %s\n", key.scope.Name)
 	}
 	ctx.OutputLine("")
 }
@@ -494,5 +475,6 @@ func (k *harnessKey) ensure(ctx *CommandContext, api *managementapi.Client) (str
 		return "", err
 	}
 	k.saved = created.ApiKey
+	ctx.Logf("Created routes API key %s\n", k.scope.Name)
 	return k.saved, nil
 }

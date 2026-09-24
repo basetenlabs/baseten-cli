@@ -226,13 +226,14 @@ func Test_Harness_Setup_TextSummary(t *testing.T) {
 	h, _ := fakeHarnessAPI(t)
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
-	for _, want := range []string{"Team: Engineering", "Available routes: 1", "acme/primary", "Primary", "Default route     acme/primary", "Background route  deepseek-ai/DeepSeek-V4.1-Flash", "Create on confirmation"} {
+	for _, want := range []string{"Team: Engineering", "Available routes: 1", "acme/primary", "Primary", "Default route     acme/primary", "Background route  deepseek-ai/DeepSeek-V4.1-Flash"} {
 		h.Require.Contains(h.Stdout.String(), want)
 	}
+	h.Require.Contains(h.Stderr.String(), "Created routes API key baseten-harness-")
 	h.Require.Contains(h.Stderr.String(), "Configuration saved.")
 	h.Require.Contains(h.Stderr.String(), "Undo with: baseten harness teardown --harness claude-code --config-dir '"+dir+"'")
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
-	h.Require.Contains(h.Stdout.String(), "Reuse saved key")
+	h.Require.NotContains(h.Stderr.String(), "Created routes API key")
 	h.Require.Contains(h.Stdout.String(), "Already configured")
 }
 
@@ -508,6 +509,8 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 			}
 			var output strings.Builder
 			run.Stdout, run.Stderr = &output, &output
+			// A leftover child process could hold the output pipe open after cancel.
+			run.WaitDelay = 5 * time.Second
 			h.Require.NoError(run.Start())
 			done := make(chan error, 1)
 			go func() { done <- run.Wait() }()

@@ -57,10 +57,9 @@ type Harness interface {
 	// Detect finds the harness executable and its settings file in configDir,
 	// or in the harness's native configuration directory when configDir is empty.
 	Detect(ctx context.Context, execer Execer, configDir string) (Detection, error)
-	// Prepare plans setup of the settings file at path. ApplyPlans replaces
-	// token; an empty token keeps the file's current credential, so a preview
-	// doesn't report it as changed.
-	Prepare(path string, routes []Route, selection Selection, endpoint, token string) ([]*Plan, error)
+	// Prepare plans setup of the settings file at path. The plan keeps the
+	// file's current credential; ApplyPlans inserts the real one.
+	Prepare(path string, routes []Route, selection Selection, endpoint string) ([]*Plan, error)
 	// Inspect reports the integration state of the detected settings file.
 	Inspect(d Detection) (Status, error)
 	// Teardown plans removal of the integration settings at path.
@@ -303,7 +302,7 @@ func readConfig(path string) (*configFile, map[string]any, error) {
 	return f, d, err
 }
 
-func prepareSettings(path string, credentialPath []string, token string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
+func prepareSettings(path string, credentialPath []string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
 	f, d, err := readConfig(path)
 	if err != nil {
 		return nil, err
@@ -323,7 +322,9 @@ func prepareSettings(path string, credentialPath []string, token string, build f
 		}
 		p.Keys = append(p.Keys, pathKey(v.Path))
 	}
-	if token == "" && len(credentialPath) > 0 {
+	// Keep the file's credential until ApplyPlans inserts the real one, so a
+	// preview only reports real changes.
+	if len(credentialPath) > 0 {
 		if current := get(original, credentialPath); current.Exists {
 			if err := put(d, credentialPath, current); err != nil {
 				return nil, err

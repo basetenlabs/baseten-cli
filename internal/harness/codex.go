@@ -47,7 +47,7 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 
 func (codexHarness) BackgroundRoute(Selection) string { return "" }
 
-func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
+func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
 	switch {
 	case s.Background != "":
 		return nil, errors.New("--background-route is supported only for Claude Code and OpenCode")
@@ -70,11 +70,11 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, 
 			"base_url":                  strings.TrimRight(endpoint, "/") + "/v1",
 			"wire_api":                  "responses",
 			"requires_openai_auth":      false,
-			"experimental_bearer_token": token,
+			"experimental_bearer_token": "",
 		}),
 	}
 	credential := []string{"model_providers", providerID, "experimental_bearer_token"}
-	p, err := prepareSettings(path, credential, token, func(map[string]any) ([]setting, error) { return values, nil })
+	p, err := prepareSettings(path, credential, func(map[string]any) ([]setting, error) { return values, nil })
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, 
 			"experimental_supported_tools": []any{},
 		})
 	}
-	catalog, err := prepareSettings(catalogPath(path), nil, "", func(map[string]any) ([]setting, error) {
+	catalog, err := prepareSettings(catalogPath(path), nil, func(map[string]any) ([]setting, error) {
 		return []setting{desired([]string{"models"}, models)}, nil
 	})
 	if err != nil {

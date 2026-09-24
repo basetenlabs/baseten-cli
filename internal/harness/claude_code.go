@@ -39,9 +39,9 @@ func (claudeCodeHarness) BackgroundRoute(s Selection) string {
 	return cmp.Or(s.Background, defaultBackgroundRoute)
 }
 
-func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, token string) ([]*Plan, error) {
-	p, err := prepareSettings(path, []string{"env", "ANTHROPIC_AUTH_TOKEN"}, token, func(data map[string]any) ([]setting, error) {
-		return claudeSettings(routes, s, endpoint, token, data)
+func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
+	p, err := prepareSettings(path, []string{"env", "ANTHROPIC_AUTH_TOKEN"}, func(data map[string]any) ([]setting, error) {
+		return claudeSettings(routes, s, endpoint, data)
 	})
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, end
 	return []*Plan{p}, nil
 }
 
-func claudeSettings(routes []Route, selection Selection, endpoint, token string, current map[string]any) ([]setting, error) {
+func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any) ([]setting, error) {
 	s, err := selection.resolve(routes)
 	if err != nil {
 		return nil, err
@@ -74,7 +74,7 @@ func claudeSettings(routes []Route, selection Selection, endpoint, token string,
 	for _, kv := range [][2]string{
 		{claudeMarker, "1"},
 		{"ANTHROPIC_BASE_URL", endpoint},
-		{"ANTHROPIC_AUTH_TOKEN", token},
+		{"ANTHROPIC_AUTH_TOKEN", ""},
 		{"ANTHROPIC_DEFAULT_SONNET_MODEL", s.Primary},
 		{"ANTHROPIC_DEFAULT_OPUS_MODEL", s.Primary},
 		{"ANTHROPIC_DEFAULT_FABLE_MODEL", s.Primary},
