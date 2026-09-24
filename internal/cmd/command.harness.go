@@ -227,7 +227,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 		ctx.Outputf("%s: %s\n", r.Harness, r.State)
 		ctx.Outputf("  Config            %s\n", harnessDisplayPath(r.Config))
 		if !r.Installed {
-			ctx.OutputLine("  Version           not found on PATH")
+			ctx.OutputLine("  Version           not found")
 		} else {
 			ctx.Outputf("  Version           %s\n", cmp.Or(r.Version, "unavailable"))
 		}

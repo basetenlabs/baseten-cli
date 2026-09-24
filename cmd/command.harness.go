@@ -8,7 +8,7 @@ const harnessPreRelease = "PRE-RELEASE: Harness commands are not GA yet. " +
 var commandHarness = Command{
 	Name:        "harness",
 	Summary:     "Configure Baseten harness integrations (PRE-RELEASE)",
-	Description: harnessPreRelease + "Configure Claude Code, Codex CLI, and OpenCode CLI to use Baseten routes.",
+	Description: harnessPreRelease + "Configure Claude Code, Codex (CLI or ChatGPT desktop app), and OpenCode CLI to use Baseten routes.",
 	Children: []Command{
 		{
 			Name:    "setup",

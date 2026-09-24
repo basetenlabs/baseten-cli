@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,6 +36,69 @@ func (e fakeExecer) LookPath(name string) (string, error) {
 func (fakeExecer) Exec(command *exec.Cmd) error {
 	_, err := fmt.Fprintln(command.Stdout, "1.2.3\nextra")
 	return err
+}
+
+type codexDetectionExecer struct {
+	fakeExecer
+	binaries map[string]bool
+	executed string
+}
+
+func (e *codexDetectionExecer) LookPath(name string) (string, error) {
+	if !e.binaries[name] {
+		return "", exec.ErrNotFound
+	}
+	if name == "codex" {
+		return "/cli/codex", nil
+	}
+	return name, nil
+}
+
+func (e *codexDetectionExecer) Exec(command *exec.Cmd) error {
+	e.executed = command.Path
+	return e.fakeExecer.Exec(command)
+}
+
+func TestCodexDesktopDetection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", "")
+	path := filepath.Join(home, ".codex", "config.toml")
+	save(t, path, map[string]any{})
+	bundled := func(root, app string) string {
+		return filepath.Join(root, app, "Contents", "Resources", "codex")
+	}
+	chatgpt := bundled("/Applications", "ChatGPT.app")
+	for _, tc := range []struct {
+		name     string
+		binaries map[string]bool
+		want     string
+	}{
+		{"chatgpt", map[string]bool{chatgpt: true}, chatgpt},
+		{"codex", map[string]bool{bundled("/Applications", "Codex.app"): true}, bundled("/Applications", "Codex.app")},
+		{"user chatgpt", map[string]bool{bundled(filepath.Join(home, "Applications"), "ChatGPT.app"): true}, bundled(filepath.Join(home, "Applications"), "ChatGPT.app")},
+		{"user codex", map[string]bool{bundled(filepath.Join(home, "Applications"), "Codex.app"): true}, bundled(filepath.Join(home, "Applications"), "Codex.app")},
+		{"CLI takes precedence", map[string]bool{"codex": true, chatgpt: true}, "/cli/codex"},
+		{"config alone is not an installation", nil, ""},
+		{"classic app without bundled codex", map[string]bool{"/Applications/ChatGPT.app/Contents/MacOS/ChatGPT": true}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			execer := &codexDetectionExecer{binaries: tc.binaries}
+			want := tc.want
+			if runtime.GOOS != "darwin" && !tc.binaries["codex"] {
+				want = ""
+			}
+			d, err := codexHarness{}.Detect(t.Context(), execer, "")
+			require.NoError(t, err)
+			require.Equal(t, path, d.Path)
+			require.Equal(t, want != "", d.Installed)
+			require.Equal(t, want, execer.executed)
+			if d.Installed {
+				require.Equal(t, "1.2.3", d.Version)
+			}
+		})
+	}
 }
 
 // settingsPath is the settings file h uses in a fresh configuration directory.

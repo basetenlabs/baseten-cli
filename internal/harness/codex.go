@@ -3,7 +3,9 @@ package harness
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -21,7 +23,26 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 	if err != nil {
 		return Detection{}, err
 	}
-	return detect(ctx, execer, h.Name(), "codex", filepath.Join(dir, "config.toml"))
+	path := filepath.Join(dir, "config.toml")
+	d, err := detect(ctx, execer, h.Name(), "codex", path)
+	if err != nil || d.Installed || runtime.GOOS != "darwin" {
+		return d, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return Detection{}, err
+	}
+	// Desktop installs bundle Codex without adding it to PATH, and share its config.
+	for _, root := range []string{"/Applications", filepath.Join(home, "Applications")} {
+		for _, app := range []string{"ChatGPT.app", "Codex.app"} {
+			binary := filepath.Join(root, app, "Contents", "Resources", "codex")
+			d, err = detect(ctx, execer, h.Name(), binary, path)
+			if err != nil || d.Installed {
+				return d, err
+			}
+		}
+	}
+	return d, nil
 }
 
 func (codexHarness) BackgroundRoute(Selection) string { return "" }

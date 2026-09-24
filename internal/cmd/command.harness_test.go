@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -24,9 +25,17 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-type fakeHarnessExecer struct{}
+type fakeHarnessExecer struct{ binary string }
 
-func (fakeHarnessExecer) LookPath(name string) (string, error) { return "/fake/" + name, nil }
+func (e fakeHarnessExecer) LookPath(name string) (string, error) {
+	if e.binary != "" {
+		if name != e.binary {
+			return "", exec.ErrNotFound
+		}
+		return name, nil
+	}
+	return "/fake/" + name, nil
+}
 
 func (fakeHarnessExecer) Exec(command *exec.Cmd) error {
 	_, err := fmt.Fprintln(command.Stdout, "1.2.3")
@@ -189,6 +198,28 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 			h.Require.Contains(h.Stdout.String(), `"state": "not-configured"`)
 		})
 	}
+}
+
+func Test_Harness_Setup_CodexDesktopWithoutCLI(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS desktop installation")
+	}
+	h, _ := harnessAPI(t, "")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{
+		binary: "/Applications/ChatGPT.app/Contents/Resources/codex",
+	})
+	dir := t.TempDir()
+	t.Setenv("CODEX_HOME", dir)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--yes"))
+	settings := readHarnessSettings(t, "codex", filepath.Join(dir, "config.toml"))
+	h.Require.Equal("baseten-harness", settings["model_provider"])
+	h.Require.Equal("acme/primary", settings["model"])
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "codex", "--output", "json"))
+	var statuses public.HarnessStatusList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
+	h.Require.Len(statuses.Items, 1)
+	h.Require.True(statuses.Items[0].Installed)
+	h.Require.Equal("configured", statuses.Items[0].State)
 }
 
 func Test_Harness_Setup_TextSummary(t *testing.T) {
