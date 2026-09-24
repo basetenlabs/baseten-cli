@@ -3,7 +3,6 @@ package harness
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -91,18 +90,10 @@ func claudeSettings(routes []Route, selection Selection, endpoint, token string,
 	if err != nil {
 		return nil, err
 	}
-	for _, name := range []string{s.Primary, s.Background, s.Subagent, s.Fallback} {
-		if r, ok := routeByName(routes, name); ok && !r.Messages {
-			return nil, fmt.Errorf("Route %q lacks verified Messages support", r.Name)
-		}
-	}
 	background := cmp.Or(s.Background, defaultBackgroundRoute)
 	options := []any{}
 	allowed := []any{}
 	for _, r := range routes {
-		if !r.Messages {
-			continue
-		}
 		options = append(options, map[string]any{"model": r.Name, "label": r.DisplayName})
 		allowed = append(allowed, r.Name)
 	}

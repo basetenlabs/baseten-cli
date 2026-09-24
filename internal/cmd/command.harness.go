@@ -155,13 +155,8 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		Fallback:   f.FallbackRoute,
 	}
 	for _, choice := range selected {
-		switch choice.Name() {
-		case harness.ClaudeCode:
-			if excluded := harness.RoutesWithoutMessages(routes); len(excluded) > 0 {
-				ctx.Logf("Routes hidden from the Claude Code model picker because they lack Messages support: %s\n", strings.Join(excluded, ", "))
-			}
-		case harness.Codex:
-			if responses, chat, err := harness.WireFamilies(routes, selection); err == nil && responses && chat {
+		if choice.Name() == harness.Codex {
+			if responses, chat := harness.WireFamilies(routes, selection); responses && chat {
 				ctx.Logf("Selected Routes span both Responses and Chat Completions; in-session model switching across families requires switching model_provider\n")
 			}
 		}

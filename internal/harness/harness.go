@@ -140,19 +140,9 @@ func routeByName(routes []Route, name string) (Route, bool) {
 	return Route{}, false
 }
 
-// RoutesWithoutMessages names the routes Claude Code cannot serve.
-func RoutesWithoutMessages(routes []Route) []string {
-	var names []string
-	for _, r := range routes {
-		if !r.Messages {
-			names = append(names, r.Name)
-		}
-	}
-	return names
-}
-
-// WireFamilies reports which wire protocols the selected routes require.
-func WireFamilies(routes []Route, s Selection) (responses, chat bool, err error) {
+// WireFamilies reports which wire protocols the selected routes use. A route
+// whose formats are unknown or unset is served over Chat Completions.
+func WireFamilies(routes []Route, s Selection) (responses, chat bool) {
 	for _, name := range []string{s.Primary, s.Background, s.Subagent} {
 		if name == "" {
 			continue
@@ -163,13 +153,11 @@ func WireFamilies(routes []Route, s Selection) (responses, chat bool, err error)
 		}
 		if r.Responses {
 			responses = true
-		} else if r.ChatCompletions {
-			chat = true
 		} else {
-			return false, false, fmt.Errorf("Route %q requires Responses or Chat Completions support", r.Name)
+			chat = true
 		}
 	}
-	return responses, chat, nil
+	return responses, chat
 }
 
 func defaultReasoningLevel(levels []string) any {

@@ -19,11 +19,14 @@ func chatOnlyRoute() Route {
 	return Route{Name: "acme/chat", DisplayName: "Chat only", Messages: false, Responses: false, ChatCompletions: true, Tools: true, ContextWindow: 64000, OutputLimit: 8192, InputModalities: []string{"text"}}
 }
 
+func unknownFormatsRoute() Route {
+	return Route{Name: "acme/unknown", DisplayName: "Unknown formats", Tools: true, ContextWindow: 64000, OutputLimit: 8192, InputModalities: []string{"text"}}
+}
+
 func TestCodexChatOnlyRouteAddsChatProvider(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	routes := append(metadataRoutes()[:1:1], chatOnlyRoute())
-	responses, chat, err := WireFamilies(routes, Selection{Primary: "acme/primary", Background: "acme/chat"})
-	require.NoError(t, err)
+	responses, chat := WireFamilies(routes, Selection{Primary: "acme/primary", Background: "acme/chat"})
 	require.True(t, responses)
 	require.True(t, chat)
 	plans, err := codexHarness{}.Prepare(path, routes, nil, Selection{Primary: "acme/primary"}, testEndpoint, "baseten-harness-pending-key")
@@ -51,23 +54,36 @@ func TestCodexChatOnlyPrimarySelectsChatProvider(t *testing.T) {
 	require.Equal(t, "chat", get(d, []string{"model_providers", chatProviderID, "wire_api"}).Data)
 }
 
-func TestClaudeFiltersNonMessagesRoutesFromPicker(t *testing.T) {
-	routes := append(metadataRoutes(), chatOnlyRoute())
-	require.Contains(t, RoutesWithoutMessages(routes), "acme/chat")
+func TestCodexUnknownFormatsRouteUsesChatProvider(t *testing.T) {
+	responses, chat := WireFamilies([]Route{unknownFormatsRoute()}, Selection{Primary: "acme/unknown"})
+	require.False(t, responses)
+	require.True(t, chat)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	plans, err := codexHarness{}.Prepare(path, []Route{unknownFormatsRoute()}, nil, Selection{Primary: "acme/unknown"}, testEndpoint, testToken)
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	d := load(t, path)
+	require.Equal(t, chatProviderID, get(d, []string{"model_provider"}).Data)
+	require.False(t, get(d, []string{"model_providers", providerID}).Exists)
+	require.Equal(t, "chat", get(d, []string{"model_providers", chatProviderID, "wire_api"}).Data)
+}
+
+func TestClaudeIncludesAllRoutesInPicker(t *testing.T) {
+	routes := append(metadataRoutes(), chatOnlyRoute(), unknownFormatsRoute())
 	path := filepath.Join(t.TempDir(), "settings.json")
 	plans, err := claudeCodeHarness{}.Prepare(path, routes, nil, Selection{Primary: "acme/primary"}, testEndpoint, testToken)
 	require.NoError(t, err)
 	require.NoError(t, ApplyPlans(plans, testToken))
 	d := load(t, path)
-	for _, o := range get(d, []string{"modelPicker", "options"}).Data.([]any) {
-		require.NotEqual(t, "acme/chat", o.(map[string]any)["model"])
-	}
-	require.Len(t, get(d, []string{"modelPicker", "options"}).Data, 2)
-	require.NotContains(t, get(d, []string{"availableModels"}).Data, "acme/chat")
+	require.Len(t, get(d, []string{"modelPicker", "options"}).Data, 4)
+	require.Contains(t, get(d, []string{"availableModels"}).Data, "acme/chat")
+	require.Contains(t, get(d, []string{"availableModels"}).Data, "acme/unknown")
 	require.Equal(t, "128000", get(d, []string{"env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"}).Data)
 	require.Equal(t, "4096", get(d, []string{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}).Data)
 	_, err = claudeCodeHarness{}.Prepare(path, routes, nil, Selection{Primary: "acme/chat"}, testEndpoint, testToken)
-	require.ErrorContains(t, err, `Route "acme/chat" lacks verified Messages support`)
+	require.NoError(t, err)
+	_, err = claudeCodeHarness{}.Prepare(path, routes, nil, Selection{Primary: "acme/unknown"}, testEndpoint, testToken)
+	require.NoError(t, err)
 }
 
 func TestCodexCatalogCarriesRouteMetadata(t *testing.T) {

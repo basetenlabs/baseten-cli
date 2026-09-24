@@ -44,10 +44,8 @@ func (codexHarness) Prepare(path string, routes []Route, mcpServers []MCPServer,
 	for _, r := range routes {
 		if r.Responses {
 			responses = true
-		} else if r.ChatCompletions {
-			chat = true
 		} else {
-			return nil, fmt.Errorf("Route %q requires Responses or Chat Completions support", r.Name)
+			chat = true
 		}
 	}
 	provider := providerID

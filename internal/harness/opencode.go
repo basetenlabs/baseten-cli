@@ -54,8 +54,8 @@ func (openCodeHarness) Prepare(path string, routes []Route, mcpServers []MCPServ
 		models[defaultBackgroundRoute] = map[string]any{"name": "DeepSeek V4.1 Flash"}
 	}
 	for _, r := range routes {
-		if !r.ChatCompletions || r.ContextWindow <= 0 || r.OutputLimit <= 0 || r.OutputLimit >= r.ContextWindow {
-			return nil, fmt.Errorf("Route %q requires Chat Completions and explicit context/output limits", r.Name)
+		if r.ContextWindow <= 0 || r.OutputLimit <= 0 || r.OutputLimit >= r.ContextWindow {
+			return nil, fmt.Errorf("Route %q requires explicit context/output limits", r.Name)
 		}
 		if len(r.InputModalities) == 0 {
 			return nil, fmt.Errorf("Route %q requires explicit input modalities", r.Name)
