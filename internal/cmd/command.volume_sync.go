@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -18,26 +17,6 @@ func init() {
 }
 
 const volumeSyncPollInterval = 2 * time.Second
-
-type volumeSyncAuthenticationAWSOIDC struct {
-	Region  string `json:"region"`
-	RoleARN string `json:"role_arn"`
-}
-
-type volumeSyncAuthenticationGCPOIDC struct {
-	ServiceAccount           string `json:"service_account"`
-	WorkloadIdentityProvider string `json:"workload_identity_provider"`
-}
-
-type volumeSyncSourceS3OIDC struct {
-	managementapi.VolumeSyncSourceS3
-	AWSOIDC volumeSyncAuthenticationAWSOIDC `json:"aws_oidc"`
-}
-
-type volumeSyncSourceGCSOIDC struct {
-	managementapi.VolumeSyncSourceGCS
-	GCPOIDC volumeSyncAuthenticationGCPOIDC `json:"gcp_oidc"`
-}
 
 func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags) error {
 	source, err := volumeSyncSourceFromFlags(flags)
@@ -255,38 +234,29 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 		if arn != "" {
 			assumeRole = &managementapi.VolumeSyncAuthenticationAWSAssumeRole{RoleArn: arn, Region: region}
 		}
-		s3Source := managementapi.VolumeSyncSourceS3{
-			Uri: uri, Include: &include, Exclude: &exclude,
-			AuthSecretName: authSecretName, AwsAssumeRole: assumeRole,
-		}
+		var awsOIDC *managementapi.VolumeSyncAuthenticationAWSOIDC
 		if awsOIDCRoleARN != "" {
-			s3Source.Type = "S3"
-			err = encodeVolumeSyncSource(&source, volumeSyncSourceS3OIDC{
-				VolumeSyncSourceS3: s3Source,
-				AWSOIDC: volumeSyncAuthenticationAWSOIDC{
-					RoleARN: awsOIDCRoleARN,
-					Region:  awsOIDCRegion,
-				},
-			})
-		} else {
-			err = source.FromVolumeSyncSourceS3(s3Source)
+			awsOIDC = &managementapi.VolumeSyncAuthenticationAWSOIDC{
+				RoleArn: awsOIDCRoleARN,
+				Region:  awsOIDCRegion,
+			}
 		}
+		err = source.FromVolumeSyncSourceS3(managementapi.VolumeSyncSourceS3{
+			Uri: uri, Include: &include, Exclude: &exclude,
+			AuthSecretName: authSecretName, AwsAssumeRole: assumeRole, AwsOidc: awsOIDC,
+		})
 	case "GCS":
-		gcsSource := managementapi.VolumeSyncSourceGCS{
-			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
-		}
+		var gcpOIDC *managementapi.VolumeSyncAuthenticationGCPOIDC
 		if gcpOIDCServiceAccount != "" {
-			gcsSource.Type = "GCS"
-			err = encodeVolumeSyncSource(&source, volumeSyncSourceGCSOIDC{
-				VolumeSyncSourceGCS: gcsSource,
-				GCPOIDC: volumeSyncAuthenticationGCPOIDC{
-					ServiceAccount:           gcpOIDCServiceAccount,
-					WorkloadIdentityProvider: gcpOIDCWorkloadIdentityProvider,
-				},
-			})
-		} else {
-			err = source.FromVolumeSyncSourceGCS(gcsSource)
+			gcpOIDC = &managementapi.VolumeSyncAuthenticationGCPOIDC{
+				ServiceAccount:           gcpOIDCServiceAccount,
+				WorkloadIdentityProvider: gcpOIDCWorkloadIdentityProvider,
+			}
 		}
+		err = source.FromVolumeSyncSourceGCS(managementapi.VolumeSyncSourceGCS{
+			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
+			GcpOidc: gcpOIDC,
+		})
 	case "AZURE":
 		err = source.FromVolumeSyncSourceAzure(managementapi.VolumeSyncSourceAzure{
 			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
@@ -308,17 +278,6 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 		return managementapi.CreateVolumeSyncRequest_Source{}, fmt.Errorf("encoding volume sync source: %w", err)
 	}
 	return source, nil
-}
-
-// encodeVolumeSyncSource bridges fields that are present in the REST API schema but not yet in
-// the generated management client. The union's JSON representation is its wire representation,
-// so this can be removed once baseten-go includes the OIDC source types.
-func encodeVolumeSyncSource(target *managementapi.CreateVolumeSyncRequest_Source, value any) error {
-	b, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(b, target)
 }
 
 func volumeSyncDestination(raw string) (string, error) {
