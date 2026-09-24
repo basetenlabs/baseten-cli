@@ -444,7 +444,8 @@ func decodeConfig(path string, b []byte) (map[string]any, error) {
 	return d, nil
 }
 
-// encodeConfig writes JSONC files as plain JSON, which drops their comments.
+// encodeConfig rewrites the whole file, which drops comments and reorders keys:
+// JSONC files are written as plain JSON, and TOML files are re-encoded.
 func encodeConfig(path string, d map[string]any) ([]byte, error) {
 	if filepath.Ext(path) != ".toml" {
 		return encode(d)
