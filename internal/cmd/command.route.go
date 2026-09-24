@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -29,17 +30,9 @@ func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
 	if team != "" {
 		params.TeamId = &team
 	}
-	var items []managementapi.Route
-	for {
-		resp, err := cl.API().GetRoutes(ctx, params)
-		if err != nil {
-			return fmt.Errorf("list routes: %w", err)
-		}
-		items = append(items, resp.Items...)
-		if !resp.Pagination.HasMore || resp.Pagination.Cursor == nil {
-			break
-		}
-		params.Cursor = resp.Pagination.Cursor
+	items, err := listRoutes(ctx, cl.API(), params)
+	if err != nil {
+		return err
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(cmd.RouteList{Items: items})
@@ -340,5 +333,21 @@ func routeTargetFields(value any) (kind, model, secret string, err error) {
 		return t.Type, t.Model, t.SecretName, nil
 	default:
 		return "", "", "", fmt.Errorf("unsupported route target %T", value)
+	}
+}
+
+// listRoutes returns the routes across all pages.
+func listRoutes(ctx context.Context, api *managementapi.Client, params managementapi.GetV1RoutesParams) ([]managementapi.Route, error) {
+	var routes []managementapi.Route
+	for {
+		resp, err := api.GetRoutes(ctx, params)
+		if err != nil {
+			return nil, fmt.Errorf("list routes: %w", err)
+		}
+		routes = append(routes, resp.Items...)
+		if !resp.Pagination.HasMore || resp.Pagination.Cursor == nil {
+			return routes, nil
+		}
+		params.Cursor = resp.Pagination.Cursor
 	}
 }

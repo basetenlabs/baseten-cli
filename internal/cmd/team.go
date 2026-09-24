@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/basetenlabs/baseten-go/client/managementapi"
@@ -17,24 +18,38 @@ func ResolveTeam(ctx context.Context, api *managementapi.Client, input string) (
 	if input == "" {
 		return "", nil
 	}
+	team, err := resolveTeamOrDefault(ctx, api, input)
+	if err != nil {
+		return "", err
+	}
+	return team.Id, nil
+}
+
+// resolveTeamOrDefault is ResolveTeam for callers that also need the team's name. An
+// empty input selects the organization's default team.
+func resolveTeamOrDefault(ctx context.Context, api *managementapi.Client, input string) (*managementapi.Team, error) {
 	resp, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
 	if err != nil {
-		return "", fmt.Errorf("list teams: %w", err)
+		return nil, fmt.Errorf("list teams: %w", err)
 	}
-	found := ""
-	for _, t := range resp.Teams {
-		if t.Id == input {
-			return t.Id, nil
-		}
-		if t.Name == input {
-			if found != "" {
-				return "", fmt.Errorf("multiple teams named %q; pass the team ID instead", input)
+	var found *managementapi.Team
+	for i := range resp.Teams {
+		t := &resp.Teams[i]
+		switch {
+		case input == "" && t.Default, input != "" && t.Id == input:
+			return t, nil
+		case input != "" && t.Name == input:
+			if found != nil {
+				return nil, fmt.Errorf("multiple teams named %q; pass the team ID instead", input)
 			}
-			found = t.Id
+			found = t
 		}
 	}
-	if found == "" {
-		return "", fmt.Errorf("no team matched %q", input)
+	if found != nil {
+		return found, nil
 	}
-	return found, nil
+	if input == "" {
+		return nil, errors.New("the organization has no default team; pass --team")
+	}
+	return nil, fmt.Errorf("no team matched %q", input)
 }

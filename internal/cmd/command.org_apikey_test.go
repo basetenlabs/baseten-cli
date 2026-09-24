@@ -61,6 +61,27 @@ func Test_Org_APIKey_List_UnknownType(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "WORKSPACE_SOMETHING_NEW")
 }
 
+func Test_Org_APIKey_List_RoutesKeysOnlyWithType(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/api_keys", 200, map[string]any{
+		"keys": []any{
+			map[string]any{"name": "ci-key", "prefix": "bsnt_abc", "type": "PERSONAL"},
+			map[string]any{"name": "laptop", "prefix": "bsnt_rte", "type": "ROUTES"},
+		},
+	})
+
+	h.Require.NoError(h.Execute("org", "api-key", "list"))
+	h.Require.Contains(h.Stdout.String(), "bsnt_abc****")
+	h.Require.NotContains(h.Stdout.String(), "bsnt_rte")
+
+	h.Require.NoError(h.Execute("org", "api-key", "list", "--type", "routes"))
+	h.Require.Contains(h.Stdout.String(), "bsnt_rte****")
+	h.Require.Contains(h.Stdout.String(), "routes")
+	calls := m.Calls()
+	h.Require.Equal("ROUTES", calls[len(calls)-1].Query().Get("type"))
+}
+
 func Test_Org_APIKey_Create_Personal(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()

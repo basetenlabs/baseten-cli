@@ -157,7 +157,58 @@ var commandRoute = Command{
 				},
 			},
 		},
+		{
+			Name:        "api-key",
+			Summary:     "Manage your routes API keys (PRE-RELEASE)",
+			Description: routePrereleaseNotice + "Manage the routes API keys you created, such as with harness setup, across all your machines and teams.",
+			Children: []Command{
+				{
+					Name:        "list",
+					Summary:     "List your routes API keys (PRE-RELEASE)",
+					Description: routePrereleaseNotice + "List the routes API keys you created, across all your machines and teams. Key values are never shown.",
+					Flags:       RouteAPIKeyListFlags{},
+					Output: &CommandOutput[managementapi.APIKeys]{
+						TextDescription: "Table with NAME, PREFIX, TEAM, CREATED, and LAST USED columns.",
+						Examples:        []CommandExample{{Description: "List your routes API keys.", Command: "baseten route api-key list"}},
+						JQExample:       CommandExample{Description: "Print key prefixes.", Command: "baseten route api-key list --jq '.keys[].prefix'"},
+					},
+				},
+				{
+					Name:    "delete",
+					Summary: "Delete your routes API keys (PRE-RELEASE)",
+					Description: routePrereleaseNotice + "Delete one routes API key by prefix, or all of them with --all. Harnesses using a deleted key lose access " +
+						"until you rerun harness setup on that machine, which creates a new key.",
+					Flags: RouteAPIKeyDeleteFlags{},
+					Output: &CommandOutput[RouteAPIKeyDeleteResult]{
+						TextDescription: "Each deleted prefix, on stderr.",
+						JSONDescription: "deleted lists the deleted prefixes and failed the ones that could not be deleted. The command fails if any deletion failed.",
+						Examples: []CommandExample{
+							{Description: "Delete a lost machine's key.", Command: "baseten route api-key delete --prefix <prefix>"},
+							{Description: "Delete all your routes API keys without prompting.", Command: "baseten route api-key delete --all --yes"},
+						},
+						JQExample: CommandExample{Description: "Print deleted prefixes.", Command: "baseten route api-key delete --prefix <prefix> --yes --jq '.deleted[]'"},
+					},
+				},
+			},
+		},
 	},
+}
+
+// RouteAPIKeyListFlags are the flags for `baseten route api-key list`.
+type RouteAPIKeyListFlags struct{ CommandFlags }
+
+// RouteAPIKeyDeleteFlags are the flags for `baseten route api-key delete`.
+type RouteAPIKeyDeleteFlags struct {
+	CommandFlags
+	Prefix string `flag:"prefix" desc:"Prefix of the key to delete, as shown by route api-key list." oneof:"key"`
+	All    bool   `flag:"all" desc:"Delete all your routes API keys, on every machine and team." oneof:"key"`
+	Yes    bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+}
+
+// RouteAPIKeyDeleteResult is the JSON output of `baseten route api-key delete`.
+type RouteAPIKeyDeleteResult struct {
+	Deleted []string `json:"deleted"`
+	Failed  []string `json:"failed"`
 }
 
 type RouteRefFlags struct {
