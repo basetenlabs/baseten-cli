@@ -47,6 +47,12 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 
 func (codexHarness) BackgroundRoute(Selection) string { return "" }
 
+var codexCredentialPath = []string{"model_providers", providerID, "experimental_bearer_token"}
+
+func (codexHarness) Credential(path string) (string, error) {
+	return credential(path, codexCredentialPath)
+}
+
 func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
 	switch {
 	case s.Background != "":
@@ -73,8 +79,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 			"experimental_bearer_token": "",
 		}),
 	}
-	credential := []string{"model_providers", providerID, "experimental_bearer_token"}
-	p, err := prepareSettings(path, credential, func(map[string]any) ([]setting, error) { return values, nil })
+	p, err := prepareSettings(path, codexCredentialPath, func(map[string]any) ([]setting, error) { return values, nil })
 	if err != nil {
 		return nil, err
 	}

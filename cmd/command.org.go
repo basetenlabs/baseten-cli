@@ -16,10 +16,11 @@ var commandOrg = Command{
 			Summary: "Manage API keys",
 			Children: []Command{
 				{
-					Name:        "list",
-					Summary:     "List API keys",
-					Description: "List API keys (metadata only; key values are never returned).",
-					Flags:       OrgAPIKeyListFlags{},
+					Name:    "list",
+					Summary: "List API keys",
+					Description: "List API keys (metadata only; key values are never returned). " +
+						"Routes API keys, which harness setup creates and manages, are listed only with --type routes.",
+					Flags: OrgAPIKeyListFlags{},
 					Output: &CommandOutput[managementapi.APIKeys]{
 						TextDescription: "Table with columns: NAME, KEY (prefix + ****), TYPE, TEAM. When no " +
 							"keys exist, prints \"No API keys found.\" to stderr.",
@@ -421,6 +422,7 @@ type OrgUserDescribeFlags struct {
 
 type OrgAPIKeyListFlags struct {
 	CommandFlags
+	Type string `flag:"type" desc:"Only list keys of this category." enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all,workspace-manage-api-keys,routes"`
 }
 
 type OrgAPIKeyCreateFlags struct {

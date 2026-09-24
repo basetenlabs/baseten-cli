@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
@@ -21,6 +22,7 @@ var (
 		"workspace-invoke":          managementapi.APIKeyCategory_WORKSPACE_INVOKE,
 		"workspace-manage-all":      managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL,
 		"workspace-manage-api-keys": managementapi.APIKeyCategory_WORKSPACE_MANAGE_API_KEYS,
+		"routes":                    managementapi.APIKeyCategory_ROUTES,
 	}
 	apiKeyTypeFromBackend = map[managementapi.APIKeyCategory]string{
 		managementapi.APIKeyCategory_PERSONAL:                  "personal",
@@ -28,18 +30,31 @@ var (
 		managementapi.APIKeyCategory_WORKSPACE_INVOKE:          "workspace-invoke",
 		managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL:      "workspace-manage-all",
 		managementapi.APIKeyCategory_WORKSPACE_MANAGE_API_KEYS: "workspace-manage-api-keys",
+		managementapi.APIKeyCategory_ROUTES:                    "routes",
 	}
 )
 
-func commandOrgAPIKeyList(ctx *CommandContext, _ *cmd.OrgAPIKeyListFlags) error {
+func commandOrgAPIKeyList(ctx *CommandContext, flags *cmd.OrgAPIKeyListFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
 
-	keys, err := cl.API().GetApiKeys(ctx, managementapi.GetV1ApiKeysParams{})
+	var params managementapi.GetV1ApiKeysParams
+	if flags.Type != "" {
+		keyType := apiKeyTypeToBackend[flags.Type]
+		params.Type = &keyType
+	}
+	keys, err := cl.API().GetApiKeys(ctx, params)
 	if err != nil {
 		return fmt.Errorf("listing API keys: %w", err)
+	}
+	// Harness setup creates and deletes routes keys, so they would only clutter
+	// the default listing.
+	if flags.Type == "" {
+		keys.Keys = slices.DeleteFunc(keys.Keys, func(k managementapi.APIKeyInfo) bool {
+			return k.Type == managementapi.APIKeyCategory_ROUTES
+		})
 	}
 
 	if ctx.JSON {

@@ -14,13 +14,13 @@ import (
 )
 
 func init() {
-	Register("route key list", commandRouteKeyList)
-	Register("route key revoke", commandRouteKeyRevoke)
+	Register("route api-key list", commandRouteAPIKeyList)
+	Register("route api-key delete", commandRouteAPIKeyDelete)
 }
 
-// listRouteKeys returns the routes API keys the caller created, across all
+// listRouteAPIKeys returns the routes API keys the caller created, across all
 // their machines and teams.
-func listRouteKeys(ctx context.Context, api *managementapi.Client) (*managementapi.APIKeys, error) {
+func listRouteAPIKeys(ctx context.Context, api *managementapi.Client) (*managementapi.APIKeys, error) {
 	category, mine := managementapi.APIKeyCategory_ROUTES, true
 	keys, err := api.GetApiKeys(ctx, managementapi.GetV1ApiKeysParams{Type: &category, CreatedByMe: &mine})
 	if err != nil {
@@ -48,9 +48,9 @@ func routesKeyScope(ctx *CommandContext, userID, teamID, name string) (auth.Rout
 	}, nil
 }
 
-// forgetRouteKeys removes this machine's saved copies of revoked keys, so
+// forgetRouteAPIKeys removes this machine's saved copies of deleted keys, so
 // harness setup creates new ones.
-func forgetRouteKeys(ctx *CommandContext, api *managementapi.Client, revoked []managementapi.APIKeyInfo) error {
+func forgetRouteAPIKeys(ctx *CommandContext, api *managementapi.Client, deleted []managementapi.APIKeyInfo) error {
 	user, err := api.GetUsersMe(ctx)
 	if err != nil {
 		return fmt.Errorf("getting current user: %w", err)
@@ -63,7 +63,7 @@ func forgetRouteKeys(ctx *CommandContext, api *managementapi.Client, revoked []m
 	if err != nil {
 		return err
 	}
-	for _, k := range revoked {
+	for _, k := range deleted {
 		if k.Name == nil || k.TeamName == nil {
 			continue
 		}
@@ -89,12 +89,12 @@ func forgetRouteKeys(ctx *CommandContext, api *managementapi.Client, revoked []m
 	return nil
 }
 
-func commandRouteKeyList(ctx *CommandContext, _ *cmd.RouteKeyListFlags) error {
+func commandRouteAPIKeyList(ctx *CommandContext, _ *cmd.RouteAPIKeyListFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	keys, err := listRouteKeys(ctx, cl.API())
+	keys, err := listRouteAPIKeys(ctx, cl.API())
 	if err != nil {
 		return err
 	}
@@ -124,12 +124,12 @@ func commandRouteKeyList(ctx *CommandContext, _ *cmd.RouteKeyListFlags) error {
 	return nil
 }
 
-func commandRouteKeyRevoke(ctx *CommandContext, flags *cmd.RouteKeyRevokeFlags) error {
+func commandRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.RouteAPIKeyDeleteFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	keys, err := listRouteKeys(ctx, cl.API())
+	keys, err := listRouteAPIKeys(ctx, cl.API())
 	if err != nil {
 		return err
 	}
@@ -137,10 +137,10 @@ func commandRouteKeyRevoke(ctx *CommandContext, flags *cmd.RouteKeyRevokeFlags) 
 	if !flags.All {
 		targets = slices.DeleteFunc(targets, func(k managementapi.APIKeyInfo) bool { return k.Prefix != flags.Prefix })
 		if len(targets) == 0 {
-			return fmt.Errorf("no routes API key with prefix %q; run 'baseten route key list'", flags.Prefix)
+			return fmt.Errorf("no routes API key with prefix %q; run 'baseten route api-key list'", flags.Prefix)
 		}
 	}
-	result := cmd.RouteKeyRevokeResult{Revoked: []string{}, Failed: []string{}}
+	result := cmd.RouteAPIKeyDeleteResult{Deleted: []string{}, Failed: []string{}}
 	if len(targets) == 0 {
 		if ctx.JSON {
 			ctx.OutputJSON(result)
@@ -150,7 +150,7 @@ func commandRouteKeyRevoke(ctx *CommandContext, flags *cmd.RouteKeyRevokeFlags) 
 		return nil
 	}
 	if !flags.Yes {
-		ctx.LogLine("Routes API keys to revoke:")
+		ctx.LogLine("Routes API keys to delete:")
 		for _, k := range targets {
 			name := ""
 			if k.Name != nil {
@@ -158,25 +158,25 @@ func commandRouteKeyRevoke(ctx *CommandContext, flags *cmd.RouteKeyRevokeFlags) 
 			}
 			ctx.Logf("  %s  %s\n", k.Prefix, name)
 		}
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Revoke %d routes API keys? Harnesses using them lose access.", len(targets))); err != nil {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete %d routes API keys? Harnesses using them lose access.", len(targets))); err != nil {
 			return err
 		}
 	}
 	var errs []error
-	var revoked []managementapi.APIKeyInfo
+	var deleted []managementapi.APIKeyInfo
 	for _, k := range targets {
 		if _, err := cl.API().DeleteApiKeys(ctx, k.Prefix); err != nil {
 			result.Failed = append(result.Failed, k.Prefix)
-			errs = append(errs, fmt.Errorf("revoking routes API key %s: %w", k.Prefix, err))
+			errs = append(errs, fmt.Errorf("deleting routes API key %s: %w", k.Prefix, err))
 			continue
 		}
-		revoked = append(revoked, k)
-		result.Revoked = append(result.Revoked, k.Prefix)
-		ctx.Logf("Revoked routes API key %s\n", k.Prefix)
+		deleted = append(deleted, k)
+		result.Deleted = append(result.Deleted, k.Prefix)
+		ctx.Logf("Deleted routes API key %s\n", k.Prefix)
 	}
-	if len(revoked) > 0 {
-		if err := forgetRouteKeys(ctx, cl.API(), revoked); err != nil {
-			errs = append(errs, fmt.Errorf("removing saved copies of revoked keys: %w", err))
+	if len(deleted) > 0 {
+		if err := forgetRouteAPIKeys(ctx, cl.API(), deleted); err != nil {
+			errs = append(errs, fmt.Errorf("removing saved copies of deleted keys: %w", err))
 		}
 	}
 	if ctx.JSON {
@@ -184,7 +184,7 @@ func commandRouteKeyRevoke(ctx *CommandContext, flags *cmd.RouteKeyRevokeFlags) 
 		if len(errs) > 0 {
 			ctx.SuppressJSONError()
 		}
-	} else if len(result.Revoked) > 0 {
+	} else if len(result.Deleted) > 0 {
 		ctx.LogLine("Rerun 'baseten harness setup' on affected machines to create new keys.")
 	}
 	return errors.Join(errs...)

@@ -71,7 +71,8 @@ var commandHarness = Command{
 			Description: harnessPreRelease +
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
 				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path.\n\n" +
-				"Saved routes API keys are kept and not revoked. Teardown reads local files only, so it works after the harness is uninstalled.",
+				"Teardown also deletes the routes API key the removed harnesses use, once no other harness on this machine uses it. " +
+				"It works after the harness is uninstalled.",
 			Flags: HarnessTeardownFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
 				TextDescription: "The settings removed from each harness. Use --verbose for configuration paths and setting names.",
@@ -108,6 +109,8 @@ type HarnessPlan struct {
 // HarnessPlanList is the JSON output of `baseten harness setup` and `baseten harness teardown`.
 type HarnessPlanList struct {
 	Items []HarnessPlan `json:"items"`
+	// DeletedAPIKeys lists the prefixes of routes API keys teardown deleted.
+	DeletedAPIKeys []string `json:"deleted_api_keys,omitempty"`
 }
 
 // HarnessRoute is a route configured in a harness.

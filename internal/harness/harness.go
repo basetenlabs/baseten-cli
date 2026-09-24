@@ -67,6 +67,9 @@ type Harness interface {
 	// BackgroundRoute is the route for lightweight background tasks, or "" if
 	// the harness has no such setting.
 	BackgroundRoute(selection Selection) string
+	// Credential returns the routes API key setup wrote to the settings file at
+	// path, or "" if there is none.
+	Credential(path string) (string, error)
 }
 
 // All returns every supported harness.
@@ -300,6 +303,16 @@ func readConfig(path string) (*configFile, map[string]any, error) {
 	}
 	d, err := decodeConfig(path, f.data)
 	return f, d, err
+}
+
+// credential reads the string at key from the settings file at path.
+func credential(path string, key []string) (string, error) {
+	_, data, err := readConfig(path)
+	if err != nil {
+		return "", err
+	}
+	token, _ := get(data, key).Data.(string)
+	return token, nil
 }
 
 func prepareSettings(path string, credentialPath []string, build func(map[string]any) ([]setting, error)) (*Plan, error) {

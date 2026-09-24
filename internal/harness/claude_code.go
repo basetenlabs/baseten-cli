@@ -15,6 +15,8 @@ const claudeMarker = "BASETEN_HARNESS"
 
 var claudeSubagentPath = []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}
 
+var claudeCredentialPath = []string{"env", "ANTHROPIC_AUTH_TOKEN"}
+
 var claudePaths = [][]string{
 	{"model"}, {"fallbackModel"}, {"modelPicker", "options"},
 	{"modelPicker", "replaceBuiltInOptions"}, {"availableModels"},
@@ -40,7 +42,7 @@ func (claudeCodeHarness) BackgroundRoute(s Selection) string {
 }
 
 func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
-	p, err := prepareSettings(path, []string{"env", "ANTHROPIC_AUTH_TOKEN"}, func(data map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, claudeCredentialPath, func(data map[string]any) ([]setting, error) {
 		return claudeSettings(routes, s, endpoint, data)
 	})
 	if err != nil {
@@ -119,6 +121,15 @@ func claudeTeardownPaths(data map[string]any) [][]string {
 		paths = append(paths, claudeSubagentPath)
 	}
 	return paths
+}
+
+func (claudeCodeHarness) Credential(path string) (string, error) {
+	_, data, err := readConfig(path)
+	if err != nil || get(data, []string{"env", claudeMarker}).Data != "1" {
+		return "", err
+	}
+	token, _ := get(data, claudeCredentialPath).Data.(string)
+	return token, nil
 }
 
 func (claudeCodeHarness) Teardown(path string) ([]*Plan, error) {

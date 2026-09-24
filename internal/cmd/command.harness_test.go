@@ -71,6 +71,7 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 	})
 	for _, team := range []string{"team-a", "team-b"} {
 		api.SetRoute("POST", "/v1/teams/"+team+"/api_keys", 200, map[string]string{"api_key": "secret-" + team})
+		api.SetRoute("DELETE", "/v1/api_keys/secret-"+team, 200, map[string]string{"prefix": "secret-" + team})
 	}
 	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{
 		map[string]any{"prefix": "secret-team-a", "type": "ROUTES", "name": "laptop", "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"},
@@ -136,7 +137,7 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 			if name == "codex" {
 				h.Require.NoError(os.WriteFile(path, []byte("theme = \"dark\"\n"), 0o600))
 			}
-			args := []string{"harness", "setup", "--harness", name, "--config-dir", dir, "--output", "json"}
+			args := []string{"harness", "setup", "--harness", name, "--config-dir", dir, "--key-name", "laptop", "--output", "json"}
 
 			h.Require.NoError(h.Execute(append(args, "--dry-run")...))
 			var preview public.HarnessPlanList
@@ -184,6 +185,8 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 
 			h.Require.NoError(h.Execute("harness", "teardown", "--harness", name, "--config-dir", dir, "--dry-run"))
 			h.Require.Contains(h.Stdout.String(), "Remove Baseten settings from "+name)
+			h.Require.Contains(h.Stdout.String(), "Also delete the routes API key")
+			h.Require.Equal(calls, len(api.Calls()), "status and teardown previews are local")
 			unchanged, err := os.ReadFile(path)
 			h.Require.NoError(err)
 			h.Require.Equal(settings, unchanged, "teardown --dry-run changes nothing")
@@ -192,7 +195,10 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 			h.Require.NoError(h.Execute("harness", "teardown", "--harness", name, "--config-dir", dir, "--yes"))
 			h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, name, path))
 			h.Require.NoFileExists(filepath.Join(dir, "baseten-models.json"))
-			h.Require.Equal(calls, len(api.Calls()), "status and teardown are local")
+			h.Require.Equal(1, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"), "teardown deletes the unused key")
+			key, err := configDirStore(t).GetRoutesKey(auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: "team-a", Name: "laptop"})
+			h.Require.NoError(err)
+			h.Require.Empty(key, "teardown forgets the deleted key")
 
 			h.Require.NoError(h.Execute("harness", "status", "--harness", name, "--config-dir", dir, "--output", "json"))
 			h.Require.Contains(h.Stdout.String(), `"state": "not-configured"`)
@@ -414,16 +420,46 @@ func Test_Harness_DefaultDiscovery(t *testing.T) {
 	h.Require.Error(h.Execute("harness", "status", "--harness", "opencode"))
 	h.Require.Contains(h.Stderr.String(), "invalid settings JSON")
 
+	h.Require.Equal(calls, len(api.Calls()), "status is local")
+
+	// Claude Code still uses the key, so removing Codex keeps it.
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "codex", "--yes"))
+	h.Require.Equal(0, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"))
 	h.Require.NoError(h.Execute("harness", "status", "--output", "json"))
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
 	h.Require.Len(statuses.Items, 1)
+	// An unreadable file might still use the key, so teardown keeps it.
 	h.Require.NoError(h.Execute("harness", "teardown", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "warning: keeping the routes API key")
+	h.Require.Equal(0, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"))
 	h.Require.NoError(h.Execute("harness", "status"))
 	h.Require.Contains(h.Stderr.String(), "No configured Baseten harnesses found.")
 	h.Require.NoError(h.Execute("harness", "teardown", "--output", "json"))
 	h.Require.JSONEq(`{"items":[]}`, h.Stdout.String())
-	h.Require.Equal(calls, len(api.Calls()), "status and teardown are local")
+}
+
+func Test_Harness_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
+	h, api := fakeHarnessAPI(t)
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	t.Setenv("XDG_CONFIG_HOME", root)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--yes"))
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "opencode", "--yes"))
+	h.Require.Equal(0, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"), "Claude Code still uses the key")
+	h.Require.NoError(h.Execute("harness", "teardown", "--yes", "--output", "json"))
+	var result public.HarnessPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	h.Require.Equal([]string{"secret-team-a"}, result.DeletedAPIKeys)
+	h.Require.Equal(1, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"))
+
+	// A failed delete leaves the settings in place so teardown can be retried.
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--yes"))
+	api.SetRoute("DELETE", "/v1/api_keys/secret-team-a", 500, map[string]string{"message": "unavailable"})
+	h.Require.Error(h.Execute("harness", "teardown", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "deleting routes API key secret-team-a")
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "codex", "--output", "json"))
+	h.Require.Contains(h.Stdout.String(), `"state": "configured"`)
 }
 
 // harnessGateway records the model each inference request names and refuses it.

@@ -14,6 +14,12 @@ type openCodeHarness struct{}
 
 var openCodeSubagentPaths = [][]string{{"agent", "general", "model"}, {"agent", "explore", "model"}}
 
+var openCodeCredentialPath = []string{"provider", providerID, "options", "apiKey"}
+
+func (openCodeHarness) Credential(path string) (string, error) {
+	return credential(path, openCodeCredentialPath)
+}
+
 func (openCodeHarness) Name() string { return OpenCode }
 
 func (h openCodeHarness) Detect(ctx context.Context, execer Execer, dir string) (Detection, error) {
@@ -73,8 +79,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 			values = append(values, desired(path, providerID+"/"+s.Subagent))
 		}
 	}
-	credential := []string{"provider", providerID, "options", "apiKey"}
-	p, err := prepareSettings(path, credential, func(current map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, openCodeCredentialPath, func(current map[string]any) ([]setting, error) {
 		if explicitSubagent {
 			return values, nil
 		}

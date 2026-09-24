@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -152,7 +153,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	}
 	if f.DryRun {
 		if ctx.JSON {
-			outputHarnessPlansJSON(ctx, plans)
+			outputHarnessPlansJSON(ctx, plans, nil)
 		} else {
 			ctx.LogLine("Preview only. No files changed and no routes API key created.")
 		}
@@ -176,7 +177,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		return err
 	}
 	if ctx.JSON {
-		outputHarnessPlansJSON(ctx, plans)
+		outputHarnessPlansJSON(ctx, plans, nil)
 		return nil
 	}
 	ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
@@ -272,26 +273,45 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	}
 	if len(names) == 0 {
 		if ctx.JSON {
-			outputHarnessPlansJSON(ctx, plans)
+			outputHarnessPlansJSON(ctx, plans, nil)
 		} else {
 			ctx.LogLine("No Baseten settings to remove.")
 		}
 		return nil
 	}
+	unused, err := unusedHarnessKeys(ctx, selected)
+	if err != nil {
+		return err
+	}
 	list := strings.Join(names, ", ")
+	question := "Remove Baseten settings from " + list + "?"
 	if !ctx.JSON {
 		ctx.Outputf("Remove Baseten settings from %s. Native defaults will apply and unrelated settings are kept.\n", list)
 	}
+	if len(unused) > 0 {
+		question = "Remove Baseten settings from " + list + " and delete the routes API key they use?"
+		if !ctx.JSON {
+			ctx.OutputLine("Also delete the routes API key they use, since no other harness on this machine uses it.")
+		}
+	}
 	if f.DryRun {
 		if ctx.JSON {
-			outputHarnessPlansJSON(ctx, plans)
+			outputHarnessPlansJSON(ctx, plans, nil)
 		} else {
-			ctx.LogLine("Preview only. No files changed.")
+			ctx.LogLine("Preview only. No files changed and no key deleted.")
 		}
 		return nil
 	}
 	if !f.Yes {
-		if err := ctx.ConfirmYesNo("Remove Baseten settings from " + list + "?"); err != nil {
+		if err := ctx.ConfirmYesNo(question); err != nil {
+			return err
+		}
+	}
+	// Delete the key first: once the settings are gone, teardown can no longer
+	// find it to retry.
+	var deleted []string
+	if len(unused) > 0 {
+		if deleted, err = deleteHarnessKeys(ctx, unused); err != nil {
 			return err
 		}
 	}
@@ -299,7 +319,7 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 		return err
 	}
 	if ctx.JSON {
-		outputHarnessPlansJSON(ctx, plans)
+		outputHarnessPlansJSON(ctx, plans, deleted)
 	} else {
 		ctx.LogLine("Baseten settings removed. Restart the harnesses to load the changes.")
 	}
@@ -315,7 +335,7 @@ func harnessFollowupCommand(action string, h selectedHarness, configDir string) 
 	return command
 }
 
-func outputHarnessPlansJSON(ctx *CommandContext, plans []*harness.Plan) {
+func outputHarnessPlansJSON(ctx *CommandContext, plans []*harness.Plan, deletedKeys []string) {
 	items := make([]cmd.HarnessPlan, 0, len(plans))
 	for _, p := range plans {
 		items = append(items, cmd.HarnessPlan{
@@ -327,7 +347,7 @@ func outputHarnessPlansJSON(ctx *CommandContext, plans []*harness.Plan) {
 			Changed:          p.Changed,
 		})
 	}
-	ctx.OutputJSON(cmd.HarnessPlanList{Items: items})
+	ctx.OutputJSON(cmd.HarnessPlanList{Items: items, DeletedAPIKeys: deletedKeys})
 }
 
 func harnessDisplayPath(path string) string {
@@ -396,6 +416,72 @@ func harnessSetupSummary(ctx *CommandContext, team *managementapi.Team, routes [
 	ctx.OutputLine("")
 }
 
+// unusedHarnessKeys returns the routes API keys the selected harnesses use that
+// no other harness on this machine still uses.
+func unusedHarnessKeys(ctx *CommandContext, selected []selectedHarness) ([]string, error) {
+	keys := map[string]bool{}
+	for _, s := range selected {
+		token, err := s.Credential(s.detection.Path)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", s.Name(), err)
+		}
+		if token != "" {
+			keys[token] = true
+		}
+	}
+	for _, h := range harness.All() {
+		if len(keys) == 0 {
+			break
+		}
+		d, err := h.Detect(ctx, ctx.Execer(), "")
+		if err != nil {
+			return nil, err
+		}
+		if slices.ContainsFunc(selected, func(s selectedHarness) bool { return s.Name() == h.Name() && s.detection.Path == d.Path }) {
+			continue
+		}
+		token, err := h.Credential(d.Path)
+		if err != nil {
+			ctx.Logf("warning: keeping the routes API key, since %s settings at %s can't be read: %v\n", h.Name(), harnessDisplayPath(d.Path), err)
+			return nil, nil
+		}
+		delete(keys, token)
+	}
+	return slices.Sorted(maps.Keys(keys)), nil
+}
+
+// deleteHarnessKeys deletes the routes API keys with these values, and this
+// machine's saved copies of them.
+func deleteHarnessKeys(ctx *CommandContext, tokens []string) ([]string, error) {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return nil, err
+	}
+	keys, err := listRouteAPIKeys(ctx, cl.API())
+	if err != nil {
+		return nil, err
+	}
+	var deleted []managementapi.APIKeyInfo
+	prefixes := []string{}
+	for _, k := range keys.Keys {
+		if !slices.ContainsFunc(tokens, func(token string) bool { return strings.HasPrefix(token, k.Prefix) }) {
+			continue
+		}
+		if _, err := cl.API().DeleteApiKeys(ctx, k.Prefix); err != nil {
+			return nil, fmt.Errorf("deleting routes API key %s: %w", k.Prefix, err)
+		}
+		deleted = append(deleted, k)
+		prefixes = append(prefixes, k.Prefix)
+		ctx.Logf("Deleted routes API key %s\n", k.Prefix)
+	}
+	if len(deleted) > 0 {
+		if err := forgetRouteAPIKeys(ctx, cl.API(), deleted); err != nil {
+			return nil, err
+		}
+	}
+	return prefixes, nil
+}
+
 // defaultHarnessKeyName derives a key name from the hostname, which may contain
 // characters API key names don't allow.
 func defaultHarnessKeyName(hostname string) string {
@@ -437,9 +523,9 @@ func loadHarnessKey(ctx *CommandContext, api *managementapi.Client, teamID, name
 	if k.saved, err = store.GetRoutesKey(k.scope); err != nil || k.saved == "" {
 		return k, err
 	}
-	// The saved key may have been revoked, here or on another machine; setup
+	// The saved key may have been deleted, here or on another machine; setup
 	// then creates a new one.
-	keys, err := listRouteKeys(ctx, api)
+	keys, err := listRouteAPIKeys(ctx, api)
 	if err != nil {
 		return nil, err
 	}

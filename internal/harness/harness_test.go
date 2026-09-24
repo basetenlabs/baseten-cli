@@ -189,6 +189,25 @@ func TestSetupRefreshAndTeardownKeepUnrelatedSettings(t *testing.T) {
 	}
 }
 
+func TestCredential(t *testing.T) {
+	for _, h := range All() {
+		t.Run(h.Name(), func(t *testing.T) {
+			path := settingsPath(t, h)
+			token, err := h.Credential(path)
+			require.NoError(t, err)
+			require.Empty(t, token, "no settings file")
+			setup(t, h, path, testRoutes(), Selection{})
+			token, err = h.Credential(path)
+			require.NoError(t, err)
+			require.Equal(t, testToken, token)
+			teardown(t, h, path)
+			token, err = h.Credential(path)
+			require.NoError(t, err)
+			require.Empty(t, token)
+		})
+	}
+}
+
 func TestRefreshWithFewerRoutes(t *testing.T) {
 	for _, h := range All() {
 		t.Run(h.Name(), func(t *testing.T) {
