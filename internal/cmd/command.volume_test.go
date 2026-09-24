@@ -415,7 +415,7 @@ func Test_Volume_Stat_Volume_NoExpiration(t *testing.T) {
 
 	h.Require.NoError(h.Execute("volume", "stat", "bdn:weights/llama"))
 	out := h.Stdout.String()
-	h.Require.Contains(out, "Expires:     none")
+	h.Require.Contains(out, "Expires:     never")
 	h.Require.Contains(out, "Version expiry: none scheduled")
 	h.Require.Contains(out, "Tags:        prod")
 	h.Require.NotContains(out, "prod (expires")
@@ -465,7 +465,7 @@ func Test_Volume_Stat_Version_NoExpiration(t *testing.T) {
 	h.MockManagementAPI().SetRoute("GET", "/v1/volumes/weights/llama/versions/@b3:aabbccddeeff", 200, payload)
 
 	h.Require.NoError(h.Execute("volume", "stat", "bdn:weights/llama@b3:aabbccddeeff"))
-	h.Require.Contains(h.Stdout.String(), "Expires:          none")
+	h.Require.Contains(h.Stdout.String(), "Expires:          never")
 }
 
 func Test_Volume_Stat_Version_Digest(t *testing.T) {

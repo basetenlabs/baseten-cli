@@ -746,7 +746,7 @@ func volumeExpiryText(expiresAt *time.Time) string {
 
 func volumeExpiryDetailText(expiresAt *time.Time) string {
 	if expiresAt == nil {
-		return "none"
+		return "never"
 	}
 	return expiresAt.UTC().Format(time.RFC3339)
 }
