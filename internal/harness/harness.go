@@ -412,15 +412,22 @@ func (p *Plan) apply() error {
 	case !p.Changed:
 		return nil
 	case p.remove:
-		if err := os.Remove(p.file.target); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(p.Path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		return nil
 	case p.teardown:
-		return p.file.write(p.data, p.file.mode)
+		// An existing file keeps its permissions.
+		return os.WriteFile(p.Path, p.data, 0o600)
 	default:
+		if err := os.MkdirAll(filepath.Dir(p.Path), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(p.Path, p.data, 0o600); err != nil {
+			return err
+		}
 		// Setup writes a credential, so the file is private.
-		return p.file.write(p.data, 0o600)
+		return os.Chmod(p.Path, 0o600)
 	}
 }
 
@@ -469,50 +476,16 @@ func encodeConfig(path string, d map[string]any) ([]byte, error) {
 	return b.Bytes(), err
 }
 
-// configFile is a settings file as read before planning. A symlinked file is
-// written through to its target so dotfile links survive.
+// configFile is a settings file as read before planning.
 type configFile struct {
-	target string
 	exists bool
-	mode   os.FileMode
 	data   []byte
 }
 
 func readFile(path string) (*configFile, error) {
-	target, err := filepath.EvalSymlinks(path)
-	if os.IsNotExist(err) {
-		return &configFile{target: path, mode: 0o600}, nil
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return &configFile{}, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	info, err := os.Stat(target)
-	if err != nil {
-		return nil, err
-	}
-	data, err := os.ReadFile(target)
-	return &configFile{target: target, exists: true, mode: info.Mode().Perm(), data: data}, err
-}
-
-// write replaces the file atomically so an interrupted write never leaves a
-// truncated settings file.
-func (f *configFile) write(data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(f.target), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(f.target), ".baseten-harness-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err = tmp.Chmod(mode); err == nil {
-		_, err = tmp.Write(data)
-	}
-	if closeErr := tmp.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), f.target)
+	return &configFile{exists: err == nil, data: data}, err
 }

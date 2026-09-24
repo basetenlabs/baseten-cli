@@ -52,6 +52,7 @@ func Test_Route_APIKey_DeleteAllReportsPartialFailure(t *testing.T) {
 }
 
 func Test_Harness_Setup_ReplacesDeletedKey(t *testing.T) {
+	skipUnlessMacOS(t)
 	h, api := fakeHarnessAPI(t)
 	dir := t.TempDir()
 	args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
@@ -75,6 +76,7 @@ func Test_Harness_Setup_ReplacesDeletedKey(t *testing.T) {
 }
 
 func Test_Route_APIKey_DeleteForgetsSavedKey(t *testing.T) {
+	skipUnlessMacOS(t)
 	h, api := fakeHarnessAPI(t)
 	api.SetRoute("DELETE", "/v1/api_keys/secret-team-a", 200, map[string]string{"prefix": "secret-team-a"})
 	setup := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--key-name", "laptop", "--yes"}

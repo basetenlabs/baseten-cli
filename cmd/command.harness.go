@@ -1,6 +1,6 @@
 package cmd
 
-const harnessPreRelease = "PRE-RELEASE: Harness commands are not GA yet. " +
+const harnessPreRelease = "PRE-RELEASE: Harness commands are not GA yet and support only macOS for now. " +
 	"Their arguments, flags, and output may change.\n\n"
 
 var commandHarness = Command{

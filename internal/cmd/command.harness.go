@@ -34,6 +34,10 @@ type selectedHarness struct {
 // installed harnesses; status and teardown find configured ones, even when
 // the harness is no longer installed.
 func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([]selectedHarness, error) {
+	// Harness settings locations are only verified on macOS so far.
+	if runtime.GOOS != "darwin" {
+		return nil, errors.New("harness commands support only macOS for now")
+	}
 	explicit := len(flags.Harness) > 0
 	if flags.ConfigDir != "" && len(flags.Harness) != 1 {
 		return nil, cmd.NewErrUsagef("--config-dir requires exactly one --harness")
