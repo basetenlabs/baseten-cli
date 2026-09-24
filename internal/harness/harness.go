@@ -160,6 +160,20 @@ func WireFamilies(routes []Route, s Selection) (responses, chat bool) {
 	return responses, chat
 }
 
+// NormalizeReasoningLevels maps server effort vocabulary onto the levels the harnesses describe.
+func NormalizeReasoningLevels(levels []string) []string {
+	out := make([]string, 0, len(levels))
+	for _, level := range levels {
+		if level == "max" {
+			level = "xhigh"
+		}
+		if !slices.Contains(out, level) {
+			out = append(out, level)
+		}
+	}
+	return out
+}
+
 func defaultReasoningLevel(levels []string) any {
 	best := ""
 	for _, level := range levels {

@@ -63,3 +63,17 @@ func Test_Harness_Setup_HarnessCatalogRejectsUnusableMetadata(t *testing.T) {
 	require.ErrorContains(t, err, "baseten route update --name <route> --metadata")
 	require.ElementsMatch(t, []string{"acme/no-tools", "acme/unresolved"}, skipped)
 }
+
+func Test_Harness_Setup_HarnessCatalogMapsReasoningVocabulary(t *testing.T) {
+	metadata := map[string]any{
+		"context_window": 64000, "max_output_tokens": 8192, "input_modalities": []string{"text"}, "tools": true,
+		"reasoning_effort_levels": []string{"none", "low", "high", "max"},
+		"supported_api_formats":   map[string]any{"messages": true, "responses": false, "chat_completions": true},
+	}
+	listed := []internalcmd.HarnessRouteRecordForTest{harnessRouteFixture(t, "acme/kimi", metadata)}
+	routes, skipped, err := internalcmd.HarnessCatalogForTest(listed, "")
+	require.NoError(t, err)
+	require.Empty(t, skipped)
+	require.Len(t, routes, 1)
+	require.Equal(t, []string{"none", "low", "high", "xhigh"}, routes[0].ReasoningLevels)
+}

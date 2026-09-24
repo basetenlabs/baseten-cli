@@ -133,7 +133,7 @@ func harnessCatalog(listed []harnessRouteRecord, primary string) ([]harness.Rout
 			Name: route.Name, DisplayName: route.DisplayName,
 			ContextWindow: m.ContextWindow, OutputLimit: m.MaxOutputTokens,
 			InputModalities: m.InputModalities, Tools: m.Tools,
-			ReasoningLevels: m.ReasoningLevels, ParallelTools: m.ParallelToolCalls,
+			ReasoningLevels: harness.NormalizeReasoningLevels(m.ReasoningLevels), ParallelTools: m.ParallelToolCalls,
 			Messages:        m.SupportedAPIFormats.Messages,
 			Responses:       m.SupportedAPIFormats.Responses,
 			ChatCompletions: m.SupportedAPIFormats.ChatCompletions,

@@ -111,3 +111,11 @@ func TestDefaultReasoningLevelPicksLowestRealEffort(t *testing.T) {
 	require.Nil(t, defaultReasoningLevel([]string{"none"}))
 	require.Nil(t, defaultReasoningLevel(nil))
 }
+
+func TestNormalizeReasoningLevelsMapsServerVocabulary(t *testing.T) {
+	require.Equal(t, []string{"none", "low", "high", "xhigh"}, NormalizeReasoningLevels([]string{"none", "low", "high", "max"}))
+	require.Equal(t, []string{"low", "xhigh"}, NormalizeReasoningLevels([]string{"low", "max", "xhigh"}))
+	require.Empty(t, NormalizeReasoningLevels(nil))
+	_, err := ValidateCatalog([]Route{{Name: "acme/turbo", DisplayName: "Turbo", Tools: true, ReasoningLevels: NormalizeReasoningLevels([]string{"turbo"})}})
+	require.ErrorContains(t, err, `Route "acme/turbo" has an unsupported reasoning level`)
+}
