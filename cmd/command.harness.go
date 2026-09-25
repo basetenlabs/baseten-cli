@@ -14,7 +14,7 @@ var commandHarness = Command{
 			Description: harnessPreRelease +
 				"Configure installed harnesses with your team's routes and a routes API key.\n\n" +
 				"Setup offers a picker of installed harnesses when --harness is omitted. Repeat --harness to select several. " +
-				"All of the team's routes are added to each harness's model picker, replacing it; the first route is the default unless --route is set.\n\n" +
+				"The team's routes with model metadata are added to each harness's model picker, replacing it; the first route is the default unless --route is set.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
 				"The routes API key is created on first setup and reused afterward. Restart the harness after setup.",
 			Flags: HarnessSetupFlags{},

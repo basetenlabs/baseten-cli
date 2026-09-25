@@ -70,7 +70,18 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 		models[defaultBackgroundRoute] = map[string]any{"name": "DeepSeek V4.1 Flash"}
 	}
 	for _, r := range routes {
-		model := map[string]any{"name": r.DisplayName}
+		variants := map[string]any{}
+		for _, level := range r.ReasoningLevels {
+			variants[level] = map[string]any{"reasoningEffort": level}
+		}
+		model := map[string]any{
+			"name":       r.DisplayName,
+			"limit":      map[string]any{"context": r.ContextWindow, "output": r.OutputLimit},
+			"tool_call":  r.Tools,
+			"modalities": map[string]any{"input": r.InputModalities, "output": []string{"text"}},
+			"reasoning":  len(r.ReasoningLevels) > 0,
+			"variants":   variants,
+		}
 		// A model's npm overrides the provider's, so first-party routes use their
 		// native API at the same base URL: Messages for Anthropic, Responses for OpenAI.
 		if npm, ok := openCodeTargetPackages[r.Target]; ok {
@@ -98,7 +109,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 			values = append(values, desired(path, providerID+"/"+s.Subagent))
 		}
 	}
-	p, err := prepareSettings(path, openCodeCredentialPath, func(current map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, [][]string{openCodeCredentialPath}, func(current map[string]any) ([]setting, error) {
 		// Like the API key, keep the file's header until ApplyPlans inserts the real one.
 		if current, ok := get(current, openCodeBearerPath).Data.(string); ok {
 			headers["Authorization"] = current

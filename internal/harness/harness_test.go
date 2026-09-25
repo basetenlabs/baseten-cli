@@ -15,12 +15,19 @@ const testToken = "baseten-harness-test-token"
 
 const testEndpoint = "https://inference.example.com"
 
+func testRoute(name, displayName string) Route {
+	return Route{
+		Name: name, DisplayName: displayName,
+		ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, Responses: true,
+	}
+}
+
 func testRoutes() []Route {
 	return []Route{
-		{Name: "acme/primary", DisplayName: "Primary"},
-		{Name: "acme/background", DisplayName: "Background"},
-		{Name: "acme/subagent", DisplayName: "Subagents"},
-		{Name: "acme/fallback", DisplayName: "Fallback"},
+		testRoute("acme/primary", "Primary"),
+		testRoute("acme/background", "Background"),
+		testRoute("acme/subagent", "Subagents"),
+		testRoute("acme/fallback", "Fallback"),
 	}
 }
 
@@ -216,7 +223,11 @@ func TestRefreshWithFewerRoutes(t *testing.T) {
 			setup(t, h, path, testRoutes()[:2], Selection{})
 			status, err := h.Inspect(Detection{Name: h.Name(), Path: path})
 			require.NoError(t, err)
-			require.ElementsMatch(t, testRoutes()[:2], status.Routes)
+			expected := []Route{}
+			for _, r := range testRoutes()[:2] {
+				expected = append(expected, Route{Name: r.Name, DisplayName: r.DisplayName})
+			}
+			require.ElementsMatch(t, expected, status.Routes)
 		})
 	}
 }
@@ -416,9 +427,9 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.Equal(t, "@ai-sdk/openai-compatible", get(data, []string{"provider", providerID, "npm"}).Data)
 	require.Equal(t, "Bearer "+testToken, get(data, openCodeBearerPath).Data, "@ai-sdk/anthropic sends apiKey only as x-api-key")
 	models := get(data, []string{"provider", providerID, "models"}).Data.(map[string]any)
-	require.Equal(t, map[string]any{"name": "Primary", "provider": map[string]any{"npm": "@ai-sdk/anthropic"}}, models["acme/primary"])
-	require.Equal(t, map[string]any{"name": "Background", "provider": map[string]any{"npm": "@ai-sdk/openai"}}, models["acme/background"])
-	require.Equal(t, map[string]any{"name": "Subagents"}, models["acme/subagent"])
+	require.Equal(t, map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/primary"].(map[string]any)["provider"])
+	require.Equal(t, map[string]any{"npm": "@ai-sdk/openai"}, models["acme/background"].(map[string]any)["provider"])
+	require.NotContains(t, models["acme/subagent"], "provider")
 }
 
 func TestSymlinkedSettingsStayLinked(t *testing.T) {
