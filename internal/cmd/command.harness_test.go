@@ -611,7 +611,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 }
 
 func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
 		"items": []any{
