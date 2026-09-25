@@ -78,7 +78,7 @@ func TestClaudeIncludesAllRoutesInPicker(t *testing.T) {
 	require.Len(t, get(d, []string{"modelPicker", "options"}).Data, 4)
 	require.Contains(t, get(d, []string{"availableModels"}).Data, "acme/chat")
 	require.Contains(t, get(d, []string{"availableModels"}).Data, "acme/unknown")
-	require.Equal(t, "128000", get(d, []string{"env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"}).Data)
+	require.False(t, get(d, []string{"env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"}).Exists)
 	require.Equal(t, "4096", get(d, []string{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}).Data)
 	_, err = claudeCodeHarness{}.Prepare(path, routes, nil, Selection{Primary: "acme/chat"}, testEndpoint, testToken)
 	require.NoError(t, err)
@@ -103,6 +103,54 @@ func TestCodexCatalogCarriesRouteMetadata(t *testing.T) {
 	require.Equal(t, true, model["supports_parallel_tool_calls"])
 	require.Equal(t, json.Number("128000"), model["context_window"])
 	require.Equal(t, []any{"text"}, model["input_modalities"])
+}
+
+func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
+	huge := Route{Name: "acme/huge", DisplayName: "Huge", ContextWindow: 1000000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, ReasoningLevels: []string{"none", "low", "high", "xhigh"}}
+	mid := Route{Name: "acme/mid", DisplayName: "Mid", ContextWindow: 200000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true}
+	small := Route{Name: "acme/small", DisplayName: "Small", ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true}
+	path := filepath.Join(t.TempDir(), "settings.json")
+	plans, err := claudeCodeHarness{}.Prepare(path, []Route{huge, mid, small}, nil, Selection{Primary: "acme/huge"}, testEndpoint, testToken)
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	d := load(t, path)
+	require.Equal(t, "acme/huge[1m]", d["model"])
+	require.Equal(t, []any{
+		map[string]any{"model": "acme/huge[1m]", "label": "Huge"},
+		map[string]any{"model": "acme/mid", "label": "Mid"},
+		map[string]any{"model": "acme/small", "label": "Small"},
+	}, get(d, []string{"modelPicker", "options"}).Data)
+	require.Equal(t, []any{"acme/huge[1m]", "acme/mid", "acme/small", defaultBackgroundRoute}, get(d, []string{"availableModels"}).Data)
+	require.Equal(t, map[string]any{"acme/huge[1m]": "acme/huge"}, get(d, []string{"modelOverrides"}).Data)
+	require.Equal(t, map[string]any{
+		"acme/huge[1m]": map[string]any{"maxEffortLevel": "xhigh", "effortLevel": "low"},
+	}, get(d, []string{"modelSettings"}).Data)
+	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}).Data)
+	require.False(t, get(d, []string{"env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"}).Exists)
+	require.Equal(t, "4096", get(d, []string{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}).Data)
+}
+
+func TestClaudeModelSettingsSkipsRoutesWithoutEffortLevels(t *testing.T) {
+	routes := []Route{
+		{Name: "acme/turbo", DisplayName: "Turbo", ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, ReasoningLevels: []string{"none", "low", "high", "xhigh"}},
+		{Name: "acme/plain", DisplayName: "Plain", ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true},
+	}
+	path := filepath.Join(t.TempDir(), "settings.json")
+	plans, err := claudeCodeHarness{}.Prepare(path, routes, nil, Selection{Primary: "acme/turbo"}, testEndpoint, testToken)
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	d := load(t, path)
+	require.Equal(t, map[string]any{
+		"acme/turbo": map[string]any{"maxEffortLevel": "xhigh", "effortLevel": "low"},
+	}, get(d, []string{"modelSettings"}).Data)
+	require.Equal(t, map[string]any{}, get(d, []string{"modelOverrides"}).Data)
+}
+
+func TestMaxReasoningLevelPicksHighestRealEffort(t *testing.T) {
+	require.Equal(t, "xhigh", maxReasoningLevel([]string{"none", "low", "high", "xhigh"}))
+	require.Equal(t, "high", maxReasoningLevel([]string{"high", "low"}))
+	require.Nil(t, maxReasoningLevel([]string{"none"}))
+	require.Nil(t, maxReasoningLevel(nil))
 }
 
 func TestDefaultReasoningLevelPicksLowestRealEffort(t *testing.T) {

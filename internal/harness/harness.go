@@ -190,6 +190,22 @@ func defaultReasoningLevel(levels []string) any {
 	return best
 }
 
+func maxReasoningLevel(levels []string) any {
+	best := ""
+	for _, level := range levels {
+		if level == "none" || level == "default" {
+			continue
+		}
+		if best == "" || reasoningRank(level) > reasoningRank(best) {
+			best = level
+		}
+	}
+	if best == "" {
+		return nil
+	}
+	return best
+}
+
 func reasoningRank(level string) int {
 	switch level {
 	case "minimal":
