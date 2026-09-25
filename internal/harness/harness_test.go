@@ -421,6 +421,25 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.Equal(t, map[string]any{"name": "Subagents"}, models["acme/subagent"])
 }
 
+func TestClientHeaderNamesHarness(t *testing.T) {
+	paths := map[string][]string{
+		ClaudeCode: {"env", "ANTHROPIC_CUSTOM_HEADERS"},
+		Codex:      {"model_providers", providerID, "http_headers", clientHeader},
+		OpenCode:   {"provider", providerID, "options", "headers", clientHeader},
+	}
+	for _, h := range All() {
+		t.Run(h.Name(), func(t *testing.T) {
+			path := settingsPath(t, h)
+			setup(t, h, path, testRoutes(), Selection{})
+			want := h.Name()
+			if h.Name() == ClaudeCode {
+				want = clientHeader + ": " + ClaudeCode
+			}
+			require.Equal(t, want, get(load(t, path), paths[h.Name()]).Data)
+		})
+	}
+}
+
 func TestSymlinkedSettingsStayLinked(t *testing.T) {
 	for _, h := range All() {
 		t.Run(h.Name(), func(t *testing.T) {
