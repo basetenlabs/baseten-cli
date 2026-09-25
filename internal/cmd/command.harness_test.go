@@ -496,10 +496,12 @@ func Test_Harness_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), `"state": "configured"`)
 }
 
-// harnessGateway records the model each inference request names and refuses it.
+// harnessGateway records the model and client each inference request names and
+// refuses it.
 type harnessGateway struct {
-	mu     sync.Mutex
-	models []string
+	mu      sync.Mutex
+	models  []string
+	clients []string
 }
 
 func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -510,6 +512,7 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal(raw, &body) == nil && body.Model != "" {
 		g.mu.Lock()
 		g.models = append(g.models, body.Model)
+		g.clients = append(g.clients, r.Header.Get("X-Baseten-Client"))
 		g.mu.Unlock()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -524,6 +527,12 @@ func (g *harnessGateway) requested() []string {
 }
 
 func (g *harnessGateway) saw(model string) bool { return slices.Contains(g.requested(), model) }
+
+func (g *harnessGateway) sentClients() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.clients)
+}
 
 // Test_Harness_Setup_RealHarness configures each installed harness in an
 // isolated directory, runs it, and checks that it asks the gateway for the
@@ -603,6 +612,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 			if !gateway.saw("acme/primary") {
 				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.requested(), output.String())
 			}
+			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Client")
 		})
 	}
 }

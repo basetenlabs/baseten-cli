@@ -24,7 +24,7 @@ var claudePaths = [][]string{
 	{"env", "ANTHROPIC_AUTH_TOKEN"}, {"env", "ANTHROPIC_DEFAULT_SONNET_MODEL"},
 	{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}, {"env", "ANTHROPIC_DEFAULT_FABLE_MODEL"},
 	{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}, {"env", "ANTHROPIC_SMALL_FAST_MODEL"},
-	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"},
+	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"}, {"env", "ANTHROPIC_CUSTOM_HEADERS"},
 }
 
 func (claudeCodeHarness) Name() string { return ClaudeCode }
@@ -83,6 +83,7 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", background},
 		{"ANTHROPIC_SMALL_FAST_MODEL", background},
 		{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"},
+		{"ANTHROPIC_CUSTOM_HEADERS", clientHeader + ": " + ClaudeCode},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
