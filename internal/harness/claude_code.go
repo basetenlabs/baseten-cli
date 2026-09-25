@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 )
 
 type claudeCodeHarness struct{}
@@ -16,14 +17,18 @@ const claudeMarker = "BASETEN_HARNESS"
 
 var claudeSubagentPath = []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}
 
+const extendedContextWindow = 500000
+
 var claudePaths = [][]string{
 	{"model"}, {"fallbackModel"}, {"modelPicker", "options"},
 	{"modelPicker", "replaceBuiltInOptions"}, {"availableModels"},
+	{"modelOverrides"}, {"modelSettings"},
 	{"env", claudeMarker}, {"env", "ANTHROPIC_BASE_URL"},
 	{"env", "ANTHROPIC_AUTH_TOKEN"}, {"env", "ANTHROPIC_DEFAULT_SONNET_MODEL"},
 	{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}, {"env", "ANTHROPIC_DEFAULT_FABLE_MODEL"},
 	{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}, {"env", "ANTHROPIC_SMALL_FAST_MODEL"},
 	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"},
+	{"env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"}, {"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"},
 }
 
 func (claudeCodeHarness) Name() string { return ClaudeCode }
@@ -41,7 +46,7 @@ func (claudeCodeHarness) BackgroundRoute(s Selection) string {
 }
 
 func (h claudeCodeHarness) Prepare(path string, routes []Route, mcpServers []MCPServer, s Selection, endpoint, token string) ([]*Plan, error) {
-	p, err := prepareSettings(path, []string{"env", "ANTHROPIC_AUTH_TOKEN"}, token, func(data map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, [][]string{{"env", "ANTHROPIC_AUTH_TOKEN"}}, token, func(data map[string]any) ([]setting, error) {
 		return claudeSettings(routes, s, endpoint, token, data)
 	})
 	if err != nil {
@@ -89,37 +94,57 @@ func claudeSettings(routes []Route, selection Selection, endpoint, token string,
 		return nil, err
 	}
 	background := cmp.Or(s.Background, defaultBackgroundRoute)
+	pickerID := func(name string) string {
+		if r, ok := routeByName(routes, name); ok && r.ContextWindow >= extendedContextWindow {
+			return name + "[1m]"
+		}
+		return name
+	}
 	options := []any{}
 	allowed := []any{}
+	overrides := map[string]any{}
+	effort := map[string]any{}
 	for _, r := range routes {
-		options = append(options, map[string]any{"model": r.Name, "label": r.DisplayName})
-		allowed = append(allowed, r.Name)
+		id := pickerID(r.Name)
+		options = append(options, map[string]any{"model": id, "label": r.DisplayName})
+		allowed = append(allowed, id)
+		if id != r.Name {
+			overrides[id] = r.Name
+		}
+		if high, low := maxReasoningLevel(r.ReasoningLevels), defaultReasoningLevel(r.ReasoningLevels); high != nil && low != nil {
+			effort[id] = map[string]any{"maxEffortLevel": high, "effortLevel": low}
+		}
 	}
-	if !slices.Contains(allowed, any(background)) {
-		allowed = append(allowed, background)
+	if bg := pickerID(background); !slices.Contains(allowed, any(bg)) {
+		allowed = append(allowed, bg)
 	}
 	values := []setting{
-		desired([]string{"model"}, s.Primary),
-		desired([]string{"fallbackModel"}, []string{s.Fallback}),
+		desired([]string{"model"}, pickerID(s.Primary)),
+		desired([]string{"fallbackModel"}, []string{pickerID(s.Fallback)}),
 		desired([]string{"modelPicker", "options"}, options),
 		desired([]string{"modelPicker", "replaceBuiltInOptions"}, true),
 		desired([]string{"availableModels"}, allowed),
+		desired([]string{"modelOverrides"}, overrides),
+		desired([]string{"modelSettings"}, effort),
 	}
 	for _, kv := range [][2]string{
 		{claudeMarker, "1"},
 		{"ANTHROPIC_BASE_URL", endpoint},
 		{"ANTHROPIC_AUTH_TOKEN", token},
-		{"ANTHROPIC_DEFAULT_SONNET_MODEL", s.Primary},
-		{"ANTHROPIC_DEFAULT_OPUS_MODEL", s.Primary},
-		{"ANTHROPIC_DEFAULT_FABLE_MODEL", s.Primary},
-		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", background},
-		{"ANTHROPIC_SMALL_FAST_MODEL", background},
+		{"ANTHROPIC_DEFAULT_SONNET_MODEL", pickerID(s.Primary)},
+		{"ANTHROPIC_DEFAULT_OPUS_MODEL", pickerID(s.Primary)},
+		{"ANTHROPIC_DEFAULT_FABLE_MODEL", pickerID(s.Primary)},
+		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", pickerID(background)},
+		{"ANTHROPIC_SMALL_FAST_MODEL", pickerID(background)},
 		{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
+	if primary, ok := routeByName(routes, s.Primary); ok && primary.OutputLimit > 0 {
+		values = append(values, desired([]string{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}, strconv.Itoa(primary.OutputLimit)))
+	}
 	if selection.Subagent != "" {
-		values = append(values, desired(claudeSubagentPath, s.Subagent))
+		values = append(values, desired(claudeSubagentPath, pickerID(s.Subagent)))
 	} else if get(current, []string{"env", claudeMarker}).Data == "1" {
 		// A refresh may retire the route an earlier --subagent-route selected.
 		previous, _ := get(current, claudeSubagentPath).Data.(string)

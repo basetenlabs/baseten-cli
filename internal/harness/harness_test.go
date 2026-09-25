@@ -15,11 +15,18 @@ const testToken = "baseten-harness-test-token"
 const testEndpoint = "https://inference.example.com"
 
 func testRoutes() []Route {
+	route := func(name, displayName string) Route {
+		return Route{
+			Name: name, DisplayName: displayName,
+			ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"},
+			Tools: true, Messages: true, Responses: true, ChatCompletions: true,
+		}
+	}
 	return []Route{
-		{Name: "acme/primary", DisplayName: "Primary"},
-		{Name: "acme/background", DisplayName: "Background"},
-		{Name: "acme/subagent", DisplayName: "Subagents"},
-		{Name: "acme/fallback", DisplayName: "Fallback"},
+		route("acme/primary", "Primary"),
+		route("acme/background", "Background"),
+		route("acme/subagent", "Subagents"),
+		route("acme/fallback", "Fallback"),
 	}
 }
 
@@ -123,7 +130,11 @@ func TestRefreshWithFewerRoutes(t *testing.T) {
 			setup(t, h, path, testRoutes()[:2], Selection{})
 			status, err := h.Inspect(Detection{Name: h.Name(), Path: path})
 			require.NoError(t, err)
-			require.ElementsMatch(t, testRoutes()[:2], status.Routes)
+			expected := []Route{}
+			for _, r := range testRoutes()[:2] {
+				expected = append(expected, Route{Name: r.Name, DisplayName: r.DisplayName})
+			}
+			require.ElementsMatch(t, expected, status.Routes)
 		})
 	}
 }

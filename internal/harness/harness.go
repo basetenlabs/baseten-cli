@@ -45,6 +45,7 @@ const (
 )
 
 const providerID = "baseten-harness"
+const chatProviderID = "baseten-harness-chat"
 
 // TODO: Make the default background route server-driven.
 const defaultBackgroundRoute = "deepseek-ai/DeepSeek-V4.1-Flash"
@@ -76,10 +77,149 @@ func All() []Harness {
 	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}}
 }
 
-// Route is a Baseten route as shown in a harness's model picker.
+// Route is a Baseten route as shown in a harness's model picker, with the model
+// capabilities supplied by the route's own metadata.
 type Route struct {
-	Name        string
-	DisplayName string
+	Name            string
+	DisplayName     string
+	ContextWindow   int
+	OutputLimit     int
+	InputModalities []string
+	Tools           bool
+	ReasoningLevels []string
+	ParallelTools   bool
+	Messages        bool
+	Responses       bool
+	ChatCompletions bool
+}
+
+// ValidateCatalog rejects routes the harnesses cannot describe or drive.
+func ValidateCatalog(routes []Route) ([]Route, error) {
+	if len(routes) == 0 {
+		return nil, errors.New("no accessible Routes in catalog")
+	}
+	seen := map[string]bool{}
+	for _, r := range routes {
+		if r.Name == "" || strings.TrimSpace(r.Name) != r.Name || strings.ContainsAny(r.Name, "\r\n\t []") || seen[r.Name] {
+			return nil, errors.New("catalog has an invalid or duplicate Route name")
+		}
+		// Claude's built-in keywords are interpreted before sending a model ID.
+		switch r.Name {
+		case "default", "inherit", "opus", "sonnet", "haiku", "fable", "opusplan", "best":
+			return nil, fmt.Errorf("Route %q conflicts with a Claude model keyword", r.Name)
+		}
+		if strings.TrimSpace(r.DisplayName) == "" {
+			return nil, fmt.Errorf("Route %q has no display name", r.Name)
+		}
+		if !r.Tools {
+			return nil, fmt.Errorf("Route %q lacks verified tool support", r.Name)
+		}
+		for _, modality := range r.InputModalities {
+			if modality != "text" && modality != "image" {
+				return nil, fmt.Errorf("Route %q has an unsupported input modality", r.Name)
+			}
+		}
+		for _, level := range r.ReasoningLevels {
+			switch level {
+			case "low", "medium", "high", "minimal", "none", "xhigh":
+			default:
+				return nil, fmt.Errorf("Route %q has an unsupported reasoning level", r.Name)
+			}
+		}
+		seen[r.Name] = true
+	}
+	return routes, nil
+}
+
+func routeByName(routes []Route, name string) (Route, bool) {
+	for _, r := range routes {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return Route{}, false
+}
+
+// WireFamilies reports which wire protocols the selected routes use. A route
+// whose formats are unknown or unset is served over Chat Completions.
+func WireFamilies(routes []Route, s Selection) (responses, chat bool) {
+	for _, name := range []string{s.Primary, s.Background, s.Subagent} {
+		if name == "" {
+			continue
+		}
+		r, ok := routeByName(routes, name)
+		if !ok {
+			continue
+		}
+		if r.Responses {
+			responses = true
+		} else {
+			chat = true
+		}
+	}
+	return responses, chat
+}
+
+// NormalizeReasoningLevels maps server effort vocabulary onto the levels the harnesses describe.
+func NormalizeReasoningLevels(levels []string) []string {
+	out := make([]string, 0, len(levels))
+	for _, level := range levels {
+		if level == "max" {
+			level = "xhigh"
+		}
+		if !slices.Contains(out, level) {
+			out = append(out, level)
+		}
+	}
+	return out
+}
+
+func defaultReasoningLevel(levels []string) any {
+	best := ""
+	for _, level := range levels {
+		if level == "none" || level == "default" {
+			continue
+		}
+		if best == "" || reasoningRank(level) < reasoningRank(best) {
+			best = level
+		}
+	}
+	if best == "" {
+		return nil
+	}
+	return best
+}
+
+func maxReasoningLevel(levels []string) any {
+	best := ""
+	for _, level := range levels {
+		if level == "none" || level == "default" {
+			continue
+		}
+		if best == "" || reasoningRank(level) > reasoningRank(best) {
+			best = level
+		}
+	}
+	if best == "" {
+		return nil
+	}
+	return best
+}
+
+func reasoningRank(level string) int {
+	switch level {
+	case "minimal":
+		return 0
+	case "low":
+		return 1
+	case "medium":
+		return 2
+	case "high":
+		return 3
+	case "xhigh":
+		return 4
+	}
+	return 5
 }
 
 // Selection holds the requested routes. Empty fields use each harness's default.
@@ -205,12 +345,12 @@ type Plan struct {
 	Managed  bool
 	Changed  bool
 
-	file           *configFile
-	data           []byte
-	config         map[string]any
-	credentialPath []string
-	teardown       bool
-	remove         bool
+	file            *configFile
+	data            []byte
+	config          map[string]any
+	credentialPaths [][]string
+	teardown        bool
+	remove          bool
 }
 
 // ApplyPlans writes plans in order, inserting token into setup plans first.
@@ -304,7 +444,7 @@ func readConfig(path string) (*configFile, map[string]any, error) {
 	return f, d, err
 }
 
-func prepareSettings(path string, credentialPath []string, token string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
+func prepareSettings(path string, credentialPaths [][]string, token string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
 	f, d, err := readConfig(path)
 	if err != nil {
 		return nil, err
@@ -317,17 +457,19 @@ func prepareSettings(path string, credentialPath []string, token string, build f
 	if err != nil {
 		return nil, err
 	}
-	p := &Plan{Path: path, Managed: true, file: f, config: d, credentialPath: credentialPath}
+	p := &Plan{Path: path, Managed: true, file: f, config: d, credentialPaths: credentialPaths}
 	for _, v := range settings {
 		if err := put(d, v.Path, v.Installed); err != nil {
 			return nil, err
 		}
 		p.Keys = append(p.Keys, pathKey(v.Path))
 	}
-	if token == "" && len(credentialPath) > 0 {
-		if current := get(original, credentialPath); current.Exists {
-			if err := put(d, credentialPath, current); err != nil {
-				return nil, err
+	if token == "" {
+		for _, credentialPath := range credentialPaths {
+			if current := get(original, credentialPath); current.Exists {
+				if err := put(d, credentialPath, current); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
@@ -385,11 +527,13 @@ func (p *Plan) encode() error {
 }
 
 func (p *Plan) setCredential(token string) error {
-	if len(p.credentialPath) == 0 {
-		return nil
+	for _, credentialPath := range p.credentialPaths {
+		if err := put(p.config, credentialPath, value{Exists: true, Data: token}); err != nil {
+			return err
+		}
 	}
-	if err := put(p.config, p.credentialPath, value{Exists: true, Data: token}); err != nil {
-		return err
+	if len(p.credentialPaths) == 0 {
+		return nil
 	}
 	return p.encode()
 }

@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -39,18 +40,44 @@ func (codexHarness) Prepare(path string, routes []Route, mcpServers []MCPServer,
 	if err != nil {
 		return nil, err
 	}
+	responses, chat := false, false
+	for _, r := range routes {
+		if r.Responses {
+			responses = true
+		} else {
+			chat = true
+		}
+	}
+	provider := providerID
+	if r, ok := routeByName(routes, s.Primary); ok && !r.Responses {
+		provider = chatProviderID
+	}
 	values := []setting{
 		desired([]string{"model"}, s.Primary),
-		desired([]string{"model_provider"}, providerID),
+		desired([]string{"model_provider"}, provider),
 		desired([]string{"model_catalog_json"}, catalogPath(path)),
 		desired([]string{"review_model"}, s.Primary),
-		desired([]string{"model_providers", providerID}, map[string]any{
+	}
+	var credentialPaths [][]string
+	if responses {
+		values = append(values, desired([]string{"model_providers", providerID}, map[string]any{
 			"name":                      "Baseten",
 			"base_url":                  strings.TrimRight(endpoint, "/") + "/v1",
 			"wire_api":                  "responses",
 			"requires_openai_auth":      false,
 			"experimental_bearer_token": token,
-		}),
+		}))
+		credentialPaths = append(credentialPaths, []string{"model_providers", providerID, "experimental_bearer_token"})
+	}
+	if chat {
+		values = append(values, desired([]string{"model_providers", chatProviderID}, map[string]any{
+			"name":                      "Baseten",
+			"base_url":                  strings.TrimRight(endpoint, "/") + "/v1",
+			"wire_api":                  "chat",
+			"requires_openai_auth":      false,
+			"experimental_bearer_token": token,
+		}))
+		credentialPaths = append(credentialPaths, []string{"model_providers", chatProviderID, "experimental_bearer_token"})
 	}
 	for _, server := range mcpServers {
 		values = append(values, desired([]string{"mcp_servers", server.Name, "url"}, server.URL))
@@ -58,22 +85,26 @@ func (codexHarness) Prepare(path string, routes []Route, mcpServers []MCPServer,
 			values = append(values, desired([]string{"mcp_servers", server.Name, "http_headers", "Authorization"}, "Bearer "+server.AuthorizationToken))
 		}
 	}
-	credential := []string{"model_providers", providerID, "experimental_bearer_token"}
-	p, err := prepareSettings(path, credential, token, func(map[string]any) ([]setting, error) { return values, nil })
+	p, err := prepareSettings(path, credentialPaths, token, func(map[string]any) ([]setting, error) { return values, nil })
 	if err != nil {
 		return nil, err
 	}
 	models := []any{}
 	for i, r := range routes {
-		// Codex requires every field. Model-specific capabilities and limits are
-		// follow-up work, so these are conservative defaults.
+		if r.ContextWindow <= 0 || len(r.InputModalities) == 0 {
+			return nil, fmt.Errorf("Route %q requires a context limit and explicit input modalities", r.Name)
+		}
+		levels := []any{}
+		for _, level := range r.ReasoningLevels {
+			levels = append(levels, map[string]any{"effort": level, "description": level})
+		}
 		models = append(models, map[string]any{
 			"slug":                         r.Name,
 			"display_name":                 r.DisplayName,
 			"description":                  "Baseten route",
 			"base_instructions":            "",
-			"default_reasoning_level":      nil,
-			"supported_reasoning_levels":   []any{},
+			"default_reasoning_level":      defaultReasoningLevel(r.ReasoningLevels),
+			"supported_reasoning_levels":   levels,
 			"shell_type":                   "shell_command",
 			"visibility":                   "list",
 			"supported_in_api":             true,
@@ -83,7 +114,9 @@ func (codexHarness) Prepare(path string, routes []Route, mcpServers []MCPServer,
 			"default_verbosity":            nil,
 			"apply_patch_tool_type":        nil,
 			"truncation_policy":            map[string]any{"mode": "tokens", "limit": 10000},
-			"supports_parallel_tool_calls": false,
+			"context_window":               r.ContextWindow,
+			"input_modalities":             r.InputModalities,
+			"supports_parallel_tool_calls": r.ParallelTools,
 			"experimental_supported_tools": []any{},
 		})
 	}
@@ -98,9 +131,9 @@ func (codexHarness) Prepare(path string, routes []Route, mcpServers []MCPServer,
 }
 
 func codexTeardownPaths(data map[string]any, catalog string) [][]string {
-	paths := [][]string{{"model_providers", providerID}}
+	paths := [][]string{{"model_providers", providerID}, {"model_providers", chatProviderID}}
 	// Only reset shared defaults while Baseten is the selected provider.
-	if data["model_provider"] == providerID {
+	if data["model_provider"] == providerID || data["model_provider"] == chatProviderID {
 		paths = append(paths, []string{"model_provider"}, []string{"model"}, []string{"review_model"})
 	}
 	if data["model_catalog_json"] == catalog {
@@ -140,9 +173,9 @@ func (codexHarness) Inspect(d Detection) (Status, error) {
 			r.State = StateIncomplete
 		}
 		return r, nil
-	case !get(data, []string{"model_providers", providerID}).Exists || !f.exists:
+	case !get(data, []string{"model_providers", providerID}).Exists && !get(data, []string{"model_providers", chatProviderID}).Exists || !f.exists:
 		r.State = StateIncomplete
-	case data["model_provider"] != providerID:
+	case data["model_provider"] != providerID && data["model_provider"] != chatProviderID:
 		r.State = StateInactive
 	}
 	labels := map[string]string{}
