@@ -79,6 +79,7 @@ func routeFixture(target map[string]any) map[string]any {
 		"description":  "",
 		"target":       target,
 		"invoke_url":   "https://coding.baseten.co",
+		"metadata":     nil,
 		"created_at":   "2026-09-17T10:00:00Z",
 	}
 }

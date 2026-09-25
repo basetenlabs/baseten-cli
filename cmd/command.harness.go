@@ -66,6 +66,39 @@ var commandHarness = Command{
 			},
 		},
 		{
+			Name:    "usage",
+			Summary: "Show your routes spend, requests, and tokens for the month (PRE-RELEASE)",
+			Description: harnessPreRelease +
+				"Show the estimated spend, request count, and token usage of the routes API keys you created, " +
+				"across all teams, for one UTC calendar month. Defaults to the current month.\n\n" +
+				"Costs are estimates. Model API costs use your prices; OpenAI, Anthropic, and xAI costs estimate what " +
+				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage can't be priced, " +
+				"so its cost is empty and the total spend leaves it out. Usage is retained for 92 days.",
+			Flags: HarnessUsageFlags{},
+			Output: &CommandOutput[HarnessUsage]{
+				TextDescription: "Total spend, requests, and tokens, then a table with one row per route, by display name: " +
+					"REQUESTS, then INPUT, CACHED, and OUTPUT token counts (abbreviated, like 1.2M), and COST. A cost of \"-\" means some of that usage " +
+					"could not be priced. With no usage in the month, prints a message to stderr instead.",
+				JSONDescription: "cost_usd values are exact decimal strings. An item's cost_usd is null when some of its " +
+					"usage could not be priced; totals.cost_usd sums the priced usage, and totals.cost_complete is false " +
+					"when anything was left out.",
+				Examples: []CommandExample{
+					{
+						Description: "Show this month's usage by route.",
+						Command:     "baseten harness usage",
+					},
+					{
+						Description: "Show last month's usage.",
+						Command:     "baseten harness usage --month 2026-08",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print this month's total estimated spend.",
+					Command:     "baseten harness usage --jq '.totals.cost_usd'",
+				},
+			},
+		},
+		{
 			Name:    "teardown",
 			Summary: "Remove Baseten harness settings (PRE-RELEASE)",
 			Description: harnessPreRelease +
@@ -135,6 +168,52 @@ type HarnessStatus struct {
 // HarnessStatusList is the JSON output of `baseten harness status`.
 type HarnessStatusList struct {
 	Items []HarnessStatus `json:"items"`
+}
+
+// HarnessUsageCounts are the request and token counts of some routes usage.
+type HarnessUsageCounts struct {
+	RequestCount        int64 `json:"request_count"`
+	InputTokens         int64 `json:"input_tokens"`
+	CachedInputTokens   int64 `json:"cached_input_tokens"`
+	UncachedInputTokens int64 `json:"uncached_input_tokens"`
+	OutputTokens        int64 `json:"output_tokens"`
+}
+
+// HarnessUsageItem is the month's usage for one route.
+type HarnessUsageItem struct {
+	RouteID   *string `json:"route_id"`
+	RouteName *string `json:"route_name"`
+	// RouteDisplayName is null for routes that have since been deleted.
+	RouteDisplayName *string `json:"route_display_name"`
+	// CostUSD is null when some of this usage could not be priced.
+	CostUSD *string `json:"cost_usd"`
+	HarnessUsageCounts
+}
+
+// HarnessUsageTotals is the month's usage across every item.
+type HarnessUsageTotals struct {
+	// CostUSD sums the usage that could be priced.
+	CostUSD string `json:"cost_usd"`
+	// CostComplete is false when some usage could not be priced and is left
+	// out of CostUSD.
+	CostComplete bool `json:"cost_complete"`
+	HarnessUsageCounts
+}
+
+// HarnessUsage is the JSON output of `baseten harness usage`.
+type HarnessUsage struct {
+	Month string `json:"month"`
+	// StartDate is inclusive and EndDate exclusive, both UTC calendar days.
+	StartDate string             `json:"start_date"`
+	EndDate   string             `json:"end_date"`
+	Totals    HarnessUsageTotals `json:"totals"`
+	Items     []HarnessUsageItem `json:"items"`
+}
+
+// HarnessUsageFlags are the flags for `baseten harness usage`.
+type HarnessUsageFlags struct {
+	CommandFlags
+	Month string `flag:"month" desc:"UTC calendar month to show, as YYYY-MM. Defaults to the current month."`
 }
 
 // HarnessFlags selects the harnesses a command applies to.
