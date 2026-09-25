@@ -13,18 +13,23 @@ func chatRoute() Route {
 	return r
 }
 
-func TestCodexChatRouteAddsChatProvider(t *testing.T) {
+func TestCodexListsOnlyPrimaryWireAPIRoutes(t *testing.T) {
 	path := settingsPath(t, codexHarness{})
-	setup(t, codexHarness{}, path, []Route{testRoute("acme/primary", "Primary"), chatRoute()}, Selection{})
+	routes := []Route{testRoute("acme/primary", "Primary"), chatRoute()}
+	setup(t, codexHarness{}, path, routes, Selection{})
 	d := load(t, path)
 	require.Equal(t, providerID, d["model_provider"])
-	responses := get(d, []string{"model_providers", providerID}).Data.(map[string]any)
-	chat := get(d, []string{"model_providers", chatProviderID}).Data.(map[string]any)
-	require.Equal(t, "responses", responses["wire_api"])
-	require.Equal(t, "chat", chat["wire_api"])
-	require.Equal(t, responses["base_url"], chat["base_url"])
-	require.Equal(t, testToken, responses["experimental_bearer_token"])
-	require.Equal(t, testToken, chat["experimental_bearer_token"])
+	require.Equal(t, "responses", get(d, []string{"model_providers", providerID, "wire_api"}).Data)
+	require.False(t, get(d, []string{"model_providers", chatProviderID}).Exists)
+	models := load(t, catalogPath(path))["models"].([]any)
+	require.Len(t, models, 1, "a chat route would be sent over Responses")
+
+	setup(t, codexHarness{}, path, routes, Selection{Primary: "acme/chat"})
+	d = load(t, path)
+	require.Equal(t, chatProviderID, d["model_provider"])
+	require.Equal(t, "chat", get(d, []string{"model_providers", chatProviderID, "wire_api"}).Data)
+	require.Equal(t, testToken, get(d, []string{"model_providers", chatProviderID, "experimental_bearer_token"}).Data)
+	require.Equal(t, "acme/chat", load(t, catalogPath(path))["models"].([]any)[0].(map[string]any)["slug"])
 }
 
 func TestCodexChatPrimarySelectsChatProvider(t *testing.T) {
@@ -84,6 +89,11 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	}, d["modelSettings"])
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}).Data)
 	require.Equal(t, "4096", get(d, []string{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}).Data)
+
+	setup(t, claudeCodeHarness{}, path, []Route{mid, huge}, Selection{Background: "acme/huge"})
+	d = load(t, path)
+	require.Equal(t, []any{"acme/mid", "acme/huge[1m]"}, d["availableModels"])
+	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data)
 }
 
 func TestReasoningBoundsSkipNone(t *testing.T) {

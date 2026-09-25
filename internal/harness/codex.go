@@ -49,7 +49,7 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 func (codexHarness) BackgroundRoute(Selection) string { return "" }
 
 // Codex's wire API is per provider, so routes without Responses support use a
-// second provider over Chat Completions.
+// second provider over Chat Completions. Setup writes only the primary route's.
 var codexProviders = []string{providerID, chatProviderID}
 
 func codexCredentialPath(provider string) []string {
@@ -78,7 +78,10 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 	if err != nil {
 		return nil, err
 	}
+	// model_provider is global, so Codex can only switch among routes that
+	// share the primary route's wire API.
 	primary, _ := routeByName(routes, s.Primary)
+	routes = slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return codexProvider(r) != codexProvider(primary) })
 	values := []setting{
 		desired([]string{"model"}, s.Primary),
 		desired([]string{"model_provider"}, codexProvider(primary)),

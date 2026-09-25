@@ -86,8 +86,8 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 			effort[id] = map[string]any{"maxEffortLevel": high, "effortLevel": low}
 		}
 	}
-	if !slices.Contains(allowed, any(background)) {
-		allowed = append(allowed, background)
+	if !slices.Contains(allowed, any(modelID(background))) {
+		allowed = append(allowed, modelID(background))
 	}
 	values := []setting{
 		desired([]string{"model"}, modelID(s.Primary)),

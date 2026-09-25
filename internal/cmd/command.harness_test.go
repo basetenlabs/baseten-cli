@@ -649,8 +649,9 @@ func Test_Harness_Setup_RouteMetadata(t *testing.T) {
 			})
 			return
 		}
+		// A skipped route's invoke URL doesn't have to match.
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"items":      []any{map[string]any{"name": "acme/bare", "display_name": "Bare", "invoke_url": api.URL, "metadata": nil}},
+			"items":      []any{map[string]any{"name": "acme/bare", "display_name": "Bare", "invoke_url": "https://elsewhere.example.com", "metadata": nil}},
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
