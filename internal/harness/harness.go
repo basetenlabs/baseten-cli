@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -70,6 +71,12 @@ type Harness interface {
 	// Credential returns the routes API key setup wrote to the settings file at
 	// path, or "" if there is none.
 	Credential(path string) (string, error)
+}
+
+// Supported reports whether harness settings locations are verified on this
+// platform.
+func Supported() bool {
+	return runtime.GOOS == "darwin" || runtime.GOOS == "linux"
 }
 
 // All returns every supported harness.
