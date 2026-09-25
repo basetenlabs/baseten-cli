@@ -45,6 +45,7 @@ const (
 )
 
 const providerID = "baseten-harness"
+const chatProviderID = "baseten-harness-chat"
 
 // TODO: Make the default background route server-driven.
 const defaultBackgroundRoute = "deepseek-ai/DeepSeek-V4.1-Flash"
@@ -77,13 +78,94 @@ func All() []Harness {
 	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}}
 }
 
-// Route is a Baseten route as shown in a harness's model picker.
+// Route is a Baseten route as shown in a harness's model picker, with the model
+// capabilities supplied by the route's own metadata.
 type Route struct {
 	Name        string
 	DisplayName string
 	// Target is the route's upstream provider, such as TargetAnthropic, which
 	// decides the API a harness calls the route with.
-	Target string
+	Target          string
+	ContextWindow   int
+	OutputLimit     int
+	InputModalities []string
+	Tools           bool
+	ReasoningLevels []string
+	ParallelTools   bool
+	// Responses reports Responses API support; Codex serves other routes over
+	// Chat Completions.
+	Responses bool
+	// Cost is the provider's list price, or nil if unknown.
+	Cost *Cost
+}
+
+// Cost holds prices in USD per 1M tokens. Optional prices are nil when unknown.
+type Cost struct {
+	Input, Output         float64
+	CacheRead, CacheWrite *float64
+	// LongContext prices long-context requests, when the provider tiers them.
+	LongContext *Cost
+}
+
+// ValidateRoute rejects a route whose metadata the harnesses cannot describe or drive.
+func ValidateRoute(r Route) error {
+	switch {
+	case !r.Tools:
+		return fmt.Errorf("route %q lacks tool support", r.Name)
+	case r.ContextWindow <= 0 || r.OutputLimit <= 0 || r.OutputLimit >= r.ContextWindow:
+		return fmt.Errorf("route %q has no usable context and output limits", r.Name)
+	case len(r.InputModalities) == 0:
+		return fmt.Errorf("route %q has no input modalities", r.Name)
+	}
+	for _, modality := range r.InputModalities {
+		if modality != "text" && modality != "image" {
+			return fmt.Errorf("route %q has an unsupported input modality", r.Name)
+		}
+	}
+	for _, level := range r.ReasoningLevels {
+		if level != "none" && reasoningRank(level) < 0 {
+			return fmt.Errorf("route %q has an unsupported reasoning level", r.Name)
+		}
+	}
+	return nil
+}
+
+func routeByName(routes []Route, name string) (Route, bool) {
+	i := slices.IndexFunc(routes, func(r Route) bool { return r.Name == name })
+	if i < 0 {
+		return Route{}, false
+	}
+	return routes[i], true
+}
+
+// NormalizeReasoningLevels maps server effort vocabulary onto the levels the harnesses describe.
+func NormalizeReasoningLevels(levels []string) []string {
+	out := make([]string, 0, len(levels))
+	for _, level := range levels {
+		if level == "max" {
+			level = "xhigh"
+		}
+		if !slices.Contains(out, level) {
+			out = append(out, level)
+		}
+	}
+	return out
+}
+
+var reasoningOrder = []string{"minimal", "low", "medium", "high", "xhigh"}
+
+// reasoningRank orders real effort levels, or returns -1 for "none" and unknown levels.
+func reasoningRank(level string) int { return slices.Index(reasoningOrder, level) }
+
+// reasoningBounds returns the lowest and highest real effort levels, or nils
+// if there are none.
+func reasoningBounds(levels []string) (low, high any) {
+	ranked := slices.DeleteFunc(slices.Clone(levels), func(l string) bool { return reasoningRank(l) < 0 })
+	if len(ranked) == 0 {
+		return nil, nil
+	}
+	byRank := func(a, b string) int { return reasoningRank(a) - reasoningRank(b) }
+	return slices.MinFunc(ranked, byRank), slices.MaxFunc(ranked, byRank)
 }
 
 // Route target types, as the routes API reports them.
@@ -215,10 +297,11 @@ type Plan struct {
 	Managed  bool
 	Changed  bool
 
-	file           *configFile
-	data           []byte
-	config         map[string]any
-	credentialPath []string
+	file   *configFile
+	data   []byte
+	config map[string]any
+	// credentialPaths receive the token, and keep their current values until then.
+	credentialPaths [][]string
 	// bearerPath, if set, receives the token as an Authorization header value.
 	bearerPath []string
 	teardown   bool
@@ -326,7 +409,7 @@ func credential(path string, key []string) (string, error) {
 	return token, nil
 }
 
-func prepareSettings(path string, credentialPath []string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
+func prepareSettings(path string, credentialPaths [][]string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
 	f, d, err := readConfig(path)
 	if err != nil {
 		return nil, err
@@ -339,7 +422,7 @@ func prepareSettings(path string, credentialPath []string, build func(map[string
 	if err != nil {
 		return nil, err
 	}
-	p := &Plan{Path: path, Managed: true, file: f, config: d, credentialPath: credentialPath}
+	p := &Plan{Path: path, Managed: true, file: f, config: d, credentialPaths: credentialPaths}
 	for _, v := range settings {
 		if err := put(d, v.Path, v.Installed); err != nil {
 			return nil, err
@@ -348,7 +431,7 @@ func prepareSettings(path string, credentialPath []string, build func(map[string
 	}
 	// Keep the file's credential until ApplyPlans inserts the real one, so a
 	// preview only reports real changes.
-	if len(credentialPath) > 0 {
+	for _, credentialPath := range credentialPaths {
 		if current := get(original, credentialPath); current.Exists {
 			if err := put(d, credentialPath, current); err != nil {
 				return nil, err
@@ -409,11 +492,13 @@ func (p *Plan) encode() error {
 }
 
 func (p *Plan) setCredential(token string) error {
-	if len(p.credentialPath) == 0 {
+	if len(p.credentialPaths) == 0 {
 		return nil
 	}
-	if err := put(p.config, p.credentialPath, value{Exists: true, Data: token}); err != nil {
-		return err
+	for _, credentialPath := range p.credentialPaths {
+		if err := put(p.config, credentialPath, value{Exists: true, Data: token}); err != nil {
+			return err
+		}
 	}
 	if len(p.bearerPath) > 0 {
 		if err := put(p.config, p.bearerPath, value{Exists: true, Data: "Bearer " + token}); err != nil {

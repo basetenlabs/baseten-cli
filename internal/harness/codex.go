@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -47,10 +48,21 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 
 func (codexHarness) BackgroundRoute(Selection) string { return "" }
 
-var codexCredentialPath = []string{"model_providers", providerID, "experimental_bearer_token"}
+// Codex's wire API is per provider, so routes without Responses support use a
+// second provider over Chat Completions. Setup writes only the primary route's.
+var codexProviders = []string{providerID, chatProviderID}
+
+func codexCredentialPath(provider string) []string {
+	return []string{"model_providers", provider, "experimental_bearer_token"}
+}
 
 func (codexHarness) Credential(path string) (string, error) {
-	return credential(path, codexCredentialPath)
+	for _, provider := range codexProviders {
+		if token, err := credential(path, codexCredentialPath(provider)); err != nil || token != "" {
+			return token, err
+		}
+	}
+	return "", nil
 }
 
 func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
@@ -66,34 +78,52 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 	if err != nil {
 		return nil, err
 	}
+	// model_provider is global, so Codex can only switch among routes that
+	// share the primary route's wire API.
+	primary, _ := routeByName(routes, s.Primary)
+	routes = slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return codexProvider(r) != codexProvider(primary) })
 	values := []setting{
 		desired([]string{"model"}, s.Primary),
-		desired([]string{"model_provider"}, providerID),
+		desired([]string{"model_provider"}, codexProvider(primary)),
 		desired([]string{"model_catalog_json"}, catalogPath(path)),
 		desired([]string{"review_model"}, s.Primary),
-		desired([]string{"model_providers", providerID}, map[string]any{
+	}
+	var credentials [][]string
+	for _, provider := range codexProviders {
+		key := []string{"model_providers", provider}
+		if !slices.ContainsFunc(routes, func(r Route) bool { return codexProvider(r) == provider }) {
+			values = append(values, setting{Path: key})
+			continue
+		}
+		wire := map[string]string{providerID: "responses", chatProviderID: "chat"}[provider]
+		values = append(values, desired(key, map[string]any{
 			"name":                      "Baseten",
 			"base_url":                  strings.TrimRight(endpoint, "/") + "/v1",
-			"wire_api":                  "responses",
+			"wire_api":                  wire,
 			"requires_openai_auth":      false,
 			"experimental_bearer_token": "",
-		}),
+		}))
+		credentials = append(credentials, codexCredentialPath(provider))
 	}
-	p, err := prepareSettings(path, codexCredentialPath, func(map[string]any) ([]setting, error) { return values, nil })
+	p, err := prepareSettings(path, credentials, func(map[string]any) ([]setting, error) { return values, nil })
 	if err != nil {
 		return nil, err
 	}
 	models := []any{}
 	for i, r := range routes {
-		// Codex requires every field. Model-specific capabilities and limits are
-		// follow-up work, so these are conservative defaults.
+		levels := []any{}
+		for _, level := range r.ReasoningLevels {
+			levels = append(levels, map[string]any{"effort": level, "description": level})
+		}
+		low, _ := reasoningBounds(r.ReasoningLevels)
+		// Codex requires every field.
 		models = append(models, map[string]any{
 			"slug":                         r.Name,
 			"display_name":                 r.DisplayName,
 			"description":                  "Baseten route",
 			"base_instructions":            "",
-			"default_reasoning_level":      nil,
-			"supported_reasoning_levels":   []any{},
+			"default_reasoning_level":      low,
+			"supported_reasoning_levels":   levels,
 			"shell_type":                   "shell_command",
 			"visibility":                   "list",
 			"supported_in_api":             true,
@@ -103,7 +133,9 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 			"default_verbosity":            nil,
 			"apply_patch_tool_type":        nil,
 			"truncation_policy":            map[string]any{"mode": "tokens", "limit": 10000},
-			"supports_parallel_tool_calls": false,
+			"context_window":               r.ContextWindow,
+			"input_modalities":             r.InputModalities,
+			"supports_parallel_tool_calls": r.ParallelTools,
 			"experimental_supported_tools": []any{},
 		})
 	}
@@ -117,10 +149,23 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 	return []*Plan{catalog, p}, nil
 }
 
+func codexProvider(r Route) string {
+	if r.Responses {
+		return providerID
+	}
+	return chatProviderID
+}
+
+// codexSelected reports whether a Baseten provider is Codex's selected provider.
+func codexSelected(data map[string]any) bool {
+	provider, _ := data["model_provider"].(string)
+	return slices.Contains(codexProviders, provider)
+}
+
 func codexTeardownPaths(data map[string]any, catalog string) [][]string {
-	paths := [][]string{{"model_providers", providerID}}
+	paths := [][]string{{"model_providers", providerID}, {"model_providers", chatProviderID}}
 	// Only reset shared defaults while Baseten is the selected provider.
-	if data["model_provider"] == providerID {
+	if codexSelected(data) {
 		paths = append(paths, []string{"model_provider"}, []string{"model"}, []string{"review_model"})
 	}
 	if data["model_catalog_json"] == catalog {
@@ -160,9 +205,9 @@ func (codexHarness) Inspect(d Detection) (Status, error) {
 			r.State = StateIncomplete
 		}
 		return r, nil
-	case !get(data, []string{"model_providers", providerID}).Exists || !f.exists:
+	case !f.exists || !slices.ContainsFunc(codexProviders, func(p string) bool { return get(data, []string{"model_providers", p}).Exists }):
 		r.State = StateIncomplete
-	case data["model_provider"] != providerID:
+	case !codexSelected(data):
 		r.State = StateInactive
 	}
 	labels := map[string]string{}

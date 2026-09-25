@@ -126,15 +126,25 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if len(listed) == 0 {
 		return fmt.Errorf("team %s has no routes; create one with 'baseten route create'", team.Name)
 	}
+	routes, skipped, err := harnessCatalog(listed, f.Route)
+	if err != nil {
+		return err
+	}
+	if len(skipped) > 0 {
+		ctx.Logf("warning: skipping routes without usable model metadata: %s\n", strings.Join(skipped, ", "))
+	}
 	// One provider configuration serves every route, so they must share an endpoint.
-	endpoint := strings.TrimRight(listed[0].InvokeUrl, "/")
-	routes := make([]harness.Route, 0, len(listed))
+	endpoint := ""
 	for _, r := range listed {
-		if strings.TrimRight(r.InvokeUrl, "/") != endpoint {
+		if slices.Contains(skipped, r.Name) {
+			continue
+		}
+		invokeURL := strings.TrimRight(r.InvokeUrl, "/")
+		if endpoint == "" {
+			endpoint = invokeURL
+		} else if invokeURL != endpoint {
 			return fmt.Errorf("team %s has routes with different invoke URLs", team.Name)
 		}
-		target, _ := r.Target.Discriminator()
-		routes = append(routes, harness.Route{Name: r.Name, DisplayName: r.DisplayName, Target: target})
 	}
 	selection := harness.Selection{
 		Primary:    cmp.Or(f.Route, routes[0].Name),
