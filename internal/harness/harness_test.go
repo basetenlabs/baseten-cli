@@ -405,6 +405,22 @@ func TestOpenCodeJSONC(t *testing.T) {
 	require.Equal(t, invalid, data)
 }
 
+func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
+	path := settingsPath(t, openCodeHarness{})
+	routes := testRoutes()
+	routes[0].Target = TargetAnthropic
+	routes[1].Target = TargetOpenAI
+	routes[2].Target = "XAI"
+	setup(t, openCodeHarness{}, path, routes, Selection{})
+	data := load(t, path)
+	require.Equal(t, "@ai-sdk/openai-compatible", get(data, []string{"provider", providerID, "npm"}).Data)
+	require.Equal(t, "Bearer "+testToken, get(data, openCodeBearerPath).Data, "@ai-sdk/anthropic sends apiKey only as x-api-key")
+	models := get(data, []string{"provider", providerID, "models"}).Data.(map[string]any)
+	require.Equal(t, map[string]any{"name": "Primary", "provider": map[string]any{"npm": "@ai-sdk/anthropic"}}, models["acme/primary"])
+	require.Equal(t, map[string]any{"name": "Background", "provider": map[string]any{"npm": "@ai-sdk/openai"}}, models["acme/background"])
+	require.Equal(t, map[string]any{"name": "Subagents"}, models["acme/subagent"])
+}
+
 func TestSymlinkedSettingsStayLinked(t *testing.T) {
 	for _, h := range All() {
 		t.Run(h.Name(), func(t *testing.T) {

@@ -81,7 +81,16 @@ func All() []Harness {
 type Route struct {
 	Name        string
 	DisplayName string
+	// Target is the route's upstream provider, such as TargetAnthropic, which
+	// decides the API a harness calls the route with.
+	Target string
 }
+
+// Route target types, as the routes API reports them.
+const (
+	TargetAnthropic = "ANTHROPIC"
+	TargetOpenAI    = "OPENAI"
+)
 
 // Selection holds the requested routes. Empty fields use each harness's default.
 type Selection struct {
@@ -210,8 +219,10 @@ type Plan struct {
 	data           []byte
 	config         map[string]any
 	credentialPath []string
-	teardown       bool
-	remove         bool
+	// bearerPath, if set, receives the token as an Authorization header value.
+	bearerPath []string
+	teardown   bool
+	remove     bool
 }
 
 // ApplyPlans writes plans in order, inserting token into setup plans first.
@@ -403,6 +414,11 @@ func (p *Plan) setCredential(token string) error {
 	}
 	if err := put(p.config, p.credentialPath, value{Exists: true, Data: token}); err != nil {
 		return err
+	}
+	if len(p.bearerPath) > 0 {
+		if err := put(p.config, p.bearerPath, value{Exists: true, Data: "Bearer " + token}); err != nil {
+			return err
+		}
 	}
 	return p.encode()
 }
