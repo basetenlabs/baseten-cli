@@ -131,7 +131,8 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		if strings.TrimRight(r.InvokeUrl, "/") != endpoint {
 			return fmt.Errorf("team %s has routes with different invoke URLs", team.Name)
 		}
-		routes = append(routes, harness.Route{Name: r.Name, DisplayName: r.DisplayName})
+		target, _ := r.Target.Discriminator()
+		routes = append(routes, harness.Route{Name: r.Name, DisplayName: r.DisplayName, Target: target})
 	}
 	selection := harness.Selection{
 		Primary:    cmp.Or(f.Route, routes[0].Name),
