@@ -51,7 +51,7 @@ func Test_Route_APIKey_DeleteAllReportsPartialFailure(t *testing.T) {
 }
 
 func Test_Harness_Setup_ReplacesDeletedKey(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	dir := t.TempDir()
 	args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}

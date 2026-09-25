@@ -25,24 +25,54 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 	}
 	path := filepath.Join(dir, "config.toml")
 	d, err := detect(ctx, execer, h.Name(), "codex", path)
-	if err != nil || d.Installed || runtime.GOOS != "darwin" {
+	if err != nil || d.Installed {
 		return d, err
 	}
-	// Desktop installs bundle Codex without adding it to PATH, and share its config.
-	roots := []string{"/Applications"}
-	if home, err := os.UserHomeDir(); err == nil {
-		roots = append(roots, filepath.Join(home, "Applications"))
-	}
-	for _, root := range roots {
-		for _, app := range []string{"ChatGPT.app", "Codex.app"} {
-			binary := filepath.Join(root, app, "Contents", "Resources", "codex")
-			d, err = detect(ctx, execer, h.Name(), binary, path)
-			if err != nil || d.Installed {
-				return d, err
-			}
+	for _, binary := range desktopCodexBinaries() {
+		d, err = detect(ctx, execer, h.Name(), binary, path)
+		if err != nil || d.Installed {
+			return d, err
 		}
 	}
 	return d, nil
+}
+
+// linuxDesktopCodex is where the ChatGPT desktop app's x64 .deb package
+// installs its bundled Codex.
+const linuxDesktopCodex = "/usr/lib/chatgpt/resources/codex"
+
+// CodexDesktopLocations describes where Detect looks for a desktop-bundled
+// Codex on this platform, or "" if it looks only on PATH.
+func CodexDesktopLocations() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "ChatGPT.app or Codex.app"
+	case "linux":
+		return filepath.Dir(filepath.Dir(linuxDesktopCodex))
+	}
+	return ""
+}
+
+// desktopCodexBinaries lists where ChatGPT and Codex desktop installs bundle
+// Codex without adding it to PATH. The bundled Codex shares the CLI config.
+func desktopCodexBinaries() []string {
+	switch runtime.GOOS {
+	case "darwin":
+		roots := []string{"/Applications"}
+		if home, err := os.UserHomeDir(); err == nil {
+			roots = append(roots, filepath.Join(home, "Applications"))
+		}
+		var binaries []string
+		for _, root := range roots {
+			for _, app := range []string{"ChatGPT.app", "Codex.app"} {
+				binaries = append(binaries, filepath.Join(root, app, "Contents", "Resources", "codex"))
+			}
+		}
+		return binaries
+	case "linux":
+		return []string{linuxDesktopCodex}
+	}
+	return nil
 }
 
 func (codexHarness) BackgroundRoute(Selection) string { return "" }

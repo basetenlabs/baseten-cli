@@ -22,6 +22,7 @@ import (
 	public "github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/harness"
 	"github.com/zalando/go-keyring"
 )
 
@@ -127,27 +128,27 @@ func countCalls(api *MockManagementAPI, method, path string) int {
 	return count
 }
 
-// skipUnlessMacOS skips tests of harness commands, which support only macOS.
-func skipUnlessMacOS(t *testing.T) {
+// skipUnlessSupported skips tests of harness commands, which support only macOS and Linux.
+func skipUnlessSupported(t *testing.T) {
 	t.Helper()
-	if runtime.GOOS != "darwin" {
-		t.Skip("harness commands support only macOS")
+	if !harness.Supported() {
+		t.Skip("harness commands support only macOS and Linux")
 	}
 }
 
 func Test_HarnessCommands_RejectOtherPlatforms(t *testing.T) {
-	if runtime.GOOS == "darwin" {
-		t.Skip("harness commands support macOS")
+	if harness.Supported() {
+		t.Skip("harness commands support this platform")
 	}
 	for _, command := range []string{"setup", "status", "teardown"} {
 		h := NewCommandHarness(t)
 		h.Require.Error(h.Execute("harness", command, "--harness", "codex"))
-		h.Require.Contains(h.Stderr.String(), "harness commands support only macOS for now")
+		h.Require.Contains(h.Stderr.String(), "harness commands support only macOS and Linux for now")
 	}
 }
 
 func Test_Harness_Setup_Lifecycle(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	for _, name := range []string{"claude-code", "codex", "opencode"} {
 		t.Run(name, func(t *testing.T) {
 			h, api := fakeHarnessAPI(t)
@@ -227,14 +228,13 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 }
 
 func Test_Harness_Setup_CodexDesktopWithoutCLI(t *testing.T) {
-	skipUnlessMacOS(t)
-	if runtime.GOOS != "darwin" {
-		t.Skip("macOS desktop installation")
+	skipUnlessSupported(t)
+	binary := "/Applications/ChatGPT.app/Contents/Resources/codex"
+	if runtime.GOOS == "linux" {
+		binary = "/usr/lib/chatgpt/resources/codex"
 	}
 	h, _ := harnessAPI(t, "")
-	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{
-		binary: "/Applications/ChatGPT.app/Contents/Resources/codex",
-	})
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{binary: binary})
 	dir := t.TempDir()
 	t.Setenv("CODEX_HOME", dir)
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--yes"))
@@ -250,7 +250,7 @@ func Test_Harness_Setup_CodexDesktopWithoutCLI(t *testing.T) {
 }
 
 func Test_Harness_Setup_TextSummary(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, _ := fakeHarnessAPI(t)
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
@@ -266,7 +266,7 @@ func Test_Harness_Setup_TextSummary(t *testing.T) {
 }
 
 func Test_Harness_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h := NewCommandHarness(t)
 	h.Require.Error(h.Execute("harness", "setup"))
 	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
@@ -274,7 +274,7 @@ func Test_Harness_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
 }
 
 func Test_Harness_ConfigDirRequiresOneHarness(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	for _, command := range []string{"setup", "status", "teardown"} {
 		for _, harnesses := range [][]string{nil, {"--harness", "codex", "--harness", "opencode"}} {
 			t.Run(fmt.Sprint(command, len(harnesses)), func(t *testing.T) {
@@ -288,20 +288,23 @@ func Test_Harness_ConfigDirRequiresOneHarness(t *testing.T) {
 }
 
 func Test_Harness_Setup_NotInstalledFailsBeforeAPI(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	h.Context = internalcmd.WithExecer(h.Context, missingHarnessExecer{})
 	h.Require.Error(h.Execute("harness", "setup", "--harness", "codex", "--dry-run"))
 	want := "codex is not installed or not on PATH"
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		want = "codex is not installed or not on PATH or in ChatGPT.app or Codex.app"
+	case "linux":
+		want = "codex is not installed or not on PATH or in /usr/lib/chatgpt"
 	}
 	h.Require.Contains(h.Stderr.String(), want)
 	h.Require.Empty(api.Calls())
 }
 
 func Test_Harness_Setup_Teams(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	for _, tc := range []struct{ team, want string }{{"", "team-a"}, {"team-b", "team-b"}, {"Research", "team-b"}} {
 		t.Run(tc.team, func(t *testing.T) {
 			h, api := fakeHarnessAPI(t)
@@ -321,7 +324,7 @@ func Test_Harness_Setup_Teams(t *testing.T) {
 }
 
 func Test_Harness_Setup_KeyPerTeamAndProfile(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude-code", dir)
@@ -345,7 +348,7 @@ func Test_Harness_Setup_KeyPerTeamAndProfile(t *testing.T) {
 }
 
 func Test_Harness_Setup_DefaultKeyName(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"))
 	name := api.FindCall("POST", "/v1/teams/team-a/api_keys").BodyJSON(t)["name"].(string)
@@ -353,7 +356,7 @@ func Test_Harness_Setup_DefaultKeyName(t *testing.T) {
 }
 
 func Test_Harness_Setup_KeyCreationFailureCanBeRetried(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	dir := t.TempDir()
 	args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
@@ -367,7 +370,7 @@ func Test_Harness_Setup_KeyCreationFailureCanBeRetried(t *testing.T) {
 }
 
 func Test_Harness_Setup_KeyringUnavailableStoresPlaintext(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	keyring.MockInitWithError(errors.New("no keyring"))
 	t.Cleanup(keyring.MockInit)
@@ -379,7 +382,7 @@ func Test_Harness_Setup_KeyringUnavailableStoresPlaintext(t *testing.T) {
 }
 
 func Test_Harness_Setup_RouteFlags(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	for _, tc := range []struct{ name, flag string }{
 		{"codex", "--background-route"}, {"codex", "--subagent-route"}, {"codex", "--fallback-route"}, {"opencode", "--fallback-route"},
 	} {
@@ -400,7 +403,7 @@ func Test_Harness_Setup_RouteFlags(t *testing.T) {
 }
 
 func Test_Harness_Setup_ReplacesSettingsAndPicker(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, _ := fakeHarnessAPI(t)
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude-code", dir)
@@ -422,7 +425,7 @@ func Test_Harness_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 }
 
 func Test_Harness_DefaultDiscovery(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	root := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
@@ -472,7 +475,7 @@ func Test_Harness_DefaultDiscovery(t *testing.T) {
 }
 
 func Test_Harness_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	root := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
@@ -529,7 +532,7 @@ func (g *harnessGateway) saw(model string) bool { return slices.Contains(g.reque
 // isolated directory, runs it, and checks that it asks the gateway for the
 // configured route. Harnesses not on PATH are skipped.
 func Test_Harness_Setup_RealHarness(t *testing.T) {
-	skipUnlessMacOS(t)
+	skipUnlessSupported(t)
 	for _, tc := range []struct {
 		name, binary string
 		args         []string
