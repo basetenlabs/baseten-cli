@@ -18,24 +18,11 @@ func init() {
 	Register("harness usage", commandHarnessUsage)
 }
 
-// harnessUsageDimensions maps --group-by onto the backend dimensions. Models
-// carry their provider, since one model name can be served by several.
-var harnessUsageDimensions = map[string][]managementapi.RouteUsageDimension{
-	"model":    {managementapi.RouteUsageDimension_MODEL, managementapi.RouteUsageDimension_PROVIDER},
-	"route":    {managementapi.RouteUsageDimension_ROUTE},
-	"provider": {managementapi.RouteUsageDimension_PROVIDER},
-}
-
 // harnessUsageMaxBuckets is the most daily buckets the endpoint returns per
 // page, which covers any month.
 const harnessUsageMaxBuckets = 31
 
 func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
-	groupBy := cmp.Or(f.GroupBy, "model")
-	dims, ok := harnessUsageDimensions[groupBy]
-	if !ok {
-		return cmd.NewErrUsagef("invalid --group-by %q; must be one of: model, route, provider", f.GroupBy)
-	}
 	today := ctx.Now().UTC().Truncate(24 * time.Hour)
 	month := time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, time.UTC)
 	if f.Month != "" {
@@ -67,7 +54,7 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	params := managementapi.GetV1RoutesUsageParams{
 		StartDate: new(month.Format(time.DateOnly)),
 		EndDate:   new(end.Format(time.DateOnly)),
-		GroupBy:   &dims,
+		GroupBy:   &[]managementapi.RouteUsageDimension{managementapi.RouteUsageDimension_ROUTE},
 		UserIds:   &[]string{me.UserId},
 		Limit:     new(harnessUsageMaxBuckets),
 	}
@@ -89,13 +76,10 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	}
 
 	out := agg.result()
-	if groupBy == "route" {
-		nameHarnessUsageRoutes(ctx, api, out.Items)
-	}
+	nameHarnessUsageRoutes(ctx, api, out.Items)
 	out.Month = month.Format("2006-01")
 	out.StartDate = month.Format(time.DateOnly)
 	out.EndDate = end.Format(time.DateOnly)
-	out.GroupBy = groupBy
 	if ctx.JSON {
 		ctx.OutputJSON(out)
 		return nil
@@ -110,13 +94,8 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 		through = ", through " + today.Format("Jan 2")
 	}
 	ctx.Logf("Harness usage for %s (UTC%s)\n\n", monthName, through)
-	renderHarnessUsage(ctx, out, dims)
+	renderHarnessUsage(ctx, out)
 	return nil
-}
-
-// harnessUsageKey identifies one --group-by value across daily buckets.
-type harnessUsageKey struct {
-	model, provider, routeID string
 }
 
 type harnessUsageEntry struct {
@@ -126,27 +105,23 @@ type harnessUsageEntry struct {
 	priced bool
 }
 
-// harnessUsageAggregate sums daily results into one entry per group, adding
+// harnessUsageAggregate sums daily results into one entry per route, adding
 // costs as exact decimals.
 type harnessUsageAggregate struct {
-	entries map[harnessUsageKey]*harnessUsageEntry
-	order   []harnessUsageKey
+	entries map[string]*harnessUsageEntry
+	order   []string
 }
 
 func newHarnessUsageAggregate() *harnessUsageAggregate {
-	return &harnessUsageAggregate{entries: map[harnessUsageKey]*harnessUsageEntry{}}
+	return &harnessUsageAggregate{entries: map[string]*harnessUsageEntry{}}
 }
 
 func (a *harnessUsageAggregate) add(r managementapi.RoutesUsageResult) {
-	var provider *string
-	if r.Provider != nil {
-		provider = new(string(*r.Provider))
-	}
-	key := harnessUsageKey{model: deref(r.Model), provider: deref(provider), routeID: deref(r.RouteId)}
+	key := deref(r.RouteId)
 	e, ok := a.entries[key]
 	if !ok {
 		e = &harnessUsageEntry{
-			item:   cmd.HarnessUsageItem{Model: r.Model, Provider: provider, RouteID: r.RouteId, RouteName: r.RouteName},
+			item:   cmd.HarnessUsageItem{RouteID: r.RouteId, RouteName: r.RouteName},
 			cost:   new(big.Rat),
 			priced: true,
 		}
@@ -236,7 +211,7 @@ func harnessMoney(s string) string {
 	return billingFormatMoney(f)
 }
 
-func renderHarnessUsage(ctx *CommandContext, u cmd.HarnessUsage, dims []managementapi.RouteUsageDimension) {
+func renderHarnessUsage(ctx *CommandContext, u cmd.HarnessUsage) {
 	t := u.Totals
 	spend := harnessMoney(t.CostUSD)
 	if !t.CostComplete {
@@ -249,52 +224,23 @@ func renderHarnessUsage(ctx *CommandContext, u cmd.HarnessUsage, dims []manageme
 		harnessTokens(t.CachedInputTokens),
 		harnessTokens(t.OutputTokens))
 
-	var headers []string
-	for _, d := range dims {
-		headers = append(headers, string(d))
-	}
-	first := len(headers)
-	headers = append(headers, "REQUESTS", "INPUT", "CACHED", "OUTPUT", "COST")
-	var right []int
-	for col := first; col < len(headers); col++ {
-		right = append(right, col)
-	}
+	headers := []string{"ROUTE", "REQUESTS", "INPUT", "CACHED", "OUTPUT", "COST"}
 	rows := make([][]string, 0, len(u.Items))
 	for _, item := range u.Items {
-		var row []string
-		for _, d := range dims {
-			switch d {
-			case managementapi.RouteUsageDimension_MODEL:
-				row = append(row, cmp.Or(deref(item.Model), "(unknown)"))
-			case managementapi.RouteUsageDimension_PROVIDER:
-				row = append(row, harnessProviderLabel(item.Provider))
-			case managementapi.RouteUsageDimension_ROUTE:
-				row = append(row, cmp.Or(deref(item.RouteDisplayName), deref(item.RouteName), deref(item.RouteID), "(unknown)"))
-			}
-		}
 		cost := "-"
 		if item.CostUSD != nil {
 			cost = harnessMoney(*item.CostUSD)
 		}
-		row = append(row,
+		rows = append(rows, []string{
+			cmp.Or(deref(item.RouteDisplayName), deref(item.RouteName), deref(item.RouteID), "(unknown)"),
 			billingGroupDigits(strconv.FormatInt(item.RequestCount, 10)),
 			harnessTokens(item.InputTokens),
 			harnessTokens(item.CachedInputTokens),
 			harnessTokens(item.OutputTokens),
 			cost,
-		)
-		rows = append(rows, row)
+		})
 	}
-	ctx.OutputTable(TableOutput{Headers: headers, Rows: rows, RightAlignedColumns: right})
-}
-
-// harnessProviderLabel renders a provider enum like OPENAI_COMPATIBLE as
-// openai-compatible.
-func harnessProviderLabel(p *string) string {
-	if p == nil {
-		return "(unknown)"
-	}
-	return strings.ToLower(strings.ReplaceAll(*p, "_", "-"))
+	ctx.OutputTable(TableOutput{Headers: headers, Rows: rows, RightAlignedColumns: []int{1, 2, 3, 4, 5}})
 }
 
 // nameHarnessUsageRoutes fills in route display names, which usage doesn't

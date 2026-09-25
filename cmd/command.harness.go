@@ -76,20 +76,20 @@ var commandHarness = Command{
 				"so its cost is empty and the total spend leaves it out. Usage is retained for 92 days.",
 			Flags: HarnessUsageFlags{},
 			Output: &CommandOutput[HarnessUsage]{
-				TextDescription: "Total spend, requests, and tokens, then a table with one row per --group-by value: " +
-					"REQUESTS, then INPUT, CACHED, and OUTPUT token counts (abbreviated, like 1.2M), and COST. Routes show their display names. A cost of \"-\" means some of that usage " +
+				TextDescription: "Total spend, requests, and tokens, then a table with one row per route, by display name: " +
+					"REQUESTS, then INPUT, CACHED, and OUTPUT token counts (abbreviated, like 1.2M), and COST. A cost of \"-\" means some of that usage " +
 					"could not be priced. With no usage in the month, prints a message to stderr instead.",
 				JSONDescription: "cost_usd values are exact decimal strings. An item's cost_usd is null when some of its " +
 					"usage could not be priced; totals.cost_usd sums the priced usage, and totals.cost_complete is false " +
 					"when anything was left out.",
 				Examples: []CommandExample{
 					{
-						Description: "Show this month's usage by model.",
+						Description: "Show this month's usage by route.",
 						Command:     "baseten harness usage",
 					},
 					{
-						Description: "Show last month's usage by route.",
-						Command:     "baseten harness usage --month 2026-08 --group-by route",
+						Description: "Show last month's usage.",
+						Command:     "baseten harness usage --month 2026-08",
 					},
 				},
 				JQExample: CommandExample{
@@ -179,14 +179,12 @@ type HarnessUsageCounts struct {
 	OutputTokens        int64 `json:"output_tokens"`
 }
 
-// HarnessUsageItem is the month's usage for one --group-by value. The
-// dimension fields not being grouped by are omitted.
+// HarnessUsageItem is the month's usage for one route.
 type HarnessUsageItem struct {
-	Model            *string `json:"model,omitempty"`
-	Provider         *string `json:"provider,omitempty"`
-	RouteID          *string `json:"route_id,omitempty"`
-	RouteName        *string `json:"route_name,omitempty"`
-	RouteDisplayName *string `json:"route_display_name,omitempty"`
+	RouteID   *string `json:"route_id"`
+	RouteName *string `json:"route_name"`
+	// RouteDisplayName is null for routes that have since been deleted.
+	RouteDisplayName *string `json:"route_display_name"`
 	// CostUSD is null when some of this usage could not be priced.
 	CostUSD *string `json:"cost_usd"`
 	HarnessUsageCounts
@@ -208,7 +206,6 @@ type HarnessUsage struct {
 	// StartDate is inclusive and EndDate exclusive, both UTC calendar days.
 	StartDate string             `json:"start_date"`
 	EndDate   string             `json:"end_date"`
-	GroupBy   string             `json:"group_by"`
 	Totals    HarnessUsageTotals `json:"totals"`
 	Items     []HarnessUsageItem `json:"items"`
 }
@@ -216,8 +213,7 @@ type HarnessUsage struct {
 // HarnessUsageFlags are the flags for `baseten harness usage`.
 type HarnessUsageFlags struct {
 	CommandFlags
-	Month   string `flag:"month" desc:"UTC calendar month to show, as YYYY-MM. Defaults to the current month."`
-	GroupBy string `flag:"group-by" desc:"Break usage down by model (with its provider), route, or provider." enum:"model,route,provider" default:"model"`
+	Month string `flag:"month" desc:"UTC calendar month to show, as YYYY-MM. Defaults to the current month."`
 }
 
 // HarnessFlags selects the harnesses a command applies to.

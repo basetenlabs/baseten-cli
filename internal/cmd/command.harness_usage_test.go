@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,10 +42,17 @@ func harnessUsageBucket(date string, results ...map[string]any) map[string]any {
 }
 
 var (
-	usageSonnet = map[string]any{"model": "claude-sonnet-5", "provider": "ANTHROPIC"}
-	usageGpt    = map[string]any{"model": "gpt-5.2", "provider": "OPENAI"}
-	usageCustom = map[string]any{"model": "qwen-custom", "provider": "OPENAI_COMPATIBLE"}
+	usageSonnet = map[string]any{"route_id": "r-sonnet", "route_name": "salib/anthropic-claude-sonnet-5-2qjd24q"}
+	usageGpt    = map[string]any{"route_id": "r-gpt", "route_name": "salib/openai-gpt-5-2-2qjd24q"}
+	usageCustom = map[string]any{"route_id": "r-custom", "route_name": "salib/qwen-custom-2qjd24q"}
 )
+
+// harnessUsageRoute is a live route from /v1/routes.
+func harnessUsageRoute(id, displayName string) map[string]any {
+	r := routeFixture(map[string]any{"type": "ANTHROPIC", "model": "claude-sonnet-5"})
+	r["id"], r["display_name"] = id, displayName
+	return r
+}
 
 func newHarnessUsageHarness(t *testing.T, now time.Time, body map[string]any) (*CommandHarness, *MockManagementAPI) {
 	h := NewCommandHarness(t)
@@ -52,7 +60,24 @@ func newHarnessUsageHarness(t *testing.T, now time.Time, body map[string]any) (*
 	api := h.MockManagementAPI()
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
 	api.SetRoute("GET", "/v1/routes/usage", 200, body)
+	api.SetRoute("GET", "/v1/routes", 200, routePage([]any{
+		harnessUsageRoute("r-sonnet", "Claude Sonnet 5"),
+		harnessUsageRoute("r-gpt", "GPT-5.2"),
+		harnessUsageRoute("r-custom", "Qwen Custom"),
+	}, nil))
 	return h, api
+}
+
+// harnessUsageRow returns the fields of the first output line containing
+// marker, so tests can index columns from the end past multi-word names.
+func harnessUsageRow(h *CommandHarness, out, marker string) []string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, marker) {
+			return strings.Fields(line)
+		}
+	}
+	h.Require.Fail("no output line contains " + marker)
+	return nil
 }
 
 func harnessUsageMonth() map[string]any {
@@ -77,7 +102,7 @@ func Test_Harness_Usage_QueriesCurrentMonthForCurrentUser(t *testing.T) {
 	h.Require.Equal("2026-09-01", q.Get("start_date"))
 	h.Require.Equal("2026-09-26", q.Get("end_date"), "the current month includes today")
 	h.Require.Equal([]string{"user-a"}, q["user_ids"], "admins must not see other users' usage")
-	h.Require.Equal([]string{"MODEL", "PROVIDER"}, q["group_by"])
+	h.Require.Equal([]string{"ROUTE"}, q["group_by"])
 	h.Require.Equal("31", q.Get("limit"))
 	h.Require.Contains(h.Stderr.String(), "Harness usage for September 2026 (UTC, through Sep 25)")
 }
@@ -85,7 +110,7 @@ func Test_Harness_Usage_QueriesCurrentMonthForCurrentUser(t *testing.T) {
 func Test_Harness_Usage_PastMonthSpansWholeMonth(t *testing.T) {
 	h, api := newHarnessUsageHarness(t, time.Date(2027, 1, 10, 0, 0, 0, 0, time.UTC), harnessUsageMonth())
 
-	h.Require.NoError(h.Execute("harness", "usage", "--month", "2026-12", "--group-by", "route"))
+	h.Require.NoError(h.Execute("harness", "usage", "--month", "2026-12"))
 	q := api.FindCall("GET", "/v1/routes/usage").Query()
 	h.Require.Equal("2026-12-01", q.Get("start_date"))
 	h.Require.Equal("2027-01-01", q.Get("end_date"))
@@ -113,10 +138,11 @@ func Test_Harness_Usage_JSONSumsBucketsExactly(t *testing.T) {
 			Cached       int    `json:"cached_input_tokens"`
 		} `json:"totals"`
 		Items []struct {
-			Model        string  `json:"model"`
-			Provider     string  `json:"provider"`
-			CostUSD      *string `json:"cost_usd"`
-			RequestCount int     `json:"request_count"`
+			RouteID          string  `json:"route_id"`
+			RouteName        string  `json:"route_name"`
+			RouteDisplayName string  `json:"route_display_name"`
+			CostUSD          *string `json:"cost_usd"`
+			RequestCount     int     `json:"request_count"`
 		} `json:"items"`
 	}
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
@@ -126,11 +152,12 @@ func Test_Harness_Usage_JSONSumsBucketsExactly(t *testing.T) {
 	h.Require.Equal(17, got.Totals.RequestCount)
 	h.Require.Equal(800, got.Totals.Cached)
 	h.Require.Len(got.Items, 3)
-	h.Require.Equal("claude-sonnet-5", got.Items[0].Model, "most expensive first")
-	h.Require.Equal("ANTHROPIC", got.Items[0].Provider)
+	h.Require.Equal("r-sonnet", got.Items[0].RouteID, "most expensive first")
+	h.Require.Equal("salib/anthropic-claude-sonnet-5-2qjd24q", got.Items[0].RouteName)
+	h.Require.Equal("Claude Sonnet 5", got.Items[0].RouteDisplayName)
 	h.Require.Equal("1.2500000001", *got.Items[0].CostUSD)
 	h.Require.Equal(11, got.Items[0].RequestCount)
-	h.Require.Equal("qwen-custom", got.Items[2].Model, "unpriced items sort last")
+	h.Require.Equal("r-custom", got.Items[2].RouteID, "unpriced items sort last")
 	h.Require.Nil(got.Items[2].CostUSD)
 }
 
@@ -142,13 +169,10 @@ func Test_Harness_Usage_Table(t *testing.T) {
 	h.Require.Contains(out, "Spend     $1.75 (some usage could not be priced and is not included)")
 	h.Require.Contains(out, "Requests  17")
 	h.Require.Contains(out, "Tokens    1.6K input (800 cached), 155 output")
-	h.Require.Contains(out, "MODEL")
-	h.Require.Contains(out, "PROVIDER")
-	h.Require.Contains(out, "COST")
-	h.Require.Equal("anthropic", modelAPIUsageCell(h, out, "claude-sonnet-5", 1))
-	h.Require.Equal("$1.25", modelAPIUsageCell(h, out, "claude-sonnet-5", 6))
-	h.Require.Equal("openai-compatible", modelAPIUsageCell(h, out, "qwen-custom", 1))
-	h.Require.Equal("-", modelAPIUsageCell(h, out, "qwen-custom", 6))
+	h.Require.Equal([]string{"ROUTE", "REQUESTS", "INPUT", "CACHED", "OUTPUT", "COST"}, harnessUsageRow(h, out, "ROUTE"))
+	h.Require.Equal([]string{"Claude", "Sonnet", "5", "11", "1.1K", "800", "110", "$1.25"}, harnessUsageRow(h, out, "Claude Sonnet 5"))
+	h.Require.Equal([]string{"Qwen", "Custom", "2", "50", "0", "5", "-"}, harnessUsageRow(h, out, "Qwen Custom"))
+	h.Require.NotContains(out, "salib/", "routes show display names")
 }
 
 func Test_Harness_Usage_TinyCostStaysVisible(t *testing.T) {
@@ -205,30 +229,27 @@ func Test_Harness_Usage_CompactTokenCounts(t *testing.T) {
 	}
 }
 
-func Test_Harness_Usage_RouteDisplayNames(t *testing.T) {
+func Test_Harness_Usage_DeletedRouteFallsBackToName(t *testing.T) {
 	body := harnessUsageBody(false, nil, harnessUsageBucket("2026-09-01",
-		harnessUsageResult(map[string]any{"route_id": "r1", "route_name": "salib/code-2qjd24q-anthropic-0059"}, "2", 2, 10, 0, 1),
+		harnessUsageResult(usageSonnet, "2", 2, 10, 0, 1),
 		harnessUsageResult(map[string]any{"route_id": "gone", "route_name": "salib/deleted-route"}, "1", 1, 10, 0, 1),
 	))
 	h, api := newHarnessUsageHarness(t, time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC), body)
-	route := routeFixture(map[string]any{"type": "ANTHROPIC", "model": "claude-opus-5-5"})
-	route["id"], route["display_name"] = "r1", "Claude Opus 5.5"
-	api.SetRoute("GET", "/v1/routes", 200, routePage([]any{route}, nil))
-
-	h.Require.NoError(h.Execute("harness", "usage", "--group-by", "route"))
-	out := h.Stdout.String()
-	h.Require.Contains(out, "Claude Opus 5.5")
-	h.Require.NotContains(out, "salib/code-2qjd24q-anthropic-0059")
-	h.Require.Contains(out, "salib/deleted-route", "deleted routes fall back to their name")
-	h.Require.Empty(api.FindCall("GET", "/v1/routes").Query().Get("team_id"), "routes from every team")
-
-	h.Require.NoError(h.Execute("harness", "usage", "--group-by", "route", "--jq", "[.items[].route_display_name]"))
-	h.Require.JSONEq(`["Claude Opus 5.5", null]`, h.Stdout.String())
-}
-
-func Test_Harness_Usage_ModelGroupingSkipsRouteLookup(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC), harnessUsageMonth())
 
 	h.Require.NoError(h.Execute("harness", "usage"))
-	h.Require.Nil(api.FindCall("GET", "/v1/routes"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Claude Sonnet 5")
+	h.Require.Contains(out, "salib/deleted-route")
+	h.Require.Empty(api.FindCall("GET", "/v1/routes").Query().Get("team_id"), "routes from every team")
+
+	h.Require.NoError(h.Execute("harness", "usage", "--jq", "[.items[].route_display_name]"))
+	h.Require.JSONEq(`["Claude Sonnet 5", null]`, h.Stdout.String())
+}
+
+func Test_Harness_Usage_RouteLookupFailureFallsBackToNames(t *testing.T) {
+	h, api := newHarnessUsageHarness(t, time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC), harnessUsageMonth())
+	api.SetRoute("GET", "/v1/routes", 500, map[string]any{"error": "boom"})
+
+	h.Require.NoError(h.Execute("harness", "usage"))
+	h.Require.Contains(h.Stdout.String(), "salib/anthropic-claude-sonnet-5-2qjd24q")
 }
