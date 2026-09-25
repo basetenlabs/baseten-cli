@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -641,6 +642,7 @@ func Test_Harness_Setup_RouteMetadata(t *testing.T) {
 	skipUnlessMacOS(t)
 	h, api := fakeHarnessAPI(t)
 	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		// The second page holds a route without metadata.
 		if r.URL.Query().Get("cursor") == "" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -664,4 +666,17 @@ func Test_Harness_Setup_RouteMetadata(t *testing.T) {
 	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/bare", "--config-dir", t.TempDir(), "--yes"))
 	h.Require.Contains(h.Stderr.String(), `route "acme/bare" has no model metadata`)
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "a failed setup creates no key")
+
+	// A route's cost reaches OpenCode, and needs both input and output prices.
+	priced := maps.Clone(harnessRouteMetadata)
+	priced["cost"] = map[string]any{"input": 0.3, "output": 1.2, "cache_read": nil, "long_context": map[string]any{"input": 0.6}}
+	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+		"items":      []any{map[string]any{"name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": priced}},
+		"pagination": map[string]any{"has_more": false},
+	})
+	opencode := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--config-dir", opencode, "--yes"))
+	provider := readHarnessSettings(t, "opencode", harnessSettingsFile("opencode", opencode))["provider"].(map[string]any)
+	model := provider["baseten-harness"].(map[string]any)["models"].(map[string]any)["acme/primary"].(map[string]any)
+	h.Require.Equal(map[string]any{"input": 0.3, "output": 1.2}, model["cost"])
 }

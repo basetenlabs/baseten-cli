@@ -120,3 +120,17 @@ func TestValidateRouteRequiresLimits(t *testing.T) {
 	r.Tools = false
 	require.ErrorContains(t, ValidateRoute(r), "lacks tool support")
 }
+
+func TestOpenCodeCarriesRouteCost(t *testing.T) {
+	cacheRead := 0.3
+	priced := testRoute("acme/primary", "Primary")
+	priced.Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, LongContext: &Cost{Input: 6, Output: 22.5}}
+	path := settingsPath(t, openCodeHarness{})
+	setup(t, openCodeHarness{}, path, []Route{priced, testRoute("acme/unpriced", "Unpriced")}, Selection{})
+	models := get(load(t, path), []string{"provider", providerID, "models"}).Data.(map[string]any)
+	require.Equal(t, map[string]any{
+		"input": json.Number("3"), "output": json.Number("15"), "cache_read": json.Number("0.3"),
+		"context_over_200k": map[string]any{"input": json.Number("6"), "output": json.Number("22.5")},
+	}, models["acme/primary"].(map[string]any)["cost"])
+	require.NotContains(t, models["acme/unpriced"], "cost")
+}

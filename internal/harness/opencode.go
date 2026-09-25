@@ -82,6 +82,9 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 			"reasoning":  len(r.ReasoningLevels) > 0,
 			"variants":   variants,
 		}
+		if r.Cost != nil {
+			model["cost"] = openCodeCost(*r.Cost)
+		}
 		// A model's npm overrides the provider's, so first-party routes use their
 		// native API at the same base URL: Messages for Anthropic, Responses for OpenAI.
 		if npm, ok := openCodeTargetPackages[r.Target]; ok {
@@ -132,6 +135,21 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 	}
 	p.bearerPath = openCodeBearerPath
 	return []*Plan{p}, nil
+}
+
+// openCodeCost is OpenCode's per-model price, in USD per 1M tokens.
+func openCodeCost(c Cost) map[string]any {
+	cost := map[string]any{"input": c.Input, "output": c.Output}
+	if c.CacheRead != nil {
+		cost["cache_read"] = *c.CacheRead
+	}
+	if c.CacheWrite != nil {
+		cost["cache_write"] = *c.CacheWrite
+	}
+	if c.LongContext != nil {
+		cost["context_over_200k"] = openCodeCost(*c.LongContext)
+	}
+	return cost
 }
 
 // openCodeTeardownPaths clears only references to Baseten's provider; a model

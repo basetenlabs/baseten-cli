@@ -119,7 +119,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
-	listed, err := listHarnessRoutes(ctx, api, team.Id)
+	listed, err := listRoutes(ctx, api, managementapi.GetV1RoutesParams{TeamId: &team.Id})
 	if err != nil {
 		return err
 	}
@@ -139,7 +139,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		if slices.Contains(skipped, r.Name) {
 			continue
 		}
-		invokeURL := strings.TrimRight(r.InvokeURL, "/")
+		invokeURL := strings.TrimRight(r.InvokeUrl, "/")
 		if endpoint == "" {
 			endpoint = invokeURL
 		} else if invokeURL != endpoint {

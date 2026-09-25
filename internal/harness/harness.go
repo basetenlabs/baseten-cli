@@ -95,6 +95,16 @@ type Route struct {
 	// Responses reports Responses API support; Codex serves other routes over
 	// Chat Completions.
 	Responses bool
+	// Cost is the provider's list price, or nil if unknown.
+	Cost *Cost
+}
+
+// Cost holds prices in USD per 1M tokens. Optional prices are nil when unknown.
+type Cost struct {
+	Input, Output         float64
+	CacheRead, CacheWrite *float64
+	// LongContext prices long-context requests, when the provider tiers them.
+	LongContext *Cost
 }
 
 // ValidateRoute rejects a route whose metadata the harnesses cannot describe or drive.
