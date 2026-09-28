@@ -49,7 +49,7 @@ func (claudeCodeHarness) BackgroundRoute(s Selection) string {
 }
 
 func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
-	p, err := prepareSettings(path, [][]string{claudeCredentialPath}, func(data map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, claudeCredentialPath, func(data map[string]any) ([]setting, error) {
 		return claudeSettings(routes, s, endpoint, data)
 	})
 	if err != nil {

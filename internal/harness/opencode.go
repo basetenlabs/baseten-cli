@@ -112,7 +112,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 			values = append(values, desired(path, providerID+"/"+s.Subagent))
 		}
 	}
-	p, err := prepareSettings(path, [][]string{openCodeCredentialPath}, func(current map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, openCodeCredentialPath, func(current map[string]any) ([]setting, error) {
 		// Like the API key, keep the file's header until ApplyPlans inserts the real one.
 		if current, ok := get(current, openCodeBearerPath).Data.(string); ok {
 			headers["Authorization"] = current

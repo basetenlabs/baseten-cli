@@ -7,48 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func chatRoute() Route {
-	r := testRoute("acme/chat", "Chat")
-	r.Responses = false
-	return r
-}
-
-func TestCodexListsOnlyPrimaryWireAPIRoutes(t *testing.T) {
-	path := settingsPath(t, codexHarness{})
-	routes := []Route{testRoute("acme/primary", "Primary"), chatRoute()}
-	setup(t, codexHarness{}, path, routes, Selection{})
-	d := load(t, path)
-	require.Equal(t, providerID, d["model_provider"])
-	require.Equal(t, "responses", get(d, []string{"model_providers", providerID, "wire_api"}).Data)
-	require.False(t, get(d, []string{"model_providers", chatProviderID}).Exists)
-	models := load(t, catalogPath(path))["models"].([]any)
-	require.Len(t, models, 1, "a chat route would be sent over Responses")
-
-	setup(t, codexHarness{}, path, routes, Selection{Primary: "acme/chat"})
-	d = load(t, path)
-	require.Equal(t, chatProviderID, d["model_provider"])
-	require.Equal(t, "chat", get(d, []string{"model_providers", chatProviderID, "wire_api"}).Data)
-	require.Equal(t, testToken, get(d, []string{"model_providers", chatProviderID, "experimental_bearer_token"}).Data)
-	require.Equal(t, "acme/chat", load(t, catalogPath(path))["models"].([]any)[0].(map[string]any)["slug"])
-}
-
-func TestCodexChatPrimarySelectsChatProvider(t *testing.T) {
-	path := settingsPath(t, codexHarness{})
-	setup(t, codexHarness{}, path, []Route{testRoute("acme/primary", "Primary"), chatRoute()}, Selection{})
-	setup(t, codexHarness{}, path, []Route{chatRoute()}, Selection{})
-	d := load(t, path)
-	require.Equal(t, chatProviderID, d["model_provider"])
-	require.False(t, get(d, []string{"model_providers", providerID}).Exists, "refresh removes the unused provider")
-	token, err := codexHarness{}.Credential(path)
-	require.NoError(t, err)
-	require.Equal(t, testToken, token)
-	status, err := codexHarness{}.Inspect(Detection{Name: Codex, Path: path})
-	require.NoError(t, err)
-	require.Equal(t, StateConfigured, status.State)
-	teardown(t, codexHarness{}, path)
-	require.Empty(t, load(t, path))
-}
-
 func TestCodexCatalogCarriesRouteMetadata(t *testing.T) {
 	path := settingsPath(t, codexHarness{})
 	r := testRoute("acme/primary", "Primary")

@@ -46,7 +46,6 @@ const (
 )
 
 const providerID = "baseten-harness"
-const chatProviderID = "baseten-harness-chat"
 
 // clientHeader names the harness on each request. Baseten's /v1/models answers
 // with a harness-specific catalog for claude-code and codex.
@@ -103,8 +102,7 @@ type Route struct {
 	Tools           bool
 	ReasoningLevels []string
 	ParallelTools   bool
-	// Responses reports Responses API support; Codex serves other routes over
-	// Chat Completions.
+	// Responses reports Responses API support.
 	Responses bool
 	// Cost is the provider's list price, or nil if unknown.
 	Cost *Cost
@@ -308,11 +306,10 @@ type Plan struct {
 	Managed  bool
 	Changed  bool
 
-	file   *configFile
-	data   []byte
-	config map[string]any
-	// credentialPaths receive the token, and keep their current values until then.
-	credentialPaths [][]string
+	file           *configFile
+	data           []byte
+	config         map[string]any
+	credentialPath []string
 	// bearerPath, if set, receives the token as an Authorization header value.
 	bearerPath []string
 	teardown   bool
@@ -420,7 +417,7 @@ func credential(path string, key []string) (string, error) {
 	return token, nil
 }
 
-func prepareSettings(path string, credentialPaths [][]string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
+func prepareSettings(path string, credentialPath []string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
 	f, d, err := readConfig(path)
 	if err != nil {
 		return nil, err
@@ -433,7 +430,7 @@ func prepareSettings(path string, credentialPaths [][]string, build func(map[str
 	if err != nil {
 		return nil, err
 	}
-	p := &Plan{Path: path, Managed: true, file: f, config: d, credentialPaths: credentialPaths}
+	p := &Plan{Path: path, Managed: true, file: f, config: d, credentialPath: credentialPath}
 	for _, v := range settings {
 		if err := put(d, v.Path, v.Installed); err != nil {
 			return nil, err
@@ -442,7 +439,7 @@ func prepareSettings(path string, credentialPaths [][]string, build func(map[str
 	}
 	// Keep the file's credential until ApplyPlans inserts the real one, so a
 	// preview only reports real changes.
-	for _, credentialPath := range credentialPaths {
+	if len(credentialPath) > 0 {
 		if current := get(original, credentialPath); current.Exists {
 			if err := put(d, credentialPath, current); err != nil {
 				return nil, err
@@ -503,13 +500,11 @@ func (p *Plan) encode() error {
 }
 
 func (p *Plan) setCredential(token string) error {
-	if len(p.credentialPaths) == 0 {
+	if len(p.credentialPath) == 0 {
 		return nil
 	}
-	for _, credentialPath := range p.credentialPaths {
-		if err := put(p.config, credentialPath, value{Exists: true, Data: token}); err != nil {
-			return err
-		}
+	if err := put(p.config, p.credentialPath, value{Exists: true, Data: token}); err != nil {
+		return err
 	}
 	if len(p.bearerPath) > 0 {
 		if err := put(p.config, p.bearerPath, value{Exists: true, Data: "Bearer " + token}); err != nil {
