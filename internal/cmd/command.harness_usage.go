@@ -18,7 +18,7 @@ func init() {
 }
 
 // harnessUsageMaxBuckets is the most daily buckets the endpoint returns per
-// page, which covers any month.
+// page.
 const harnessUsageMaxBuckets = 31
 
 // harnessUsageRetentionDays is how many days of usage, including today, the
@@ -26,32 +26,28 @@ const harnessUsageMaxBuckets = 31
 const harnessUsageRetentionDays = 92
 
 func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
+	// Month to date by default, the period spend limits apply to.
+	start, end, err := usageWindow(ctx, f.Start, f.End, f.Since, func(end time.Time) time.Time {
+		end = end.UTC()
+		return time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, time.UTC)
+	})
+	if err != nil {
+		return err
+	}
+	// Usage comes in whole UTC days, so widen the window to cover them.
+	startDay := start.UTC().Truncate(24 * time.Hour)
+	endDay := end.UTC().Truncate(24 * time.Hour)
+	if endDay.Before(end) {
+		endDay = endDay.AddDate(0, 0, 1)
+	}
 	today := ctx.Now().UTC().Truncate(24 * time.Hour)
-	month := time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, time.UTC)
-	if f.Month != "" {
-		parsed, err := time.Parse("2006-01", f.Month)
-		if err != nil {
-			return cmd.NewErrUsagef("invalid --month %q; use YYYY-MM", f.Month)
-		}
-		if parsed.After(today) {
-			return cmd.NewErrUsagef("--month %s is in the future", f.Month)
-		}
-		month = parsed
-	}
-	// The current month ends tomorrow so today's usage is included.
-	end := month.AddDate(0, 1, 0)
-	if tomorrow := today.AddDate(0, 0, 1); tomorrow.Before(end) {
-		end = tomorrow
-	}
-	start := month
-	if retained := today.AddDate(0, 0, 1-harnessUsageRetentionDays); start.Before(retained) {
-		if !end.After(retained) {
-			return cmd.NewErrUsagef("--month %s is older than the %d days of usage Baseten keeps",
-				month.Format("2006-01"), harnessUsageRetentionDays)
+	if retained := today.AddDate(0, 0, 1-harnessUsageRetentionDays); startDay.Before(retained) {
+		if !endDay.After(retained) {
+			return cmd.NewErrUsagef("the window is older than the %d days of usage Baseten keeps", harnessUsageRetentionDays)
 		}
 		ctx.Logf("Usage is kept for %d days, so this only includes usage from %s on.\n",
-			harnessUsageRetentionDays, retained.Format("Jan 2"))
-		start = retained
+			harnessUsageRetentionDays, retained.Format(time.DateOnly))
+		startDay = retained
 	}
 
 	cl, err := ctx.NewManagementClient()
@@ -64,12 +60,17 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	if err != nil {
 		return fmt.Errorf("getting current user: %w", err)
 	}
+	startDate := startDay.Format(time.DateOnly)
+	endDate := endDay.Format(time.DateOnly)
+	groupBy := []managementapi.RouteUsageDimension{managementapi.RouteUsageDimension_MODEL}
+	userIDs := []string{me.UserId}
+	pageSize := harnessUsageMaxBuckets
 	params := managementapi.GetV1RoutesUsageParams{
-		StartDate: new(start.Format(time.DateOnly)),
-		EndDate:   new(end.Format(time.DateOnly)),
-		GroupBy:   &[]managementapi.RouteUsageDimension{managementapi.RouteUsageDimension_MODEL},
-		UserIds:   &[]string{me.UserId},
-		Limit:     new(harnessUsageMaxBuckets),
+		StartDate: &startDate,
+		EndDate:   &endDate,
+		GroupBy:   &groupBy,
+		UserIds:   &userIDs,
+		Limit:     &pageSize,
 	}
 	byModel := map[string]*harnessUsageEntry{}
 	for {
@@ -93,15 +94,13 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	summary := summarizeHarnessUsage(byModel)
 	if ctx.JSON {
 		out := summary.output()
-		out.Month = month.Format("2006-01")
-		out.StartDate = start.Format(time.DateOnly)
-		out.EndDate = end.Format(time.DateOnly)
+		out.StartDate = startDate
+		out.EndDate = endDate
 		ctx.OutputJSON(out)
 		return nil
 	}
-	monthName := month.Format("January 2006")
 	if len(summary.entries) == 0 {
-		ctx.Logf("No harness usage in %s.\n", monthName)
+		ctx.LogLine("No usage in the selected window.")
 		// A team or workspace key authenticates as a service account, which
 		// never creates routes keys, so its usage is always empty.
 		if session, err := ctx.authInfo.Session(); err == nil && session.UsesAPIKey() {
@@ -109,11 +108,11 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 		}
 		return nil
 	}
-	through := ""
-	if end.Before(month.AddDate(0, 1, 0)) {
-		through = ", through " + today.Format("Jan 2")
+	ctx.LogLine(fmt.Sprintf("Window: %s through %s UTC · grouped by model · can lag by up to 15 minutes",
+		startDate, endDay.AddDate(0, 0, -1).Format(time.DateOnly)))
+	if !summary.priced {
+		ctx.LogLine("A cost of \"-\" means some of that usage couldn't be priced.")
 	}
-	ctx.Logf("Harness usage for %s (UTC%s). Numbers can lag by up to 15 minutes.\n\n", monthName, through)
 	renderHarnessUsage(ctx, summary)
 	return nil
 }
@@ -163,7 +162,7 @@ func addHarnessTokens(dst *cmd.HarnessUsageTokens, src cmd.HarnessUsageTokens) {
 	dst.OutputTokens += src.OutputTokens
 }
 
-// harnessUsageSummary is the month's usage, most expensive model first.
+// harnessUsageSummary is the window's usage, most expensive model first.
 type harnessUsageSummary struct {
 	entries []*harnessUsageEntry
 	tokens  cmd.HarnessUsageTokens
@@ -202,7 +201,8 @@ func (s harnessUsageSummary) output() cmd.HarnessUsage {
 	for _, e := range s.entries {
 		item := cmd.HarnessUsageItem{Model: e.model, HarnessUsageTokens: e.tokens}
 		if e.priced {
-			item.CostUSD = new(formatHarnessCost(e.cost))
+			cost := formatHarnessCost(e.cost)
+			item.CostUSD = &cost
 		}
 		out.Items = append(out.Items, item)
 	}
@@ -218,8 +218,11 @@ func formatHarnessCost(r *big.Rat) string {
 }
 
 // harnessMoney renders a cost in dollars and cents, keeping tiny nonzero costs
-// visible.
-func harnessMoney(r *big.Rat) string {
+// visible, or "-" when some of it couldn't be priced.
+func harnessMoney(r *big.Rat, priced bool) string {
+	if !priced {
+		return "-"
+	}
 	f, _ := r.Float64()
 	if f > 0 && f < 0.005 {
 		return "<$0.01"
@@ -228,42 +231,27 @@ func harnessMoney(r *big.Rat) string {
 }
 
 func renderHarnessUsage(ctx *CommandContext, s harnessUsageSummary) {
-	spend := harnessMoney(s.cost)
-	if !s.priced {
-		spend += " (excludes usage that couldn't be priced)"
-	}
-	ctx.Outputf("Spend   %s\n", spend)
-	ctx.Outputf("Tokens  %s input (%s cached), %s output\n\n",
-		harnessTokens(s.tokens.InputTokens),
-		harnessTokens(s.tokens.CachedInputTokens),
-		harnessTokens(s.tokens.OutputTokens))
-
-	rows := make([][]string, 0, len(s.entries))
-	for _, e := range s.entries {
-		cost := "-"
-		if e.priced {
-			cost = harnessMoney(e.cost)
-		}
-		rows = append(rows, []string{
-			cmp.Or(e.model, "(unknown)"),
-			harnessTokens(e.tokens.InputTokens),
-			harnessTokens(e.tokens.CachedInputTokens),
-			harnessTokens(e.tokens.OutputTokens),
+	row := func(name string, t cmd.HarnessUsageTokens, cost string) []string {
+		return []string{
+			name,
+			billingGroupDigits(strconv.FormatInt(t.InputTokens, 10)),
+			billingGroupDigits(strconv.FormatInt(t.CachedInputTokens, 10)),
+			billingGroupDigits(strconv.FormatInt(t.OutputTokens, 10)),
 			cost,
-		})
+		}
+	}
+	rows := make([][]string, 0, len(s.entries)+1)
+	for _, e := range s.entries {
+		rows = append(rows, row(cmp.Or(e.model, "(unknown)"), e.tokens, harnessMoney(e.cost, e.priced)))
+	}
+	// A totals row only earns its keep once there is more than one row to
+	// total; with a single row it would just repeat it.
+	if len(s.entries) > 1 {
+		rows = append(rows, row("ALL", s.tokens, harnessMoney(s.cost, s.priced)))
 	}
 	ctx.OutputTable(TableOutput{
 		Headers:             []string{"MODEL", "INPUT", "CACHED", "OUTPUT", "COST"},
 		Rows:                rows,
 		RightAlignedColumns: []int{1, 2, 3, 4},
 	})
-}
-
-// harnessTokens renders a token count compactly, like 62.2K or 1.7M.
-func harnessTokens(n int64) string {
-	if n < 1000 {
-		return strconv.FormatInt(n, 10)
-	}
-	v, thousands := compactNumber(float64(n), 1)
-	return strconv.FormatFloat(v, 'f', 1, 64) + []string{"", "K", "M", "B"}[thousands]
 }

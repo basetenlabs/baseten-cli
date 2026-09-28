@@ -1,5 +1,7 @@
 package cmd
 
+import "time"
+
 const harnessPreRelease = "PRE-RELEASE: Harness commands are not GA yet and support only macOS and Linux for now. " +
 	"Their arguments, flags, and output may change.\n\n"
 
@@ -68,34 +70,40 @@ var commandHarness = Command{
 		},
 		{
 			Name:    "usage",
-			Summary: "Show your routes spend and tokens for the month (PRE-RELEASE)",
+			Summary: "Show your routes spend and tokens, month to date by default (PRE-RELEASE)",
 			Description: harnessPreRelease +
 				"Show the estimated spend and token usage of the routes API keys you created, across all teams, " +
-				"broken down by model, for one UTC calendar month. Defaults to the current month.\n\n" +
-				"This is the same spend that monthly spend limits are checked against, and it can lag by up to 15 minutes. " +
+				"broken down by model. Usage comes in whole UTC days: --start is snapped down to its day and --end " +
+				"is rounded up to the end of its day. Defaults to the current UTC month to date, the period monthly " +
+				"spend limits apply to.\n\n" +
+				"This is the same spend that spend limits are checked against, and it can lag by up to 15 minutes. " +
 				"Model API costs use your prices and include tool calls. OpenAI, Anthropic, and xAI costs estimate what " +
 				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage isn't included. " +
 				"Usage is retained for 92 days.",
 			Flags: HarnessUsageFlags{},
 			Output: &CommandOutput[HarnessUsage]{
-				TextDescription: "Total spend and tokens, then a table with one row per model: INPUT, CACHED, and OUTPUT " +
-					"token counts (abbreviated, like 1.2M) and COST, most expensive first. A cost of \"-\" means some of that " +
-					"usage couldn't be priced. With no usage in the month, " +
-					"prints a message to stderr instead.",
+				TextDescription: "Table with one row per model, most expensive first: INPUT, CACHED, and OUTPUT token " +
+					"counts and COST, followed by an ALL totals row. A cost of \"-\" means some of that usage couldn't be " +
+					"priced. The window goes to stderr. With no usage in the window, prints \"No usage in the selected " +
+					"window.\" to stderr instead of a table.",
 				JSONDescription: "cost_usd values are exact decimal strings. An item's cost_usd is null when some of its usage " +
 					"couldn't be priced; totals.cost_usd then leaves that usage out and totals.cost_complete is false.",
 				Examples: []CommandExample{
 					{
-						Description: "Show this month's usage by model.",
+						Description: "Show this month's usage so far.",
 						Command:     "baseten harness usage",
 					},
 					{
-						Description: "Show last month's usage.",
-						Command:     "baseten harness usage --month 2026-08",
+						Description: "Show usage over the last 7 days.",
+						Command:     "baseten harness usage --since 7d",
+					},
+					{
+						Description: "Show August's usage.",
+						Command:     "baseten harness usage --start 2026-08-01T00:00:00Z --end 2026-09-01T00:00:00Z",
 					},
 				},
 				JQExample: CommandExample{
-					Description: "Print this month's total estimated spend.",
+					Description: "Print the total estimated spend so far this month.",
 					Command:     "baseten harness usage --jq '.totals.cost_usd'",
 				},
 			},
@@ -200,10 +208,8 @@ type HarnessUsageTotals struct {
 
 // HarnessUsage is the JSON output of `baseten harness usage`.
 type HarnessUsage struct {
-	Month string `json:"month"`
 	// StartDate is inclusive and EndDate exclusive, both UTC calendar days.
-	// StartDate is later than the start of the month when earlier usage is
-	// past retention.
+	// StartDate is the retention cutoff when the window starts earlier.
 	StartDate string             `json:"start_date"`
 	EndDate   string             `json:"end_date"`
 	Totals    HarnessUsageTotals `json:"totals"`
@@ -213,7 +219,9 @@ type HarnessUsage struct {
 // HarnessUsageFlags are the flags for `baseten harness usage`.
 type HarnessUsageFlags struct {
 	CommandFlags
-	Month string `flag:"month" desc:"UTC calendar month to show, as YYYY-MM. Defaults to the current month."`
+	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the start of the current UTC month."`
+	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
+	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
 }
 
 // HarnessFlags selects the harnesses a command applies to.
