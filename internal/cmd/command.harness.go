@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -27,6 +28,11 @@ func init() {
 
 // harnessPickerLabelWidth caps picker labels so they don't wrap.
 const harnessPickerLabelWidth = 80
+
+// harnessVersionNumber finds the version number in a harness's --version
+// output, such as "2.1.272" in "2.1.272 (Claude Code)" or "0.134.0" in
+// "codex-cli 0.134.0".
+var harnessVersionNumber = regexp.MustCompile(`\d+(\.\d+)+\S*`)
 
 type selectedHarness struct {
 	harness.Harness
@@ -85,11 +91,12 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		return nil, errors.New("no supported harnesses are installed")
 	}
 	// The picker sizes itself for one line per option, so a label that wraps
-	// pushes the options below it out of view.
+	// pushes the options below it out of view. Labels leave out the settings
+	// path, which can be arbitrarily long, and the rest of the version output.
 	options := make([]huh.Option[string], 0, len(selected))
 	for _, s := range selected {
-		label := fmt.Sprintf("%s  %s  %s", s.Name(), cmp.Or(s.detection.Version, "version unavailable"), harnessDisplayPath(s.detection.Path))
-		label = ansi.Truncate(label, harnessPickerLabelWidth, "…")
+		version := cmp.Or(harnessVersionNumber.FindString(s.detection.Version), "version unavailable")
+		label := ansi.Truncate(s.Name()+"  "+version, harnessPickerLabelWidth, "…")
 		options = append(options, huh.NewOption(label, s.Name()))
 	}
 	var names []string
