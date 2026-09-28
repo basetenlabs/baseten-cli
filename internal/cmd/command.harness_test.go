@@ -254,15 +254,16 @@ func Test_Harness_Setup_TextSummary(t *testing.T) {
 	h, _ := fakeHarnessAPI(t)
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
-	for _, want := range []string{"Team: Engineering", "Available routes: 1", "acme/primary", "Primary", "Default route     acme/primary", "Background route  deepseek-ai/DeepSeek-V4.1-Flash"} {
-		h.Require.Contains(h.Stdout.String(), want)
-	}
+	h.Require.Empty(h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "Created routes API key baseten-harness-")
 	h.Require.Contains(h.Stderr.String(), "Configuration saved.")
 	h.Require.Contains(h.Stderr.String(), "Undo with: baseten harness teardown --harness claude-code --config-dir '"+dir+"'")
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--verbose"))
+	for _, want := range []string{"Team: Engineering", "Default route     acme/primary", "Background route  deepseek-ai/DeepSeek-V4.1-Flash", "Already configured"} {
+		h.Require.Contains(h.Stdout.String(), want)
+	}
+	h.Require.NotContains(h.Stdout.String(), "Available routes")
 	h.Require.NotContains(h.Stderr.String(), "Created routes API key")
-	h.Require.Contains(h.Stdout.String(), "Already configured")
 }
 
 func Test_Harness_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
@@ -418,6 +419,7 @@ func Test_Harness_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "Existing integration settings will be overwritten")
 
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
+	h.Require.Contains(h.Stderr.String(), "existing integration settings in claude-code will be overwritten")
 	picker := readHarnessSettings(t, "claude-code", path)["modelPicker"].(map[string]any)
 	h.Require.Equal([]any{map[string]any{"model": "acme/primary", "label": "Primary"}}, picker["options"])
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))

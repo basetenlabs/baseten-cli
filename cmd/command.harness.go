@@ -19,7 +19,7 @@ var commandHarness = Command{
 				"The routes API key is created on first setup and reused afterward. Restart the harness after setup.",
 			Flags: HarnessSetupFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
-				TextDescription: "Available routes and the configuration for each harness. Use --verbose for setting names.",
+				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
 				Examples: []CommandExample{
 					{
 						Description: "Configure installed harnesses interactively.",
