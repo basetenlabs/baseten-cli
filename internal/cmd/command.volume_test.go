@@ -738,6 +738,8 @@ func Test_Volume_Cat_RejectsJSON(t *testing.T) {
 
 func Test_Volume_Push(t *testing.T) {
 	h := NewCommandHarness(t)
+	now := volumeTestTime
+	h.Context = cmd.WithNow(h.Context, func() time.Time { result := now; now = now.Add(1500 * time.Millisecond); return result })
 	fake := withVolumeTransfer(t, h)
 	fake.PushResult = &client.PushVolumeResult{
 		VersionRef: client.VolumeRef{
@@ -767,10 +769,13 @@ func Test_Volume_Push(t *testing.T) {
 	h.Require.Contains(out, "Contents: 3 files, 4.0 KiB")
 	h.Require.Contains(out, "Uploaded: 4 of 9 chunks")
 	h.Require.Contains(out, "Tags:     prod")
+	h.Require.Contains(h.Stdout.String(), "1.5s")
 }
 
 func Test_Volume_Push_JSON(t *testing.T) {
 	h := NewCommandHarness(t)
+	now := volumeTestTime
+	h.Context = cmd.WithNow(h.Context, func() time.Time { result := now; now = now.Add(1500 * time.Millisecond); return result })
 	fake := withVolumeTransfer(t, h)
 	fake.PushResult = &client.PushVolumeResult{
 		VersionRef: client.VolumeRef{Namespace: "weights", Volume: "llama", Digest: "b3:a1b2"},
@@ -787,6 +792,7 @@ func Test_Volume_Push_JSON(t *testing.T) {
 	h.Require.Contains(out, `"chunks_existing": 2`)
 	h.Require.Contains(out, `"head_move_denied": true`)
 	h.Require.Contains(h.Stderr.String(), "could not move head")
+	h.Require.Contains(h.Stdout.String(), `"duration_seconds": 1.5`)
 }
 
 func Test_Volume_Push_RefTag(t *testing.T) {
@@ -826,6 +832,8 @@ func Test_Volume_Push_RefSelectsAVersion(t *testing.T) {
 
 func Test_Volume_Pull(t *testing.T) {
 	h := NewCommandHarness(t)
+	now := volumeTestTime
+	h.Context = cmd.WithNow(h.Context, func() time.Time { result := now; now = now.Add(1500 * time.Millisecond); return result })
 	fake := withVolumeTransfer(t, h)
 	fake.PullResult = &client.PullVolumeResult{
 		VersionRef: client.VolumeRef{Namespace: "weights", Volume: "llama", Digest: "b3:a1b2"},
@@ -848,6 +856,7 @@ func Test_Volume_Pull(t *testing.T) {
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Written:     2 files, 2.0 KiB")
 	h.Require.Contains(out, "Selected:    2 of 7 files")
+	h.Require.Contains(h.Stdout.String(), "1.5s")
 }
 
 func Test_Volume_Pull_Namespace(t *testing.T) {
@@ -858,6 +867,8 @@ func Test_Volume_Pull_Namespace(t *testing.T) {
 
 func Test_Volume_Pull_JSON(t *testing.T) {
 	h := NewCommandHarness(t)
+	now := volumeTestTime
+	h.Context = cmd.WithNow(h.Context, func() time.Time { result := now; now = now.Add(1500 * time.Millisecond); return result })
 	fake := withVolumeTransfer(t, h)
 	fake.PullResult = &client.PullVolumeResult{
 		VersionRef: client.VolumeRef{Namespace: "weights", Volume: "llama", Digest: "b3:a1b2"},
@@ -875,4 +886,5 @@ func Test_Volume_Pull_JSON(t *testing.T) {
 	// Containment findings describe what was written, so they are reported
 	// rather than swallowed.
 	h.Require.Contains(out, "/config/current")
+	h.Require.Contains(h.Stdout.String(), `"duration_seconds": 1.5`)
 }
