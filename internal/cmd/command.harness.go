@@ -25,9 +25,8 @@ func init() {
 	Register("harness teardown", commandHarnessTeardown)
 }
 
-// harnessPickerLabelWidth keeps each picker row, with the border, cursor, and
-// checkbox drawn before the label, within 80 columns.
-const harnessPickerLabelWidth = 80 - 6
+// harnessPickerLabelWidth caps picker labels so they don't wrap.
+const harnessPickerLabelWidth = 80
 
 type selectedHarness struct {
 	harness.Harness
