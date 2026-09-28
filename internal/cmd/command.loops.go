@@ -1,7 +1,11 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -44,18 +48,32 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 		return err
 	}
 
-	args := []string{"loops", "exec"}
+	if flags.Dir == "" {
+		return cmd.NewErrUsagef("--dir is required; select the directory to upload explicitly")
+	}
+	dir, err := filepath.Abs(flags.Dir)
+	if err != nil {
+		return cmd.NewErrUsagef("resolve --dir: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return cmd.NewErrUsagef("--dir must name an existing directory")
+	}
+	args := []string{"loops", "exec", "--output-format", "json"}
 	args = trussArg(args, "accelerator", flags.Accelerator)
 	args = trussIntArg(args, "gpu-count", flags.GPUCount)
 	args = trussIntArg(args, "cpu-count", flags.CPUCount)
 	args = trussArg(args, "memory", flags.Memory)
 	args = trussArg(args, "project-name", flags.ProjectName)
 	args = trussArg(args, "image", flags.Image)
-	args = trussArg(args, "workspace-root", flags.WorkspaceRoot)
 	for _, dir := range flags.ExcludeDir {
 		args = trussArg(args, "exclude-dir", dir)
 	}
 	for _, dir := range flags.ExternalDir {
+		dir, err := filepath.Abs(dir)
+		if err != nil {
+			return cmd.NewErrUsagef("resolve --external-dir: %v", err)
+		}
 		args = trussArg(args, "external-dir", dir)
 	}
 	for _, entry := range flags.Env {
@@ -73,12 +91,42 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 	args = append(args, "--")
 	args = append(args, startCommand...)
 
-	return trussRun(ctx, trussInvocation{
+	c, err := trussCommand(ctx, trussInvocation{
 		Flags:       flags.TrussFlags,
 		Args:        args,
 		ForwardAuth: !flags.TrussNoForwardAuth,
-		JSONResult:  true,
 	})
+	if err != nil {
+		return err
+	}
+	// Resolve an explicitly relative executable before changing the child cwd.
+	if !filepath.IsAbs(c.Path) && strings.ContainsAny(c.Path, `/\`) {
+		c.Path, err = filepath.Abs(c.Path)
+		if err != nil {
+			return err
+		}
+	}
+	c.Dir = dir
+	var stdout bytes.Buffer
+	c.Stdout = &stdout
+	if err := ctx.Execer().Exec(c); err != nil {
+		return err
+	}
+	var result cmd.LoopsExecResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return fmt.Errorf("invalid Truss loops exec JSON response; the job may have been created, check jobs before retrying: %w", err)
+	}
+	if result.JobID == "" {
+		return fmt.Errorf("Truss loops exec response has no job_id; check jobs before retrying")
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(result)
+	} else {
+		ctx.Outputf("Created job %s\nSSH: %s\nFollow logs: baseten train job logs --job-id %s --tail\n", result.JobID, result.SSHHostname, result.JobID)
+	}
+	// TODO: Add native --tail using the Training Job log watcher so OAuth
+	// credentials can refresh, rather than tailing in the Truss subprocess.
+	return nil
 }
 
 // loopsExecStartCommand requires a delimiter even when the command has no
@@ -87,7 +135,7 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 func loopsExecStartCommand(ctx *CommandContext) ([]string, error) {
 	dash := ctx.Command.ArgsLenAtDash()
 	if dash == -1 {
-		return nil, cmd.NewErrUsagef("start command must follow '--', for example: baseten loops exec -- python train.py")
+		return nil, cmd.NewErrUsagef("start command must follow '--', for example: baseten loops exec --dir . -- python train.py")
 	}
 	if dash > 0 {
 		return nil, cmd.NewErrUsagef("unexpected arguments %v before '--'; wrapper options must be flags", ctx.Args[:dash])

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,6 +13,70 @@ import (
 
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 )
+
+const loopsExecJSON = `{"job_id":"job-123","project":{"id":"proj-1","name":"client"},"ssh_hostname":"training-job-job-123-0.ssh.baseten.co","start_command":"python client.py","environment_variables":["BASETEN_API_KEY"],"compute":{"cpu_count":16,"memory":"64Gi","accelerator":null,"gpu_count":null},"job":{"id":"job-123"}}`
+
+func Test_Loops_Exec_StructuredOutput(t *testing.T) {
+	for _, format := range []string{"json", "jsonl"} {
+		t.Run(format, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = loopsExecJSON
+			h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--output", format, "--", "python", "client.py"))
+			h.Require.JSONEq(loopsExecJSON, h.Stdout.String())
+			h.Require.Contains(strings.Join(fake.only(t).Args, " "), "--output-format json")
+		})
+	}
+}
+
+func Test_Loops_Exec_ExplicitDirectory(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+	dir := t.TempDir()
+	external, err := filepath.Abs("../shared")
+	h.Require.NoError(err)
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", dir, "--external-dir", "../shared", "--jq", ".job_id", "--", "python", "client.py"))
+	h.Require.Equal(dir, fake.only(t).Dir)
+	h.Require.Contains(fake.only(t).Args, external)
+	h.Require.Equal("\"job-123\"\n", h.Stdout.String())
+}
+
+func Test_Loops_Exec_RejectsInvalidDirectory(t *testing.T) {
+	for _, dir := range []string{"", filepath.Join(t.TempDir(), "missing"), "command.loops.go"} {
+		t.Run(dir, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			h.Require.Error(h.Execute("loops", "exec", "--dir", dir, "--", "python", "client.py"))
+			h.Require.Contains(h.Stderr.String(), "--dir")
+			h.Require.Empty(fake.calls)
+		})
+	}
+}
+
+func Test_Loops_Exec_RelativeDirectory(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+	want, err := os.Getwd()
+	h.Require.NoError(err)
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", ".", "--", "python", "client.py"))
+	h.Require.Equal(want, fake.only(t).Dir)
+}
+
+func Test_Loops_Exec_RequiresDirectory(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	h.Require.Error(h.Execute("loops", "exec", "--", "python", "client.py"))
+	h.Require.Contains(h.Stderr.String(), "dir")
+	h.Require.Empty(fake.calls)
+}
+
+func Test_Loops_Exec_RejectsMalformedResult(t *testing.T) {
+	for _, output := range []string{"not JSON", "{}", "null", loopsExecJSON + "{}"} {
+		t.Run(output, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = output
+			h.Require.ErrorContains(h.Execute("loops", "exec", "--dir", t.TempDir(), "--", "python", "client.py"), "Truss")
+			h.Require.NotContains(h.Stdout.String(), "Created")
+		})
+	}
+}
 
 const (
 	loopsRunPath         = "/v1/loops/runs/r-1"
@@ -23,6 +88,10 @@ const (
 
 func Test_Loops_Exec_ForwardsFlagsCommandAndAuthToTruss(t *testing.T) {
 	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+	dir := t.TempDir()
+	external, err := filepath.Abs("../shared")
+	h.Require.NoError(err)
 
 	h.Require.NoError(h.Execute(
 		"loops", "exec",
@@ -32,7 +101,7 @@ func Test_Loops_Exec_ForwardsFlagsCommandAndAuthToTruss(t *testing.T) {
 		"--memory", "128Gi",
 		"--project-name", "orchestrator",
 		"--image", "example.com/loops:latest",
-		"--workspace-root", "..",
+		"--dir", dir,
 		"--exclude-dir", ".git",
 		"--exclude-dir", "artifacts",
 		"--external-dir", "../shared",
@@ -48,17 +117,16 @@ func Test_Loops_Exec_ForwardsFlagsCommandAndAuthToTruss(t *testing.T) {
 
 	c := fake.only(t)
 	h.Require.Equal([]string{
-		"uv", "tool", "run", "truss@latest", "loops", "exec",
+		"uv", "tool", "run", "truss@latest", "loops", "exec", "--output-format", "json",
 		"--accelerator", "H100",
 		"--gpu-count", "2",
 		"--cpu-count", "32",
 		"--memory", "128Gi",
 		"--project-name", "orchestrator",
 		"--image", "example.com/loops:latest",
-		"--workspace-root", "..",
 		"--exclude-dir", ".git",
 		"--exclude-dir", "artifacts",
-		"--external-dir", "../shared",
+		"--external-dir", external,
 		"--env", "MODE=train",
 		"--env", "EMPTY=",
 		"--env", "LIST=a,b",
@@ -75,13 +143,14 @@ func Test_Loops_Exec_ForwardsFlagsCommandAndAuthToTruss(t *testing.T) {
 
 func Test_Loops_Exec_DefaultsAndCommandFlagsAfterDelimiter(t *testing.T) {
 	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
 
 	h.Require.NoError(h.Execute(
-		"loops", "exec", "--truss-version", "0.18.31", "--", "python", "client.py", "--tail", "--truss-executable", "client-value",
+		"loops", "exec", "--dir", t.TempDir(), "--truss-version", "0.18.31", "--", "python", "client.py", "--tail", "--truss-executable", "client-value",
 	))
 
 	h.Require.Equal([]string{
-		"uv", "tool", "run", "truss@0.18.31", "loops", "exec",
+		"uv", "tool", "run", "truss@0.18.31", "loops", "exec", "--output-format", "json",
 		"--cpu-count", "16", "--memory", "64Gi", "--non-interactive",
 		"--", "python", "client.py", "--tail", "--truss-executable", "client-value",
 	}, fake.only(t).Args)
@@ -89,10 +158,11 @@ func Test_Loops_Exec_DefaultsAndCommandFlagsAfterDelimiter(t *testing.T) {
 
 func Test_Loops_Exec_ProfileSelectsForwardedAuth(t *testing.T) {
 	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
 	store := configDirStore(t)
 	h.Require.NoError(store.SetAPIKeyProfile("research", "https://research.example.com", "research-key", true, nil))
 
-	h.Require.NoError(h.Execute("loops", "exec", "--profile", "research", "--", "python", "client.py"))
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--profile", "research", "--", "python", "client.py"))
 
 	c := fake.only(t)
 	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_API_KEY=research-key")
@@ -101,38 +171,39 @@ func Test_Loops_Exec_ProfileSelectsForwardedAuth(t *testing.T) {
 
 func Test_Loops_Exec_NoForwardAuth(t *testing.T) {
 	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
 
-	h.Require.NoError(h.Execute("loops", "exec", "--truss-no-forward-auth", "--", "python", "client.py"))
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--truss-no-forward-auth", "--", "python", "client.py"))
 
 	h.Require.NotContains(strings.Join(fake.only(t).Env, " "), "BASETEN_TRUSS_AUTH_")
 }
 
 func Test_Loops_Exec_JSONReservesStdout(t *testing.T) {
 	h, fake := newTrussHarness(t)
-	fake.stdout = "Created job job-123\n"
+	fake.stdout = loopsExecJSON
 
-	h.Require.NoError(h.Execute("loops", "exec", "--output", "json", "--", "python", "client.py"))
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--output", "json", "--", "python", "client.py"))
 
 	var result map[string]any
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
-	h.Require.Empty(result)
-	h.Require.Contains(h.Stderr.String(), "Created job job-123")
+	h.Require.Equal("job-123", result["job_id"])
+	h.Require.NotContains(h.Stderr.String(), "job-123")
 }
 
-func Test_Loops_Exec_TextPassesTrussOutputThrough(t *testing.T) {
+func Test_Loops_Exec_TextFormatsTrussResult(t *testing.T) {
 	h, fake := newTrussHarness(t)
-	fake.stdout = "Created job job-123\n"
+	fake.stdout = loopsExecJSON
 
-	h.Require.NoError(h.Execute("loops", "exec", "--", "python", "client.py"))
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--", "python", "client.py"))
 
-	h.Require.Equal("Created job job-123\n", h.Stdout.String())
+	h.Require.Equal("Created job job-123\nSSH: training-job-job-123-0.ssh.baseten.co\nFollow logs: baseten train job logs --job-id job-123 --tail\n", h.Stdout.String())
 }
 
 func Test_Loops_Exec_PropagatesTrussFailure(t *testing.T) {
 	h, fake := newTrussHarness(t)
 	fake.exitCode = 7
 
-	h.Require.Error(h.Execute("loops", "exec", "--", "python", "client.py"))
+	h.Require.Error(h.Execute("loops", "exec", "--dir", t.TempDir(), "--", "python", "client.py"))
 	h.Require.Equal(7, h.ExitCode)
 	h.Require.Contains(h.Stderr.String(), "truss: bad arguments")
 }
@@ -146,7 +217,7 @@ func Test_Loops_Exec_HelpDocumentsContract(t *testing.T) {
 	out := h.Stdout.String()
 	h.Require.Contains(out, "-- START_COMMAND...")
 	h.Require.Contains(out, "--accelerator")
-	h.Require.Contains(out, "--workspace-root")
+	h.Require.Contains(out, "--dir")
 	h.Require.Contains(out, "--no-api-key")
 	h.Require.Contains(out, "per-team workspace secret")
 	h.Require.Contains(out, "baseten train job logs --job-id <id> --tail")
@@ -165,7 +236,7 @@ func Test_Loops_Exec_RequiresDelimitedCommand(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h, fake := newTrussHarness(t)
-			err := h.Execute(append([]string{"loops", "exec"}, tt.args...)...)
+			err := h.Execute(append([]string{"loops", "exec", "--dir", t.TempDir()}, tt.args...)...)
 			h.Require.ErrorContains(err, tt.want)
 			h.Require.Empty(fake.calls)
 		})
@@ -199,7 +270,7 @@ func Test_Loops_Exec_RejectsInvalidInputs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h, fake := newTrussHarness(t)
-			args := append([]string{"loops", "exec"}, tt.args...)
+			args := append([]string{"loops", "exec", "--dir", t.TempDir()}, tt.args...)
 			args = append(args, "--", "python", "client.py")
 			err := h.Execute(args...)
 			h.Require.ErrorContains(err, tt.want)
@@ -211,7 +282,7 @@ func Test_Loops_Exec_RejectsInvalidInputs(t *testing.T) {
 func Test_Loops_Exec_InvalidEnvironmentDoesNotEchoValue(t *testing.T) {
 	h, fake := newTrussHarness(t)
 
-	err := h.Execute("loops", "exec", "--env", "=top-secret-value", "--", "python", "client.py")
+	err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--env", "=top-secret-value", "--", "python", "client.py")
 
 	h.Require.ErrorContains(err, "invalid --env value; expected KEY=VALUE")
 	h.Require.NotContains(h.Stderr.String(), "top-secret-value")
