@@ -32,6 +32,9 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 	if err != nil {
 		return err
 	}
+	if flags.Tail && flags.TrussNoForwardAuth {
+		return cmd.NewErrUsagef("--tail cannot be combined with --truss-no-forward-auth; native log streaming must use the same Baseten profile as submission")
+	}
 	if ctx.Command.Flags().Changed("gpu-count") && (flags.GPUCount < 1 || flags.GPUCount > 8) {
 		return cmd.NewErrUsagef("--gpu-count must be between 1 and 8")
 	}
@@ -124,8 +127,28 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 	} else {
 		ctx.Outputf("Created job %s\nSSH: %s\nFollow logs: baseten train job logs --job-id %s --tail\n", result.JobID, result.SSHHostname, result.JobID)
 	}
-	// TODO: Add native --tail using the Training Job log watcher so OAuth
-	// credentials can refresh, rather than tailing in the Truss subprocess.
+	if flags.Tail {
+		if ctx.jqErr != nil {
+			return ctx.jqErr
+		}
+		// The result has already been written. Keep stdout parseable even if
+		// watching fails; the error and resume command go to stderr instead.
+		ctx.SuppressJSONError()
+		logCtx := *ctx
+		logCtx.Stdout = ctx.Stderr
+		logCtx.JSON = false
+		logCtx.JQQuery = nil
+		err := commandTrainJobLogs(&logCtx, &cmd.TrainJobLogsFlags{
+			TrainJobRefFlags: cmd.TrainJobRefFlags{JobID: result.JobID},
+			TrainLogFlags:    cmd.TrainLogFlags{Tail: true, PageSize: maxLogPageSize},
+		})
+		if err != nil {
+			// The framework replaces interrupted errors with "Canceled", so
+			// print the resume instructions before returning the error.
+			ctx.Logf("Job %s was created. Resume logs with 'baseten train job logs --job-id %s --tail'.\n", result.JobID, result.JobID)
+			return fmt.Errorf("tail training job %s: %w", result.JobID, err)
+		}
+	}
 	return nil
 }
 
