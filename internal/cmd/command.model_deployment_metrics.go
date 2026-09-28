@@ -518,17 +518,24 @@ func deploymentMetricsUnitSuffix(unit managementapi.ModelMetricUnitHint) string 
 // deploymentMetricsHumanize renders a number compactly with a k/M/G suffix for
 // large magnitudes, trimming trailing zeros. Display-only; not exact.
 func deploymentMetricsHumanize(f float64) string {
-	abs := math.Abs(f)
-	switch {
-	case abs >= 1e9:
-		return deploymentMetricsTrim(f/1e9) + "G"
-	case abs >= 1e6:
-		return deploymentMetricsTrim(f/1e6) + "M"
-	case abs >= 1e3:
-		return deploymentMetricsTrim(f/1e3) + "k"
-	default:
-		return deploymentMetricsTrim(f)
+	v, thousands := compactNumber(f, 3)
+	return deploymentMetricsTrim(v) + []string{"", "k", "M", "G"}[thousands]
+}
+
+// compactNumber scales f down by thousands for display, at most three times,
+// and rounds it to precision decimals. It returns the scaled value and how
+// many thousands were divided out. It moves up a unit when rounding would
+// reach 1000, so 999,960 at one decimal reads as 1.0 million, not 1000.0
+// thousand.
+func compactNumber(f float64, precision int) (float64, int) {
+	scale := math.Pow(10, float64(precision))
+	round := func(v float64) float64 { return math.Round(v*scale) / scale }
+	thousands := 0
+	for thousands < 3 && math.Abs(round(f)) >= 1000 {
+		f /= 1000
+		thousands++
 	}
+	return round(f), thousands
 }
 
 func deploymentMetricsTrim(f float64) string {

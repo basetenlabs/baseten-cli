@@ -79,9 +79,11 @@ var commandHarness = Command{
 			Flags: HarnessUsageFlags{},
 			Output: &CommandOutput[HarnessUsage]{
 				TextDescription: "Total spend and tokens, then a table with one row per model: INPUT, CACHED, and OUTPUT " +
-					"token counts (abbreviated, like 1.2M) and COST, most expensive first. With no usage in the month, " +
+					"token counts (abbreviated, like 1.2M) and COST, most expensive first. A cost of \"-\" means some of that " +
+					"usage couldn't be priced. With no usage in the month, " +
 					"prints a message to stderr instead.",
-				JSONDescription: "cost_usd values are exact decimal strings.",
+				JSONDescription: "cost_usd values are exact decimal strings. An item's cost_usd is null when some of its usage " +
+					"couldn't be priced; totals.cost_usd then leaves that usage out and totals.cost_complete is false.",
 				Examples: []CommandExample{
 					{
 						Description: "Show this month's usage by model.",
@@ -180,14 +182,19 @@ type HarnessUsageTokens struct {
 
 // HarnessUsageItem is the month's usage for one model.
 type HarnessUsageItem struct {
-	Model   string `json:"model"`
-	CostUSD string `json:"cost_usd"`
+	Model string `json:"model"`
+	// CostUSD is null when some of this model's usage couldn't be priced.
+	CostUSD *string `json:"cost_usd"`
 	HarnessUsageTokens
 }
 
 // HarnessUsageTotals is the month's usage across every item.
 type HarnessUsageTotals struct {
+	// CostUSD sums the usage that could be priced.
 	CostUSD string `json:"cost_usd"`
+	// CostComplete is false when some usage couldn't be priced and is left out
+	// of CostUSD.
+	CostComplete bool `json:"cost_complete"`
 	HarnessUsageTokens
 }
 
@@ -195,6 +202,8 @@ type HarnessUsageTotals struct {
 type HarnessUsage struct {
 	Month string `json:"month"`
 	// StartDate is inclusive and EndDate exclusive, both UTC calendar days.
+	// StartDate is later than the start of the month when earlier usage is
+	// past retention.
 	StartDate string             `json:"start_date"`
 	EndDate   string             `json:"end_date"`
 	Totals    HarnessUsageTotals `json:"totals"`

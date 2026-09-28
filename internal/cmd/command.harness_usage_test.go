@@ -10,7 +10,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 )
 
-func harnessUsageResult(model, cost string, input, cached, output int) map[string]any {
+func harnessUsageResult(model string, cost any, input, cached, output int) map[string]any {
 	return map[string]any{
 		"model":                 model,
 		"cost_usd":              cost,
@@ -109,24 +109,26 @@ func Test_Harness_Usage_JSONSumsBucketsExactly(t *testing.T) {
 	var got struct {
 		Month  string `json:"month"`
 		Totals struct {
-			CostUSD string `json:"cost_usd"`
-			Input   int    `json:"input_tokens"`
-			Cached  int    `json:"cached_input_tokens"`
+			CostUSD      string `json:"cost_usd"`
+			CostComplete bool   `json:"cost_complete"`
+			Input        int    `json:"input_tokens"`
+			Cached       int    `json:"cached_input_tokens"`
 		} `json:"totals"`
 		Items []struct {
-			Model   string `json:"model"`
-			CostUSD string `json:"cost_usd"`
-			Input   int    `json:"input_tokens"`
+			Model   string  `json:"model"`
+			CostUSD *string `json:"cost_usd"`
+			Input   int     `json:"input_tokens"`
 		} `json:"items"`
 	}
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 	h.Require.Equal("2026-09", got.Month)
 	h.Require.Equal("2.2500000001", got.Totals.CostUSD, "costs are summed as exact decimals")
+	h.Require.True(got.Totals.CostComplete)
 	h.Require.Equal(1550, got.Totals.Input)
 	h.Require.Equal(800, got.Totals.Cached)
 	h.Require.Len(got.Items, 3)
 	h.Require.Equal("claude-sonnet-5", got.Items[0].Model, "most expensive first")
-	h.Require.Equal("1.2500000001", got.Items[0].CostUSD)
+	h.Require.Equal("1.2500000001", *got.Items[0].CostUSD)
 	h.Require.Equal(1100, got.Items[0].Input, "buckets are summed per model")
 	h.Require.Equal([]string{"glm-5.2", "gpt-5.2"}, []string{got.Items[1].Model, got.Items[2].Model}, "equal costs sort by model")
 }
@@ -179,6 +181,8 @@ func Test_Harness_Usage_Empty(t *testing.T) {
 	h.Require.NoError(h.Execute("harness", "usage"))
 	h.Require.Empty(h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "No harness usage in September 2026.")
+	h.Require.Contains(h.Stderr.String(), "If you're using a team or workspace API key, run 'baseten auth login'",
+		"a service-account key has no routes usage")
 
 	h.Require.NoError(h.Execute("harness", "usage", "--jq", ".totals.cost_usd"))
 	h.Require.Equal("\"0\"\n", h.Stdout.String())
@@ -216,4 +220,42 @@ func Test_Harness_Usage_CompactTokenCounts(t *testing.T) {
 		h.Require.NoError(h.Execute("harness", "usage"))
 		h.Require.Contains(h.Stdout.String(), "Tokens  "+tc.want+" input", "%d tokens", tc.input)
 	}
+}
+
+func Test_Harness_Usage_NullCostIsUnpriced(t *testing.T) {
+	body := harnessUsageBody(false, nil, harnessUsageBucket("2026-09-01",
+		harnessUsageResult("claude-opus-5-5", "0.14", 10, 0, 1),
+		harnessUsageResult("qwen-custom", nil, 50, 0, 5),
+	))
+	h, _ := newHarnessUsageHarness(t, time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC), body)
+
+	h.Require.NoError(h.Execute("harness", "usage"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Spend   $0.14 (excludes usage that couldn't be priced)")
+	h.Require.Equal([]string{"qwen-custom", "50", "0", "5", "-"}, harnessUsageRow(h, out, "qwen-custom"))
+
+	h.Require.NoError(h.Execute("harness", "usage", "--jq", "{total: .totals.cost_usd, complete: .totals.cost_complete, costs: [.items[].cost_usd]}"))
+	h.Require.JSONEq(`{"total": "0.14", "complete": false, "costs": ["0.14", null]}`, h.Stdout.String())
+}
+
+func Test_Harness_Usage_ClampsToRetention(t *testing.T) {
+	h, api := newHarnessUsageHarness(t, time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC), harnessUsageMonth())
+
+	h.Require.NoError(h.Execute("harness", "usage", "--month", "2026-06", "--output", "json"))
+	h.Require.Equal("2026-06-29", api.FindCall("GET", "/v1/routes/usage").Query().Get("start_date"),
+		"92 days including today")
+	h.Require.Contains(h.Stderr.String(), "Usage is kept for 92 days, so this only includes usage from Jun 29 on.")
+	var got struct {
+		StartDate string `json:"start_date"`
+		EndDate   string `json:"end_date"`
+	}
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal("2026-06-29", got.StartDate)
+	h.Require.Equal("2026-07-01", got.EndDate)
+
+	h.Require.ErrorContains(h.Execute("harness", "usage", "--month", "2026-05"), "older than the 92 days of usage Baseten keeps")
+
+	h.Require.NoError(h.Execute("harness", "usage", "--month", "2026-07"))
+	h.Require.Equal("2026-07-01", api.Calls()[len(api.Calls())-1].Query().Get("start_date"))
+	h.Require.NotContains(h.Stderr.String(), "Usage is kept")
 }
