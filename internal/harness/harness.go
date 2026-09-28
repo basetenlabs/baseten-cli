@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -47,6 +48,10 @@ const (
 const providerID = "baseten-harness"
 const chatProviderID = "baseten-harness-chat"
 
+// clientHeader names the harness on each request. Baseten's /v1/models answers
+// with a harness-specific catalog for claude-code and codex.
+const clientHeader = "X-Baseten-Client"
+
 // TODO: Make the default background route server-driven.
 const defaultBackgroundRoute = "deepseek-ai/DeepSeek-V4.1-Flash"
 
@@ -71,6 +76,12 @@ type Harness interface {
 	// Credential returns the routes API key setup wrote to the settings file at
 	// path, or "" if there is none.
 	Credential(path string) (string, error)
+}
+
+// Supported reports whether harness settings locations are verified on this
+// platform.
+func Supported() bool {
+	return runtime.GOOS == "darwin" || runtime.GOOS == "linux"
 }
 
 // All returns every supported harness.

@@ -7,7 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -17,6 +17,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/harness"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func init() {
@@ -24,6 +25,14 @@ func init() {
 	Register("harness status", commandHarnessStatus)
 	Register("harness teardown", commandHarnessTeardown)
 }
+
+// harnessPickerLabelWidth caps picker labels so they don't wrap.
+const harnessPickerLabelWidth = 80
+
+// harnessVersionNumber finds the version number in a harness's --version
+// output, such as "2.1.272" in "2.1.272 (Claude Code)" or "0.134.0" in
+// "codex-cli 0.134.0".
+var harnessVersionNumber = regexp.MustCompile(`\d+(\.\d+)+\S*`)
 
 type selectedHarness struct {
 	harness.Harness
@@ -34,9 +43,8 @@ type selectedHarness struct {
 // installed harnesses; status and teardown find configured ones, even when
 // the harness is no longer installed.
 func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([]selectedHarness, error) {
-	// Harness settings locations are only verified on macOS so far.
-	if runtime.GOOS != "darwin" {
-		return nil, errors.New("harness commands support only macOS for now")
+	if !harness.Supported() {
+		return nil, errors.New("harness commands support only macOS and Linux for now")
 	}
 	explicit := len(flags.Harness) > 0
 	if flags.ConfigDir != "" && len(flags.Harness) != 1 {
@@ -57,8 +65,8 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		switch {
 		case setup && !d.Installed && explicit:
 			searched := "not on PATH"
-			if h.Name() == harness.Codex && runtime.GOOS == "darwin" {
-				searched = "not on PATH or in ChatGPT.app or Codex.app"
+			if locations := harness.CodexDesktopLocations(); h.Name() == harness.Codex && locations != "" {
+				searched += " or in " + locations
 			}
 			return nil, fmt.Errorf("%s is not installed or %s", h.Name(), searched)
 		case setup && !d.Installed:
@@ -82,15 +90,22 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 	if len(selected) == 0 {
 		return nil, errors.New("no supported harnesses are installed")
 	}
+	// The picker sizes itself for one line per option, so a label that wraps
+	// pushes the options below it out of view. Labels leave out the settings
+	// path, which can be arbitrarily long, and the rest of the version output.
 	options := make([]huh.Option[string], 0, len(selected))
 	for _, s := range selected {
-		label := fmt.Sprintf("%s  %s  %s", s.Name(), cmp.Or(s.detection.Version, "version unavailable"), harnessDisplayPath(s.detection.Path))
+		version := cmp.Or(harnessVersionNumber.FindString(s.detection.Version), "version unavailable")
+		label := ansi.Truncate(s.Name()+"  "+version, harnessPickerLabelWidth, "…")
 		options = append(options, huh.NewOption(label, s.Name()))
 	}
 	var names []string
 	err := huh.NewMultiSelect[string]().
 		Title("Select harnesses to configure").
 		Options(options...).
+		// Without a height, huh takes the title's line out of the options' rows
+		// and hides the last option.
+		Height(len(options) + 1).
 		Value(&names).
 		Validate(func(names []string) error {
 			if len(names) == 0 {
@@ -163,8 +178,20 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		}
 		plans = append(plans, current...)
 	}
-	if !ctx.JSON {
-		harnessSetupSummary(ctx, team, routes, selected, selection, plans)
+	switch {
+	case ctx.JSON:
+	case ctx.verbose || f.DryRun:
+		harnessVerboseSetupSummary(ctx, team, selected, selection, plans)
+	default:
+		var replaced []string
+		for _, p := range plans {
+			if len(p.Replaced) > 0 && !slices.Contains(replaced, p.Harness) {
+				replaced = append(replaced, p.Harness)
+			}
+		}
+		if len(replaced) > 0 {
+			ctx.Logf("warning: existing integration settings in %s will be overwritten; teardown does not restore them\n", strings.Join(replaced, ", "))
+		}
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -388,12 +415,11 @@ func harnessRouteTable(ctx *CommandContext, title string, routes []harness.Route
 	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "DISPLAY NAME"}, Rows: rows})
 }
 
-func harnessSetupSummary(ctx *CommandContext, team *managementapi.Team, routes []harness.Route, selected []selectedHarness, s harness.Selection, plans []*harness.Plan) {
+func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, selected []selectedHarness, s harness.Selection, plans []*harness.Plan) {
 	renderer := lipgloss.NewRenderer(ctx.Stdout)
 	accent := renderer.NewStyle().Inherit(inlineCodeStyle)
 	heading := renderer.NewStyle().Bold(true)
-	ctx.Outputf("Team: %s\n\n", accent.Render(team.Name))
-	harnessRouteTable(ctx, "Available routes", routes)
+	ctx.Outputf("Team: %s\n", accent.Render(team.Name))
 	for _, choice := range selected {
 		ctx.Outputf("\n%s\n", heading.Render(choice.Name()))
 		ctx.Outputf("  Config            %s\n", harnessDisplayPath(choice.detection.Path))

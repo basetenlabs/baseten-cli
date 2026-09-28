@@ -77,23 +77,27 @@ func TestCodexDesktopDetection(t *testing.T) {
 		return filepath.Join(root, app, "Contents", "Resources", "codex")
 	}
 	chatgpt := bundled("/Applications", "ChatGPT.app")
+	linuxChatGPT := "/usr/lib/chatgpt/resources/codex"
 	for _, tc := range []struct {
 		name     string
 		binaries map[string]bool
 		want     string
+		// goos is the only platform where want applies; elsewhere nothing is found.
+		goos string
 	}{
-		{"chatgpt", map[string]bool{chatgpt: true}, chatgpt},
-		{"codex", map[string]bool{bundled("/Applications", "Codex.app"): true}, bundled("/Applications", "Codex.app")},
-		{"user chatgpt", map[string]bool{bundled(filepath.Join(home, "Applications"), "ChatGPT.app"): true}, bundled(filepath.Join(home, "Applications"), "ChatGPT.app")},
-		{"user codex", map[string]bool{bundled(filepath.Join(home, "Applications"), "Codex.app"): true}, bundled(filepath.Join(home, "Applications"), "Codex.app")},
-		{"CLI takes precedence", map[string]bool{"codex": true, chatgpt: true}, "/cli/codex"},
-		{"config alone is not an installation", nil, ""},
-		{"classic app without bundled codex", map[string]bool{"/Applications/ChatGPT.app/Contents/MacOS/ChatGPT": true}, ""},
+		{"chatgpt", map[string]bool{chatgpt: true}, chatgpt, "darwin"},
+		{"codex", map[string]bool{bundled("/Applications", "Codex.app"): true}, bundled("/Applications", "Codex.app"), "darwin"},
+		{"user chatgpt", map[string]bool{bundled(filepath.Join(home, "Applications"), "ChatGPT.app"): true}, bundled(filepath.Join(home, "Applications"), "ChatGPT.app"), "darwin"},
+		{"user codex", map[string]bool{bundled(filepath.Join(home, "Applications"), "Codex.app"): true}, bundled(filepath.Join(home, "Applications"), "Codex.app"), "darwin"},
+		{"linux chatgpt", map[string]bool{linuxChatGPT: true}, linuxChatGPT, "linux"},
+		{"CLI takes precedence", map[string]bool{"codex": true, chatgpt: true, linuxChatGPT: true}, "/cli/codex", ""},
+		{"config alone is not an installation", nil, "", ""},
+		{"classic app without bundled codex", map[string]bool{"/Applications/ChatGPT.app/Contents/MacOS/ChatGPT": true}, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			execer := &codexDetectionExecer{binaries: tc.binaries}
 			want := tc.want
-			if runtime.GOOS != "darwin" && !tc.binaries["codex"] {
+			if tc.goos != "" && tc.goos != runtime.GOOS {
 				want = ""
 			}
 			d, err := codexHarness{}.Detect(t.Context(), execer, "")
@@ -430,6 +434,25 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/primary"].(map[string]any)["provider"])
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/openai"}, models["acme/background"].(map[string]any)["provider"])
 	require.NotContains(t, models["acme/subagent"], "provider")
+}
+
+func TestClientHeaderNamesHarness(t *testing.T) {
+	paths := map[string][]string{
+		ClaudeCode: {"env", "ANTHROPIC_CUSTOM_HEADERS"},
+		Codex:      {"model_providers", providerID, "http_headers", clientHeader},
+		OpenCode:   {"provider", providerID, "options", "headers", clientHeader},
+	}
+	for _, h := range All() {
+		t.Run(h.Name(), func(t *testing.T) {
+			path := settingsPath(t, h)
+			setup(t, h, path, testRoutes(), Selection{})
+			want := h.Name()
+			if h.Name() == ClaudeCode {
+				want = clientHeader + ": " + ClaudeCode
+			}
+			require.Equal(t, want, get(load(t, path), paths[h.Name()]).Data)
+		})
+	}
 }
 
 func TestSymlinkedSettingsStayLinked(t *testing.T) {

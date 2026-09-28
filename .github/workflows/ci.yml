@@ -27,14 +27,14 @@ jobs:
 
       # The harness tests run the installed Claude Code, Codex, and OpenCode
       # CLIs against a local gateway, and skip any that are missing. Harness
-      # setup is only supported on macOS so far.
+      # setup is only supported on macOS and Linux so far.
       - uses: actions/setup-node@v4
-        if: matrix.os == 'macos-latest'
+        if: matrix.os != 'windows-latest'
         with:
           node-version: 22
 
       - name: Install harnesses
-        if: matrix.os == 'macos-latest'
+        if: matrix.os != 'windows-latest'
         run: npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai
 
       - name: Test
