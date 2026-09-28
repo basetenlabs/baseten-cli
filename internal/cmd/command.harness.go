@@ -90,7 +90,7 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 	// pushes the options below it out of view.
 	width := 0
 	if w, _, err := term.GetSize(os.Stdout.Fd()); err == nil {
-		width = w - harnessPickerIndent
+		width = max(w-harnessPickerIndent, 1)
 	}
 	options := make([]huh.Option[string], 0, len(selected))
 	for _, s := range selected {
