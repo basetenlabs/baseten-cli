@@ -11,6 +11,7 @@ import (
 )
 
 func init() {
+	Register("loops exec", commandLoopsExec)
 	Register("loops run create", commandLoopsRunCreate)
 	Register("loops run list", commandLoopsRunList)
 	Register("loops run describe", commandLoopsRunDescribe)
@@ -20,6 +21,18 @@ func init() {
 	Register("loops checkpoint list", commandLoopsCheckpointList)
 	Register("loops checkpoint files", commandLoopsCheckpointFiles)
 	Register("loops checkpoint deploy", commandLoopsCheckpointDeploy)
+}
+
+func commandLoopsExec(ctx *CommandContext, flags *cmd.TrussPassthroughFlags) error {
+	args, err := trussExtractFlags(&flags.TrussAuthFlags, ctx.Args)
+	if err != nil {
+		return err
+	}
+	return trussRun(ctx, trussInvocation{
+		Flags:       flags.TrussFlags,
+		Args:        append([]string{"loops", "exec"}, args...),
+		ForwardAuth: !flags.TrussNoForwardAuth,
+	})
 }
 
 // loopsTrainerLiveStatuses are the trainer deployment statuses where the trainer

@@ -21,6 +21,22 @@ const (
 	loopsSamplerDepPath  = "/v1/models/model-1/deployments/sdep-1"
 )
 
+func Test_Loops_Exec_ForwardsArgsAndAuthToTruss(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute(
+		"loops", "exec", "--with-uv", "--tail", "--", "uv", "run", "python", "train.py",
+	))
+
+	c := fake.only(t)
+	h.Require.Equal(
+		[]string{"uv", "tool", "run", "truss@latest", "loops", "exec", "--with-uv", "--tail", "--", "uv", "run", "python", "train.py"},
+		c.Args,
+	)
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_API_KEY=test-key")
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_REMOTE_URL=http://127.0.0.1:1")
+}
+
 // loopsSamplerFixture is a sampler payload. instanceType "" omits the instance
 // type entirely, which is how the backend reports a sampler that never ran.
 func loopsSamplerFixture(id, status, instanceType string, gpuCount, nodeCount int, createdAt string) map[string]any {

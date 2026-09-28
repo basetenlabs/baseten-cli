@@ -14,6 +14,28 @@ var commandLoops = Command{
 		commandLoopsCheckpoint,
 		commandLoopsRun,
 		{
+			Name:    "exec",
+			Summary: "Run a Loops client as a managed job",
+			Description: "Package the current directory and run a Loops client as a managed Training Job.\n\n" +
+				"Every argument is forwarded to 'truss loops exec' except the --truss-* flags, which this " +
+				"CLI consumes. Baseten credentials are forwarded to Truss, so the job uses the same " +
+				"profile as the rest of the CLI.",
+			ArgsUsage:          "[args...]",
+			DisableFlagParsing: true,
+			Flags:              TrussPassthroughFlags{},
+			Output: &CommandOutput[JSONUndefined]{
+				JSONOutputUnimportant: true,
+				TextDescription: "Whatever 'truss loops exec' writes to stdout and stderr, passed through verbatim. " +
+					"The exit code is propagated from Truss.",
+				Examples: []CommandExample{
+					{
+						Description: "Run a Python Loops client with uv and stream its logs.",
+						Command:     "baseten loops exec --with-uv --tail -- uv run python train.py",
+					},
+				},
+			},
+		},
+		{
 			Name:    "usage",
 			Summary: "Report Loops GPU capacity",
 			Description: "Report Loops GPU capacity, one row per trainer deployment plus a row " +
