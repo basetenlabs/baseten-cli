@@ -16,6 +16,8 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/harness"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/term"
 )
 
 func init() {
@@ -23,6 +25,10 @@ func init() {
 	Register("harness status", commandHarnessStatus)
 	Register("harness teardown", commandHarnessTeardown)
 }
+
+// harnessPickerIndent is the width of the border, cursor, and checkbox the
+// picker draws before each label.
+const harnessPickerIndent = 6
 
 type selectedHarness struct {
 	harness.Harness
@@ -80,15 +86,27 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 	if len(selected) == 0 {
 		return nil, errors.New("no supported harnesses are installed")
 	}
+	// The picker sizes itself for one line per option, so a label that wraps
+	// pushes the options below it out of view.
+	width := 0
+	if w, _, err := term.GetSize(os.Stdout.Fd()); err == nil {
+		width = w - harnessPickerIndent
+	}
 	options := make([]huh.Option[string], 0, len(selected))
 	for _, s := range selected {
 		label := fmt.Sprintf("%s  %s  %s", s.Name(), cmp.Or(s.detection.Version, "version unavailable"), harnessDisplayPath(s.detection.Path))
+		if width > 0 {
+			label = ansi.Truncate(label, width, "…")
+		}
 		options = append(options, huh.NewOption(label, s.Name()))
 	}
 	var names []string
 	err := huh.NewMultiSelect[string]().
 		Title("Select harnesses to configure").
 		Options(options...).
+		// Without a height, huh takes the title's line out of the options' rows
+		// and hides the last option.
+		Height(len(options)+1).
 		Value(&names).
 		Validate(func(names []string) error {
 			if len(names) == 0 {
@@ -151,8 +169,20 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		}
 		plans = append(plans, current...)
 	}
-	if !ctx.JSON {
-		harnessSetupSummary(ctx, team, routes, selected, selection, plans)
+	switch {
+	case ctx.JSON:
+	case ctx.verbose || f.DryRun:
+		harnessSetupSummary(ctx, team, selected, selection, plans)
+	default:
+		var replaced []string
+		for _, p := range plans {
+			if len(p.Replaced) > 0 && !slices.Contains(replaced, p.Harness) {
+				replaced = append(replaced, p.Harness)
+			}
+		}
+		if len(replaced) > 0 {
+			ctx.Logf("warning: existing integration settings in %s will be overwritten; teardown does not restore them\n", strings.Join(replaced, ", "))
+		}
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -376,12 +406,11 @@ func harnessRouteTable(ctx *CommandContext, title string, routes []harness.Route
 	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "DISPLAY NAME"}, Rows: rows})
 }
 
-func harnessSetupSummary(ctx *CommandContext, team *managementapi.Team, routes []harness.Route, selected []selectedHarness, s harness.Selection, plans []*harness.Plan) {
+func harnessSetupSummary(ctx *CommandContext, team *managementapi.Team, selected []selectedHarness, s harness.Selection, plans []*harness.Plan) {
 	renderer := lipgloss.NewRenderer(ctx.Stdout)
 	accent := renderer.NewStyle().Inherit(inlineCodeStyle)
 	heading := renderer.NewStyle().Bold(true)
-	ctx.Outputf("Team: %s\n\n", accent.Render(team.Name))
-	harnessRouteTable(ctx, "Available routes", routes)
+	ctx.Outputf("Team: %s\n", accent.Render(team.Name))
 	for _, choice := range selected {
 		ctx.Outputf("\n%s\n", heading.Render(choice.Name()))
 		ctx.Outputf("  Config            %s\n", harnessDisplayPath(choice.detection.Path))
