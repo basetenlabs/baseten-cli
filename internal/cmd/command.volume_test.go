@@ -3,7 +3,9 @@ package cmd_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -45,6 +47,8 @@ type fakeVolumeTransfer struct {
 	Contents map[string]string
 	Digest   string
 
+	OnProgress func(func(client.VolumeProgress)) error
+
 	PushResult *client.PushVolumeResult
 	PullResult *client.PullVolumeResult
 
@@ -58,6 +62,11 @@ func (f *fakeVolumeTransfer) PushVolume(
 ) (*client.PushVolumeResult, error) {
 	f.requireSeams(opts.Hasher, opts.Store)
 	f.PushOptions = &opts
+	if f.OnProgress != nil {
+		if err := f.OnProgress(opts.Progress); err != nil {
+			return nil, err
+		}
+	}
 	result := f.PushResult
 	if result == nil {
 		result = &client.PushVolumeResult{VersionRef: f.versionRef(opts.Ref)}
@@ -70,6 +79,11 @@ func (f *fakeVolumeTransfer) PullVolume(
 ) (*client.PullVolumeResult, error) {
 	f.requireSeams(opts.Hasher, opts.Store)
 	f.PullOptions = &opts
+	if f.OnProgress != nil {
+		if err := f.OnProgress(opts.Progress); err != nil {
+			return nil, err
+		}
+	}
 	if opts.EntryHandler != nil {
 		// A real pull is handed the directories leading to what it selected,
 		// as well as the selection itself, so the destination tree can be
@@ -887,4 +901,160 @@ func Test_Volume_Pull_JSON(t *testing.T) {
 	// rather than swallowed.
 	h.Require.Contains(out, "/config/current")
 	h.Require.Contains(h.Stdout.String(), `"duration_seconds": 1.5`)
+}
+
+// Exercise progress through command invocation so callback wiring and cleanup
+// are covered along with the displayed counters.
+func Test_Volume_ProgressFinalCounters(t *testing.T) {
+	for _, action := range []string{"push", "pull"} {
+		for _, outcome := range []string{"phase-change", "return", "error"} {
+			t.Run(action+"/"+outcome, func(t *testing.T) {
+				h := NewCommandHarness(t)
+				fake := withVolumeTransfer(t, h)
+				phase, next := client.VolumePhaseUpload, client.VolumePhaseCommit
+				if action == "pull" {
+					phase, next = client.VolumePhaseDownload, client.VolumePhasePublish
+				}
+				fake.OnProgress = func(progress func(client.VolumeProgress)) error {
+					p := client.VolumeProgress{Phase: phase, TotalFiles: 2, TotalBytes: 73}
+					progress(p)
+					p.Files, p.Bytes = 1, 30
+					progress(p)
+					p.Files, p.Bytes = 2, 73
+					progress(p)
+					progress(p) // Identical callbacks must not duplicate output.
+					if outcome == "phase-change" {
+						progress(client.VolumeProgress{Phase: next})
+					}
+					if outcome == "error" {
+						return errors.New("transfer failed")
+					}
+					return nil
+				}
+				args := []string{"volume", action, t.TempDir(), "bdn:weights/llama"}
+				if action == "pull" {
+					args[2], args[3] = args[3], args[2]
+				}
+				err := h.Execute(args...)
+				if outcome == "error" {
+					h.Require.ErrorContains(err, "transfer failed")
+				} else {
+					h.Require.NoError(err)
+				}
+				output := h.Stderr.String()
+				final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B\n", phase)
+				h.Require.Equal(1, strings.Count(output, final), output)
+				if outcome == "phase-change" {
+					h.Require.Contains(output, final+fmt.Sprintf("  %s...\n", next))
+				}
+			})
+		}
+	}
+}
+
+// A channel lets the fake transfer observe output while the command is still
+// running without reading the harness's bytes.Buffer concurrently.
+type volumeProgressOutput chan string
+
+func (out volumeProgressOutput) Write(p []byte) (int, error) {
+	out <- string(p)
+	return len(p), nil
+}
+
+func Test_Volume_ProgressWhileTransferIsRunning(t *testing.T) {
+	for _, action := range []string{"push", "pull"} {
+		t.Run(action, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			fake := withVolumeTransfer(t, h)
+			output := make(volumeProgressOutput, 32)
+			phase := client.VolumePhaseUpload
+			if action == "pull" {
+				phase = client.VolumePhaseDownload
+			}
+			fake.OnProgress = func(progress func(client.VolumeProgress)) error {
+				p := client.VolumeProgress{Phase: phase, TotalFiles: 4}
+				progress(p)
+				p.Files = 3
+				progress(p)
+				timeout := time.NewTimer(10 * time.Second)
+				defer timeout.Stop()
+				for {
+					select {
+					case line := <-output:
+						if strings.Contains(line, "3/4 files") {
+							p.Files = 4
+							progress(p)
+							return nil
+						}
+					case <-timeout.C:
+						return errors.New("pending progress was not displayed while the transfer was running")
+					}
+				}
+			}
+			args := []string{"volume", action, t.TempDir(), "bdn:weights/llama"}
+			if action == "pull" {
+				args[2], args[3] = args[3], args[2]
+			}
+			h.Require.NoError(cmd.Execute(h.Context, cmd.ExecuteOptions{
+				Args: args, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: output,
+			}))
+			close(output) // Execute has joined the progress worker.
+			var remaining strings.Builder
+			for line := range output {
+				remaining.WriteString(line)
+			}
+			h.Require.Equal(1, strings.Count(remaining.String(), "4/4 files"), remaining.String())
+			h.Require.NotContains(remaining.String(), "3/4 files")
+		})
+	}
+}
+
+func Test_Volume_ProgressDoesNotCorruptJSON(t *testing.T) {
+	for _, action := range []string{"push", "pull"} {
+		t.Run(action, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			now := volumeTestTime
+			h.Context = cmd.WithNow(h.Context, func() time.Time {
+				result := now
+				now = now.Add(1500 * time.Millisecond)
+				return result
+			})
+			fake := withVolumeTransfer(t, h)
+			ref := client.VolumeRef{Namespace: "weights", Volume: "llama", Digest: "b3:a1b2"}
+			fake.PushResult = &client.PushVolumeResult{VersionRef: ref, Files: 2, Bytes: 73}
+			fake.PullResult = &client.PullVolumeResult{VersionRef: ref, Files: 2, Bytes: 73}
+			phase, next := client.VolumePhaseUpload, client.VolumePhaseCommit
+			if action == "pull" {
+				phase, next = client.VolumePhaseDownload, client.VolumePhasePublish
+			}
+			fake.OnProgress = func(progress func(client.VolumeProgress)) error {
+				p := client.VolumeProgress{Phase: phase, TotalFiles: 2, TotalBytes: 73}
+				progress(p)
+				p.Files, p.Bytes = 2, 73
+				progress(p)
+				progress(client.VolumeProgress{Phase: next})
+				return nil
+			}
+			args := []string{"volume", action, t.TempDir(), "bdn:weights/llama", "--output", "json"}
+			if action == "pull" {
+				args[2], args[3] = args[3], args[2]
+			}
+			h.Require.NoError(h.Execute(args...))
+			var result struct {
+				VersionRef string  `json:"version_ref"`
+				Files      int64   `json:"files"`
+				Bytes      int64   `json:"bytes"`
+				Duration   float64 `json:"duration_seconds"`
+			}
+			// Unmarshal rejects progress text before or after the JSON document.
+			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+			h.Require.Equal(ref.String(), result.VersionRef)
+			h.Require.Equal(int64(2), result.Files)
+			h.Require.Equal(int64(73), result.Bytes)
+			h.Require.Equal(1.5, result.Duration)
+			final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B\n", phase)
+			h.Require.Contains(h.Stderr.String(), final+fmt.Sprintf("  %s...\n", next))
+			h.Require.Equal(1, strings.Count(h.Stderr.String(), final))
+		})
+	}
 }

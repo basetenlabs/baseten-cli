@@ -263,15 +263,10 @@ func volumeConcurrency(flags cmd.VolumeTransferFlags, fileJobs int) client.Volum
 // volumeProgressInterval bounds output while retaining the latest counters.
 const volumeProgressInterval = 2 * time.Second
 
+// volumeProgressLogger flushes pending counters on ticks, phase changes,
+// and shutdown. Shutdown joins the worker before the command prints its result.
 func volumeProgressLogger(ctx *CommandContext) (func(client.VolumeProgress), func()) {
 	ticker := time.NewTicker(volumeProgressInterval)
-	update, stop := startVolumeProgressLogger(ctx.Logf, ticker.C)
-	return update, func() { ticker.Stop(); stop() }
-}
-
-// startVolumeProgressLogger flushes pending counters on ticks, phase changes,
-// and shutdown. Shutdown joins the worker before the command prints its result.
-func startVolumeProgressLogger(logf func(string, ...any), ticks <-chan time.Time) (func(client.VolumeProgress), func()) {
 	var mu sync.Mutex
 	var latest, printed client.VolumeProgress
 	var have, dirty bool
@@ -282,11 +277,11 @@ func startVolumeProgressLogger(logf func(string, ...any), ticks <-chan time.Time
 		p := latest
 		switch {
 		case p.TotalBytes > 0:
-			logf("  %s: %d/%d files, %s/%s\n", p.Phase, p.Files, p.TotalFiles, formatBytes(p.Bytes), formatBytes(p.TotalBytes))
+			ctx.Logf("  %s: %d/%d files, %s/%s\n", p.Phase, p.Files, p.TotalFiles, formatBytes(p.Bytes), formatBytes(p.TotalBytes))
 		case p.TotalFiles > 0:
-			logf("  %s: %d/%d files\n", p.Phase, p.Files, p.TotalFiles)
+			ctx.Logf("  %s: %d/%d files\n", p.Phase, p.Files, p.TotalFiles)
 		default:
-			logf("  %s...\n", p.Phase)
+			ctx.Logf("  %s...\n", p.Phase)
 		}
 		printed, dirty = p, false
 	}
@@ -295,7 +290,7 @@ func startVolumeProgressLogger(logf func(string, ...any), ticks <-chan time.Time
 		defer close(exited)
 		for {
 			select {
-			case <-ticks:
+			case <-ticker.C:
 				mu.Lock()
 				flush()
 				mu.Unlock()
@@ -321,7 +316,13 @@ func startVolumeProgressLogger(logf func(string, ...any), ticks <-chan time.Time
 		}
 	}
 	var once sync.Once
-	stop := func() { once.Do(func() { close(done); <-exited }) }
+	stop := func() {
+		once.Do(func() {
+			ticker.Stop()
+			close(done)
+			<-exited
+		})
+	}
 	return update, stop
 }
 
