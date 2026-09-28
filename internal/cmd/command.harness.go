@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -34,9 +33,8 @@ type selectedHarness struct {
 // installed harnesses; status and teardown find configured ones, even when
 // the harness is no longer installed.
 func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([]selectedHarness, error) {
-	// Harness settings locations are only verified on macOS so far.
-	if runtime.GOOS != "darwin" {
-		return nil, errors.New("harness commands support only macOS for now")
+	if !harness.Supported() {
+		return nil, errors.New("harness commands support only macOS and Linux for now")
 	}
 	explicit := len(flags.Harness) > 0
 	if flags.ConfigDir != "" && len(flags.Harness) != 1 {
@@ -57,8 +55,8 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		switch {
 		case setup && !d.Installed && explicit:
 			searched := "not on PATH"
-			if h.Name() == harness.Codex && runtime.GOOS == "darwin" {
-				searched = "not on PATH or in ChatGPT.app or Codex.app"
+			if locations := harness.CodexDesktopLocations(); h.Name() == harness.Codex && locations != "" {
+				searched += " or in " + locations
 			}
 			return nil, fmt.Errorf("%s is not installed or %s", h.Name(), searched)
 		case setup && !d.Installed:
