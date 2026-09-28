@@ -22,8 +22,10 @@ func harnessCatalog(listed []managementapi.Route, primary string) (routes []harn
 			r.InputModalities, r.Tools = m.InputModalities, deref(m.Tools)
 			r.ReasoningLevels = harness.NormalizeReasoningLevels(deref(m.ReasoningEffortLevels))
 			r.ParallelTools = deref(m.ParallelToolCalls)
+			// Without formats the route's APIs are unknown, so every harness lists it.
+			r.Messages, r.Responses = true, true
 			if f := m.SupportedApiFormats; f != nil {
-				r.Responses = deref(f.Responses)
+				r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
 			}
 			if c := m.Cost; c != nil {
 				r.Cost = harnessCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})

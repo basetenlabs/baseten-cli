@@ -75,6 +75,8 @@ type Harness interface {
 	// Credential returns the routes API key setup wrote to the settings file at
 	// path, or "" if there is none.
 	Credential(path string) (string, error)
+	// Routes returns the routes the harness can call, in order.
+	Routes(routes []Route) []Route
 }
 
 // Supported reports whether harness settings locations are verified on this
@@ -102,7 +104,9 @@ type Route struct {
 	Tools           bool
 	ReasoningLevels []string
 	ParallelTools   bool
-	// Responses reports Responses API support.
+	// Messages and Responses report whether the route serves the Anthropic
+	// Messages API and the OpenAI Responses API.
+	Messages  bool
 	Responses bool
 	// Cost is the provider's list price, or nil if unknown.
 	Cost *Cost
@@ -202,7 +206,7 @@ func (s Selection) resolve(routes []Route) (Selection, error) {
 	s.Fallback = cmp.Or(s.Fallback, s.Primary)
 	for _, name := range []string{s.Primary, s.Background, s.Subagent, s.Fallback} {
 		if name != "" && !slices.ContainsFunc(routes, func(r Route) bool { return r.Name == name }) {
-			return s, fmt.Errorf("route %q is not one of the team's routes", name)
+			return s, fmt.Errorf("route %q is not one of the team's routes this harness can call", name)
 		}
 	}
 	return s, nil

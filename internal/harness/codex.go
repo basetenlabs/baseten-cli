@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -81,6 +82,12 @@ var codexCredentialPath = []string{"model_providers", providerID, "experimental_
 
 func (codexHarness) Credential(path string) (string, error) {
 	return credential(path, codexCredentialPath)
+}
+
+// Routes keeps the routes that serve the OpenAI Responses API, which Codex uses
+// for every route.
+func (codexHarness) Routes(routes []Route) []Route {
+	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Responses })
 }
 
 func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {

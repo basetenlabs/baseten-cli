@@ -55,6 +55,9 @@ func (openCodeHarness) BackgroundRoute(s Selection) string {
 	return cmp.Or(s.Background, defaultBackgroundRoute)
 }
 
+// Routes returns every route, since OpenCode picks each route's API by its target.
+func (openCodeHarness) Routes(routes []Route) []Route { return routes }
+
 func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
 	if s.Fallback != "" {
 		return nil, errors.New("--fallback-route is supported only for Claude Code")

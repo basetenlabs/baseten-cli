@@ -48,6 +48,12 @@ func (claudeCodeHarness) BackgroundRoute(s Selection) string {
 	return cmp.Or(s.Background, defaultBackgroundRoute)
 }
 
+// Routes keeps the routes that serve the Anthropic Messages API, which Claude
+// Code uses for every route.
+func (claudeCodeHarness) Routes(routes []Route) []Route {
+	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Messages })
+}
+
 func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
 	p, err := prepareSettings(path, claudeCredentialPath, func(data map[string]any) ([]setting, error) {
 		return claudeSettings(routes, s, endpoint, data)

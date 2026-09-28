@@ -695,3 +695,41 @@ func Test_Harness_Setup_RouteMetadata(t *testing.T) {
 	model := provider["baseten-harness"].(map[string]any)["models"].(map[string]any)["acme/primary"].(map[string]any)
 	h.Require.Equal(map[string]any{"input": 0.3, "output": 1.2}, model["cost"])
 }
+
+func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeHarnessAPI(t)
+	formats := func(messages, responses bool) map[string]any {
+		m := maps.Clone(harnessRouteMetadata)
+		m["supported_api_formats"] = map[string]any{"messages": messages, "responses": responses}
+		return m
+	}
+	unknown := maps.Clone(harnessRouteMetadata)
+	delete(unknown, "supported_api_formats")
+	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+		"items": []any{
+			map[string]any{"name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": formats(true, false)},
+			map[string]any{"name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": formats(false, true)},
+			map[string]any{"name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": formats(true, true)},
+			map[string]any{"name": "acme/new", "display_name": "New", "invoke_url": api.URL, "metadata": unknown},
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "codex", "--yes"))
+
+	claude := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))
+	h.Require.Equal("acme/claude", claude["model"])
+	h.Require.Equal([]any{"acme/claude", "acme/open", "acme/new", "deepseek-ai/DeepSeek-V4.1-Flash"}, claude["availableModels"])
+	h.Require.Equal("acme/gpt", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
+	var slugs []any
+	for _, m := range readHarnessSettings(t, "catalog", filepath.Join(root, "codex", "baseten-models.json"))["models"].([]any) {
+		slugs = append(slugs, m.(map[string]any)["slug"])
+	}
+	h.Require.Equal([]any{"acme/gpt", "acme/open", "acme/new"}, slugs)
+
+	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/gpt", "--yes"))
+	h.Require.Contains(h.Stderr.String(), `route "acme/gpt" is not one of the team's routes this harness can call`)
+}
