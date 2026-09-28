@@ -123,11 +123,12 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 	}
 	models := []any{}
 	for i, r := range routes {
+		efforts := xhighReasoningLevels(r.ReasoningLevels)
 		levels := []any{}
-		for _, level := range r.ReasoningLevels {
+		for _, level := range efforts {
 			levels = append(levels, map[string]any{"effort": level, "description": level})
 		}
-		low, _ := reasoningBounds(r.ReasoningLevels)
+		low, _ := reasoningBounds(efforts)
 		// Codex requires every field.
 		models = append(models, map[string]any{
 			"slug":                         r.Name,

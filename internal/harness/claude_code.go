@@ -89,8 +89,9 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		if id != r.Name {
 			overrides[id] = r.Name
 		}
-		if low, high := reasoningBounds(r.ReasoningLevels); high != nil {
-			effort[id] = map[string]any{"maxEffortLevel": high, "effortLevel": low}
+		// Only the ceiling: a default effort would override Claude Code's own.
+		if _, high := reasoningBounds(r.ReasoningLevels); high != nil {
+			effort[id] = map[string]any{"maxEffortLevel": high}
 		}
 	}
 	if !slices.Contains(allowed, any(modelID(background))) {

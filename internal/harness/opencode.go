@@ -74,7 +74,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 	}
 	for _, r := range routes {
 		variants := map[string]any{}
-		for _, level := range r.ReasoningLevels {
+		for _, level := range xhighReasoningLevels(r.ReasoningLevels) {
 			variants[level] = map[string]any{"reasoningEffort": level}
 		}
 		model := map[string]any{

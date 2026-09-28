@@ -2,6 +2,8 @@ package harness
 
 import (
 	"encoding/json"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -43,7 +45,7 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	require.Equal(t, []any{"acme/huge[1m]", "acme/mid", defaultBackgroundRoute}, d["availableModels"])
 	require.Equal(t, map[string]any{"acme/huge[1m]": "acme/huge"}, d["modelOverrides"])
 	require.Equal(t, map[string]any{
-		"acme/huge[1m]": map[string]any{"maxEffortLevel": "xhigh", "effortLevel": "low"},
+		"acme/huge[1m]": map[string]any{"maxEffortLevel": "xhigh"},
 	}, d["modelSettings"])
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}).Data)
 	require.Equal(t, "4096", get(d, []string{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}).Data)
@@ -63,10 +65,34 @@ func TestReasoningBoundsSkipNone(t *testing.T) {
 	require.Nil(t, high)
 }
 
-func TestNormalizeReasoningLevelsMapsServerVocabulary(t *testing.T) {
-	require.Equal(t, []string{"none", "low", "xhigh"}, NormalizeReasoningLevels([]string{"none", "low", "max", "xhigh"}))
+func TestMaxEffortOnlyForClaudeCode(t *testing.T) {
+	r := testRoute("acme/primary", "Primary")
+	r.ReasoningLevels = []string{"none", "low", "high", "xhigh", "max"}
+	claude := settingsPath(t, claudeCodeHarness{})
+	setup(t, claudeCodeHarness{}, claude, []Route{r}, Selection{})
+	require.Equal(t, map[string]any{"acme/primary": map[string]any{"maxEffortLevel": "max"}}, load(t, claude)["modelSettings"])
+
+	codex := settingsPath(t, codexHarness{})
+	setup(t, codexHarness{}, codex, []Route{r}, Selection{})
+	model := load(t, catalogPath(codex))["models"].([]any)[0].(map[string]any)
+	efforts := []any{}
+	for _, level := range model["supported_reasoning_levels"].([]any) {
+		efforts = append(efforts, level.(map[string]any)["effort"])
+	}
+	require.Equal(t, []any{"none", "low", "high", "xhigh"}, efforts)
+	require.Equal(t, "low", model["default_reasoning_level"])
+
+	opencode := settingsPath(t, openCodeHarness{})
+	setup(t, openCodeHarness{}, opencode, []Route{r}, Selection{})
+	variants := get(load(t, opencode), []string{"provider", providerID, "models", "acme/primary", "variants"}).Data.(map[string]any)
+	require.ElementsMatch(t, []string{"none", "low", "high", "xhigh"}, slices.Collect(maps.Keys(variants)))
+}
+
+func TestValidateRouteRejectsUnknownReasoningLevels(t *testing.T) {
 	r := testRoute("acme/turbo", "Turbo")
-	r.ReasoningLevels = NormalizeReasoningLevels([]string{"turbo"})
+	r.ReasoningLevels = []string{"max"}
+	require.NoError(t, ValidateRoute(r))
+	r.ReasoningLevels = []string{"turbo"}
 	require.ErrorContains(t, ValidateRoute(r), `route "acme/turbo" has an unsupported reasoning level`)
 }
 

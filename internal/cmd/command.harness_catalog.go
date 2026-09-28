@@ -20,7 +20,7 @@ func harnessCatalog(listed []managementapi.Route, primary string) (routes []harn
 		if m := l.Metadata; m != nil {
 			r.ContextWindow, r.OutputLimit = deref(m.ContextWindow), deref(m.MaxOutputTokens)
 			r.InputModalities, r.Tools = m.InputModalities, deref(m.Tools)
-			r.ReasoningLevels = harness.NormalizeReasoningLevels(deref(m.ReasoningEffortLevels))
+			r.ReasoningLevels = deref(m.ReasoningEffortLevels)
 			r.ParallelTools = deref(m.ParallelToolCalls)
 			// Without formats the route's APIs are unknown, so every harness lists it.
 			r.Messages, r.Responses = true, true

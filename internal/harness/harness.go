@@ -151,8 +151,9 @@ func routeByName(routes []Route, name string) (Route, bool) {
 	return routes[i], true
 }
 
-// NormalizeReasoningLevels maps server effort vocabulary onto the levels the harnesses describe.
-func NormalizeReasoningLevels(levels []string) []string {
+// xhighReasoningLevels replaces max with xhigh, for harnesses whose highest
+// effort level is xhigh.
+func xhighReasoningLevels(levels []string) []string {
 	out := make([]string, 0, len(levels))
 	for _, level := range levels {
 		if level == "max" {
@@ -165,7 +166,7 @@ func NormalizeReasoningLevels(levels []string) []string {
 	return out
 }
 
-var reasoningOrder = []string{"minimal", "low", "medium", "high", "xhigh"}
+var reasoningOrder = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
 
 // reasoningRank orders real effort levels, or returns -1 for "none" and unknown levels.
 func reasoningRank(level string) int { return slices.Index(reasoningOrder, level) }
