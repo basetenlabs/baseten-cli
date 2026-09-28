@@ -17,7 +17,6 @@ import (
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/term"
 )
 
 func init() {
@@ -26,9 +25,9 @@ func init() {
 	Register("harness teardown", commandHarnessTeardown)
 }
 
-// harnessPickerIndent is the width of the border, cursor, and checkbox the
-// picker draws before each label.
-const harnessPickerIndent = 6
+// harnessPickerLabelWidth keeps each picker row, with the border, cursor, and
+// checkbox drawn before the label, within 80 columns.
+const harnessPickerLabelWidth = 80 - 6
 
 type selectedHarness struct {
 	harness.Harness
@@ -88,16 +87,10 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 	}
 	// The picker sizes itself for one line per option, so a label that wraps
 	// pushes the options below it out of view.
-	width := 0
-	if w, _, err := term.GetSize(os.Stdout.Fd()); err == nil {
-		width = max(w-harnessPickerIndent, 1)
-	}
 	options := make([]huh.Option[string], 0, len(selected))
 	for _, s := range selected {
 		label := fmt.Sprintf("%s  %s  %s", s.Name(), cmp.Or(s.detection.Version, "version unavailable"), harnessDisplayPath(s.detection.Path))
-		if width > 0 {
-			label = ansi.Truncate(label, width, "…")
-		}
+		label = ansi.Truncate(label, harnessPickerLabelWidth, "…")
 		options = append(options, huh.NewOption(label, s.Name()))
 	}
 	var names []string
