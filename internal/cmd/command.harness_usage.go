@@ -54,7 +54,7 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	params := managementapi.GetV1RoutesUsageParams{
 		StartDate: new(month.Format(time.DateOnly)),
 		EndDate:   new(end.Format(time.DateOnly)),
-		GroupBy:   &[]managementapi.RouteUsageDimension{managementapi.RouteUsageDimension_ROUTE},
+		GroupBy:   &[]managementapi.RouteUsageDimension{managementapi.RouteUsageDimension_MODEL},
 		UserIds:   &[]string{me.UserId},
 		Limit:     new(harnessUsageMaxBuckets),
 	}
@@ -66,7 +66,9 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 		}
 		for _, bucket := range resp.Items {
 			for _, r := range bucket.Results {
-				agg.add(r)
+				if err := agg.add(r); err != nil {
+					return err
+				}
 			}
 		}
 		if !resp.Pagination.HasMore || resp.Pagination.Cursor == nil {
@@ -76,7 +78,6 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	}
 
 	out := agg.result()
-	nameHarnessUsageRoutes(ctx, api, out.Items)
 	out.Month = month.Format("2006-01")
 	out.StartDate = month.Format(time.DateOnly)
 	out.EndDate = end.Format(time.DateOnly)
@@ -93,7 +94,7 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	if end.Before(month.AddDate(0, 1, 0)) {
 		through = ", through " + today.Format("Jan 2")
 	}
-	ctx.Logf("Harness usage for %s (UTC%s)\n\n", monthName, through)
+	ctx.Logf("Harness usage for %s (UTC%s). Numbers can lag by up to 15 minutes.\n\n", monthName, through)
 	renderHarnessUsage(ctx, out)
 	return nil
 }
@@ -101,11 +102,9 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 type harnessUsageEntry struct {
 	item cmd.HarnessUsageItem
 	cost *big.Rat
-	// priced is false once any of the entry's usage could not be priced.
-	priced bool
 }
 
-// harnessUsageAggregate sums daily results into one entry per route, adding
+// harnessUsageAggregate sums daily results into one entry per model, adding
 // costs as exact decimals.
 type harnessUsageAggregate struct {
 	entries map[string]*harnessUsageEntry
@@ -116,44 +115,47 @@ func newHarnessUsageAggregate() *harnessUsageAggregate {
 	return &harnessUsageAggregate{entries: map[string]*harnessUsageEntry{}}
 }
 
-func (a *harnessUsageAggregate) add(r managementapi.RoutesUsageResult) {
-	key := deref(r.RouteId)
+func (a *harnessUsageAggregate) add(r managementapi.RoutesUsageResult) error {
+	cost, ok := new(big.Rat).SetString(r.CostUsd)
+	if !ok {
+		return fmt.Errorf("routes usage returned an invalid cost %q", r.CostUsd)
+	}
+	key := deref(r.Model)
 	e, ok := a.entries[key]
 	if !ok {
-		e = &harnessUsageEntry{
-			item:   cmd.HarnessUsageItem{RouteID: r.RouteId, RouteName: r.RouteName},
-			cost:   new(big.Rat),
-			priced: true,
-		}
+		e = &harnessUsageEntry{item: cmd.HarnessUsageItem{Model: key}, cost: new(big.Rat)}
 		a.entries[key] = e
 		a.order = append(a.order, key)
 	}
-	e.item.RequestCount += int64(r.RequestCount)
+	e.cost.Add(e.cost, cost)
 	e.item.InputTokens += int64(r.InputTokens)
 	e.item.CachedInputTokens += int64(r.CachedInputTokens)
 	e.item.UncachedInputTokens += int64(r.UncachedInputTokens)
 	e.item.OutputTokens += int64(r.OutputTokens)
-	cost, ok := parseHarnessCost(r.CostUsd)
-	if !ok {
-		e.priced = false
-		return
-	}
-	e.cost.Add(e.cost, cost)
+	return nil
 }
 
 func (a *harnessUsageAggregate) result() cmd.HarnessUsage {
-	out := cmd.HarnessUsage{Items: []cmd.HarnessUsageItem{}, Totals: cmd.HarnessUsageTotals{CostComplete: true}}
-	total := new(big.Rat)
+	entries := make([]*harnessUsageEntry, 0, len(a.order))
 	for _, key := range a.order {
-		e := a.entries[key]
-		total.Add(total, e.cost)
-		if e.priced {
-			e.item.CostUSD = new(formatHarnessCost(e.cost))
-		} else {
-			out.Totals.CostComplete = false
+		// Skip models the API reports with no tokens and no cost.
+		if e := a.entries[key]; e.cost.Sign() != 0 || e.item.InputTokens+e.item.OutputTokens != 0 {
+			entries = append(entries, e)
 		}
-		t := &out.Totals.HarnessUsageCounts
-		t.RequestCount += e.item.RequestCount
+	}
+	// Most expensive first.
+	slices.SortStableFunc(entries, func(x, y *harnessUsageEntry) int {
+		if c := y.cost.Cmp(x.cost); c != 0 {
+			return c
+		}
+		return cmp.Compare(x.item.Model, y.item.Model)
+	})
+	out := cmd.HarnessUsage{Items: make([]cmd.HarnessUsageItem, 0, len(entries))}
+	total := new(big.Rat)
+	for _, e := range entries {
+		total.Add(total, e.cost)
+		e.item.CostUSD = formatHarnessCost(e.cost)
+		t := &out.Totals.HarnessUsageTokens
 		t.InputTokens += e.item.InputTokens
 		t.CachedInputTokens += e.item.CachedInputTokens
 		t.UncachedInputTokens += e.item.UncachedInputTokens
@@ -161,32 +163,7 @@ func (a *harnessUsageAggregate) result() cmd.HarnessUsage {
 		out.Items = append(out.Items, e.item)
 	}
 	out.Totals.CostUSD = formatHarnessCost(total)
-	// Most expensive first; unpriced items follow, busiest first.
-	slices.SortStableFunc(out.Items, func(x, y cmd.HarnessUsageItem) int {
-		if c := cmp.Compare(harnessCostOrder(y), harnessCostOrder(x)); c != 0 {
-			return c
-		}
-		return cmp.Compare(y.RequestCount, x.RequestCount)
-	})
 	return out
-}
-
-// harnessCostOrder sorts an item by cost, with unpriced items below every
-// priced one.
-func harnessCostOrder(item cmd.HarnessUsageItem) float64 {
-	cost, ok := parseHarnessCost(item.CostUSD)
-	if !ok {
-		return -1
-	}
-	f, _ := cost.Float64()
-	return f
-}
-
-func parseHarnessCost(s *string) (*big.Rat, bool) {
-	if s == nil {
-		return nil, false
-	}
-	return new(big.Rat).SetString(*s)
 }
 
 // formatHarnessCost renders an exact decimal without trailing zeros. Costs
@@ -213,53 +190,27 @@ func harnessMoney(s string) string {
 
 func renderHarnessUsage(ctx *CommandContext, u cmd.HarnessUsage) {
 	t := u.Totals
-	spend := harnessMoney(t.CostUSD)
-	if !t.CostComplete {
-		spend += " (some usage could not be priced and is not included)"
-	}
-	ctx.Outputf("Spend     %s\n", spend)
-	ctx.Outputf("Requests  %s\n", billingGroupDigits(strconv.FormatInt(t.RequestCount, 10)))
-	ctx.Outputf("Tokens    %s input (%s cached), %s output\n\n",
+	ctx.Outputf("Spend   %s\n", harnessMoney(t.CostUSD))
+	ctx.Outputf("Tokens  %s input (%s cached), %s output\n\n",
 		harnessTokens(t.InputTokens),
 		harnessTokens(t.CachedInputTokens),
 		harnessTokens(t.OutputTokens))
 
-	headers := []string{"ROUTE", "REQUESTS", "INPUT", "CACHED", "OUTPUT", "COST"}
 	rows := make([][]string, 0, len(u.Items))
 	for _, item := range u.Items {
-		cost := "-"
-		if item.CostUSD != nil {
-			cost = harnessMoney(*item.CostUSD)
-		}
 		rows = append(rows, []string{
-			cmp.Or(deref(item.RouteDisplayName), deref(item.RouteName), deref(item.RouteID), "(unknown)"),
-			billingGroupDigits(strconv.FormatInt(item.RequestCount, 10)),
+			cmp.Or(item.Model, "(unknown)"),
 			harnessTokens(item.InputTokens),
 			harnessTokens(item.CachedInputTokens),
 			harnessTokens(item.OutputTokens),
-			cost,
+			harnessMoney(item.CostUSD),
 		})
 	}
-	ctx.OutputTable(TableOutput{Headers: headers, Rows: rows, RightAlignedColumns: []int{1, 2, 3, 4, 5}})
-}
-
-// nameHarnessUsageRoutes fills in route display names, which usage doesn't
-// carry. Deleted routes keep only their name.
-func nameHarnessUsageRoutes(ctx *CommandContext, api *managementapi.Client, items []cmd.HarnessUsageItem) {
-	routes, err := listRoutes(ctx, api, managementapi.GetV1RoutesParams{})
-	if err != nil {
-		ctx.VerboseLogf("warning: showing route names instead of display names: %v\n", err)
-		return
-	}
-	displayNames := make(map[string]string, len(routes))
-	for _, r := range routes {
-		displayNames[r.Id] = r.DisplayName
-	}
-	for i := range items {
-		if name := displayNames[deref(items[i].RouteID)]; name != "" {
-			items[i].RouteDisplayName = &name
-		}
-	}
+	ctx.OutputTable(TableOutput{
+		Headers:             []string{"MODEL", "INPUT", "CACHED", "OUTPUT", "COST"},
+		Rows:                rows,
+		RightAlignedColumns: []int{1, 2, 3, 4},
+	})
 }
 
 // harnessTokens renders a token count compactly, like 1.7M or 62.2K.

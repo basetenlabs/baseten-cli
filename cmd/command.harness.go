@@ -68,24 +68,23 @@ var commandHarness = Command{
 		},
 		{
 			Name:    "usage",
-			Summary: "Show your routes spend, requests, and tokens for the month (PRE-RELEASE)",
+			Summary: "Show your routes spend and tokens for the month (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Show the estimated spend, request count, and token usage of the routes API keys you created, " +
-				"across all teams, for one UTC calendar month. Defaults to the current month.\n\n" +
-				"Costs are estimates. Model API costs use your prices; OpenAI, Anthropic, and xAI costs estimate what " +
-				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage can't be priced, " +
-				"so its cost is empty and the total spend leaves it out. Usage is retained for 92 days.",
+				"Show the estimated spend and token usage of the routes API keys you created, across all teams, " +
+				"broken down by model, for one UTC calendar month. Defaults to the current month.\n\n" +
+				"This is the same spend that monthly spend limits are checked against, and it can lag by up to 15 minutes. " +
+				"Model API costs use your prices and include tool calls. OpenAI, Anthropic, and xAI costs estimate what " +
+				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage isn't included. " +
+				"Usage is retained for 92 days.",
 			Flags: HarnessUsageFlags{},
 			Output: &CommandOutput[HarnessUsage]{
-				TextDescription: "Total spend, requests, and tokens, then a table with one row per route, by display name: " +
-					"REQUESTS, then INPUT, CACHED, and OUTPUT token counts (abbreviated, like 1.2M), and COST. A cost of \"-\" means some of that usage " +
-					"could not be priced. With no usage in the month, prints a message to stderr instead.",
-				JSONDescription: "cost_usd values are exact decimal strings. An item's cost_usd is null when some of its " +
-					"usage could not be priced; totals.cost_usd sums the priced usage, and totals.cost_complete is false " +
-					"when anything was left out.",
+				TextDescription: "Total spend and tokens, then a table with one row per model: INPUT, CACHED, and OUTPUT " +
+					"token counts (abbreviated, like 1.2M) and COST, most expensive first. With no usage in the month, " +
+					"prints a message to stderr instead.",
+				JSONDescription: "cost_usd values are exact decimal strings.",
 				Examples: []CommandExample{
 					{
-						Description: "Show this month's usage by route.",
+						Description: "Show this month's usage by model.",
 						Command:     "baseten harness usage",
 					},
 					{
@@ -171,34 +170,25 @@ type HarnessStatusList struct {
 	Items []HarnessStatus `json:"items"`
 }
 
-// HarnessUsageCounts are the request and token counts of some routes usage.
-type HarnessUsageCounts struct {
-	RequestCount        int64 `json:"request_count"`
+// HarnessUsageTokens are the token counts of some routes usage.
+type HarnessUsageTokens struct {
 	InputTokens         int64 `json:"input_tokens"`
 	CachedInputTokens   int64 `json:"cached_input_tokens"`
 	UncachedInputTokens int64 `json:"uncached_input_tokens"`
 	OutputTokens        int64 `json:"output_tokens"`
 }
 
-// HarnessUsageItem is the month's usage for one route.
+// HarnessUsageItem is the month's usage for one model.
 type HarnessUsageItem struct {
-	RouteID   *string `json:"route_id"`
-	RouteName *string `json:"route_name"`
-	// RouteDisplayName is null for routes that have since been deleted.
-	RouteDisplayName *string `json:"route_display_name"`
-	// CostUSD is null when some of this usage could not be priced.
-	CostUSD *string `json:"cost_usd"`
-	HarnessUsageCounts
+	Model   string `json:"model"`
+	CostUSD string `json:"cost_usd"`
+	HarnessUsageTokens
 }
 
 // HarnessUsageTotals is the month's usage across every item.
 type HarnessUsageTotals struct {
-	// CostUSD sums the usage that could be priced.
 	CostUSD string `json:"cost_usd"`
-	// CostComplete is false when some usage could not be priced and is left
-	// out of CostUSD.
-	CostComplete bool `json:"cost_complete"`
-	HarnessUsageCounts
+	HarnessUsageTokens
 }
 
 // HarnessUsage is the JSON output of `baseten harness usage`.
