@@ -106,7 +106,7 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		Options(options...).
 		// Without a height, huh takes the title's line out of the options' rows
 		// and hides the last option.
-		Height(len(options)+1).
+		Height(len(options) + 1).
 		Value(&names).
 		Validate(func(names []string) error {
 			if len(names) == 0 {
