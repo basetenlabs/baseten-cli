@@ -23,16 +23,106 @@ func init() {
 	Register("loops checkpoint deploy", commandLoopsCheckpointDeploy)
 }
 
-func commandLoopsExec(ctx *CommandContext, flags *cmd.TrussPassthroughFlags) error {
-	args, err := trussExtractFlags(&flags.TrussAuthFlags, ctx.Args)
+func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
+	startCommand, err := loopsExecStartCommand(ctx)
 	if err != nil {
 		return err
 	}
+	if ctx.Command.Flags().Changed("gpu-count") && (flags.GPUCount < 1 || flags.GPUCount > 8) {
+		return cmd.NewErrUsagef("--gpu-count must be between 1 and 8")
+	}
+	if flags.GPUCount != 0 && flags.Accelerator == "" {
+		return cmd.NewErrUsagef("--gpu-count requires --accelerator")
+	}
+	if flags.CPUCount < 1 {
+		return cmd.NewErrUsagef("--cpu-count must be at least 1")
+	}
+	if flags.Memory == "" {
+		return cmd.NewErrUsagef("--memory cannot be empty")
+	}
+	if err := validateLoopsExecEnvironment(flags.Env, flags.Secret); err != nil {
+		return err
+	}
+
+	args := []string{"loops", "exec"}
+	args = trussArg(args, "accelerator", flags.Accelerator)
+	args = trussIntArg(args, "gpu-count", flags.GPUCount)
+	args = trussIntArg(args, "cpu-count", flags.CPUCount)
+	args = trussArg(args, "memory", flags.Memory)
+	args = trussArg(args, "project-name", flags.ProjectName)
+	args = trussArg(args, "image", flags.Image)
+	args = trussArg(args, "workspace-root", flags.WorkspaceRoot)
+	for _, dir := range flags.ExcludeDir {
+		args = trussArg(args, "exclude-dir", dir)
+	}
+	for _, dir := range flags.ExternalDir {
+		args = trussArg(args, "external-dir", dir)
+	}
+	for _, entry := range flags.Env {
+		args = trussArg(args, "env", entry)
+	}
+	for _, secret := range flags.Secret {
+		args = trussArg(args, "secret", secret)
+	}
+	args = trussBoolArg(args, "no-api-key", flags.NoAPIKey)
+	args = trussBoolArg(args, "with-uv", flags.WithUV)
+	args = trussArg(args, "team", flags.Team)
+	if !ctx.IsInteractive() {
+		args = append(args, "--non-interactive")
+	}
+	args = append(args, "--")
+	args = append(args, startCommand...)
+
 	return trussRun(ctx, trussInvocation{
 		Flags:       flags.TrussFlags,
-		Args:        append([]string{"loops", "exec"}, args...),
+		Args:        args,
 		ForwardAuth: !flags.TrussNoForwardAuth,
+		JSONResult:  true,
 	})
+}
+
+// loopsExecStartCommand requires a delimiter even when the command has no
+// flags. That keeps wrapper options and the command being run unambiguous, and
+// lets pflag preserve every token after `--` without interpreting it.
+func loopsExecStartCommand(ctx *CommandContext) ([]string, error) {
+	dash := ctx.Command.ArgsLenAtDash()
+	if dash == -1 {
+		return nil, cmd.NewErrUsagef("start command must follow '--', for example: baseten loops exec -- python train.py")
+	}
+	if dash > 0 {
+		return nil, cmd.NewErrUsagef("unexpected arguments %v before '--'; wrapper options must be flags", ctx.Args[:dash])
+	}
+	if dash == len(ctx.Args) {
+		return nil, cmd.NewErrUsagef("no start command given after '--'")
+	}
+	return ctx.Args[dash:], nil
+}
+
+// validateLoopsExecEnvironment mirrors Truss's environment parsing so malformed
+// input fails as a Baseten CLI usage error before starting a child process.
+func validateLoopsExecEnvironment(env, secrets []string) error {
+	seen := map[string]struct{}{}
+	for _, group := range []struct {
+		flag         string
+		expected     string
+		entries      []string
+		requireValue bool
+	}{
+		{flag: "--env", expected: "KEY=VALUE", entries: env},
+		{flag: "--secret", expected: "KEY=SECRET_NAME", entries: secrets, requireValue: true},
+	} {
+		for _, entry := range group.entries {
+			key, value, ok := strings.Cut(entry, "=")
+			if !ok || key == "" || (group.requireValue && value == "") {
+				return cmd.NewErrUsagef("invalid %s value; expected %s", group.flag, group.expected)
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return cmd.NewErrUsagef("environment variable %q is set more than once by --env / --secret", key)
+			}
+			seen[key] = struct{}{}
+		}
+	}
+	return nil
 }
 
 // loopsTrainerLiveStatuses are the trainer deployment statuses where the trainer

@@ -21,20 +21,201 @@ const (
 	loopsSamplerDepPath  = "/v1/models/model-1/deployments/sdep-1"
 )
 
-func Test_Loops_Exec_ForwardsArgsAndAuthToTruss(t *testing.T) {
+func Test_Loops_Exec_ForwardsFlagsCommandAndAuthToTruss(t *testing.T) {
 	h, fake := newTrussHarness(t)
 
 	h.Require.NoError(h.Execute(
-		"loops", "exec", "--with-uv", "--tail", "--", "uv", "run", "python", "train.py",
+		"loops", "exec",
+		"--accelerator", "H100",
+		"--gpu-count", "2",
+		"--cpu-count", "32",
+		"--memory", "128Gi",
+		"--project-name", "orchestrator",
+		"--image", "example.com/loops:latest",
+		"--workspace-root", "..",
+		"--exclude-dir", ".git",
+		"--exclude-dir", "artifacts",
+		"--external-dir", "../shared",
+		"--env", "MODE=train",
+		"--env", "EMPTY=",
+		"--env", "LIST=a,b",
+		"--secret", "HF_TOKEN=hf-token",
+		"--no-api-key",
+		"--with-uv",
+		"--team", "research",
+		"--", "uv", "run", "python", "train.py", "--truss-version", "inside-command",
 	))
 
 	c := fake.only(t)
-	h.Require.Equal(
-		[]string{"uv", "tool", "run", "truss@latest", "loops", "exec", "--with-uv", "--tail", "--", "uv", "run", "python", "train.py"},
-		c.Args,
-	)
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "loops", "exec",
+		"--accelerator", "H100",
+		"--gpu-count", "2",
+		"--cpu-count", "32",
+		"--memory", "128Gi",
+		"--project-name", "orchestrator",
+		"--image", "example.com/loops:latest",
+		"--workspace-root", "..",
+		"--exclude-dir", ".git",
+		"--exclude-dir", "artifacts",
+		"--external-dir", "../shared",
+		"--env", "MODE=train",
+		"--env", "EMPTY=",
+		"--env", "LIST=a,b",
+		"--secret", "HF_TOKEN=hf-token",
+		"--no-api-key",
+		"--with-uv",
+		"--team", "research",
+		"--non-interactive",
+		"--", "uv", "run", "python", "train.py", "--truss-version", "inside-command",
+	}, c.Args)
 	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_API_KEY=test-key")
 	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_REMOTE_URL=http://127.0.0.1:1")
+}
+
+func Test_Loops_Exec_DefaultsAndCommandFlagsAfterDelimiter(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute(
+		"loops", "exec", "--truss-version", "0.18.31", "--", "python", "client.py", "--tail", "--truss-executable", "client-value",
+	))
+
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@0.18.31", "loops", "exec",
+		"--cpu-count", "16", "--memory", "64Gi", "--non-interactive",
+		"--", "python", "client.py", "--tail", "--truss-executable", "client-value",
+	}, fake.only(t).Args)
+}
+
+func Test_Loops_Exec_ProfileSelectsForwardedAuth(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile("research", "https://research.example.com", "research-key", true, nil))
+
+	h.Require.NoError(h.Execute("loops", "exec", "--profile", "research", "--", "python", "client.py"))
+
+	c := fake.only(t)
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_API_KEY=research-key")
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_REMOTE_URL=https://research.example.com")
+}
+
+func Test_Loops_Exec_NoForwardAuth(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("loops", "exec", "--truss-no-forward-auth", "--", "python", "client.py"))
+
+	h.Require.NotContains(strings.Join(fake.only(t).Env, " "), "BASETEN_TRUSS_AUTH_")
+}
+
+func Test_Loops_Exec_JSONReservesStdout(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = "Created job job-123\n"
+
+	h.Require.NoError(h.Execute("loops", "exec", "--output", "json", "--", "python", "client.py"))
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	h.Require.Empty(result)
+	h.Require.Contains(h.Stderr.String(), "Created job job-123")
+}
+
+func Test_Loops_Exec_TextPassesTrussOutputThrough(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = "Created job job-123\n"
+
+	h.Require.NoError(h.Execute("loops", "exec", "--", "python", "client.py"))
+
+	h.Require.Equal("Created job job-123\n", h.Stdout.String())
+}
+
+func Test_Loops_Exec_PropagatesTrussFailure(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.exitCode = 7
+
+	h.Require.Error(h.Execute("loops", "exec", "--", "python", "client.py"))
+	h.Require.Equal(7, h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), "truss: bad arguments")
+}
+
+func Test_Loops_Exec_HelpDocumentsContract(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("loops", "exec", "--help"))
+
+	h.Require.Empty(fake.calls)
+	out := h.Stdout.String()
+	h.Require.Contains(out, "-- START_COMMAND...")
+	h.Require.Contains(out, "--accelerator")
+	h.Require.Contains(out, "--workspace-root")
+	h.Require.Contains(out, "--no-api-key")
+	h.Require.Contains(out, "per-team workspace secret")
+	h.Require.Contains(out, "baseten train job logs --job-id <id> --tail")
+}
+
+func Test_Loops_Exec_RequiresDelimitedCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing delimiter", args: []string{"python", "client.py"}, want: "start command must follow '--'"},
+		{name: "empty command", args: []string{"--"}, want: "no start command given after '--'"},
+		{name: "positional before delimiter", args: []string{"python", "--", "client.py"}, want: "unexpected arguments [python] before '--'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			err := h.Execute(append([]string{"loops", "exec"}, tt.args...)...)
+			h.Require.ErrorContains(err, tt.want)
+			h.Require.Empty(fake.calls)
+		})
+	}
+}
+
+func Test_Loops_Exec_RejectsTailBeforeDelimiter(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	err := h.Execute("loops", "exec", "--tail", "--", "python", "client.py")
+
+	h.Require.ErrorContains(err, "unknown flag: --tail")
+	h.Require.Empty(fake.calls)
+}
+
+func Test_Loops_Exec_RejectsInvalidInputs(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "gpu count without accelerator", args: []string{"--gpu-count", "2"}, want: "--gpu-count requires --accelerator"},
+		{name: "gpu count zero", args: []string{"--accelerator", "H100", "--gpu-count", "0"}, want: "--gpu-count must be between 1 and 8"},
+		{name: "gpu count too high", args: []string{"--accelerator", "H100", "--gpu-count", "9"}, want: "--gpu-count must be between 1 and 8"},
+		{name: "cpu count too low", args: []string{"--cpu-count=0"}, want: "--cpu-count must be at least 1"},
+		{name: "empty memory", args: []string{"--memory="}, want: "--memory cannot be empty"},
+		{name: "invalid env", args: []string{"--env", "BROKEN"}, want: "expected KEY=VALUE"},
+		{name: "invalid secret", args: []string{"--secret", "TOKEN="}, want: "expected KEY=SECRET_NAME"},
+		{name: "duplicate environment", args: []string{"--env", "TOKEN=value", "--secret", "TOKEN=token-secret"}, want: "environment variable \"TOKEN\" is set more than once"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			args := append([]string{"loops", "exec"}, tt.args...)
+			args = append(args, "--", "python", "client.py")
+			err := h.Execute(args...)
+			h.Require.ErrorContains(err, tt.want)
+			h.Require.Empty(fake.calls)
+		})
+	}
+}
+
+func Test_Loops_Exec_InvalidEnvironmentDoesNotEchoValue(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	err := h.Execute("loops", "exec", "--env", "=top-secret-value", "--", "python", "client.py")
+
+	h.Require.ErrorContains(err, "invalid --env value; expected KEY=VALUE")
+	h.Require.NotContains(h.Stderr.String(), "top-secret-value")
+	h.Require.Empty(fake.calls)
 }
 
 // loopsSamplerFixture is a sampler payload. instanceType "" omits the instance

@@ -14,23 +14,33 @@ var commandLoops = Command{
 		commandLoopsCheckpoint,
 		commandLoopsRun,
 		{
-			Name:    "exec",
-			Summary: "Run a Loops client as a managed job",
+			Name:      "exec",
+			ArgsUsage: "[OPTIONS] -- START_COMMAND...",
+			Summary:   "Run a Loops client as a managed job",
 			Description: "Package the current directory and run a Loops client as a managed Training Job.\n\n" +
-				"Every argument is forwarded to 'truss loops exec' except the --truss-* flags, which this " +
-				"CLI consumes. Baseten credentials are forwarded to Truss, so the job uses the same " +
-				"profile as the rest of the CLI.",
-			ArgsUsage:          "[args...]",
-			DisableFlagParsing: true,
-			Flags:              TrussPassthroughFlags{},
-			Output: &CommandOutput[JSONUndefined]{
+				"Pass the command to run after '--'. Everything after the delimiter is preserved verbatim. " +
+				"Baseten credentials are forwarded to Truss from the selected CLI profile.\n\n" +
+				"By default, Truss makes BASETEN_API_KEY available to the job from a per-team workspace " +
+				"secret, creating the credential and secret on first use when necessary. Pass --no-api-key " +
+				"to disable this behavior, or set BASETEN_API_KEY explicitly with --env or --secret.\n\n" +
+				"Returns once the job is created. Truss log tailing is not exposed here because an OAuth " +
+				"credential forwarded to the child process cannot refresh. Follow the job with " +
+				"'baseten train job logs --job-id <id> --tail'.",
+			MaxArgs: -1,
+			Flags:   LoopsExecFlags{},
+			Output: &CommandOutput[TrussDelegatedResult]{
 				JSONOutputUnimportant: true,
-				TextDescription: "Whatever 'truss loops exec' writes to stdout and stderr, passed through verbatim. " +
-					"The exit code is propagated from Truss.",
+				TextDescription:       "A confirmation that the job was created, including its ID and SSH hostname.",
+				JSONDescription: "Under --output json the text output goes to stderr and stdout is an empty " +
+					"object: this command reports nothing structured yet.",
 				Examples: []CommandExample{
 					{
-						Description: "Run a Python Loops client with uv and stream its logs.",
-						Command:     "baseten loops exec --with-uv --tail -- uv run python train.py",
+						Description: "Run a Python Loops client with uv.",
+						Command:     "baseten loops exec --with-uv -- uv run python train.py",
+					},
+					{
+						Description: "Run a client on one H100 with an environment variable and workspace secret.",
+						Command:     "baseten loops exec --accelerator H100 --env MODE=train --secret HF_TOKEN=hf-token -- python train.py",
 					},
 				},
 			},
@@ -412,6 +422,29 @@ type LoopsUsageRow struct {
 	SamplerInstanceType string `json:"sampler_instance_type,omitempty"`
 	SamplerNodeCount    int    `json:"sampler_node_count,omitempty"`
 	SamplerGPUs         int    `json:"sampler_gpus"`
+}
+
+// LoopsExecFlags configures `baseten loops exec`.
+type LoopsExecFlags struct {
+	CommandFlags
+	TrussAuthFlags
+
+	Accelerator string `flag:"accelerator" desc:"GPU accelerator type. Omit for a CPU-only job. Supported hardware is documented at https://docs.baseten.co/training/concepts/basics."`
+	GPUCount    int    `flag:"gpu-count" desc:"Number of GPUs, from 1 to 8. Requires --accelerator."`
+	CPUCount    int    `flag:"cpu-count" desc:"Number of CPUs to request." default:"16"`
+	Memory      string `flag:"memory" desc:"Memory to request, for example 8Gi." default:"64Gi"`
+
+	ProjectName   string   `flag:"project-name" desc:"Training project name. Defaults to the current directory's name."`
+	Image         string   `flag:"image" desc:"Custom Docker base image."`
+	WorkspaceRoot string   `flag:"workspace-root" desc:"Directory to upload instead of the current directory. Must be a parent of the current directory."`
+	ExcludeDir    []string `flag:"exclude-dir" desc:"Top-level directory of the workspace root to leave out of the upload. Repeatable."`
+	ExternalDir   []string `flag:"external-dir" desc:"Directory outside the workspace root to include in the upload. Repeatable."`
+
+	Env      []string `flag:"env" desc:"Environment variable for the job as KEY=VALUE. Repeatable."`
+	Secret   []string `flag:"secret" desc:"Environment variable sourced from a Baseten workspace secret as KEY=SECRET_NAME. Repeatable."`
+	NoAPIKey bool     `flag:"no-api-key" desc:"Do not provision BASETEN_API_KEY in the job from a per-team workspace secret."`
+	WithUV   bool     `flag:"with-uv" desc:"Make uv available in the job image. The start command must invoke uv itself."`
+	Team     string   `flag:"team" desc:"Team name that owns the training project."`
 }
 
 // LoopsCheckpointListFlags configures `baseten loops checkpoint list`.
