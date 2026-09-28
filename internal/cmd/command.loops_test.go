@@ -220,7 +220,7 @@ func Test_Loops_Exec_HelpDocumentsContract(t *testing.T) {
 	h.Require.Contains(out, "--dir")
 	h.Require.Contains(out, "--no-api-key")
 	h.Require.Contains(out, "per-team workspace secret")
-	h.Require.Contains(out, "baseten train job logs --job-id <id> --tail")
+	h.Require.Contains(strings.Join(strings.Fields(out), " "), "baseten train job logs --job-id <id> --tail")
 }
 
 func Test_Loops_Exec_RequiresDelimitedCommand(t *testing.T) {
@@ -291,13 +291,13 @@ func Test_Loops_Exec_TailStreamsNatively(t *testing.T) {
 }
 
 func Test_Loops_Exec_TailFailurePreservesCreatedJob(t *testing.T) {
-	for _, interrupt := range []bool{false, true} {
-		t.Run(strconv.FormatBool(interrupt), func(t *testing.T) {
+	for _, failure := range []string{"forbidden", "interrupted"} {
+		t.Run(failure, func(t *testing.T) {
 			h, fake := newTrussHarness(t)
 			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
 			m := h.MockManagementAPI()
 			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
-			if interrupt {
+			if failure == "interrupted" {
 				m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse())
 				m.SetRoute("GET", trainJobPath, 200, map[string]any{
 					"training_job": trainJobFixture("job-1", "TRAINING_JOB_RUNNING"),
@@ -313,7 +313,7 @@ func Test_Loops_Exec_TailFailurePreservesCreatedJob(t *testing.T) {
 			}
 			err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--output", "json", "--", "python", "client.py")
 			h.Require.Error(err)
-			if interrupt {
+			if failure == "interrupted" {
 				h.Require.Equal(130, h.ExitCode)
 			}
 			h.Require.JSONEq(fake.stdout, h.Stdout.String())

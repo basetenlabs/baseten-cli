@@ -127,27 +127,26 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 	} else {
 		ctx.Outputf("Created job %s\nSSH: %s\nFollow logs: baseten train job logs --job-id %s --tail\n", result.JobID, result.SSHHostname, result.JobID)
 	}
-	if flags.Tail {
-		if ctx.jqErr != nil {
-			return ctx.jqErr
-		}
-		// The result has already been written. Keep stdout parseable even if
-		// watching fails; the error and resume command go to stderr instead.
-		ctx.SuppressJSONError()
-		logCtx := *ctx
-		logCtx.Stdout = ctx.Stderr
-		logCtx.JSON = false
-		logCtx.JQQuery = nil
-		err := commandTrainJobLogs(&logCtx, &cmd.TrainJobLogsFlags{
-			TrainJobRefFlags: cmd.TrainJobRefFlags{JobID: result.JobID},
-			TrainLogFlags:    cmd.TrainLogFlags{Tail: true, PageSize: maxLogPageSize},
-		})
-		if err != nil {
-			// The framework replaces interrupted errors with "Canceled", so
-			// print the resume instructions before returning the error.
-			ctx.Logf("Job %s was created. Resume logs with 'baseten train job logs --job-id %s --tail'.\n", result.JobID, result.JobID)
-			return fmt.Errorf("tail training job %s: %w", result.JobID, err)
-		}
+	if !flags.Tail {
+		return nil
+	}
+	if ctx.jqErr != nil {
+		return ctx.jqErr
+	}
+	// Preserve the submitted job's JSON on stdout if tailing fails.
+	ctx.SuppressJSONError()
+	logCtx := *ctx
+	logCtx.Stdout = ctx.Stderr
+	logCtx.JSON = false
+	logCtx.JQQuery = nil
+	err = commandTrainJobLogs(&logCtx, &cmd.TrainJobLogsFlags{
+		TrainJobRefFlags: cmd.TrainJobRefFlags{JobID: result.JobID},
+		TrainLogFlags:    cmd.TrainLogFlags{Tail: true, PageSize: maxLogPageSize},
+	})
+	if err != nil {
+		// Print before returning: the framework replaces interrupted errors with "Canceled".
+		ctx.Logf("Job %s was created. Resume logs with 'baseten train job logs --job-id %s --tail'.\n", result.JobID, result.JobID)
+		return fmt.Errorf("tail training job %s: %w", result.JobID, err)
 	}
 	return nil
 }
