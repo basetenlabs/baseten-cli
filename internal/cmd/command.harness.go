@@ -171,7 +171,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	switch {
 	case ctx.JSON:
 	case ctx.verbose || f.DryRun:
-		harnessSetupSummary(ctx, team, selected, selection, plans)
+		harnessVerboseSetupSummary(ctx, team, selected, selection, plans)
 	default:
 		var replaced []string
 		for _, p := range plans {
@@ -405,7 +405,7 @@ func harnessRouteTable(ctx *CommandContext, title string, routes []harness.Route
 	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "DISPLAY NAME"}, Rows: rows})
 }
 
-func harnessSetupSummary(ctx *CommandContext, team *managementapi.Team, selected []selectedHarness, s harness.Selection, plans []*harness.Plan) {
+func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, selected []selectedHarness, s harness.Selection, plans []*harness.Plan) {
 	renderer := lipgloss.NewRenderer(ctx.Stdout)
 	accent := renderer.NewStyle().Inherit(inlineCodeStyle)
 	heading := renderer.NewStyle().Bold(true)
