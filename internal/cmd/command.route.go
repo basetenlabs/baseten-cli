@@ -123,36 +123,21 @@ func commandRouteDescribe(ctx *CommandContext, flags *cmd.RouteDescribeFlags) er
 		if kind != "BASETEN_MODEL_API" {
 			ctx.Outputf("Target Secret:    %s\n", secret)
 		}
-		switch t := value.(type) {
-		case managementapi.RouteTargetVertex:
-			ctx.Outputf("Vertex Project:   %s\n", t.VertexConfig.ProjectId)
-			ctx.Outputf("Vertex Location:  %s\n", t.VertexConfig.Location)
-		case managementapi.RouteTargetOpenAICompatible:
-			ctx.Outputf("Base URL:         %s\n", t.BaseUrl)
-		}
 	}
 	ctx.Outputf("Invoke URL:       %s\n", hyperlink(ctx.Stdout, route.InvokeUrl))
 	ctx.Outputf("Created:          %s\n", route.CreatedAt.UTC().Format(time.RFC3339))
 	return nil
 }
 
-func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool) (*managementapi.CreateRouteRequest_Target, error) {
-	supplied := false
-	for _, name := range []string{"target-type", "target-model", "target-secret", "target-base-url", "target-vertex-project", "target-vertex-location"} {
-		supplied = supplied || ctx.Command.Flags().Changed(name)
-	}
-	if !supplied && !required {
-		return nil, nil
-	}
+func routeTarget(flags cmd.RouteTargetFlags) (*managementapi.CreateRouteRequest_Target, error) {
 	if flags.TargetType == "" || flags.TargetModel == "" {
 		return nil, cmd.NewErrUsagef("--target-type and --target-model are required")
 	}
+	target := &managementapi.CreateRouteRequest_Target{}
 	if flags.TargetType == "baseten-model-api" {
-		if flags.TargetSecret != "" || flags.TargetBaseURL != "" || flags.TargetVertexProject != "" || flags.TargetVertexLocation != "" {
-			return nil, cmd.NewErrUsagef("--target-secret, --target-base-url, --target-vertex-project, and " +
-				"--target-vertex-location are not valid with --target-type baseten-model-api")
+		if flags.TargetSecret != "" {
+			return nil, cmd.NewErrUsagef("--target-secret is not valid with --target-type baseten-model-api")
 		}
-		target := &managementapi.CreateRouteRequest_Target{}
 		err := target.FromRouteTargetBasetenModelAPI(managementapi.RouteTargetBasetenModelAPI{
 			Type:  "BASETEN_MODEL_API",
 			Model: flags.TargetModel,
@@ -161,21 +146,6 @@ func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool)
 	}
 	if flags.TargetSecret == "" {
 		return nil, cmd.NewErrUsagef("--target-secret is required with --target-type %s", flags.TargetType)
-	}
-	target := &managementapi.CreateRouteRequest_Target{}
-	if flags.TargetType == "openai-compatible" {
-		if flags.TargetBaseURL == "" {
-			return nil, cmd.NewErrUsagef("--target-base-url is required with --target-type openai-compatible")
-		}
-	} else if flags.TargetBaseURL != "" {
-		return nil, cmd.NewErrUsagef("--target-base-url is only valid with --target-type openai-compatible")
-	}
-	if flags.TargetType == "vertex" {
-		if flags.TargetVertexProject == "" || flags.TargetVertexLocation == "" {
-			return nil, cmd.NewErrUsagef("--target-vertex-project and --target-vertex-location are required with --target-type vertex")
-		}
-	} else if flags.TargetVertexProject != "" || flags.TargetVertexLocation != "" {
-		return nil, cmd.NewErrUsagef("--target-vertex-project and --target-vertex-location are only valid with --target-type vertex")
 	}
 	var err error
 	switch flags.TargetType {
@@ -197,23 +167,6 @@ func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool)
 			Model:      flags.TargetModel,
 			SecretName: flags.TargetSecret,
 		})
-	case "vertex":
-		err = target.FromRouteTargetVertex(managementapi.RouteTargetVertex{
-			Type:       "VERTEX",
-			Model:      flags.TargetModel,
-			SecretName: flags.TargetSecret,
-			VertexConfig: managementapi.VertexTargetConfig{
-				ProjectId: flags.TargetVertexProject,
-				Location:  flags.TargetVertexLocation,
-			},
-		})
-	case "openai-compatible":
-		err = target.FromRouteTargetOpenAICompatible(managementapi.RouteTargetOpenAICompatible{
-			Type:       "OPENAI_COMPATIBLE",
-			Model:      flags.TargetModel,
-			SecretName: flags.TargetSecret,
-			BaseUrl:    flags.TargetBaseURL,
-		})
 	default:
 		return nil, cmd.NewErrUsagef("unsupported target type %q", flags.TargetType)
 	}
@@ -221,7 +174,7 @@ func routeTarget(ctx *CommandContext, flags cmd.RouteTargetFlags, required bool)
 }
 
 func commandRouteCreate(ctx *CommandContext, flags *cmd.RouteCreateFlags) error {
-	target, err := routeTarget(ctx, flags.RouteTargetFlags, true)
+	target, err := routeTarget(flags.RouteTargetFlags)
 	if err != nil {
 		return err
 	}
@@ -234,7 +187,6 @@ func commandRouteCreate(ctx *CommandContext, flags *cmd.RouteCreateFlags) error 
 		return err
 	}
 	body := managementapi.CreateRouteRequest{
-		Name:        flags.Name,
 		DisplayName: flags.DisplayName.Pointer(),
 		Description: flags.Description.Pointer(),
 		Target:      *target,
@@ -255,12 +207,8 @@ func commandRouteCreate(ctx *CommandContext, flags *cmd.RouteCreateFlags) error 
 }
 
 func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error {
-	target, err := routeTarget(ctx, flags.RouteTargetFlags, false)
-	if err != nil {
-		return err
-	}
-	if target == nil && !flags.DisplayName.IsSet() && !flags.Description.IsSet() {
-		return cmd.NewErrUsagef("pass --display-name, --description, or a target with --target-type and --target-model")
+	if !flags.DisplayName.IsSet() && !flags.Description.IsSet() {
+		return cmd.NewErrUsagef("pass --display-name or --description")
 	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -273,9 +221,6 @@ func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error 
 	body := managementapi.UpdateRouteRequest{
 		DisplayName: flags.DisplayName.Pointer(),
 		Description: flags.Description.Pointer(),
-	}
-	if target != nil {
-		body.Target = (*managementapi.UpdateRouteRequest_Target)(target)
 	}
 	route, err := cl.API().PatchRoutes(ctx, id, body)
 	if err != nil {
@@ -326,10 +271,6 @@ func routeTargetFields(value any) (kind, model, secret string, err error) {
 	case managementapi.RouteTargetOpenAI:
 		return t.Type, t.Model, t.SecretName, nil
 	case managementapi.RouteTargetXAI:
-		return t.Type, t.Model, t.SecretName, nil
-	case managementapi.RouteTargetVertex:
-		return t.Type, t.Model, t.SecretName, nil
-	case managementapi.RouteTargetOpenAICompatible:
 		return t.Type, t.Model, t.SecretName, nil
 	default:
 		return "", "", "", fmt.Errorf("unsupported route target %T", value)

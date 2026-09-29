@@ -15,7 +15,7 @@ type routeCase struct {
 	Name     string
 	Flags    []string
 	Create   map[string]any
-	Update   map[string]any
+	Target   map[string]any
 	Response map[string]any
 }
 
@@ -45,24 +45,14 @@ func routeCases() []routeCase {
 			flags:  []string{"--target-type", "xai", "--target-model", "test-model", "--target-secret", "provider-key"},
 			target: map[string]any{"type": "XAI", "model": "test-model", "secret_name": "provider-key"},
 		},
-		{
-			name:   "vertex",
-			flags:  []string{"--target-type", "vertex", "--target-model", "test-model", "--target-secret", "provider-key", "--target-vertex-project", "example-project", "--target-vertex-location", "global"},
-			target: map[string]any{"type": "VERTEX", "model": "test-model", "secret_name": "provider-key", "vertex_config": map[string]any{"project_id": "example-project", "location": "global"}},
-		},
-		{
-			name:   "openai-compatible",
-			flags:  []string{"--target-type", "openai-compatible", "--target-model", "test-model", "--target-secret", "provider-key", "--target-base-url", "https://api.example.com/v1"},
-			target: map[string]any{"type": "OPENAI_COMPATIBLE", "model": "test-model", "secret_name": "provider-key", "base_url": "https://api.example.com/v1"},
-		},
 	}
 	cases := make([]routeCase, 0, len(targets))
 	for _, tc := range targets {
 		cases = append(cases, routeCase{
 			Name:     tc.name,
 			Flags:    tc.flags,
-			Create:   map[string]any{"name": "acme/assistant", "team_id": "t123456", "display_name": "Assistant", "target": tc.target},
-			Update:   map[string]any{"target": tc.target},
+			Create:   map[string]any{"team_id": "t123456", "display_name": "Assistant", "target": tc.target},
+			Target:   tc.target,
 			Response: routeFixture(tc.target),
 		})
 	}
@@ -104,37 +94,26 @@ func Test_Route_Create_ContractTargets(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(tc.Response)
 			})
-			args := append([]string{"route", "create", "--name", "acme/assistant", "--team", "Engineering", "--display-name", "Assistant", "--output", "json"}, tc.Flags...)
+			args := append([]string{"route", "create", "--team", "Engineering", "--display-name", "Assistant", "--output", "json"}, tc.Flags...)
 			h.Require.NoError(h.Execute(args...))
 			h.Require.Equal(tc.Create, m.FindCall("POST", "/v1/routes").BodyJSON(t))
 			var got managementapi.Route
 			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 			h.Require.Equal("r123456", got.Id)
 			h.Require.Equal("https://coding.baseten.co", got.InvokeUrl)
-			if tc.Name == "openai-compatible" {
-				target, err := got.Target.AsRouteTargetOpenAICompatible()
-				h.Require.NoError(err)
-				h.Require.Equal("https://api.example.com/v1", target.BaseUrl)
-			}
-			if tc.Name == "vertex" {
-				target, err := got.Target.AsRouteTargetVertex()
-				h.Require.NoError(err)
-				h.Require.Equal("example-project", target.VertexConfig.ProjectId)
-			}
 		})
 	}
 }
 
-func Test_Route_Update_ContractTargets(t *testing.T) {
+func Test_Route_Update_RejectsTargets(t *testing.T) {
 	for _, tc := range routeCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			m.SetRoute("PATCH", "/v1/routes/r123456", 200, tc.Response)
-			args := append([]string{"route", "update", "--id", "r123456", "--output", "json"}, tc.Flags...)
-			h.Require.NoError(h.Execute(args...))
-			h.Require.Equal(tc.Update, m.FindCall("PATCH", "/v1/routes/r123456").BodyJSON(t))
-			h.Require.Len(m.Calls(), 1, "target replacement must not fetch or merge the old target")
+			args := append([]string{"route", "update", "--id", "r123456", "--display-name", "New label"}, tc.Flags...)
+			h.Require.Error(h.Execute(args...))
+			h.Require.Equal(2, h.ExitCode, "the routes API can't change a route's target")
+			h.Require.Empty(m.Calls())
 		})
 	}
 }
@@ -144,7 +123,7 @@ func Test_Route_Create_DefaultDisplayName(t *testing.T) {
 	routeTeams(h)
 	m := h.MockManagementAPI()
 	m.SetRoute("POST", "/v1/routes", 200, routeCases()[0].Response)
-	h.Require.NoError(h.Execute("route", "create", "--name", "acme/assistant", "--team", "t123456", "--target-type", "baseten-model-api", "--target-model", "test-model-api"))
+	h.Require.NoError(h.Execute("route", "create", "--team", "t123456", "--target-type", "baseten-model-api", "--target-model", "test-model-api"))
 	body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
 	h.Require.NotContains(body, "display_name")
 	h.Require.Equal("t123456", body["team_id"])
@@ -152,22 +131,12 @@ func Test_Route_Create_DefaultDisplayName(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Created route acme/assistant (r123456)")
 }
 
-func Test_Route_Update_LabelAndCombined(t *testing.T) {
-	for _, combined := range []bool{false, true} {
-		t.Run(fmt.Sprint(combined), func(t *testing.T) {
-			h := NewCommandHarness(t)
-			m := h.MockManagementAPI()
-			m.SetRoute("PATCH", "/v1/routes/r123456", 200, routeCases()[0].Response)
-			args := []string{"route", "update", "--id", "r123456", "--display-name", "New label"}
-			expected := map[string]any{"display_name": "New label"}
-			if combined {
-				args = append(args, "--target-type", "baseten-model-api", "--target-model", "new-model")
-				expected["target"] = map[string]any{"type": "BASETEN_MODEL_API", "model": "new-model"}
-			}
-			h.Require.NoError(h.Execute(args...))
-			h.Require.Equal(expected, m.FindCall("PATCH", "/v1/routes/r123456").BodyJSON(t))
-		})
-	}
+func Test_Route_Update_DisplayNameAndDescription(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", "/v1/routes/r123456", 200, routeCases()[0].Response)
+	h.Require.NoError(h.Execute("route", "update", "--id", "r123456", "--display-name", "New label", "--description", ""))
+	h.Require.Equal(map[string]any{"display_name": "New label", "description": ""}, m.FindCall("PATCH", "/v1/routes/r123456").BodyJSON(t))
 }
 
 func Test_Route_Addressed_ExactName(t *testing.T) {
@@ -321,29 +290,22 @@ func Test_Route_Usage_InvalidTargets(t *testing.T) {
 		{"--target-type", "openai", "--target-model", "model"},
 		{"--target-type", "openai", "--target-secret", "key"},
 		{"--target-type", "invalid", "--target-model", "model", "--target-secret", "key"},
+		// Targets and flags the routes API no longer accepts.
 		{"--target-type", "openai-compatible", "--target-model", "model", "--target-secret", "key"},
 		{"--target-type", "vertex", "--target-model", "model", "--target-secret", "key"},
 		append(append([]string{}, provider...), "--target-base-url", "https://api.example.com"),
 		append(append([]string{}, provider...), "--target-vertex-project", "project"),
 		append(append([]string{}, provider...), "--target-vertex-location", "global"),
+		append(append([]string{}, provider...), "--name", "acme/assistant"),
 	}
-	for _, verb := range []string{"create", "update"} {
-		for i, flags := range cases {
-			t.Run(fmt.Sprintf("%s/%d", verb, i), func(t *testing.T) {
-				h := NewCommandHarness(t)
-				m := h.MockManagementAPI()
-				args := []string{"route", verb}
-				if verb == "create" {
-					args = append(args, "--name", "acme/assistant", "--team", "Engineering")
-				} else {
-					args = append(args, "--id", "r123456")
-				}
-				args = append(args, flags...)
-				h.Require.Error(h.Execute(args...))
-				h.Require.Equal(2, h.ExitCode)
-				h.Require.Empty(m.Calls())
-			})
-		}
+	for i, flags := range cases {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			h.Require.Error(h.Execute(append([]string{"route", "create", "--team", "Engineering"}, flags...)...))
+			h.Require.Equal(2, h.ExitCode)
+			h.Require.Empty(m.Calls())
+		})
 	}
 }
 
@@ -376,13 +338,6 @@ func Test_Route_Describe_AllTargetFields(t *testing.T) {
 			h.Require.Contains(h.Stdout.String(), "Target Type:      "+tc.Flags[1])
 			h.Require.Contains(h.Stdout.String(), "Target Model:     "+tc.Flags[3])
 			h.Require.NotContains(h.Stdout.String(), "Provider:")
-			if tc.Name == "vertex" {
-				h.Require.Contains(h.Stdout.String(), "example-project")
-				h.Require.Contains(h.Stdout.String(), "global")
-			}
-			if tc.Name == "openai-compatible" {
-				h.Require.Contains(h.Stdout.String(), "api.example.com/v1")
-			}
 			if tc.Name != "model-api" {
 				h.Require.Contains(h.Stdout.String(), "Target Secret:    provider-key")
 			}
@@ -506,7 +461,7 @@ func Test_Route_Describe_StructuredOutputSkipsTeamLookup(t *testing.T) {
 func Test_Route_RequiresFlagsWithoutReadingStdin(t *testing.T) {
 	for _, args := range [][]string{
 		{"create"},
-		{"create", "--team", "Engineering", "--name", "acme/assistant"},
+		{"create", "--team", "Engineering"},
 		{"describe"},
 		{"update"},
 		{"update", "--id", "r123456"},
@@ -534,7 +489,7 @@ func Test_Route_TargetNamesAreLiteral(t *testing.T) {
 			routeTeams(h)
 			m := h.MockManagementAPI()
 			m.SetRoute("POST", "/v1/routes", 200, routeCases()[0].Response)
-			h.Require.NoError(h.Execute(append([]string{"route", "create", "--team", "t123456", "--name", "acme/assistant", "--output", "json"}, args...)...))
+			h.Require.NoError(h.Execute(append([]string{"route", "create", "--team", "t123456", "--output", "json"}, args...)...))
 			body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
 			target := body["target"].(map[string]any)
 			if args[1] == "baseten-model-api" {
@@ -562,7 +517,7 @@ func Test_Route_MutationOutputConventions(t *testing.T) {
 				message := "Updated route acme/assistant (r123456)"
 				if verb == "create" {
 					m.SetRoute("POST", "/v1/routes", 200, fixture)
-					args = append(args, "--team", "Engineering", "--name", "acme/assistant", "--target-type", "baseten-model-api", "--target-model", "model")
+					args = append(args, "--team", "Engineering", "--target-type", "baseten-model-api", "--target-model", "model")
 					message = "Created route acme/assistant (r123456)"
 				} else {
 					m.SetRoute("PATCH", "/v1/routes/r123456", 200, fixture)
@@ -601,7 +556,7 @@ func Test_Route_List_UnknownTarget(t *testing.T) {
 	h.Require.Empty(h.Stderr.String())
 	h.Require.Contains(h.Stdout.String(), "acme/future")
 	h.Require.Contains(h.Stdout.String(), "<unrecognized type>")
-	for _, target := range []string{"test-model-api", "anthropic:test-model", "openai:test-model", "xai:test-model", "vertex:test-model", "openai-compatible:test-model"} {
+	for _, target := range []string{"test-model-api", "anthropic:test-model", "openai:test-model", "xai:test-model"} {
 		h.Require.Contains(h.Stdout.String(), target)
 	}
 	h.Require.NoError(h.Execute("route", "list", "--output", "json"))
@@ -645,11 +600,11 @@ func Test_Route_Create_DefaultTeam(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
 			m.SetRoute("POST", "/v1/routes", 200, tc.Response)
-			args := append([]string{"route", "create", "--name", "acme/assistant", "--output", "json"}, tc.Flags...)
+			args := append([]string{"route", "create", "--output", "json"}, tc.Flags...)
 			h.Require.NoError(h.Execute(args...))
 			body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
 			h.Require.NotContains(body, "team_id", "the server selects the default team")
-			h.Require.Equal(tc.Update["target"], body["target"])
+			h.Require.Equal(tc.Target, body["target"])
 			h.Require.Len(m.Calls(), 1, "default team selection must not require a team-list request")
 			h.Require.Contains(h.Stdout.String(), `"team_name": "Engineering"`)
 		})
