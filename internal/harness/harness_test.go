@@ -69,6 +69,9 @@ func TestCodexDesktopDetection(t *testing.T) {
 	bundled := func(root, app string) string {
 		return filepath.Join(root, app, "Contents", "Resources", "codex")
 	}
+	newBundled := func(root, app string) string {
+		return filepath.Join(root, app, "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex")
+	}
 	chatgpt := bundled("/Applications", "ChatGPT.app")
 	linuxChatGPT := "/usr/lib/chatgpt/resources/codex"
 	for _, tc := range []struct {
@@ -79,9 +82,13 @@ func TestCodexDesktopDetection(t *testing.T) {
 		goos string
 	}{
 		{"chatgpt", map[string]bool{chatgpt: true}, chatgpt, "darwin"},
+		{"new chatgpt", map[string]bool{newBundled("/Applications", "ChatGPT.app"): true}, newBundled("/Applications", "ChatGPT.app"), "darwin"},
 		{"codex", map[string]bool{bundled("/Applications", "Codex.app"): true}, bundled("/Applications", "Codex.app"), "darwin"},
+		{"new codex", map[string]bool{newBundled("/Applications", "Codex.app"): true}, newBundled("/Applications", "Codex.app"), "darwin"},
 		{"user chatgpt", map[string]bool{bundled(filepath.Join(home, "Applications"), "ChatGPT.app"): true}, bundled(filepath.Join(home, "Applications"), "ChatGPT.app"), "darwin"},
+		{"new user chatgpt", map[string]bool{newBundled(filepath.Join(home, "Applications"), "ChatGPT.app"): true}, newBundled(filepath.Join(home, "Applications"), "ChatGPT.app"), "darwin"},
 		{"user codex", map[string]bool{bundled(filepath.Join(home, "Applications"), "Codex.app"): true}, bundled(filepath.Join(home, "Applications"), "Codex.app"), "darwin"},
+		{"new user codex", map[string]bool{newBundled(filepath.Join(home, "Applications"), "Codex.app"): true}, newBundled(filepath.Join(home, "Applications"), "Codex.app"), "darwin"},
 		{"linux chatgpt", map[string]bool{linuxChatGPT: true}, linuxChatGPT, "linux"},
 		{"CLI takes precedence", map[string]bool{"codex": true, chatgpt: true, linuxChatGPT: true}, "/cli/codex", ""},
 		{"config alone is not an installation", nil, "", ""},

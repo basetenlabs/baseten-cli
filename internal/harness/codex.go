@@ -65,7 +65,11 @@ func desktopCodexBinaries() []string {
 		var binaries []string
 		for _, root := range roots {
 			for _, app := range []string{"ChatGPT.app", "Codex.app"} {
-				binaries = append(binaries, filepath.Join(root, app, "Contents", "Resources", "codex"))
+				resources := filepath.Join(root, app, "Contents", "Resources")
+				binaries = append(binaries,
+					filepath.Join(resources, "codex"),
+					filepath.Join(resources, "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"),
+				)
 			}
 		}
 		return binaries
