@@ -237,6 +237,9 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 func Test_Harness_Setup_CodexDesktopWithoutCLI(t *testing.T) {
 	skipUnlessSupported(t)
 	binary := "/Applications/ChatGPT.app/Contents/Resources/codex"
+	if runtime.GOOS == "darwin" {
+		binary = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+	}
 	if runtime.GOOS == "linux" {
 		binary = "/usr/lib/chatgpt/resources/codex"
 	}
