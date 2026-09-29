@@ -77,7 +77,8 @@ var commandHarness = Command{
 			Summary: "Show your routes spend and tokens, month to date by default (PRE-RELEASE)",
 			Description: harnessPreRelease +
 				"Show your routes spend and token usage for the month so far, the period monthly spend limits apply to.\n\n" +
-				"This is a shortcut for 'baseten route usage --user-id me --start <first of this month, UTC>' and takes " +
+				"This is a shortcut for 'baseten route usage --user-id <your user ID> --start <first of this month, UTC>' " +
+				"and takes " +
 				"the same flags. The only other difference is the text table, which totals each --group-by combination " +
 				"over the window instead of listing each day; JSON output is identical. Organization admins can pass " +
 				"--user-id for other users; other members only ever see usage from keys they created.\n\n" +
@@ -205,7 +206,7 @@ type HarnessUsageFlags struct {
 	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
 	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
 
-	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. Pass 'me' for your own. Defaults to me."`
+	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. Defaults to your own user ID."`
 
 	RouteUsageQueryFlags
 }

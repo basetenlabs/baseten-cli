@@ -21,9 +21,6 @@ func init() {
 // page.
 const routesUsageMaxBuckets = 31
 
-// routesUsageMe is the --user-id value that stands for the caller.
-const routesUsageMe = "me"
-
 // routesUsageRetentionDays is how many days of usage, including today, the
 // endpoint keeps.
 const routesUsageRetentionDays = 92
@@ -86,21 +83,13 @@ func runRoutesUsage(ctx *CommandContext, req routesUsageRequest) error {
 		return err
 	}
 	api := cl.API()
-	userIDs := slices.Clone(req.userIDs)
+	userIDs := req.userIDs
 	if len(userIDs) == 0 && req.defaultToCaller {
-		userIDs = []string{routesUsageMe}
-	}
-	// "me" stands for the caller's own user ID.
-	if slices.Contains(userIDs, routesUsageMe) {
 		me, err := api.GetUsersMe(ctx)
 		if err != nil {
 			return fmt.Errorf("getting current user: %w", err)
 		}
-		for i := range userIDs {
-			if userIDs[i] == routesUsageMe {
-				userIDs[i] = me.UserId
-			}
-		}
+		userIDs = []string{me.UserId}
 	}
 	params := managementapi.GetV1RoutesUsageParams{
 		StartDate: &startDate,

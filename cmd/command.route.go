@@ -188,10 +188,6 @@ var commandRoute = Command{
 						Command:     "baseten route usage",
 					},
 					{
-						Description: "Show your own usage over the last 7 days.",
-						Command:     "baseten route usage --since 7d --user-id me",
-					},
-					{
 						Description: "Show which users drove usage over the last 7 days (admins).",
 						Command:     "baseten route usage --since 7d --group-by user",
 					},
@@ -326,7 +322,7 @@ type RouteUsageFlags struct {
 	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
 	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
 
-	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. Pass 'me' for your own."`
+	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. 'baseten whoami' shows your own."`
 
 	RouteUsageQueryFlags
 }

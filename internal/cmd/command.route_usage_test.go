@@ -89,10 +89,10 @@ func Test_Route_Usage_EmptyHasNoAPIKeyHint(t *testing.T) {
 	h.Require.NotContains(h.Stderr.String(), "team or workspace API key", "there's no default user filter to explain")
 }
 
-func Test_Route_Usage_UserIDMe(t *testing.T) {
+func Test_Route_Usage_PassesUserIDsThrough(t *testing.T) {
 	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
 
 	h.Require.NoError(h.Execute("route", "usage", "--user-id", "me", "--user-id", "user-b"))
-	h.Require.Equal([]string{"user-a", "user-b"}, harnessUsageLastQuery(h, api)["user_ids"], "me resolves to the caller")
-	h.Require.NotNil(api.FindCall("GET", "/v1/users/me"))
+	h.Require.Equal([]string{"me", "user-b"}, harnessUsageLastQuery(h, api)["user_ids"], "sent as given, like the API")
+	h.Require.Nil(api.FindCall("GET", "/v1/users/me"))
 }
