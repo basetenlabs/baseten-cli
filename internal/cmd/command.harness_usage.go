@@ -88,7 +88,7 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 		if !resp.Pagination.HasMore || resp.Pagination.Cursor == nil {
 			break
 		}
-		params = managementapi.GetV1RoutesUsageParams{Cursor: resp.Pagination.Cursor}
+		params.Cursor = resp.Pagination.Cursor
 	}
 
 	summary := summarizeHarnessUsage(byModel)

@@ -255,6 +255,10 @@ func Test_Harness_Usage_FollowsCursor(t *testing.T) {
 
 	h.Require.NoError(h.Execute("harness", "usage", "--jq", ".totals.cost_usd"))
 	h.Require.Equal("\"3\"\n", h.Stdout.String())
+	calls := api.Calls()
+	last := calls[len(calls)-1].Query()
+	h.Require.Equal("next", last.Get("cursor"))
+	h.Require.Equal([]string{"user-a"}, last["user_ids"], "later pages keep the user filter")
 }
 
 func Test_Harness_Usage_ClampsToRetention(t *testing.T) {

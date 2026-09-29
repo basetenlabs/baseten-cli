@@ -80,6 +80,11 @@ var commandHarness = Command{
 				"Model API costs use your prices and include tool calls. OpenAI, Anthropic, and xAI costs estimate what " +
 				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage isn't included. " +
 				"Usage is retained for 92 days.",
+			// TODO: Revisit this description, and null-cost handling in
+			// internal/cmd/command.harness_usage.go, as server-side usage changes:
+			// which providers are included (Vertex and OpenAI-compatible aren't
+			// yet), whether costs are always present, the 15-minute lag, and the
+			// 92-day retention.
 			Flags: HarnessUsageFlags{},
 			Output: &CommandOutput[HarnessUsage]{
 				TextDescription: "Table with one row per model, most expensive first: INPUT, CACHED, and OUTPUT token " +
