@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -83,6 +84,12 @@ func (codexHarness) Credential(path string) (string, error) {
 	return credential(path, codexCredentialPath)
 }
 
+// Routes keeps the routes that serve the OpenAI Responses API, which Codex uses
+// for every route.
+func (codexHarness) Routes(routes []Route) []Route {
+	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Responses })
+}
+
 func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
 	switch {
 	case s.Background != "":
@@ -116,15 +123,20 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 	}
 	models := []any{}
 	for i, r := range routes {
-		// Codex requires every field. Model-specific capabilities and limits are
-		// follow-up work, so these are conservative defaults.
+		efforts := xhighReasoningLevels(r.ReasoningLevels)
+		levels := []any{}
+		for _, level := range efforts {
+			levels = append(levels, map[string]any{"effort": level, "description": level})
+		}
+		low, _ := reasoningBounds(efforts)
+		// Codex requires every field.
 		models = append(models, map[string]any{
 			"slug":                         r.Name,
 			"display_name":                 r.DisplayName,
 			"description":                  "Baseten route",
 			"base_instructions":            "",
-			"default_reasoning_level":      nil,
-			"supported_reasoning_levels":   []any{},
+			"default_reasoning_level":      low,
+			"supported_reasoning_levels":   levels,
 			"shell_type":                   "shell_command",
 			"visibility":                   "list",
 			"supported_in_api":             true,
@@ -134,7 +146,9 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 			"default_verbosity":            nil,
 			"apply_patch_tool_type":        nil,
 			"truncation_policy":            map[string]any{"mode": "tokens", "limit": 10000},
-			"supports_parallel_tool_calls": false,
+			"context_window":               r.ContextWindow,
+			"input_modalities":             r.InputModalities,
+			"supports_parallel_tool_calls": r.ParallelTools,
 			"experimental_supported_tools": []any{},
 		})
 	}

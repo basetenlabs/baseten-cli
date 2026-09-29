@@ -21,10 +21,12 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/tailscale/hujson"
 )
 
@@ -75,6 +77,8 @@ type Harness interface {
 	// Credential returns the routes API key setup wrote to the settings file at
 	// path, or "" if there is none.
 	Credential(path string) (string, error)
+	// Routes returns the routes the harness can call, in order.
+	Routes(routes []Route) []Route
 }
 
 // Supported reports whether harness settings locations are verified on this
@@ -88,13 +92,148 @@ func All() []Harness {
 	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}}
 }
 
-// Route is a Baseten route as shown in a harness's model picker.
+// Route is a Baseten route as shown in a harness's model picker, with the model
+// capabilities supplied by the route's own metadata.
 type Route struct {
 	Name        string
 	DisplayName string
 	// Target is the route's upstream provider, such as TargetAnthropic, which
 	// decides the API a harness calls the route with.
-	Target string
+	Target          string
+	ContextWindow   int
+	OutputLimit     int
+	InputModalities []string
+	Tools           bool
+	ReasoningLevels []string
+	ParallelTools   bool
+	// Messages and Responses report whether the route serves the Anthropic
+	// Messages API and the OpenAI Responses API.
+	Messages  bool
+	Responses bool
+	// Cost is the provider's list price, or nil if unknown.
+	Cost *Cost
+}
+
+// Cost holds prices in USD per 1M tokens. Optional prices are nil when unknown.
+type Cost struct {
+	Input, Output         float64
+	CacheRead, CacheWrite *float64
+	// LongContext prices long-context requests, when the provider tiers them.
+	LongContext *Cost
+}
+
+// NewRoute converts a route from the routes API. It fails if the route's model
+// metadata is missing or is not enough to configure a harness.
+func NewRoute(api managementapi.Route) (Route, error) {
+	target, _ := api.Target.Discriminator()
+	r := Route{Name: api.Name, DisplayName: api.DisplayName, Target: target}
+	m := api.Metadata
+	if m == nil {
+		return r, fmt.Errorf("route %q has no model metadata", r.Name)
+	}
+	r.ContextWindow, r.OutputLimit = deref(m.ContextWindow), deref(m.MaxOutputTokens)
+	r.InputModalities, r.Tools = m.InputModalities, deref(m.Tools)
+	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
+	// Without formats the route's APIs are unknown, so every harness lists it.
+	r.Messages, r.Responses = true, true
+	if f := m.SupportedApiFormats; f != nil {
+		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
+	}
+	if c := m.Cost; c != nil {
+		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
+		if r.Cost != nil && c.LongContext != nil {
+			r.Cost.LongContext = newCost(*c.LongContext)
+		}
+	}
+	return r, validateRoute(r)
+}
+
+// newCost returns nil unless both input and output prices are known.
+func newCost(c managementapi.ExploreCostValues) *Cost {
+	if c.Input == nil || c.Output == nil {
+		return nil
+	}
+	return &Cost{Input: *price(c.Input), Output: *price(c.Output), CacheRead: price(c.CacheRead), CacheWrite: price(c.CacheWrite)}
+}
+
+// price widens the generated float32 by its shortest decimal form, so 0.3
+// stays 0.3 rather than 0.30000001192092896.
+func price(p *float32) *float64 {
+	if p == nil {
+		return nil
+	}
+	f, _ := strconv.ParseFloat(strconv.FormatFloat(float64(*p), 'g', -1, 32), 64)
+	return &f
+}
+
+func deref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
+}
+
+// validateRoute rejects a route whose metadata the harnesses cannot describe or drive.
+func validateRoute(r Route) error {
+	switch {
+	case !r.Tools:
+		return fmt.Errorf("route %q lacks tool support", r.Name)
+	case r.ContextWindow <= 0 || r.OutputLimit <= 0 || r.OutputLimit >= r.ContextWindow:
+		return fmt.Errorf("route %q has no usable context and output limits", r.Name)
+	case len(r.InputModalities) == 0:
+		return fmt.Errorf("route %q has no input modalities", r.Name)
+	}
+	for _, modality := range r.InputModalities {
+		if modality != "text" && modality != "image" {
+			return fmt.Errorf("route %q has an unsupported input modality", r.Name)
+		}
+	}
+	for _, level := range r.ReasoningLevels {
+		if level != "none" && reasoningRank(level) < 0 {
+			return fmt.Errorf("route %q has an unsupported reasoning level", r.Name)
+		}
+	}
+	return nil
+}
+
+func routeByName(routes []Route, name string) (Route, bool) {
+	i := slices.IndexFunc(routes, func(r Route) bool { return r.Name == name })
+	if i < 0 {
+		return Route{}, false
+	}
+	return routes[i], true
+}
+
+// xhighReasoningLevels replaces max with xhigh, for harnesses whose highest
+// effort level is xhigh.
+func xhighReasoningLevels(levels []string) []string {
+	out := make([]string, 0, len(levels))
+	for _, level := range levels {
+		if level == "max" {
+			level = "xhigh"
+		}
+		if !slices.Contains(out, level) {
+			out = append(out, level)
+		}
+	}
+	return out
+}
+
+var reasoningOrder = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
+
+// reasoningRank orders real effort levels, or returns -1 for "none" and unknown levels.
+func reasoningRank(level string) int { return slices.Index(reasoningOrder, level) }
+
+// reasoningBounds returns the lowest and highest real effort levels, or nils
+// if there are none.
+func reasoningBounds(levels []string) (low, high any) {
+	ranked := slices.DeleteFunc(slices.Clone(levels), func(l string) bool { return reasoningRank(l) < 0 })
+	if len(ranked) == 0 {
+		return nil, nil
+	}
+	byRank := func(a, b string) int { return reasoningRank(a) - reasoningRank(b) }
+	return slices.MinFunc(ranked, byRank), slices.MaxFunc(ranked, byRank)
 }
 
 // Route target types, as the routes API reports them.
@@ -122,7 +261,7 @@ func (s Selection) resolve(routes []Route) (Selection, error) {
 	s.Fallback = cmp.Or(s.Fallback, s.Primary)
 	for _, name := range []string{s.Primary, s.Background, s.Subagent, s.Fallback} {
 		if name != "" && !slices.ContainsFunc(routes, func(r Route) bool { return r.Name == name }) {
-			return s, fmt.Errorf("route %q is not one of the team's routes", name)
+			return s, fmt.Errorf("route %q is not one of the team's routes this harness can call", name)
 		}
 	}
 	return s, nil

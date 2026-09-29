@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +26,12 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/harness"
 	"github.com/zalando/go-keyring"
 )
+
+// harnessRouteMetadata is usable model metadata for route fixtures.
+var harnessRouteMetadata = map[string]any{
+	"context_window": 128000, "max_output_tokens": 4096, "input_modalities": []string{"text"}, "tools": true,
+	"supported_api_formats": map[string]any{"messages": true, "responses": true, "chat_completions": true},
+}
 
 type fakeHarnessExecer struct{ binary string }
 
@@ -66,7 +73,7 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"items":      []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": r.URL.Query().Get("team_id"), "display_name": "Primary", "invoke_url": invokeURL}},
+			"items":      []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": r.URL.Query().Get("team_id"), "display_name": "Primary", "invoke_url": invokeURL, "metadata": harnessRouteMetadata}},
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
@@ -627,11 +634,11 @@ func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	h, api := fakeHarnessAPI(t)
 	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
 		"items": []any{
-			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL,
+			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "ANTHROPIC", "model": "claude-opus-5-5", "secret_name": "anthropic-key"}},
-			map[string]any{"id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL,
+			map[string]any{"id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "OPENAI", "model": "gpt-5.5", "secret_name": "openai-key"}},
-			map[string]any{"id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL,
+			map[string]any{"id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
 		},
 		"pagination": map[string]any{"has_more": false},
@@ -644,4 +651,85 @@ func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/claude"].(map[string]any)["provider"])
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/openai"}, models["acme/gpt"].(map[string]any)["provider"])
 	h.Require.NotContains(models["acme/open"], "provider")
+}
+
+func Test_Harness_Setup_RouteMetadata(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeHarnessAPI(t)
+	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// The second page holds a route without metadata.
+		if r.URL.Query().Get("cursor") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items":      []any{map[string]any{"name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata}},
+				"pagination": map[string]any{"has_more": true, "cursor": "page-two"},
+			})
+			return
+		}
+		// A skipped route's invoke URL doesn't have to match.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items":      []any{map[string]any{"name": "acme/bare", "display_name": "Bare", "invoke_url": "https://elsewhere.example.com", "metadata": nil}},
+			"pagination": map[string]any{"has_more": false},
+		})
+	})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	h.Require.Contains(h.Stderr.String(), "warning: skipping routes without usable model metadata: acme/bare")
+	h.Require.NotContains(fmt.Sprint(readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["availableModels"]), "acme/bare")
+
+	h.Stderr.Reset()
+	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/bare", "--config-dir", t.TempDir(), "--yes"))
+	h.Require.Contains(h.Stderr.String(), `route "acme/bare" has no model metadata`)
+	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "a failed setup creates no key")
+
+	// A route's cost reaches OpenCode, and needs both input and output prices.
+	priced := maps.Clone(harnessRouteMetadata)
+	priced["cost"] = map[string]any{"input": 0.3, "output": 1.2, "cache_read": nil, "long_context": map[string]any{"input": 0.6}}
+	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+		"items":      []any{map[string]any{"name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": priced}},
+		"pagination": map[string]any{"has_more": false},
+	})
+	opencode := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--config-dir", opencode, "--yes"))
+	provider := readHarnessSettings(t, "opencode", harnessSettingsFile("opencode", opencode))["provider"].(map[string]any)
+	model := provider["baseten-harness"].(map[string]any)["models"].(map[string]any)["acme/primary"].(map[string]any)
+	h.Require.Equal(map[string]any{"input": 0.3, "output": 1.2}, model["cost"])
+}
+
+func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeHarnessAPI(t)
+	formats := func(messages, responses bool) map[string]any {
+		m := maps.Clone(harnessRouteMetadata)
+		m["supported_api_formats"] = map[string]any{"messages": messages, "responses": responses}
+		return m
+	}
+	unknown := maps.Clone(harnessRouteMetadata)
+	delete(unknown, "supported_api_formats")
+	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+		"items": []any{
+			map[string]any{"name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": formats(true, false)},
+			map[string]any{"name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": formats(false, true)},
+			map[string]any{"name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": formats(true, true)},
+			map[string]any{"name": "acme/new", "display_name": "New", "invoke_url": api.URL, "metadata": unknown},
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "codex", "--yes"))
+
+	claude := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))
+	h.Require.Equal("acme/claude", claude["model"])
+	h.Require.Equal([]any{"acme/claude", "acme/open", "acme/new", "deepseek-ai/DeepSeek-V4.1-Flash"}, claude["availableModels"])
+	h.Require.Equal("acme/gpt", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
+	var slugs []any
+	for _, m := range readHarnessSettings(t, "catalog", filepath.Join(root, "codex", "baseten-models.json"))["models"].([]any) {
+		slugs = append(slugs, m.(map[string]any)["slug"])
+	}
+	h.Require.Equal([]any{"acme/gpt", "acme/open", "acme/new"}, slugs)
+
+	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/gpt", "--yes"))
+	h.Require.Contains(h.Stderr.String(), `route "acme/gpt" is not one of the team's routes this harness can call`)
 }

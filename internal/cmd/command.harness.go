@@ -37,6 +37,7 @@ var harnessVersionNumber = regexp.MustCompile(`\d+(\.\d+)+\S*`)
 type selectedHarness struct {
 	harness.Harness
 	detection harness.Detection
+	selection harness.Selection
 }
 
 // selectHarnesses returns the harnesses a command applies to. Setup offers
@@ -82,7 +83,7 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 				continue
 			}
 		}
-		selected = append(selected, selectedHarness{h, d})
+		selected = append(selected, selectedHarness{Harness: h, detection: d})
 	}
 	if !setup || explicit {
 		return selected, nil
@@ -141,25 +142,52 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if len(listed) == 0 {
 		return fmt.Errorf("team %s has no routes; create one with 'baseten route create'", team.Name)
 	}
+	var routes []harness.Route
+	var skipped []string
+	for _, l := range listed {
+		r, err := harness.NewRoute(l)
+		switch {
+		case err == nil:
+			routes = append(routes, r)
+		case l.Name == f.Route:
+			return cmd.NewErrValidation(err)
+		default:
+			skipped = append(skipped, l.Name)
+		}
+	}
+	if len(routes) == 0 {
+		return cmd.NewErrValidation(errors.New("none of the team's routes have usable model metadata"))
+	}
+	if len(skipped) > 0 {
+		ctx.Logf("warning: skipping routes without usable model metadata: %s\n", strings.Join(skipped, ", "))
+	}
 	// One provider configuration serves every route, so they must share an endpoint.
-	endpoint := strings.TrimRight(listed[0].InvokeUrl, "/")
-	routes := make([]harness.Route, 0, len(listed))
+	endpoint := ""
 	for _, r := range listed {
-		if strings.TrimRight(r.InvokeUrl, "/") != endpoint {
+		if slices.Contains(skipped, r.Name) {
+			continue
+		}
+		invokeURL := strings.TrimRight(r.InvokeUrl, "/")
+		if endpoint == "" {
+			endpoint = invokeURL
+		} else if invokeURL != endpoint {
 			return fmt.Errorf("team %s has routes with different invoke URLs", team.Name)
 		}
-		target, _ := r.Target.Discriminator()
-		routes = append(routes, harness.Route{Name: r.Name, DisplayName: r.DisplayName, Target: target})
-	}
-	selection := harness.Selection{
-		Primary:    cmp.Or(f.Route, routes[0].Name),
-		Background: f.BackgroundRoute,
-		Subagent:   f.SubagentRoute,
-		Fallback:   f.FallbackRoute,
 	}
 	var plans []*harness.Plan
-	for _, choice := range selected {
-		current, err := choice.Prepare(choice.detection.Path, routes, selection, endpoint)
+	for i := range selected {
+		choice := &selected[i]
+		callable := choice.Routes(routes)
+		if len(callable) == 0 {
+			return fmt.Errorf("team %s has no routes that %s can call", team.Name, choice.Name())
+		}
+		choice.selection = harness.Selection{
+			Primary:    cmp.Or(f.Route, callable[0].Name),
+			Background: f.BackgroundRoute,
+			Subagent:   f.SubagentRoute,
+			Fallback:   f.FallbackRoute,
+		}
+		current, err := choice.Prepare(choice.detection.Path, callable, choice.selection, endpoint)
 		if err != nil {
 			return fmt.Errorf("%s: %w", choice.Name(), err)
 		}
@@ -171,7 +199,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	switch {
 	case ctx.JSON:
 	case ctx.verbose || f.DryRun:
-		harnessVerboseSetupSummary(ctx, team, selected, selection, plans)
+		harnessVerboseSetupSummary(ctx, team, selected, plans)
 	default:
 		var replaced []string
 		for _, p := range plans {
@@ -405,12 +433,13 @@ func harnessRouteTable(ctx *CommandContext, title string, routes []harness.Route
 	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "DISPLAY NAME"}, Rows: rows})
 }
 
-func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, selected []selectedHarness, s harness.Selection, plans []*harness.Plan) {
+func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, selected []selectedHarness, plans []*harness.Plan) {
 	renderer := lipgloss.NewRenderer(ctx.Stdout)
 	accent := renderer.NewStyle().Inherit(inlineCodeStyle)
 	heading := renderer.NewStyle().Bold(true)
 	ctx.Outputf("Team: %s\n", accent.Render(team.Name))
 	for _, choice := range selected {
+		s := choice.selection
 		ctx.Outputf("\n%s\n", heading.Render(choice.Name()))
 		ctx.Outputf("  Config            %s\n", harnessDisplayPath(choice.detection.Path))
 		ctx.Outputf("  Default route     %s\n", accent.Render(s.Primary))

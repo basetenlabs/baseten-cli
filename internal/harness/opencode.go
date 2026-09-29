@@ -55,6 +55,9 @@ func (openCodeHarness) BackgroundRoute(s Selection) string {
 	return cmp.Or(s.Background, defaultBackgroundRoute)
 }
 
+// Routes returns every route, since OpenCode picks each route's API by its target.
+func (openCodeHarness) Routes(routes []Route) []Route { return routes }
+
 func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
 	if s.Fallback != "" {
 		return nil, errors.New("--fallback-route is supported only for Claude Code")
@@ -70,7 +73,21 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 		models[defaultBackgroundRoute] = map[string]any{"name": "DeepSeek V4.1 Flash"}
 	}
 	for _, r := range routes {
-		model := map[string]any{"name": r.DisplayName}
+		variants := map[string]any{}
+		for _, level := range xhighReasoningLevels(r.ReasoningLevels) {
+			variants[level] = map[string]any{"reasoningEffort": level}
+		}
+		model := map[string]any{
+			"name":       r.DisplayName,
+			"limit":      map[string]any{"context": r.ContextWindow, "output": r.OutputLimit},
+			"tool_call":  r.Tools,
+			"modalities": map[string]any{"input": r.InputModalities, "output": []string{"text"}},
+			"reasoning":  len(r.ReasoningLevels) > 0,
+			"variants":   variants,
+		}
+		if r.Cost != nil {
+			model["cost"] = openCodeCost(*r.Cost)
+		}
 		// A model's npm overrides the provider's, so first-party routes use their
 		// native API at the same base URL: Messages for Anthropic, Responses for OpenAI.
 		if npm, ok := openCodeTargetPackages[r.Target]; ok {
@@ -121,6 +138,21 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 	}
 	p.bearerPath = openCodeBearerPath
 	return []*Plan{p}, nil
+}
+
+// openCodeCost is OpenCode's per-model price, in USD per 1M tokens.
+func openCodeCost(c Cost) map[string]any {
+	cost := map[string]any{"input": c.Input, "output": c.Output}
+	if c.CacheRead != nil {
+		cost["cache_read"] = *c.CacheRead
+	}
+	if c.CacheWrite != nil {
+		cost["cache_write"] = *c.CacheWrite
+	}
+	if c.LongContext != nil {
+		cost["context_over_200k"] = openCodeCost(*c.LongContext)
+	}
+	return cost
 }
 
 // openCodeTeardownPaths clears only references to Baseten's provider; a model
