@@ -21,10 +21,12 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/tailscale/hujson"
 )
 
@@ -120,8 +122,60 @@ type Cost struct {
 	LongContext *Cost
 }
 
-// ValidateRoute rejects a route whose metadata the harnesses cannot describe or drive.
-func ValidateRoute(r Route) error {
+// NewRoute converts a route from the routes API. It fails if the route's model
+// metadata is missing or is not enough to configure a harness.
+func NewRoute(api managementapi.Route) (Route, error) {
+	target, _ := api.Target.Discriminator()
+	r := Route{Name: api.Name, DisplayName: api.DisplayName, Target: target}
+	m := api.Metadata
+	if m == nil {
+		return r, fmt.Errorf("route %q has no model metadata", r.Name)
+	}
+	r.ContextWindow, r.OutputLimit = deref(m.ContextWindow), deref(m.MaxOutputTokens)
+	r.InputModalities, r.Tools = m.InputModalities, deref(m.Tools)
+	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
+	// Without formats the route's APIs are unknown, so every harness lists it.
+	r.Messages, r.Responses = true, true
+	if f := m.SupportedApiFormats; f != nil {
+		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
+	}
+	if c := m.Cost; c != nil {
+		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
+		if r.Cost != nil && c.LongContext != nil {
+			r.Cost.LongContext = newCost(*c.LongContext)
+		}
+	}
+	return r, validateRoute(r)
+}
+
+// newCost returns nil unless both input and output prices are known.
+func newCost(c managementapi.ExploreCostValues) *Cost {
+	if c.Input == nil || c.Output == nil {
+		return nil
+	}
+	return &Cost{Input: *price(c.Input), Output: *price(c.Output), CacheRead: price(c.CacheRead), CacheWrite: price(c.CacheWrite)}
+}
+
+// price widens the generated float32 by its shortest decimal form, so 0.3
+// stays 0.3 rather than 0.30000001192092896.
+func price(p *float32) *float64 {
+	if p == nil {
+		return nil
+	}
+	f, _ := strconv.ParseFloat(strconv.FormatFloat(float64(*p), 'g', -1, 32), 64)
+	return &f
+}
+
+func deref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
+}
+
+// validateRoute rejects a route whose metadata the harnesses cannot describe or drive.
+func validateRoute(r Route) error {
 	switch {
 	case !r.Tools:
 		return fmt.Errorf("route %q lacks tool support", r.Name)

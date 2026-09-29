@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,18 +92,18 @@ func TestMaxEffortOnlyForClaudeCode(t *testing.T) {
 func TestValidateRouteRejectsUnknownReasoningLevels(t *testing.T) {
 	r := testRoute("acme/turbo", "Turbo")
 	r.ReasoningLevels = []string{"max"}
-	require.NoError(t, ValidateRoute(r))
+	require.NoError(t, validateRoute(r))
 	r.ReasoningLevels = []string{"turbo"}
-	require.ErrorContains(t, ValidateRoute(r), `route "acme/turbo" has an unsupported reasoning level`)
+	require.ErrorContains(t, validateRoute(r), `route "acme/turbo" has an unsupported reasoning level`)
 }
 
 func TestValidateRouteRequiresLimits(t *testing.T) {
 	r := testRoute("acme/primary", "Primary")
 	r.OutputLimit = r.ContextWindow
-	require.ErrorContains(t, ValidateRoute(r), "no usable context and output limits")
+	require.ErrorContains(t, validateRoute(r), "no usable context and output limits")
 	r = testRoute("acme/primary", "Primary")
 	r.Tools = false
-	require.ErrorContains(t, ValidateRoute(r), "lacks tool support")
+	require.ErrorContains(t, validateRoute(r), "lacks tool support")
 }
 
 func TestOpenCodeCarriesRouteCost(t *testing.T) {
@@ -117,4 +118,19 @@ func TestOpenCodeCarriesRouteCost(t *testing.T) {
 		"context_over_200k": map[string]any{"input": json.Number("6"), "output": json.Number("22.5")},
 	}, models["acme/primary"].(map[string]any)["cost"])
 	require.NotContains(t, models["acme/unpriced"], "cost")
+}
+
+func TestNewRoute(t *testing.T) {
+	_, err := NewRoute(managementapi.Route{Name: "acme/bare"})
+	require.ErrorContains(t, err, `route "acme/bare" has no model metadata`)
+
+	ptr := func(v float32) *float32 { return &v }
+	tools, ctx, out := true, 128000, 4096
+	r, err := NewRoute(managementapi.Route{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.ExploreMetadata{
+		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools,
+		Cost: &managementapi.ExploreCost{Input: ptr(0.3), Output: ptr(1.2), LongContext: &managementapi.ExploreCostValues{Input: ptr(0.6)}},
+	}})
+	require.NoError(t, err)
+	require.True(t, r.Messages && r.Responses, "a route without API formats is listed in every harness")
+	require.Equal(t, &Cost{Input: 0.3, Output: 1.2}, r.Cost, "a long-context price without output is dropped")
 }

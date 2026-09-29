@@ -142,9 +142,21 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if len(listed) == 0 {
 		return fmt.Errorf("team %s has no routes; create one with 'baseten route create'", team.Name)
 	}
-	routes, skipped, err := harnessCatalog(listed, f.Route)
-	if err != nil {
-		return err
+	var routes []harness.Route
+	var skipped []string
+	for _, l := range listed {
+		r, err := harness.NewRoute(l)
+		switch {
+		case err == nil:
+			routes = append(routes, r)
+		case l.Name == f.Route:
+			return cmd.NewErrValidation(err)
+		default:
+			skipped = append(skipped, l.Name)
+		}
+	}
+	if len(routes) == 0 {
+		return cmd.NewErrValidation(errors.New("none of the team's routes have usable model metadata"))
 	}
 	if len(skipped) > 0 {
 		ctx.Logf("warning: skipping routes without usable model metadata: %s\n", strings.Join(skipped, ", "))

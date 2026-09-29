@@ -380,13 +380,11 @@ func defaultProfileName(email string, remote *Remote) string {
 	return email + ":" + remote.HostLabel()
 }
 
-// deref returns *p, or the zero value if p is nil.
-func deref[T any](p *T) T {
-	if p == nil {
-		var zero T
-		return zero
+func deref(s *string) string {
+	if s == nil {
+		return ""
 	}
-	return *p
+	return *s
 }
 
 func decodeJWTClaims(token string) (string, error) {
