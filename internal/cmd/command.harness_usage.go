@@ -17,14 +17,6 @@ func init() {
 	Register("harness usage", commandHarnessUsage)
 }
 
-// harnessUsageDimensions are the allowed --group-by values, mapped to the
-// backend enum by uppercasing.
-var harnessUsageDimensions = []string{"user", "model", "provider"}
-
-// harnessUsageProviders are the allowed --provider values, mapped to the
-// backend enum by uppercasing and swapping '-' for '_'.
-var harnessUsageProviders = []string{"baseten-model-api", "openai", "anthropic", "xai", "vertex", "openai-compatible"}
-
 // harnessUsageMaxBuckets is the most daily buckets the endpoint returns per
 // page.
 const harnessUsageMaxBuckets = 31
@@ -41,14 +33,8 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	if pageSize < 1 || pageSize > harnessUsageMaxBuckets {
 		return cmd.NewErrUsagef("--page-size must be between 1 and %d", harnessUsageMaxBuckets)
 	}
-	dims, err := harnessUsageGroupBy(f.GroupBy)
-	if err != nil {
-		return err
-	}
-	providers, err := harnessUsageProviderFilter(f.Providers)
-	if err != nil {
-		return err
-	}
+	dims := harnessUsageGroupBy(f.GroupBy)
+	providers := harnessUsageProviderFilter(f.Providers)
 	startDate, endDate, err := harnessUsageWindow(ctx, f)
 	if err != nil {
 		return err
@@ -152,36 +138,27 @@ buckets:
 	return nil
 }
 
-// harnessUsageGroupBy validates the --group-by values and maps them onto the
-// backend dimension enum, defaulting to model.
-func harnessUsageGroupBy(values []string) ([]managementapi.RouteUsageDimension, error) {
-	if len(values) == 0 {
-		return []managementapi.RouteUsageDimension{managementapi.RouteUsageDimension_MODEL}, nil
-	}
+// harnessUsageGroupBy maps the --group-by values, already validated by the
+// flag's enum, onto the backend dimension enum, dropping repeats.
+func harnessUsageGroupBy(values []string) []managementapi.RouteUsageDimension {
 	dims := make([]managementapi.RouteUsageDimension, 0, len(values))
 	for _, v := range values {
-		if !slices.Contains(harnessUsageDimensions, v) {
-			return nil, cmd.NewErrUsagef("invalid --group-by %q; must be one of: %s", v, strings.Join(harnessUsageDimensions, ", "))
-		}
 		dim := managementapi.RouteUsageDimension(strings.ToUpper(v))
 		if !slices.Contains(dims, dim) {
 			dims = append(dims, dim)
 		}
 	}
-	return dims, nil
+	return dims
 }
 
-// harnessUsageProviderFilter validates the --provider values and maps them
-// onto the backend provider enum.
-func harnessUsageProviderFilter(values []string) ([]managementapi.RouteProvider, error) {
+// harnessUsageProviderFilter maps the --provider values, already validated by
+// the flag's enum, onto the backend provider enum.
+func harnessUsageProviderFilter(values []string) []managementapi.RouteProvider {
 	providers := make([]managementapi.RouteProvider, 0, len(values))
 	for _, v := range values {
-		if !slices.Contains(harnessUsageProviders, v) {
-			return nil, cmd.NewErrUsagef("invalid --provider %q; must be one of: %s", v, strings.Join(harnessUsageProviders, ", "))
-		}
 		providers = append(providers, managementapi.RouteProvider(strings.ToUpper(strings.ReplaceAll(v, "-", "_"))))
 	}
-	return providers, nil
+	return providers
 }
 
 // harnessUsageWindow resolves the query's UTC start and end dates, month to

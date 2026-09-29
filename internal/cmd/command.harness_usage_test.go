@@ -138,10 +138,24 @@ func Test_Harness_Usage_RejectsBadFlags(t *testing.T) {
 	h.Require.ErrorContains(h.Execute("harness", "usage", "--since", "1d", "--start", "2026-09-01T00:00:00Z"), "--since cannot be combined")
 	h.Require.ErrorContains(h.Execute("harness", "usage", "--start", "2026-09-10T00:00:00Z", "--end", "2026-09-01T00:00:00Z"), "--start must be earlier than --end")
 	h.Require.ErrorContains(h.Execute("harness", "usage", "--start", "2026-10-01T00:00:00Z"), "--start must be in the past")
-	h.Require.ErrorContains(h.Execute("harness", "usage", "--group-by", "route"), `invalid --group-by "route"; must be one of: user, model, provider`)
-	h.Require.ErrorContains(h.Execute("harness", "usage", "--provider", "google"), `invalid --provider "google"`)
+	h.Require.ErrorContains(h.Execute("harness", "usage", "--group-by", "route"), `"route" must be one of: user, model, provider`)
+	h.Require.ErrorContains(h.Execute("harness", "usage", "--provider", "google"), `"google" must be one of: baseten-model-api, openai`)
 	h.Require.ErrorContains(h.Execute("harness", "usage", "--limit", "-1"), "--limit must be zero")
 	h.Require.ErrorContains(h.Execute("harness", "usage", "--page-size", "32"), "--page-size must be between 1 and 31")
+}
+
+func Test_Harness_Usage_GroupByDefaultShowsInHelp(t *testing.T) {
+	h, _ := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+
+	h.Require.NoError(h.Execute("harness", "usage", "--help"))
+	h.Require.Regexp(`--group-by[^\n]*\{user,model,provider\} \(model\)`, h.Stdout.String())
+}
+
+func Test_Harness_Usage_CommaSeparatedGroupBy(t *testing.T) {
+	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+
+	h.Require.NoError(h.Execute("harness", "usage", "--group-by", "provider,model"))
+	h.Require.Equal([]string{"PROVIDER", "MODEL"}, harnessUsageLastQuery(h, api)["group_by"], "passing values replaces the default")
 }
 
 func Test_Harness_Usage_FiltersAndGrouping(t *testing.T) {

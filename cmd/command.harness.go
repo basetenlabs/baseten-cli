@@ -204,11 +204,11 @@ type HarnessUsageFlags struct {
 	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
 	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
 
-	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated. One of: user, model, provider. Defaults to model."`
+	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated." enum:"user,model,provider" default:"model"`
 
 	UserIDs   []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. Defaults to your own user ID."`
 	Models    []string `flag:"model" desc:"Only return usage for these models. May be repeated."`
-	Providers []string `flag:"provider" desc:"Only return usage for these providers. May be repeated. One of: baseten-model-api, openai, anthropic, xai, vertex, openai-compatible."`
+	Providers []string `flag:"provider" desc:"Only return usage for these providers. May be repeated." enum:"baseten-model-api,openai,anthropic,xai,vertex,openai-compatible"`
 
 	Limit int `flag:"limit" desc:"Maximum number of daily buckets, paging as needed. 0 for no limit."`
 
