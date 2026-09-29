@@ -1076,7 +1076,7 @@ func Test_Volume_Push_ConflictMessage(t *testing.T) {
 					})
 				}
 				err := h.Execute("volume", "push", t.TempDir(), "bdn:weights/llama", "--output", format)
-				h.Require.ErrorContains(err, "this volume is updated")
+				h.Require.ErrorContains(err, "this volume was updated")
 				h.Require.Equal(1, calls)
 				h.Require.Equal(1, h.ExitCode)
 				h.Require.Contains(h.Stderr.String(), "please push again")
