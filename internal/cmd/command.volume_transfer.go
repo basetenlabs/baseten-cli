@@ -135,7 +135,7 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 		if errors.As(err, &volumeErr) && volumeErr.Reason == client.VolumeErrorReasonCASConflict {
 			// Do not wrap the service error: its code and storage details must
 			// not leak into either the text message or JSON error metadata.
-			return cmd.NewErrGeneric(fmt.Errorf("pushing %s: another push updated this volume before your push could finish; please push again", ref))
+			return cmd.NewErrGeneric(fmt.Errorf("pushing %s: this volume is updated before your push could finish; please push again", ref))
 		}
 		return fmt.Errorf("pushing %s: %w", ref, err)
 	}
