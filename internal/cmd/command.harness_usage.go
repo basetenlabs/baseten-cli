@@ -141,8 +141,8 @@ func addHarnessUsage(byModel map[string]*harnessUsageEntry, r managementapi.Rout
 		UncachedInputTokens: int64(r.UncachedInputTokens),
 		OutputTokens:        int64(r.OutputTokens),
 	})
-	// Before basetenlabs/baseten#30972, the endpoint returned a null cost for
-	// usage it couldn't price, which decodes as empty.
+	// Older versions of the endpoint return a null cost for usage they can't
+	// price, which decodes as empty.
 	if r.CostUsd == "" {
 		e.priced = false
 		return nil
