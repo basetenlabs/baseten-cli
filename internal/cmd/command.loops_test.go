@@ -208,6 +208,47 @@ func Test_Loops_Exec_PropagatesTrussFailure(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "truss: bad arguments")
 }
 
+func Test_Loops_Exec_PreservesTrussJSONError(t *testing.T) {
+	for _, format := range []string{"json", "jsonl", "jq"} {
+		t.Run(format, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.exitCode = 7
+			fake.stdout = `{"error":{"message":"checkpoint unavailable","status_code":403}}`
+			args := []string{"loops", "exec", "--dir", t.TempDir()}
+			if format == "jq" {
+				args = append(args, "--jq", ".job_id")
+			} else {
+				args = append(args, "--output", format)
+			}
+			h.Require.Error(h.Execute(append(args, "--", "python", "client.py")...))
+			h.Require.Equal(7, h.ExitCode)
+			h.Require.JSONEq(`{"error":{"message":"checkpoint unavailable","status_code":403}}`, h.Stdout.String())
+			h.Require.Contains(h.Stderr.String(), "truss: bad arguments")
+		})
+	}
+}
+
+func Test_Loops_Exec_SubprocessFailureWithoutJSON(t *testing.T) {
+	for _, output := range []string{"", "not JSON"} {
+		t.Run(output, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.exitCode = 7
+			fake.stdout = output
+			h.Require.Error(h.Execute("loops", "exec", "--dir", t.TempDir(), "--output", "json", "--", "python", "client.py"))
+			h.Require.Equal(7, h.ExitCode)
+			var body struct {
+				Error struct {
+					Message  string `json:"message"`
+					ExitCode int    `json:"exit_code"`
+				} `json:"error"`
+			}
+			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &body))
+			h.Require.Equal(7, body.Error.ExitCode)
+			h.Require.Contains(body.Error.Message, "truss: bad arguments")
+		})
+	}
+}
+
 func Test_Loops_Exec_HelpDocumentsContract(t *testing.T) {
 	h, fake := newTrussHarness(t)
 
