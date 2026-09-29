@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -130,6 +131,12 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 	elapsed := ctx.Now().Sub(started)
 	stopProgress()
 	if err != nil {
+		var volumeErr *client.VolumeError
+		if errors.As(err, &volumeErr) && volumeErr.Reason == client.VolumeErrorReasonCASConflict {
+			// Do not wrap the service error: its code and storage details must
+			// not leak into either the text message or JSON error metadata.
+			return cmd.NewErrGeneric(fmt.Errorf("pushing %s: this volume was updated before your push could finish; please push again", ref))
+		}
 		return fmt.Errorf("pushing %s: %w", ref, err)
 	}
 

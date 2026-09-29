@@ -13,6 +13,7 @@ import (
 
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-go/client"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
 // volumeTestTime is what every fixture records, so a test asserting on output
@@ -1055,6 +1056,62 @@ func Test_Volume_ProgressDoesNotCorruptJSON(t *testing.T) {
 			final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B\n", phase)
 			h.Require.Contains(h.Stderr.String(), final+fmt.Sprintf("  %s...\n", next))
 			h.Require.Equal(1, strings.Count(h.Stderr.String(), final))
+		})
+	}
+}
+
+func Test_Volume_Push_ConflictMessage(t *testing.T) {
+	for _, format := range []string{"text", "json", "jsonl"} {
+		for _, detail := range []string{"conditional put: If-Match failed", "object already exists"} {
+			t.Run(format+"/"+detail, func(t *testing.T) {
+				h := NewCommandHarness(t)
+				fake := withVolumeTransfer(t, h)
+				calls := 0
+				fake.OnProgress = func(_ func(client.VolumeProgress)) error {
+					calls++
+					return fmt.Errorf("commit: %w", &client.VolumeError{
+						Reason:  client.VolumeErrorReasonCASConflict,
+						Message: detail,
+						Err:     &managementapi.ResponseError{StatusCode: 409, Body: `{"code":"CAS_CONFLICT","details":{"storage":"internal"}}`},
+					})
+				}
+				err := h.Execute("volume", "push", t.TempDir(), "bdn:weights/llama", "--output", format)
+				h.Require.ErrorContains(err, "this volume was updated")
+				h.Require.Equal(1, calls)
+				h.Require.Equal(1, h.ExitCode)
+				h.Require.Contains(h.Stderr.String(), "please push again")
+				h.Require.Contains(h.Stderr.String(), "bdn:weights/llama")
+				for _, output := range []string{err.Error(), h.Stdout.String(), h.Stderr.String()} {
+					h.Require.NotContains(output, "CAS_CONFLICT")
+					h.Require.NotContains(output, detail)
+					h.Require.NotContains(output, "internal")
+				}
+				if format == "text" {
+					h.Require.Empty(h.Stdout.String())
+				} else {
+					jsonErr := decodeJSONErrorEnvelope(h)
+					h.Require.Contains(jsonErr.Message, "please push again")
+					h.Require.Equal("ErrGeneric", jsonErr.Type)
+					h.Require.Empty(jsonErr.APIErrorCode)
+					h.Require.Empty(jsonErr.APIDetails)
+				}
+			})
+		}
+	}
+}
+
+func Test_Volume_Push_OtherErrorsPreserved(t *testing.T) {
+	for _, original := range []error{
+		&client.VolumeError{Reason: client.VolumeErrorReasonPermissionDenied, Message: "access denied"},
+		errors.New("CAS_CONFLICT in an unrelated error"),
+	} {
+		t.Run(original.Error(), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			fake := withVolumeTransfer(t, h)
+			fake.OnProgress = func(_ func(client.VolumeProgress)) error { return original }
+			err := h.Execute("volume", "push", t.TempDir(), "bdn:weights/llama")
+			h.Require.ErrorContains(err, original.Error())
+			h.Require.Contains(h.Stderr.String(), original.Error())
 		})
 	}
 }
