@@ -76,10 +76,11 @@ var commandHarness = Command{
 			Name:    "usage",
 			Summary: "Show your routes spend and tokens, month to date by default (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Show the estimated spend and token usage of routes API keys as daily UTC buckets, broken down by the " +
-				"dimensions passed to --group-by. Defaults to your own usage, across all teams, for the current UTC month " +
-				"to date, the period monthly spend limits apply to. Organization admins can pass --user-id for other " +
-				"users; other members only ever see usage from keys they created.\n\n" +
+				"Show your routes spend and token usage for the month so far, the period monthly spend limits apply to. " +
+				"This is 'baseten route usage' with --user-id set to you and --start at the beginning of the current UTC " +
+				"month, and with the text table totaling each --group-by combination over the window instead of listing " +
+				"each day. Organization admins can pass --user-id for other users; other members only ever see usage " +
+				"from keys they created.\n\n" +
 				"Usage comes in whole UTC days: --start is snapped down to its day and --end is rounded up to the end of " +
 				"its day. Every bucket in the window is fetched, paging as needed, until --limit buckets are collected.\n\n" +
 				"This is the same spend that spend limits are checked against, and it can lag by up to 15 minutes. " +
@@ -204,17 +205,9 @@ type HarnessUsageFlags struct {
 	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
 	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
 
-	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated." enum:"user,model,provider" default:"model"`
+	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. Defaults to your own user ID."`
 
-	UserIDs   []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. Defaults to your own user ID."`
-	Models    []string `flag:"model" desc:"Only return usage for these models. May be repeated."`
-	Providers []string `flag:"provider" desc:"Only return usage for these providers. May be repeated." enum:"baseten-model-api,openai,anthropic,xai,vertex,openai-compatible"`
-
-	Limit int `flag:"limit" desc:"Maximum number of daily buckets, paging as needed. 0 for no limit."`
-
-	// PageSize is the per-request fetch size while paging. Hidden; exists so
-	// tests can force multiple pages. Zero uses the backend's maximum.
-	PageSize int `flag:"page-size" hidden:"true" desc:"Daily buckets fetched per backend request while paging."`
+	RouteUsageQueryFlags
 }
 
 // HarnessFlags selects the harnesses a command applies to.
