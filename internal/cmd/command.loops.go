@@ -110,6 +110,16 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 	var stdout bytes.Buffer
 	c.Stdout = &stdout
 	if err := ctx.Execer().Exec(c); err != nil {
+		if ctx.JSON {
+			// Unlike passthrough commands, we captured the child's error payload.
+			// Emit it without applying the success-only jq filter.
+			if json.Valid(stdout.Bytes()) {
+				ctx.encodeJSON(json.RawMessage(stdout.Bytes()))
+			} else {
+				ctx.writeJSONError(normalizeError(err), nil)
+			}
+			ctx.SuppressJSONError()
+		}
 		return err
 	}
 	var result cmd.LoopsExecResult
