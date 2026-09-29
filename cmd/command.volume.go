@@ -452,6 +452,8 @@ type VolumeEntryDetail struct {
 
 // VolumePushResult is the JSON output of `baseten volume push`.
 type VolumePushResult struct {
+	// DurationSeconds is total elapsed SDK transfer time, including setup and finalization.
+	DurationSeconds float64 `json:"duration_seconds"`
 	// VersionRef is the published version, pinned to its digest, which is what
 	// config.yaml takes to mount exactly this tree.
 	VersionRef string `json:"version_ref"`
@@ -478,6 +480,8 @@ type VolumePushResult struct {
 
 // VolumePullResult is the JSON output of `baseten volume pull`.
 type VolumePullResult struct {
+	// DurationSeconds is total elapsed SDK transfer time, including setup and finalization.
+	DurationSeconds float64 `json:"duration_seconds"`
 	// VersionRef is the version that was downloaded, pinned to its digest.
 	VersionRef string `json:"version_ref"`
 	DestDir    string `json:"dest_dir"`
