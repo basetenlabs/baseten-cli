@@ -261,7 +261,7 @@ func Test_Loops_Exec_HelpDocumentsContract(t *testing.T) {
 	h.Require.Contains(out, "--dir")
 	h.Require.Contains(out, "--no-api-key")
 	h.Require.Contains(out, "per-team workspace secret")
-	h.Require.Contains(out, "baseten train job logs --job-id <id> --tail")
+	h.Require.Contains(strings.Join(strings.Fields(out), " "), "baseten train job logs --job-id <id> --tail")
 }
 
 func Test_Loops_Exec_RequiresDelimitedCommand(t *testing.T) {
@@ -284,13 +284,87 @@ func Test_Loops_Exec_RequiresDelimitedCommand(t *testing.T) {
 	}
 }
 
-func Test_Loops_Exec_RejectsTailBeforeDelimiter(t *testing.T) {
+func Test_Loops_Exec_TailRejectsUnforwardedAuth(t *testing.T) {
 	h, fake := newTrussHarness(t)
 
-	err := h.Execute("loops", "exec", "--tail", "--", "python", "client.py")
+	err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--truss-no-forward-auth", "--", "python", "client.py")
 
-	h.Require.ErrorContains(err, "unknown flag: --tail")
+	h.Require.ErrorContains(err, "--tail cannot be combined with --truss-no-forward-auth")
 	h.Require.Empty(fake.calls)
+}
+
+func Test_Loops_Exec_TailStreamsNatively(t *testing.T) {
+	for _, format := range []string{"text", "json", "jsonl", "none", "jq"} {
+		t.Run(format, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
+			m := h.MockManagementAPI()
+			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+			m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse(
+				map[string]any{"timestamp": "1", "message": "training step", "replica": nil},
+			))
+			m.SetRoute("GET", trainJobPath, 200, map[string]any{
+				"training_job": trainJobFixture("job-1", "TRAINING_JOB_COMPLETED"),
+			})
+			args := []string{"loops", "exec", "--dir", t.TempDir(), "--tail"}
+			if format == "jq" {
+				args = append(args, "--jq", ".job_id")
+			} else {
+				args = append(args, "--output", format)
+			}
+			h.Require.NoError(h.Execute(append(args, "--", "python", "client.py")...))
+			h.Require.NotContains(fake.only(t).Args, "--tail")
+			h.Require.Contains(h.Stderr.String(), "training step")
+			h.Require.Contains(h.Stderr.String(), "completed")
+			h.Require.NotContains(h.Stdout.String(), "training step")
+			switch format {
+			case "json", "jsonl":
+				h.Require.JSONEq(fake.stdout, h.Stdout.String())
+			case "none":
+				h.Require.Empty(h.Stdout.String())
+			case "jq":
+				h.Require.Equal("\"job-1\"\n", h.Stdout.String())
+			default:
+				h.Require.Contains(h.Stdout.String(), "Created job job-1")
+			}
+		})
+	}
+}
+
+func Test_Loops_Exec_TailFailurePreservesCreatedJob(t *testing.T) {
+	for _, failure := range []string{"forbidden", "interrupted"} {
+		t.Run(failure, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
+			m := h.MockManagementAPI()
+			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+			if failure == "interrupted" {
+				m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse())
+				m.SetRoute("GET", trainJobPath, 200, map[string]any{
+					"training_job": trainJobFixture("job-1", "TRAINING_JOB_RUNNING"),
+				})
+				watchContext, cancel := context.WithCancel(h.Context)
+				defer cancel()
+				h.Context = cmd.WithSleep(watchContext, func(_ context.Context, _ time.Duration) error {
+					cancel()
+					return watchContext.Err()
+				})
+			} else {
+				m.SetRoute("GET", trainJobPath+"/logs", 403, map[string]any{"error": "forbidden"})
+			}
+			err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--output", "json", "--", "python", "client.py")
+			h.Require.Error(err)
+			if failure == "interrupted" {
+				h.Require.Equal(130, h.ExitCode)
+			}
+			h.Require.JSONEq(fake.stdout, h.Stdout.String())
+			h.Require.Contains(h.Stderr.String(), "job-1 was created")
+			h.Require.Contains(h.Stderr.String(), "baseten train job logs --job-id job-1 --tail")
+			for _, call := range m.Calls() {
+				h.Require.NotContains(call.Path, "stop")
+			}
+		})
+	}
 }
 
 func Test_Loops_Exec_RejectsInvalidInputs(t *testing.T) {

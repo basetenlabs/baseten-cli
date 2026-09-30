@@ -23,8 +23,9 @@ var commandLoops = Command{
 				"By default, Truss makes BASETEN_API_KEY available to the job from a per-team workspace " +
 				"secret, creating the credential and secret on first use when necessary. Pass --no-api-key " +
 				"to disable this behavior, or set BASETEN_API_KEY explicitly with --env or --secret.\n\n" +
-				"Returns once the job is created. Truss log tailing is not exposed here because an OAuth " +
-				"credential forwarded to the child process cannot refresh. Follow the job with " +
+				"Returns once the job is created. Pass --tail to stream logs to stderr using the Baseten " +
+				"client, which supports OAuth refresh. The job result stays on stdout. " +
+				"Ctrl-C stops watching without stopping the job. Resume with " +
 				"'baseten train job logs --job-id <id> --tail'.",
 			MaxArgs: -1,
 			Flags:   LoopsExecFlags{},
@@ -35,6 +36,10 @@ var commandLoops = Command{
 					{
 						Description: "Run a Python Loops client with uv.",
 						Command:     "baseten loops exec --dir . --with-uv -- uv run python train.py",
+					},
+					{
+						Description: "Run a client and follow its logs.",
+						Command:     "baseten loops exec --dir . --tail -- python train.py",
 					},
 					{
 						Description:  "Run a client on one H100 with an environment variable and workspace secret.",
@@ -447,6 +452,7 @@ type LoopsExecFlags struct {
 	NoAPIKey bool     `flag:"no-api-key" desc:"Do not provision BASETEN_API_KEY in the job from a per-team workspace secret."`
 	WithUV   bool     `flag:"with-uv" desc:"Make uv available in the job image. The start command must invoke uv itself."`
 	Team     string   `flag:"team" desc:"Team name that owns the training project."`
+	Tail     bool     `flag:"tail" desc:"Stream job logs to stderr until the job stops or you press Ctrl-C. Cannot be combined with --truss-no-forward-auth."`
 }
 
 // LoopsExecResult is the structured result returned by Truss loops exec.
