@@ -125,6 +125,27 @@ func readHarnessSettings(t *testing.T, name, path string) map[string]any {
 	return data
 }
 
+func catalogSlugs(t *testing.T, path string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []struct {
+			Slug string `json:"slug"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	slugs := make([]string, 0, len(catalog.Models))
+	for _, m := range catalog.Models {
+		slugs = append(slugs, m.Slug)
+	}
+	return slugs
+}
+
 func countCalls(api *MockManagementAPI, method, path string) int {
 	count := 0
 	for _, call := range api.Calls() {
@@ -649,7 +670,7 @@ func Test_Harness_Setup_RouterRouteInPickers(t *testing.T) {
 			map[string]any{"id": "route-a", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
 			map[string]any{"id": "route-b", "name": "acme/auto", "display_name": "Auto", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "router"}},
+				"target": map[string]any{"type": "ROUTER"}},
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -674,11 +695,7 @@ func Test_Harness_Setup_RouterRouteInPickers(t *testing.T) {
 	h.Require.NotContains(models["acme/auto"], "provider")
 
 	h.Require.Equal("acme/auto", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
-	var slugs []any
-	for _, m := range readHarnessSettings(t, "catalog", filepath.Join(root, "codex", "baseten-models.json"))["models"].([]any) {
-		slugs = append(slugs, m.(map[string]any)["slug"])
-	}
-	h.Require.Equal([]any{"acme/primary", "acme/auto"}, slugs)
+	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 }
 
 func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
@@ -776,11 +793,7 @@ func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
 	h.Require.Equal("acme/claude", claude["model"])
 	h.Require.Equal([]any{"acme/claude", "acme/open", "acme/new", "deepseek-ai/DeepSeek-V4.1-Flash"}, claude["availableModels"])
 	h.Require.Equal("acme/gpt", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
-	var slugs []any
-	for _, m := range readHarnessSettings(t, "catalog", filepath.Join(root, "codex", "baseten-models.json"))["models"].([]any) {
-		slugs = append(slugs, m.(map[string]any)["slug"])
-	}
-	h.Require.Equal([]any{"acme/gpt", "acme/open", "acme/new"}, slugs)
+	h.Require.Equal([]string{"acme/gpt", "acme/open", "acme/new"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 
 	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/gpt", "--yes"))
 	h.Require.Contains(h.Stderr.String(), `route "acme/gpt" is not one of the team's routes this harness can call`)
