@@ -5,25 +5,25 @@ Run the live CPU tests against a disposable test workspace:
 ```sh
 export BASETEN_E2E_TEST_API_KEY=<test-workspace-key>
 export BASETEN_E2E_TEST_REMOTE_URL=<test-workspace-url>
-go test -v -tags=e2e -run '^TestE2ELoopsExec$' -count=1 -timeout 30m ./internal/e2e-tests/...
+go test -v -tags=e2e -run '^TestE2ELoopsExec$' -count=1 -timeout 25m ./internal/e2e-tests/...
 ```
 
-The existing E2E CI step discovers this test. Without the API key it skips;
-a skipped run is not live validation. These tests create billable CPU jobs,
-use unique project names, and delete their projects during cleanup, including
-after assertion failures. Cleanup failures fail the test and require inspection
-of the logged project name. No GPU or new API key is requested.
+CI runs this test in its own Ubuntu step. Fork PRs skip the step; trusted runs
+fail if E2E credentials are missing. Local runs without the API key skip.
+These tests create billable CPU jobs in one uniquely named project and delete
+that project and its cache during cleanup, including after assertion failures.
+Cleanup uses a separate timeout and confirms that the project is absent.
+Cleanup failures fail the test and require inspection of the logged project
+name. No GPU or new API key is requested.
 
 ## Coverage
 
-| Behavior | Automated coverage |
-| --- | --- |
-| Uploaded directory, quoted argument, environment value | Live CPU fixture asserts received values |
-| Successful execution | Live terminal status, completion log, and CLI success |
-| Failed execution | Live terminal status, traceback marker, and CLI failure |
-| JSON separate from logs | Live stdout parses as one job result; markers appear on stderr |
-| Delayed final logs and cancellation | Deterministic command tests in `command.loops_test.go` |
-| Flag validation and credential forwarding | Command tests in `command.loops_test.go` |
+- The remote fixture checks the uploaded directory, a quoted argument, and an environment value containing spaces.
+- Success requires a completion log, CLI exit 0, and backend status `COMPLETED`.
+- Failure requires the final traceback, CLI exit 1, and backend status `FAILED`.
+- Stdout must contain one job JSON result, with remote logs on stderr.
+- Cancelling the command after a readiness marker must return exit 130 and leave the remote job running. Resuming logs must receive a newer heartbeat, then explicit stop must reach `STOPPED`.
+- Command tests in `command.loops_test.go` cover the delayed-log race, flag validation, and credential forwarding.
 
 The CPU fixture tests the managed client launcher, not Loops model training.
 It uses `--no-api-key` to avoid provisioning remote credentials.
@@ -52,7 +52,6 @@ and `curl`. The successful run used
 `pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel`. The upstream Truss bootstrap
 issue remains; the CPU test does not cover it.
 
-Before claiming full Loops E2E coverage, add automated GPU training with
-guaranteed trainer cleanup, live cancellation and log resumption, OAuth refresh,
-and first-use team API-key provisioning. Sampling, checkpoint deployment, and
+Automated GPU training with guaranteed trainer cleanup, OAuth refresh,
+and first-use team API-key provisioning remain outside the CPU suite. Sampling, checkpoint deployment, and
 long-running training are outside this launcher's tests.
