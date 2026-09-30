@@ -233,6 +233,11 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	for _, choice := range selected {
+		if choice.Name() == harness.Codex {
+			harnessLogoutCodex(ctx, filepath.Dir(choice.detection.Path), f.Yes)
+		}
+	}
 	if err := harness.ApplyPlans(plans, token); err != nil {
 		return err
 	}
@@ -241,9 +246,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	}
 	for _, choice := range selected {
 		if choice.Name() == harness.Codex {
-			dir := filepath.Dir(choice.detection.Path)
-			harnessLogoutCodex(ctx, dir, f.Yes)
-			harnessRestartCodexDaemon(ctx, dir, f.Yes)
+			harnessRestartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
 		}
 	}
 	if ctx.JSON {

@@ -745,15 +745,17 @@ func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
 
 type codexDaemonHarnessExecer struct {
 	fakeHarnessExecer
-	socket       string
-	lsof         string
-	noLsof       bool
-	restartFails bool
-	restarts     int
-	loggedIn     bool
-	apiKey       bool
-	logoutFails  bool
-	logouts      int
+	socket        string
+	lsof          string
+	noLsof        bool
+	restartFails  bool
+	restarts      int
+	loggedIn      bool
+	apiKey        bool
+	logoutFails   bool
+	logouts       int
+	probes        int
+	forcedAtProbe bool
 }
 
 func (e *codexDaemonHarnessExecer) LookPath(name string) (string, error) {
@@ -782,6 +784,13 @@ func (e *codexDaemonHarnessExecer) Exec(command *exec.Cmd) error {
 		_, err := fmt.Fprint(command.Stdout, e.lsof)
 		return err
 	case "login status":
+		e.probes++
+		for _, kv := range command.Env {
+			if dir, ok := strings.CutPrefix(kv, "CODEX_HOME="); ok {
+				config, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+				e.forcedAtProbe = e.forcedAtProbe || strings.Contains(string(config), "forced_login_method")
+			}
+		}
 		switch {
 		case e.apiKey:
 			_, err := fmt.Fprintln(command.Stderr, "Logged in using an API key - sk-***")
@@ -871,6 +880,9 @@ func Test_Harness_Setup_SignsOutCodex(t *testing.T) {
 			}
 			h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", dir, "--yes"))
 			h.Require.Equal(tc.logouts, tc.execer.logouts)
+			h.Require.Equal(1, tc.execer.probes)
+			h.Require.False(tc.execer.forcedAtProbe, "login status must be probed before forced_login_method is written")
+			h.Require.Equal("api", readHarnessSettings(t, "codex", filepath.Join(dir, "config.toml"))["forced_login_method"])
 			_, err := os.Stat(auth)
 			h.Require.Equal(tc.authAfter, err == nil)
 			_, err = os.Stat(cache)
@@ -925,4 +937,16 @@ func Test_Harness_Teardown_RestartsCodexDaemon(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_Harness_Setup_DryRunSkipsCodexSignOut(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := harnessAPI(t, "")
+	execer := &codexDaemonHarnessExecer{loggedIn: true, socket: "/tmp/unused.sock"}
+	h.Context = internalcmd.WithExecer(h.Context, execer)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--dry-run"))
+	h.Require.Equal(0, execer.probes)
+	h.Require.Equal(0, execer.logouts)
+	h.Require.Equal(0, execer.restarts)
+	h.Require.NotContains(h.Stderr.String(), "Signing codex out")
 }
