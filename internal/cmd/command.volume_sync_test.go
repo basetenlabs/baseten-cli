@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/basetenlabs/baseten-cli/cmd"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 )
 
@@ -265,6 +266,55 @@ func Test_Volume_Sync_Start_WaitFailsWithFinalJSONOnly(t *testing.T) {
 	h.Require.ErrorContains(err, "Source authentication failed")
 	h.Require.Contains(h.Stdout.String(), `"status": "FAILED"`)
 	h.Require.NotContains(h.Stdout.String(), `"exit_code"`)
+}
+
+func Test_Volume_Sync_Start_WaitInterrupted(t *testing.T) {
+	for _, stage := range []string{"sleep", "status request"} {
+		for _, output := range []string{"text", "json", "jsonl"} {
+			t.Run(stage+"/"+output, func(t *testing.T) {
+				h := NewCommandHarness(t)
+				m := h.MockManagementAPI()
+				ctx, cancel := context.WithCancel(h.Context)
+				defer cancel()
+				h.Context = internalcmd.WithSleep(ctx, func(ctx context.Context, _ time.Duration) error {
+					if stage == "sleep" {
+						cancel()
+						return ctx.Err()
+					}
+					return nil
+				})
+				m.SetRoute("POST", "/v1/volumes/syncs", http.StatusOK, volumeSyncPayload("vsync-1", "PENDING"))
+				m.SetRouteFunc("GET", "/v1/volumes/syncs/vsync-1", func(w http.ResponseWriter, _ *http.Request) {
+					cancel()
+					w.WriteHeader(http.StatusServiceUnavailable)
+				})
+
+				err := h.Execute("volume", "sync", "start", "--source", "hf://org/model",
+					"--dest", "bdn:weights/model:prod", "--wait", "--output", output)
+				h.Require.Error(err)
+				h.Require.Equal(int(cmd.ExitInterrupted), h.ExitCode)
+				h.Require.Contains(h.Stderr.String(), "Press Ctrl+C to stop waiting; the sync will continue in the background.")
+				for _, message := range []string{
+					"Stopped waiting. Sync vsync-1 was not cancelled and can continue in the background.",
+					"baseten volume sync describe --sync-id vsync-1",
+					"baseten volume sync cancel --sync-id vsync-1",
+				} {
+					h.Require.Contains(h.Stderr.String(), message)
+				}
+				h.Require.NotContains(h.Stderr.String(), "Canceled.")
+				h.Require.Nil(m.FindCall("POST", "/v1/volumes/syncs/vsync-1/cancel"))
+				if output == "text" {
+					h.Require.Empty(h.Stdout.String())
+				} else {
+					jsonErr := decodeJSONErrorEnvelope(h)
+					h.Require.Equal("ErrInterrupted", jsonErr.Type)
+					h.Require.Equal(cmd.ExitInterrupted, jsonErr.ExitCode)
+					h.Require.Contains(jsonErr.Message, "Stopped waiting. Sync vsync-1 was not cancelled")
+					h.Require.Contains(jsonErr.Message, "baseten volume sync describe --sync-id vsync-1")
+				}
+			})
+		}
+	}
 }
 
 func Test_Volume_Sync_DescribeAndCancel(t *testing.T) {

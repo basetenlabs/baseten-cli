@@ -289,7 +289,10 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			// generic failure. Gated on the context, not the error's identity:
 			// only an actual interrupt should be treated this way.
 			if ctx.Err() != nil {
-				runErr = cmd.NewErrInterrupted(errors.New("Canceled."))
+				var interrupted *cmd.ErrInterrupted
+				if !errors.As(runErr, &interrupted) {
+					runErr = cmd.NewErrInterrupted(errors.New("Canceled."))
+				}
 			}
 
 			// Render the error and set exit code.
