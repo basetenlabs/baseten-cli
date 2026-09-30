@@ -2,6 +2,11 @@
 
 Run the live CPU tests against a disposable test workspace:
 
+The workspace must have Training SSH enabled. Truss requests an on-demand SSH
+session for `loops exec`, even when the test does not connect over SSH. If job
+creation reports that SSH interactive sessions are disabled, ask the workspace
+owner to enable `ORG_ENABLE_TRAINING_SSH` before rerunning the test.
+
 ```sh
 export BASETEN_E2E_TEST_API_KEY=<test-workspace-key>
 export BASETEN_E2E_TEST_REMOTE_URL=<test-workspace-url>
