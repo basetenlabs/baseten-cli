@@ -25,6 +25,7 @@ var commandLoops = Command{
 				"to disable this behavior, or set BASETEN_API_KEY explicitly with --env or --secret.\n\n" +
 				"Returns once the job is created. Pass --tail to stream logs to stderr using the Baseten " +
 				"client, which supports OAuth refresh. The job result stays on stdout. " +
+				"With --tail, exits nonzero if the job fails to deploy or execute. " +
 				"Ctrl-C stops watching without stopping the job. Resume with " +
 				"'baseten train job logs --job-id <id> --tail'.",
 			MaxArgs: -1,

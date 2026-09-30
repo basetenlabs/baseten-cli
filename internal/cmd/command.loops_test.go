@@ -331,6 +331,49 @@ func Test_Loops_Exec_TailStreamsNatively(t *testing.T) {
 	}
 }
 
+func Test_Loops_Exec_TailReportsJobFailure(t *testing.T) {
+	for _, tc := range []struct {
+		status   string
+		exitCode int
+	}{
+		{"TRAINING_JOB_FAILED", 1},
+		{"TRAINING_JOB_DEPLOY_FAILED", 1},
+		{"TRAINING_JOB_STOPPED", 0},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
+			m := h.MockManagementAPI()
+			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+			m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse(
+				map[string]any{"timestamp": "1", "message": "client output", "replica": nil},
+			))
+			m.SetRoute("GET", trainJobPath, 200, map[string]any{
+				"training_job": trainJobFixture("job-1", tc.status),
+			})
+
+			err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--output", "json", "--", "python", "client.py")
+			if tc.exitCode != 0 {
+				h.Require.ErrorContains(err, "job-1")
+				h.Require.ErrorContains(err, "failed")
+			} else {
+				h.Require.NoError(err)
+			}
+			h.Require.Equal(tc.exitCode, h.ExitCode)
+			h.Require.JSONEq(fake.stdout, h.Stdout.String())
+			h.Require.Contains(h.Stderr.String(), "client output")
+			h.Require.NotContains(h.Stderr.String(), "Resume logs")
+			statusCalls := 0
+			for _, call := range m.Calls() {
+				if call.Method == "GET" && call.Path == trainJobPath {
+					statusCalls++
+				}
+			}
+			h.Require.Equal(1, statusCalls)
+		})
+	}
+}
+
 func Test_Loops_Exec_TailFailurePreservesCreatedJob(t *testing.T) {
 	for _, failure := range []string{"forbidden", "interrupted"} {
 		t.Run(failure, func(t *testing.T) {
