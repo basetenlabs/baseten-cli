@@ -14,6 +14,53 @@ var commandLoops = Command{
 		commandLoopsCheckpoint,
 		commandLoopsRun,
 		{
+			Name:      "exec",
+			ArgsUsage: "[OPTIONS] -- START_COMMAND...",
+			Summary:   "Run a Loops client as a managed job",
+			Description: "Package the directory selected by --dir and run a Loops client as a managed Training Job.\n\n" +
+				"Pass the command to run after '--'. Everything after the delimiter is preserved verbatim. " +
+				"Baseten credentials are forwarded to Truss from the selected CLI profile.\n\n" +
+				"By default, Truss makes BASETEN_API_KEY available to the job from a per-team workspace " +
+				"secret, creating the credential and secret on first use when necessary. Pass --no-api-key " +
+				"to disable this behavior, or set BASETEN_API_KEY explicitly with --env or --secret.\n\n" +
+				"Pass --no-ssh to submit a job without an interactive SSH session. Otherwise, Training SSH " +
+				"must be enabled for the workspace.\n\n" +
+				"Returns once the job is created. Pass --tail to stream logs to stderr using the Baseten " +
+				"client, which supports OAuth refresh. The job result stays on stdout. " +
+				"With --tail, exits nonzero if the job fails to deploy or execute. " +
+				"Ctrl-C stops watching without stopping the job. Resume with " +
+				"'baseten train job logs --job-id <id> --tail'.",
+			MaxArgs: -1,
+			Flags:   LoopsExecFlags{},
+			Output: &CommandOutput[LoopsExecResult]{
+				TextDescription: "The created job's ID, SSH hostname when enabled, and a command to follow its logs.",
+				JSONDescription: "The job ID, project, SSH hostname, start command, environment variable names, compute configuration, and job response.",
+				Examples: []CommandExample{
+					{
+						Description: "Run a Python Loops client with uv.",
+						Command:     "baseten loops exec --dir . --with-uv -- uv run python train.py",
+					},
+					{
+						Description: "Run a client and follow its logs.",
+						Command:     "baseten loops exec --dir . --tail -- python train.py",
+					},
+					{
+						Description: "Run a client on one H100 using a CUDA image with Python.",
+						CommandLines: []string{
+							"baseten loops exec --dir . --accelerator H100",
+							"--image pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel --with-uv",
+							"--env MODE=train --secret HF_TOKEN=hf-token",
+							"-- uv run --python 3.12 --with baseten-loops python train.py",
+						},
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the created job ID.",
+					Command:     "baseten loops exec --dir . --jq '.job_id' -- python train.py",
+				},
+			},
+		},
+		{
 			Name:    "usage",
 			Summary: "Report Loops GPU capacity",
 			Description: "Report Loops GPU capacity, one row per trainer deployment plus a row " +
@@ -390,6 +437,50 @@ type LoopsUsageRow struct {
 	SamplerInstanceType string `json:"sampler_instance_type,omitempty"`
 	SamplerNodeCount    int    `json:"sampler_node_count,omitempty"`
 	SamplerGPUs         int    `json:"sampler_gpus"`
+}
+
+// LoopsExecFlags configures `baseten loops exec`.
+type LoopsExecFlags struct {
+	CommandFlags
+	TrussAuthFlags
+
+	Accelerator string `flag:"accelerator" desc:"GPU accelerator type. Omit for a CPU-only job. Supported hardware is documented at https://docs.baseten.co/training/concepts/basics."`
+	GPUCount    int    `flag:"gpu-count" desc:"Number of GPUs, from 1 to 8. Requires --accelerator."`
+	CPUCount    int    `flag:"cpu-count" desc:"Number of CPUs to request." default:"16"`
+	Memory      string `flag:"memory" desc:"Memory to request, for example 8Gi." default:"64Gi"`
+
+	ProjectName string   `flag:"project-name" desc:"Training project name. Defaults to the selected directory's name."`
+	Image       string   `flag:"image" desc:"Custom Docker base image."`
+	Dir         string   `flag:"dir" desc:"Directory to upload and run the command from. Required; use '.' to select the current directory." required:"true"`
+	ExcludeDir  []string `flag:"exclude-dir" desc:"Top-level directory of the workspace root to leave out of the upload. Repeatable."`
+	ExternalDir []string `flag:"external-dir" desc:"Directory outside --dir to include in the upload. Relative paths resolve from the caller's current directory. Repeatable."`
+
+	Env      []string `flag:"env" desc:"Environment variable for the job as KEY=VALUE. Repeatable."`
+	Secret   []string `flag:"secret" desc:"Environment variable sourced from a Baseten workspace secret as KEY=SECRET_NAME. Repeatable."`
+	NoAPIKey bool     `flag:"no-api-key" desc:"Do not provision BASETEN_API_KEY in the job from a per-team workspace secret."`
+	NoSSH    bool     `flag:"no-ssh" desc:"Do not create an interactive SSH session. The job can run without Training SSH enabled for the workspace."`
+	WithUV   bool     `flag:"with-uv" desc:"Make uv available in the job image. The start command must invoke uv itself."`
+	Team     string   `flag:"team" desc:"Team name that owns the training project."`
+	Tail     bool     `flag:"tail" desc:"Stream job logs to stderr until the job stops or you press Ctrl-C. Cannot be combined with --truss-no-forward-auth."`
+}
+
+// LoopsExecResult is the structured result returned by Truss loops exec.
+type LoopsExecResult struct {
+	JobID   string `json:"job_id"`
+	Project struct {
+		ID   *string `json:"id"`
+		Name *string `json:"name"`
+	} `json:"project"`
+	SSHHostname          *string  `json:"ssh_hostname"`
+	StartCommand         string   `json:"start_command"`
+	EnvironmentVariables []string `json:"environment_variables"`
+	Compute              struct {
+		CPUCount    int     `json:"cpu_count"`
+		Memory      string  `json:"memory"`
+		Accelerator *string `json:"accelerator"`
+		GPUCount    *int    `json:"gpu_count"`
+	} `json:"compute"`
+	Job map[string]any `json:"job"`
 }
 
 // LoopsCheckpointListFlags configures `baseten loops checkpoint list`.

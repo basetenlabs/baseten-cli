@@ -1,7 +1,11 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -11,6 +15,7 @@ import (
 )
 
 func init() {
+	Register("loops exec", commandLoopsExec)
 	Register("loops run create", commandLoopsRunCreate)
 	Register("loops run list", commandLoopsRunList)
 	Register("loops run describe", commandLoopsRunDescribe)
@@ -20,6 +25,202 @@ func init() {
 	Register("loops checkpoint list", commandLoopsCheckpointList)
 	Register("loops checkpoint files", commandLoopsCheckpointFiles)
 	Register("loops checkpoint deploy", commandLoopsCheckpointDeploy)
+}
+
+func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
+	startCommand, err := loopsExecStartCommand(ctx)
+	if err != nil {
+		return err
+	}
+	if flags.Tail && flags.TrussNoForwardAuth {
+		return cmd.NewErrUsagef("--tail cannot be combined with --truss-no-forward-auth; native log streaming must use the same Baseten profile as submission")
+	}
+	if ctx.Command.Flags().Changed("gpu-count") && (flags.GPUCount < 1 || flags.GPUCount > 8) {
+		return cmd.NewErrUsagef("--gpu-count must be between 1 and 8")
+	}
+	if flags.GPUCount != 0 && flags.Accelerator == "" {
+		return cmd.NewErrUsagef("--gpu-count requires --accelerator")
+	}
+	if flags.CPUCount < 1 {
+		return cmd.NewErrUsagef("--cpu-count must be at least 1")
+	}
+	if flags.Memory == "" {
+		return cmd.NewErrUsagef("--memory cannot be empty")
+	}
+	if err := validateLoopsExecEnvironment(flags.Env, flags.Secret); err != nil {
+		return err
+	}
+
+	if flags.Dir == "" {
+		return cmd.NewErrUsagef("--dir is required; select the directory to upload explicitly")
+	}
+	dir, err := filepath.Abs(flags.Dir)
+	if err != nil {
+		return cmd.NewErrUsagef("resolve --dir: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return cmd.NewErrUsagef("--dir must name an existing directory")
+	}
+	args := []string{"loops", "exec", "--output-format", "json"}
+	args = trussArg(args, "accelerator", flags.Accelerator)
+	args = trussIntArg(args, "gpu-count", flags.GPUCount)
+	args = trussIntArg(args, "cpu-count", flags.CPUCount)
+	args = trussArg(args, "memory", flags.Memory)
+	args = trussArg(args, "project-name", flags.ProjectName)
+	args = trussArg(args, "image", flags.Image)
+	for _, dir := range flags.ExcludeDir {
+		args = trussArg(args, "exclude-dir", dir)
+	}
+	for _, dir := range flags.ExternalDir {
+		dir, err := filepath.Abs(dir)
+		if err != nil {
+			return cmd.NewErrUsagef("resolve --external-dir: %v", err)
+		}
+		args = trussArg(args, "external-dir", dir)
+	}
+	for _, entry := range flags.Env {
+		args = trussArg(args, "env", entry)
+	}
+	for _, secret := range flags.Secret {
+		args = trussArg(args, "secret", secret)
+	}
+	args = trussBoolArg(args, "no-api-key", flags.NoAPIKey)
+	args = trussBoolArg(args, "no-ssh", flags.NoSSH)
+	args = trussBoolArg(args, "with-uv", flags.WithUV)
+	args = trussArg(args, "team", flags.Team)
+	if !ctx.IsInteractive() {
+		args = append(args, "--non-interactive")
+	}
+	args = append(args, "--")
+	args = append(args, startCommand...)
+
+	c, err := trussCommand(ctx, trussInvocation{
+		Flags:       flags.TrussFlags,
+		Args:        args,
+		ForwardAuth: !flags.TrussNoForwardAuth,
+	})
+	if err != nil {
+		return err
+	}
+	// Resolve an explicitly relative executable before changing the child cwd.
+	if !filepath.IsAbs(c.Path) && strings.ContainsAny(c.Path, `/\`) {
+		c.Path, err = filepath.Abs(c.Path)
+		if err != nil {
+			return err
+		}
+	}
+	c.Dir = dir
+	var stdout bytes.Buffer
+	c.Stdout = &stdout
+	if err := ctx.Execer().Exec(c); err != nil {
+		if ctx.Err() != nil {
+			// Let the framework normalize interruption before writing its JSON error.
+			return err
+		}
+		if ctx.JSON {
+			// Unlike passthrough commands, we captured the child's error payload.
+			// Emit it without applying the success-only jq filter.
+			if json.Valid(stdout.Bytes()) {
+				ctx.encodeJSON(json.RawMessage(stdout.Bytes()))
+			} else {
+				// Truss can mix a printed API error with its JSON envelope.
+				// Preserve those diagnostics without corrupting our stdout JSON.
+				if output := strings.TrimSpace(stdout.String()); output != "" {
+					ctx.Logf("%s\n", output)
+				}
+				ctx.writeJSONError(normalizeError(err), nil)
+			}
+			ctx.SuppressJSONError()
+		}
+		return err
+	}
+	var result cmd.LoopsExecResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return fmt.Errorf("invalid Truss loops exec JSON response; the job may have been created, check jobs before retrying: %w", err)
+	}
+	if result.JobID == "" {
+		return fmt.Errorf("Truss loops exec response has no job_id; check jobs before retrying")
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(result)
+	} else {
+		ctx.Outputf("Created job %s\n", result.JobID)
+		if result.SSHHostname != nil && *result.SSHHostname != "" {
+			ctx.Outputf("SSH: %s\n", *result.SSHHostname)
+		}
+		ctx.Outputf("Follow logs: baseten train job logs --job-id %s --tail\n", result.JobID)
+	}
+	if !flags.Tail {
+		return nil
+	}
+	if ctx.jqErr != nil {
+		return ctx.jqErr
+	}
+	// Preserve the submitted job's JSON on stdout if tailing fails.
+	ctx.SuppressJSONError()
+	originalStdout, originalJSON, originalJQQuery := ctx.Stdout, ctx.JSON, ctx.JQQuery
+	defer func() {
+		ctx.Stdout, ctx.JSON, ctx.JQQuery = originalStdout, originalJSON, originalJQQuery
+	}()
+	ctx.Stdout, ctx.JSON, ctx.JQQuery = ctx.Stderr, false, nil
+	status, err := runTrainJobLogs(ctx, &cmd.TrainJobLogsFlags{
+		TrainJobRefFlags: cmd.TrainJobRefFlags{JobID: result.JobID},
+		TrainLogFlags:    cmd.TrainLogFlags{Tail: true, PageSize: maxLogPageSize},
+	}, 10*time.Second)
+	if err != nil {
+		// Print before returning: the framework replaces interrupted errors with "Canceled".
+		ctx.Logf("Job %s was created. Resume logs with 'baseten train job logs --job-id %s --tail'.\n", result.JobID, result.JobID)
+		return fmt.Errorf("tail training job %s: %w", result.JobID, err)
+	}
+	if status == "TRAINING_JOB_FAILED" || status == "TRAINING_JOB_DEPLOY_FAILED" {
+		return fmt.Errorf("training job %s %s", result.JobID, trainJobStatusFromAPI(status))
+	}
+	return nil
+}
+
+// loopsExecStartCommand requires a delimiter even when the command has no
+// flags. That keeps wrapper options and the command being run unambiguous, and
+// lets pflag preserve every token after `--` without interpreting it.
+func loopsExecStartCommand(ctx *CommandContext) ([]string, error) {
+	dash := ctx.Command.ArgsLenAtDash()
+	if dash == -1 {
+		return nil, cmd.NewErrUsagef("start command must follow '--', for example: baseten loops exec --dir . -- python train.py")
+	}
+	if dash > 0 {
+		return nil, cmd.NewErrUsagef("unexpected arguments %v before '--'; wrapper options must be flags", ctx.Args[:dash])
+	}
+	if dash == len(ctx.Args) {
+		return nil, cmd.NewErrUsagef("no start command given after '--'")
+	}
+	return ctx.Args[dash:], nil
+}
+
+// validateLoopsExecEnvironment mirrors Truss's environment parsing so malformed
+// input fails as a Baseten CLI usage error before starting a child process.
+func validateLoopsExecEnvironment(env, secrets []string) error {
+	seen := map[string]struct{}{}
+	for _, group := range []struct {
+		flag         string
+		expected     string
+		entries      []string
+		requireValue bool
+	}{
+		{flag: "--env", expected: "KEY=VALUE", entries: env},
+		{flag: "--secret", expected: "KEY=SECRET_NAME", entries: secrets, requireValue: true},
+	} {
+		for _, entry := range group.entries {
+			key, value, ok := strings.Cut(entry, "=")
+			if !ok || key == "" || (group.requireValue && value == "") {
+				return cmd.NewErrUsagef("invalid %s value; expected %s", group.flag, group.expected)
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return cmd.NewErrUsagef("environment variable %q is set more than once by --env / --secret", key)
+			}
+			seen[key] = struct{}{}
+		}
+	}
+	return nil
 }
 
 // loopsTrainerLiveStatuses are the trainer deployment statuses where the trainer

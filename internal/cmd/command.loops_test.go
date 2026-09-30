@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,6 +15,70 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 )
 
+const loopsExecJSON = `{"job_id":"job-123","project":{"id":"proj-1","name":"client"},"ssh_hostname":"training-job-job-123-0.ssh.baseten.co","start_command":"python client.py","environment_variables":["BASETEN_API_KEY"],"compute":{"cpu_count":16,"memory":"64Gi","accelerator":null,"gpu_count":null},"job":{"id":"job-123"}}`
+
+func Test_Loops_Exec_StructuredOutput(t *testing.T) {
+	for _, format := range []string{"json", "jsonl"} {
+		t.Run(format, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = loopsExecJSON
+			h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--output", format, "--", "python", "client.py"))
+			h.Require.JSONEq(loopsExecJSON, h.Stdout.String())
+			h.Require.Contains(strings.Join(fake.only(t).Args, " "), "--output-format json")
+		})
+	}
+}
+
+func Test_Loops_Exec_ExplicitDirectory(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+	dir := t.TempDir()
+	external, err := filepath.Abs("../shared")
+	h.Require.NoError(err)
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", dir, "--external-dir", "../shared", "--jq", ".job_id", "--", "python", "client.py"))
+	h.Require.Equal(dir, fake.only(t).Dir)
+	h.Require.Contains(fake.only(t).Args, external)
+	h.Require.Equal("\"job-123\"\n", h.Stdout.String())
+}
+
+func Test_Loops_Exec_RejectsInvalidDirectory(t *testing.T) {
+	for _, dir := range []string{"", filepath.Join(t.TempDir(), "missing"), "command.loops.go"} {
+		t.Run(dir, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			h.Require.Error(h.Execute("loops", "exec", "--dir", dir, "--", "python", "client.py"))
+			h.Require.Contains(h.Stderr.String(), "--dir")
+			h.Require.Empty(fake.calls)
+		})
+	}
+}
+
+func Test_Loops_Exec_RelativeDirectory(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+	want, err := os.Getwd()
+	h.Require.NoError(err)
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", ".", "--", "python", "client.py"))
+	h.Require.Equal(want, fake.only(t).Dir)
+}
+
+func Test_Loops_Exec_RequiresDirectory(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	h.Require.Error(h.Execute("loops", "exec", "--", "python", "client.py"))
+	h.Require.Contains(h.Stderr.String(), "dir")
+	h.Require.Empty(fake.calls)
+}
+
+func Test_Loops_Exec_RejectsMalformedResult(t *testing.T) {
+	for _, output := range []string{"not JSON", "{}", "null", loopsExecJSON + "{}"} {
+		t.Run(output, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = output
+			h.Require.ErrorContains(h.Execute("loops", "exec", "--dir", t.TempDir(), "--", "python", "client.py"), "Truss")
+			h.Require.NotContains(h.Stdout.String(), "Created")
+		})
+	}
+}
+
 const (
 	loopsRunPath         = "/v1/loops/runs/r-1"
 	loopsTrainerLogsPath = "/v1/loops/deployments/dep-1/logs"
@@ -20,6 +86,548 @@ const (
 	loopsSamplerLogsPath = "/v1/models/model-1/deployments/sdep-1/logs"
 	loopsSamplerDepPath  = "/v1/models/model-1/deployments/sdep-1"
 )
+
+func Test_Loops_Exec_ForwardsFlagsCommandAndAuthToTruss(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+	dir := t.TempDir()
+	external, err := filepath.Abs("../shared")
+	h.Require.NoError(err)
+
+	h.Require.NoError(h.Execute(
+		"loops", "exec",
+		"--accelerator", "H100",
+		"--gpu-count", "2",
+		"--cpu-count", "32",
+		"--memory", "128Gi",
+		"--project-name", "orchestrator",
+		"--image", "example.com/loops:latest",
+		"--dir", dir,
+		"--exclude-dir", ".git",
+		"--exclude-dir", "artifacts",
+		"--external-dir", "../shared",
+		"--env", "MODE=train",
+		"--env", "EMPTY=",
+		"--env", "LIST=a,b",
+		"--secret", "HF_TOKEN=hf-token",
+		"--no-api-key",
+		"--with-uv",
+		"--team", "research",
+		"--", "uv", "run", "python", "train.py", "--truss-version", "inside-command",
+	))
+
+	c := fake.only(t)
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "loops", "exec", "--output-format", "json",
+		"--accelerator", "H100",
+		"--gpu-count", "2",
+		"--cpu-count", "32",
+		"--memory", "128Gi",
+		"--project-name", "orchestrator",
+		"--image", "example.com/loops:latest",
+		"--exclude-dir", ".git",
+		"--exclude-dir", "artifacts",
+		"--external-dir", external,
+		"--env", "MODE=train",
+		"--env", "EMPTY=",
+		"--env", "LIST=a,b",
+		"--secret", "HF_TOKEN=hf-token",
+		"--no-api-key",
+		"--with-uv",
+		"--team", "research",
+		"--non-interactive",
+		"--", "uv", "run", "python", "train.py", "--truss-version", "inside-command",
+	}, c.Args)
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_API_KEY=test-key")
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_REMOTE_URL=http://127.0.0.1:1")
+}
+
+func Test_Loops_Exec_DefaultsAndCommandFlagsAfterDelimiter(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+
+	h.Require.NoError(h.Execute(
+		"loops", "exec", "--dir", t.TempDir(), "--truss-version", "0.18.31", "--", "python", "client.py", "--tail", "--truss-executable", "client-value",
+	))
+
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@0.18.31", "loops", "exec", "--output-format", "json",
+		"--cpu-count", "16", "--memory", "64Gi", "--non-interactive",
+		"--", "python", "client.py", "--tail", "--truss-executable", "client-value",
+	}, fake.only(t).Args)
+}
+
+func Test_Loops_Exec_ProfileSelectsForwardedAuth(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile("research", "https://research.example.com", "research-key", true, nil))
+
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--profile", "research", "--", "python", "client.py"))
+
+	c := fake.only(t)
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_API_KEY=research-key")
+	h.Require.Contains(c.Env, "BASETEN_TRUSS_AUTH_REMOTE_URL=https://research.example.com")
+}
+
+func Test_Loops_Exec_NoForwardAuth(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--truss-no-forward-auth", "--", "python", "client.py"))
+
+	h.Require.NotContains(strings.Join(fake.only(t).Env, " "), "BASETEN_TRUSS_AUTH_")
+}
+
+func Test_Loops_Exec_JSONReservesStdout(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--output", "json", "--", "python", "client.py"))
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	h.Require.Equal("job-123", result["job_id"])
+	h.Require.NotContains(h.Stderr.String(), "job-123")
+}
+
+func Test_Loops_Exec_TextFormatsTrussResult(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = loopsExecJSON
+
+	h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--", "python", "client.py"))
+
+	h.Require.Equal("Created job job-123\nSSH: training-job-job-123-0.ssh.baseten.co\nFollow logs: baseten train job logs --job-id job-123 --tail\n", h.Stdout.String())
+}
+
+func Test_Loops_Exec_NoSSH(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = strings.Replace(loopsExecJSON, `"ssh_hostname":"training-job-job-123-0.ssh.baseten.co"`, `"ssh_hostname":null`, 1)
+			h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--no-ssh", "--output", format, "--", "python", "client.py"))
+			h.Require.Contains(fake.only(t).Args, "--no-ssh")
+			if format == "json" {
+				h.Require.JSONEq(fake.stdout, h.Stdout.String())
+			} else {
+				h.Require.Equal("Created job job-123\nFollow logs: baseten train job logs --job-id job-123 --tail\n", h.Stdout.String())
+			}
+		})
+	}
+}
+
+func Test_Loops_Exec_PropagatesTrussFailure(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.exitCode = 7
+
+	h.Require.Error(h.Execute("loops", "exec", "--dir", t.TempDir(), "--", "python", "client.py"))
+	h.Require.Equal(7, h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), "truss: bad arguments")
+}
+
+func Test_Loops_Exec_PreservesTrussJSONError(t *testing.T) {
+	for _, format := range []string{"json", "jsonl", "jq"} {
+		t.Run(format, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.exitCode = 7
+			fake.stdout = `{"error":{"message":"checkpoint unavailable","status_code":403}}`
+			args := []string{"loops", "exec", "--dir", t.TempDir()}
+			if format == "jq" {
+				args = append(args, "--jq", ".job_id")
+			} else {
+				args = append(args, "--output", format)
+			}
+			h.Require.Error(h.Execute(append(args, "--", "python", "client.py")...))
+			h.Require.Equal(7, h.ExitCode)
+			h.Require.JSONEq(`{"error":{"message":"checkpoint unavailable","status_code":403}}`, h.Stdout.String())
+			h.Require.Contains(h.Stderr.String(), "truss: bad arguments")
+		})
+	}
+}
+
+func Test_Loops_Exec_SubprocessFailureWithoutJSON(t *testing.T) {
+	for _, output := range []string{"", "not JSON"} {
+		t.Run(output, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.exitCode = 7
+			fake.stdout = output
+			h.Require.Error(h.Execute("loops", "exec", "--dir", t.TempDir(), "--output", "json", "--", "python", "client.py"))
+			h.Require.Equal(7, h.ExitCode)
+			var body struct {
+				Error struct {
+					Message  string `json:"message"`
+					ExitCode int    `json:"exit_code"`
+				} `json:"error"`
+			}
+			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &body))
+			h.Require.Equal(7, body.Error.ExitCode)
+			h.Require.Contains(body.Error.Message, "truss: bad arguments")
+		})
+	}
+}
+
+func Test_Loops_Exec_SubprocessFailurePreservesMixedOutput(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.exitCode = 1
+	fake.stdout = "Client error: SSH sessions are not enabled\n" +
+		`{"error":{"status_code":400,"response_body":{"message":"SSH sessions are not enabled"}}}`
+
+	h.Require.Error(h.Execute("loops", "exec", "--dir", t.TempDir(), "--output", "json", "--", "python", "client.py"))
+	h.Require.Equal(1, h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), fake.stdout)
+	h.Require.NotContains(h.Stdout.String(), "SSH sessions")
+	var body struct {
+		Error struct {
+			Type     string `json:"type"`
+			ExitCode int    `json:"exit_code"`
+		} `json:"error"`
+	}
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &body), "stdout must contain a single JSON error")
+	h.Require.Equal("ErrSubprocess", body.Error.Type)
+	h.Require.Equal(1, body.Error.ExitCode)
+}
+
+type cancelingTrussExecer struct {
+	*trussFakeExecer
+	cancel context.CancelFunc
+}
+
+func (e *cancelingTrussExecer) Exec(c *exec.Cmd) error {
+	err := e.trussFakeExecer.Exec(c)
+	e.cancel()
+	return err
+}
+
+func Test_Loops_Exec_SubmissionInterruptedJSON(t *testing.T) {
+	for _, output := range []string{"", "partial JSON", `{"error":{"message":"child interrupted"}}`} {
+		for _, format := range []string{"json", "jsonl", "jq"} {
+			t.Run(output+"/"+format, func(t *testing.T) {
+				h, fake := newTrussHarness(t)
+				fake.stdout, fake.exitCode = output, -1
+				ctx, cancel := context.WithCancel(h.Context)
+				defer cancel()
+				h.Context = cmd.WithExecer(ctx, &cancelingTrussExecer{fake, cancel})
+				args := []string{"loops", "exec", "--dir", t.TempDir()}
+				if format == "jq" {
+					args = append(args, "--jq", ".job_id")
+				} else {
+					args = append(args, "--output", format)
+				}
+				h.Require.Error(h.Execute(append(args, "--", "python", "client.py")...))
+				h.Require.Equal(130, h.ExitCode)
+				var body struct {
+					Error struct {
+						Type     string `json:"type"`
+						ExitCode int    `json:"exit_code"`
+					} `json:"error"`
+				}
+				h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &body))
+				h.Require.Equal("ErrInterrupted", body.Error.Type)
+				h.Require.Equal(h.ExitCode, body.Error.ExitCode)
+			})
+		}
+	}
+}
+
+func Test_Loops_Exec_HelpDocumentsContract(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	h.Require.NoError(h.Execute("loops", "exec", "--help"))
+
+	h.Require.Empty(fake.calls)
+	out := h.Stdout.String()
+	h.Require.Contains(out, "-- START_COMMAND...")
+	h.Require.Contains(out, "--accelerator")
+	h.Require.Contains(out, "--dir")
+	h.Require.Contains(out, "--no-api-key")
+	h.Require.Contains(out, "per-team workspace secret")
+	h.Require.Contains(strings.Join(strings.Fields(out), " "), "baseten train job logs --job-id <id> --tail")
+}
+
+func Test_Loops_Exec_RequiresDelimitedCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing delimiter", args: []string{"python", "client.py"}, want: "start command must follow '--'"},
+		{name: "empty command", args: []string{"--"}, want: "no start command given after '--'"},
+		{name: "positional before delimiter", args: []string{"python", "--", "client.py"}, want: "unexpected arguments [python] before '--'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			err := h.Execute(append([]string{"loops", "exec", "--dir", t.TempDir()}, tt.args...)...)
+			h.Require.ErrorContains(err, tt.want)
+			h.Require.Empty(fake.calls)
+		})
+	}
+}
+
+func Test_Loops_Exec_TailRejectsUnforwardedAuth(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--truss-no-forward-auth", "--", "python", "client.py")
+
+	h.Require.ErrorContains(err, "--tail cannot be combined with --truss-no-forward-auth")
+	h.Require.Empty(fake.calls)
+}
+
+func Test_Loops_Exec_TailStreamsNatively(t *testing.T) {
+	for _, format := range []string{"text", "json", "jsonl", "none", "jq"} {
+		t.Run(format, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			now := time.Now()
+			h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
+			h.Context = cmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+				now = now.Add(d)
+				return nil
+			})
+			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
+			m := h.MockManagementAPI()
+			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+			m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse(
+				map[string]any{"timestamp": "1", "message": "training step", "replica": nil},
+			))
+			m.SetRoute("GET", trainJobPath, 200, map[string]any{
+				"training_job": trainJobFixture("job-1", "TRAINING_JOB_COMPLETED"),
+			})
+			args := []string{"loops", "exec", "--dir", t.TempDir(), "--tail"}
+			if format == "jq" {
+				args = append(args, "--jq", ".job_id")
+			} else {
+				args = append(args, "--output", format)
+			}
+			h.Require.NoError(h.Execute(append(args, "--", "python", "client.py")...))
+			h.Require.NotContains(fake.only(t).Args, "--tail")
+			h.Require.Contains(h.Stderr.String(), "training step")
+			h.Require.Contains(h.Stderr.String(), "completed")
+			h.Require.NotContains(h.Stdout.String(), "training step")
+			switch format {
+			case "json", "jsonl":
+				h.Require.JSONEq(fake.stdout, h.Stdout.String())
+			case "none":
+				h.Require.Empty(h.Stdout.String())
+			case "jq":
+				h.Require.Equal("\"job-1\"\n", h.Stdout.String())
+			default:
+				h.Require.Contains(h.Stdout.String(), "Created job job-1")
+			}
+		})
+	}
+}
+
+func Test_Loops_Exec_TailReportsJobFailure(t *testing.T) {
+	for _, tc := range []struct {
+		status   string
+		exitCode int
+	}{
+		{"TRAINING_JOB_FAILED", 1},
+		{"TRAINING_JOB_DEPLOY_FAILED", 1},
+		{"TRAINING_JOB_STOPPED", 0},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			now := time.Now()
+			h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
+			h.Context = cmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+				now = now.Add(d)
+				return nil
+			})
+			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
+			m := h.MockManagementAPI()
+			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+			m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse(
+				map[string]any{"timestamp": "1", "message": "client output", "replica": nil},
+			))
+			m.SetRoute("GET", trainJobPath, 200, map[string]any{
+				"training_job": trainJobFixture("job-1", tc.status),
+			})
+
+			err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--output", "json", "--", "python", "client.py")
+			if tc.exitCode != 0 {
+				h.Require.ErrorContains(err, "job-1")
+				h.Require.ErrorContains(err, "failed")
+			} else {
+				h.Require.NoError(err)
+			}
+			h.Require.Equal(tc.exitCode, h.ExitCode)
+			h.Require.JSONEq(fake.stdout, h.Stdout.String())
+			h.Require.Contains(h.Stderr.String(), "client output")
+			h.Require.NotContains(h.Stderr.String(), "Resume logs")
+			statusCalls := 0
+			for _, call := range m.Calls() {
+				if call.Method == "GET" && call.Path == trainJobPath {
+					statusCalls++
+				}
+			}
+			h.Require.Equal(1, statusCalls)
+		})
+	}
+}
+
+func Test_Loops_Exec_TailDrainsAfterTerminalStatus(t *testing.T) {
+	for _, status := range []string{"TRAINING_JOB_COMPLETED", "TRAINING_JOB_FAILED"} {
+		t.Run(status, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
+			m := h.MockManagementAPI()
+			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+			start := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+			now := start
+			logCalls, statusCalls := 0, 0
+			m.SetRouteFunc("GET", trainJobPath+"/logs", func(w http.ResponseWriter, _ *http.Request) {
+				logCalls++
+				logs := []map[string]any{{"timestamp": strconv.FormatInt(start.UnixNano(), 10), "message": "client started"}}
+				if now.Sub(start) >= 12*time.Second {
+					// The final line arrives at the end of the grace period. New
+					// lines must not extend the deadline or be emitted twice.
+					logs = append([]map[string]any{{"timestamp": strconv.FormatInt(start.Add(time.Second).UnixNano(), 10), "message": "final client details"}}, logs...)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(logsResponse(logs...))
+			})
+			m.SetRouteFunc("GET", trainJobPath, func(w http.ResponseWriter, _ *http.Request) {
+				statusCalls++
+				current := "TRAINING_JOB_RUNNING"
+				if now.After(start) {
+					current = status
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"training_job": trainJobFixture("job-1", current)})
+			})
+			h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
+			h.Context = cmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+				now = now.Add(d)
+				if now.Sub(start) > 12*time.Second {
+					return context.DeadlineExceeded
+				}
+				return nil
+			})
+			err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--output", "json", "--", "python", "client.py")
+			if status == "TRAINING_JOB_FAILED" {
+				h.Require.ErrorContains(err, "job-1 failed")
+				h.Require.Equal(1, h.ExitCode)
+			} else {
+				h.Require.NoError(err)
+			}
+			h.Require.JSONEq(fake.stdout, h.Stdout.String())
+			h.Require.Equal(1, strings.Count(h.Stderr.String(), "client started"))
+			h.Require.Equal(1, strings.Count(h.Stderr.String(), "final client details"))
+			h.Require.Equal(12*time.Second, now.Sub(start))
+			h.Require.Equal(7, logCalls)
+			h.Require.Equal(2, statusCalls, "the first terminal status is sufficient")
+		})
+	}
+}
+
+func Test_Loops_Exec_TailStopsWithoutLogs(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
+	m := h.MockManagementAPI()
+	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+	m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse())
+	start := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	now := start
+	m.SetRouteFunc("GET", trainJobPath, func(w http.ResponseWriter, _ *http.Request) {
+		status := "TRAINING_JOB_RUNNING"
+		if now.After(start) {
+			status = "TRAINING_JOB_DEPLOY_FAILED"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"training_job": trainJobFixture("job-1", status)})
+	})
+	h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
+	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+		now = now.Add(d)
+		if now.Sub(start) > 12*time.Second {
+			return context.DeadlineExceeded
+		}
+		return nil
+	})
+	h.Require.ErrorContains(h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--output", "json", "--", "python", "client.py"), "job-1 deploy-failed")
+	h.Require.Equal(1, h.ExitCode)
+	h.Require.JSONEq(fake.stdout, h.Stdout.String())
+	h.Require.Equal(12*time.Second, now.Sub(start))
+	h.Require.NotContains(h.Stderr.String(), "Resume logs")
+}
+
+func Test_Loops_Exec_TailFailurePreservesCreatedJob(t *testing.T) {
+	for _, failure := range []string{"forbidden", "interrupted", "interrupted during terminal drain"} {
+		t.Run(failure, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
+			m := h.MockManagementAPI()
+			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+			if strings.HasPrefix(failure, "interrupted") {
+				status := "TRAINING_JOB_RUNNING"
+				if failure == "interrupted during terminal drain" {
+					status = "TRAINING_JOB_FAILED"
+				}
+				m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse())
+				m.SetRoute("GET", trainJobPath, 200, map[string]any{
+					"training_job": trainJobFixture("job-1", status),
+				})
+				watchContext, cancel := context.WithCancel(h.Context)
+				defer cancel()
+				h.Context = cmd.WithSleep(watchContext, func(_ context.Context, _ time.Duration) error {
+					cancel()
+					return watchContext.Err()
+				})
+			} else {
+				m.SetRoute("GET", trainJobPath+"/logs", 403, map[string]any{"error": "forbidden"})
+			}
+			err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--output", "json", "--", "python", "client.py")
+			h.Require.Error(err)
+			if strings.HasPrefix(failure, "interrupted") {
+				h.Require.Equal(130, h.ExitCode)
+			}
+			h.Require.JSONEq(fake.stdout, h.Stdout.String())
+			h.Require.Contains(h.Stderr.String(), "job-1 was created")
+			h.Require.Contains(h.Stderr.String(), "baseten train job logs --job-id job-1 --tail")
+			for _, call := range m.Calls() {
+				h.Require.NotContains(call.Path, "stop")
+			}
+		})
+	}
+}
+
+func Test_Loops_Exec_RejectsInvalidInputs(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "gpu count without accelerator", args: []string{"--gpu-count", "2"}, want: "--gpu-count requires --accelerator"},
+		{name: "gpu count zero", args: []string{"--accelerator", "H100", "--gpu-count", "0"}, want: "--gpu-count must be between 1 and 8"},
+		{name: "gpu count too high", args: []string{"--accelerator", "H100", "--gpu-count", "9"}, want: "--gpu-count must be between 1 and 8"},
+		{name: "cpu count too low", args: []string{"--cpu-count=0"}, want: "--cpu-count must be at least 1"},
+		{name: "empty memory", args: []string{"--memory="}, want: "--memory cannot be empty"},
+		{name: "invalid env", args: []string{"--env", "BROKEN"}, want: "expected KEY=VALUE"},
+		{name: "invalid secret", args: []string{"--secret", "TOKEN="}, want: "expected KEY=SECRET_NAME"},
+		{name: "duplicate environment", args: []string{"--env", "TOKEN=value", "--secret", "TOKEN=token-secret"}, want: "environment variable \"TOKEN\" is set more than once"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			args := append([]string{"loops", "exec", "--dir", t.TempDir()}, tt.args...)
+			args = append(args, "--", "python", "client.py")
+			err := h.Execute(args...)
+			h.Require.ErrorContains(err, tt.want)
+			h.Require.Empty(fake.calls)
+		})
+	}
+}
+
+func Test_Loops_Exec_InvalidEnvironmentDoesNotEchoValue(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--env", "=top-secret-value", "--", "python", "client.py")
+
+	h.Require.ErrorContains(err, "invalid --env value; expected KEY=VALUE")
+	h.Require.NotContains(h.Stderr.String(), "top-secret-value")
+	h.Require.Empty(fake.calls)
+}
 
 // loopsSamplerFixture is a sampler payload. instanceType "" omits the instance
 // type entirely, which is how the backend reports a sampler that never ran.
