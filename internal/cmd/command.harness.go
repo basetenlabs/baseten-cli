@@ -242,8 +242,8 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	for _, choice := range selected {
 		if choice.Name() == harness.Codex {
 			dir := filepath.Dir(choice.detection.Path)
-			logoutCodex(ctx, dir, f.Yes)
-			restartCodexDaemon(ctx, dir, f.Yes)
+			harnessLogoutCodex(ctx, dir, f.Yes)
+			harnessRestartCodexDaemon(ctx, dir, f.Yes)
 		}
 	}
 	if ctx.JSON {
@@ -256,7 +256,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	return nil
 }
 
-func logoutCodex(ctx *CommandContext, dir string, yes bool) {
+func harnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
 	if !harness.CodexLoggedIn(ctx, ctx.Execer(), dir) {
 		return
 	}
@@ -283,9 +283,9 @@ func logoutCodex(ctx *CommandContext, dir string, yes bool) {
 	ctx.LogLine("Signed codex out of OpenAI/ChatGPT and cleared the cached workspace policy.")
 }
 
-const codexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done to pick up the new models."
+const harnessCodexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done to pick up the new models."
 
-func restartCodexDaemon(ctx *CommandContext, dir string, yes bool) {
+func harnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) {
 	socket := harness.CodexDaemonSocket(ctx, ctx.Execer(), dir)
 	if socket == "" {
 		return
@@ -299,14 +299,14 @@ func restartCodexDaemon(ctx *CommandContext, dir string, yes bool) {
 	}
 	if (err != nil || clients > 0) && !yes {
 		if ctx.ConfirmYesNo("Restart the codex app-server daemon now?") != nil {
-			ctx.LogLine(codexDaemonRestartHint)
+			ctx.LogLine(harnessCodexDaemonRestartHint)
 			return
 		}
 	}
 	pid, err := harness.RestartCodexDaemon(ctx, ctx.Execer(), dir)
 	if err != nil {
 		ctx.Logf("warning: could not restart the codex app-server daemon: %v\n", err)
-		ctx.LogLine(codexDaemonRestartHint)
+		ctx.LogLine(harnessCodexDaemonRestartHint)
 		return
 	}
 	ctx.Logf("Restarted codex app-server daemon (pid %d) so the new model catalog takes effect.\n", pid)
@@ -448,7 +448,7 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	}
 	for _, choice := range selected {
 		if choice.Name() == harness.Codex && slices.Contains(names, harness.Codex) {
-			restartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
+			harnessRestartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
 			ctx.LogLine("Teardown removed the ChatGPT login restriction. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch.")
 		}
 	}
