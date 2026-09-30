@@ -51,10 +51,7 @@ var commandVolume = Command{
 					"EXPIRES, UPDATED. An expiring tag is annotated with its expiry. Prints what was empty " +
 					"to stderr when a listing has no rows.",
 				JSONDescription: "An object with version_ref and items, one entry per row, when the ref " +
-					"names a volume or a version. The two inventory shapes follow. " +
-					"With --output jsonl, emits one object per item: {namespace: name} for namespaces, " +
-					"a volume object for volumes, or an entry with version_ref for files. Empty lists " +
-					"emit no lines. With --output jsonl, --jq applies to each item.",
+					"names a volume or a version. The two inventory shapes follow.",
 				JSONAlternatives: []CommandOutputAlternative{
 					JSONAlternativeFor[VolumeNamespaceList]("command is given no ref"),
 					JSONAlternativeFor[VolumeList]("ref names a namespace"),
@@ -395,11 +392,6 @@ type VolumeVersionsFlags struct {
 type VolumeRestoreFlags struct {
 	CommandFlags
 	VolumeRefFlags
-}
-
-// VolumeNamespace is one namespace record under --output jsonl.
-type VolumeNamespace struct {
-	Namespace string `json:"namespace"`
 }
 
 // VolumeNamespaceList is the JSON output of `baseten volume ls` with no ref:
