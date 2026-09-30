@@ -186,6 +186,9 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 			h.Require.Contains(string(settings), "secret-team-a")
 			h.Require.Contains(string(settings), "acme/primary")
 			h.Require.Equal("dark", readHarnessSettings(t, name, path)["theme"])
+			if name == "codex" {
+				h.Require.Equal("api", readHarnessSettings(t, name, path)["forced_login_method"])
+			}
 
 			h.Require.NoError(h.Execute(append(args, "--yes")...))
 			var rerun public.HarnessPlanList
@@ -209,6 +212,9 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 			h.Require.Equal("configured", statuses.Items[0].State)
 			h.Require.Equal("acme/primary", statuses.Items[0].DefaultRoute)
 			h.Require.Equal([]public.HarnessRoute{{Name: "acme/primary", DisplayName: "Primary"}}, statuses.Items[0].Routes)
+			if name == "codex" {
+				h.Require.Contains(statuses.Items[0].ManagedSettings, "forced_login_method")
+			}
 			h.Require.NotContains(h.Stdout.String(), "secret-team-a")
 
 			h.Require.NoError(h.Execute("harness", "teardown", "--harness", name, "--config-dir", dir, "--dry-run"))
@@ -890,7 +896,7 @@ func Test_Harness_Teardown_RestartsCodexDaemon(t *testing.T) {
 		t.Fatal(err)
 	}
 	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
-	signBackIn := "Codex was signed out of OpenAI/ChatGPT during setup. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch."
+	signBackIn := "Teardown removed the ChatGPT login restriction. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch."
 	for name, tc := range map[string]struct {
 		execer   *codexDaemonHarnessExecer
 		restarts int

@@ -282,6 +282,7 @@ func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 			d := load(t, path)
 			d["model"] = "other/user-model"
 			if h.Name() == Codex {
+				require.Equal(t, "api", d["forced_login_method"])
 				d["model_provider"] = "other"
 				d["review_model"] = "other/reviewer"
 				d["model_catalog_json"] = "/user/custom-catalog.json"
@@ -301,6 +302,7 @@ func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 				providers = "model_providers"
 			}
 			require.NoError(t, put(d, []string{providers, providerID}, value{}))
+			delete(d, "forced_login_method")
 			require.Equal(t, d, load(t, path))
 		})
 	}

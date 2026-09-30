@@ -261,7 +261,7 @@ func logoutCodex(ctx *CommandContext, dir string, yes bool) {
 		return
 	}
 	hint := "Run `codex logout` and delete `" + harnessDisplayPath(harness.CodexCloudConfigPath(dir)) + "` to stop the workspace default model from overriding the Baseten route."
-	ctx.LogLine("Signing codex out of OpenAI/ChatGPT: codex only needs the Baseten route, and a ChatGPT login lets your workspace override the model for new threads. Run `codex login` to sign back in.")
+	ctx.LogLine("Signing codex out of OpenAI/ChatGPT and disabling ChatGPT login while the Baseten harness is configured: codex only needs the Baseten route, and a ChatGPT login lets your workspace override the model for new threads.")
 	if !yes && ctx.ConfirmYesNo("Sign codex out of OpenAI/ChatGPT now?") != nil {
 		ctx.LogLine(hint)
 		return
@@ -449,7 +449,7 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	for _, choice := range selected {
 		if choice.Name() == harness.Codex && slices.Contains(names, harness.Codex) {
 			restartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
-			ctx.LogLine("Codex was signed out of OpenAI/ChatGPT during setup. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch.")
+			ctx.LogLine("Teardown removed the ChatGPT login restriction. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch.")
 		}
 	}
 	if ctx.JSON {

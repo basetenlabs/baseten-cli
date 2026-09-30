@@ -230,6 +230,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 		desired([]string{"model_provider"}, providerID),
 		desired([]string{"model_catalog_json"}, catalogPath(path)),
 		desired([]string{"review_model"}, s.Primary),
+		desired([]string{"forced_login_method"}, "api"),
 		desired([]string{"model_providers", providerID}, map[string]any{
 			"name":                      "Baseten",
 			"base_url":                  strings.TrimRight(endpoint, "/") + "/v1",
@@ -292,6 +293,9 @@ func codexTeardownPaths(data map[string]any, catalog string) [][]string {
 	}
 	if data["model_catalog_json"] == catalog {
 		paths = append(paths, []string{"model_catalog_json"})
+	}
+	if data["forced_login_method"] == "api" {
+		paths = append(paths, []string{"forced_login_method"})
 	}
 	return paths
 }

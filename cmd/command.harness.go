@@ -25,7 +25,7 @@ var commandHarness = Command{
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
 				"The routes API key is created on first setup and reused afterward. Restart the harness after setup. " +
 				"Codex serves its model list from a background app-server daemon, so setup restarts a running daemon and asks first when Codex sessions are attached to it. " +
-				"Setup also signs Codex out of OpenAI/ChatGPT and clears its cached workspace policy, since Codex only needs the Baseten route; run 'codex login' to sign back in.",
+				"Setup also signs Codex out of OpenAI/ChatGPT, clears its cached workspace policy, and disables ChatGPT login while the Baseten harness is configured, since Codex only needs the Baseten route.",
 			Flags: HarnessSetupFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
@@ -135,7 +135,7 @@ var commandHarness = Command{
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
 				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path.\n\n" +
 				"Teardown also deletes the routes API key the removed harnesses use, once no other harness on this machine uses it. " +
-				"It works after the harness is uninstalled. For Codex, teardown restarts a running app-server daemon so the stock model list returns, asking first when Codex sessions are attached to it.",
+				"It works after the harness is uninstalled. For Codex, teardown restarts a running app-server daemon so the stock model list returns, asking first when Codex sessions are attached to it, and re-enables ChatGPT login.",
 			Flags: HarnessTeardownFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
 				TextDescription: "The settings removed from each harness. Use --verbose for configuration paths and setting names.",
