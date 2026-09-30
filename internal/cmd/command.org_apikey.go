@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
@@ -16,28 +17,44 @@ func init() {
 // Maps between the lowercase-kebab CLI form and the ALL_CAPS backend form.
 var (
 	apiKeyTypeToBackend = map[string]managementapi.APIKeyCategory{
-		"personal":                 managementapi.APIKeyCategory_PERSONAL,
-		"workspace-export-metrics": managementapi.APIKeyCategory_WORKSPACE_EXPORT_METRICS,
-		"workspace-invoke":         managementapi.APIKeyCategory_WORKSPACE_INVOKE,
-		"workspace-manage-all":     managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL,
+		"personal":                  managementapi.APIKeyCategory_PERSONAL,
+		"workspace-export-metrics":  managementapi.APIKeyCategory_WORKSPACE_EXPORT_METRICS,
+		"workspace-invoke":          managementapi.APIKeyCategory_WORKSPACE_INVOKE,
+		"workspace-manage-all":      managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL,
+		"workspace-manage-api-keys": managementapi.APIKeyCategory_WORKSPACE_MANAGE_API_KEYS,
+		"routes":                    managementapi.APIKeyCategory_ROUTES,
 	}
 	apiKeyTypeFromBackend = map[managementapi.APIKeyCategory]string{
-		managementapi.APIKeyCategory_PERSONAL:                 "personal",
-		managementapi.APIKeyCategory_WORKSPACE_EXPORT_METRICS: "workspace-export-metrics",
-		managementapi.APIKeyCategory_WORKSPACE_INVOKE:         "workspace-invoke",
-		managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL:     "workspace-manage-all",
+		managementapi.APIKeyCategory_PERSONAL:                  "personal",
+		managementapi.APIKeyCategory_WORKSPACE_EXPORT_METRICS:  "workspace-export-metrics",
+		managementapi.APIKeyCategory_WORKSPACE_INVOKE:          "workspace-invoke",
+		managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL:      "workspace-manage-all",
+		managementapi.APIKeyCategory_WORKSPACE_MANAGE_API_KEYS: "workspace-manage-api-keys",
+		managementapi.APIKeyCategory_ROUTES:                    "routes",
 	}
 )
 
-func commandOrgAPIKeyList(ctx *CommandContext, _ *cmd.OrgAPIKeyListFlags) error {
+func commandOrgAPIKeyList(ctx *CommandContext, flags *cmd.OrgAPIKeyListFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
 
-	keys, err := cl.API().GetApiKeys(ctx)
+	var params managementapi.GetV1ApiKeysParams
+	if flags.Type != "" {
+		keyType := apiKeyTypeToBackend[flags.Type]
+		params.Type = &keyType
+	}
+	keys, err := cl.API().GetApiKeys(ctx, params)
 	if err != nil {
 		return fmt.Errorf("listing API keys: %w", err)
+	}
+	// Harness setup creates and deletes routes keys, so they would only clutter
+	// the default listing.
+	if flags.Type == "" {
+		keys.Keys = slices.DeleteFunc(keys.Keys, func(k managementapi.APIKeyInfo) bool {
+			return k.Type == managementapi.APIKeyCategory_ROUTES
+		})
 	}
 
 	if ctx.JSON {
@@ -59,7 +76,13 @@ func commandOrgAPIKeyList(ctx *CommandContext, _ *cmd.OrgAPIKeyListFlags) error 
 		if k.TeamName != nil {
 			team = *k.TeamName
 		}
-		rows = append(rows, []string{name, k.Prefix + "****", apiKeyTypeFromBackend[k.Type], team})
+		// A category the CLI does not know yet renders as its raw backend form
+		// rather than an empty cell.
+		keyType := apiKeyTypeFromBackend[k.Type]
+		if keyType == "" {
+			keyType = string(k.Type)
+		}
+		rows = append(rows, []string{name, k.Prefix + "****", keyType, team})
 	}
 	ctx.OutputTable(TableOutput{
 		Headers: []string{"NAME", "KEY", "TYPE", "TEAM"},
@@ -121,7 +144,7 @@ func commandOrgAPIKeyDelete(ctx *CommandContext, flags *cmd.OrgAPIKeyDeleteFlags
 	// Resolve --name to a prefix by listing; --prefix is passed through.
 	prefix := flags.Prefix
 	if flags.Name != "" {
-		keys, err := cl.API().GetApiKeys(ctx)
+		keys, err := cl.API().GetApiKeys(ctx, managementapi.GetV1ApiKeysParams{})
 		if err != nil {
 			return fmt.Errorf("listing API keys: %w", err)
 		}

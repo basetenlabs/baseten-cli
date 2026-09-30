@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
-	"github.com/charmbracelet/huh"
 )
 
 func init() {

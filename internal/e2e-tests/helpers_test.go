@@ -9,21 +9,37 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/stretchr/testify/require"
 )
 
 // Minimal Truss source files baked into the test binary.
+// trussConfigTmpl is the lifecycle model's config. external_package_dirs points
+// at a sibling dir (see writeTruss) so the push exercises gather: its contents
+// are inlined into the archive's packages/ and the field is stripped from the
+// config the server builds from.
 const trussConfigTmpl = `model_name: %s
 python_version: py313
 resources:
   cpu: 50m
   memory: 50Mi
   use_gpu: false
+runtime:
+  remote_ssh:
+    enabled: true
+external_package_dirs:
+  - ../extpkg
 `
+
+// e2eExternalConst is exported by the external package module and echoed back
+// by the model's predict, proving the inlined packages/ dir is importable.
+const e2eExternalConst = "baseten-e2e-external-ok"
+const e2eExternalModule = "EXTERNAL_CONST = \"" + e2eExternalConst + "\"\n"
 
 // Marker tokens emitted by the test model's load() and asserted by the Logs
 // phase. The shared marker scopes queries to our lines; the per-level words
@@ -34,11 +50,20 @@ const (
 	e2eLogInfoWord    = "apple"
 	e2eLogWarningWord = "banana"
 	e2eLogErrorWord   = "cherry"
+
+	// e2ePageMarker tags the burst of lines the pagination sub-test filters to;
+	// e2ePageTotalLineCount must match the loop count in trussModelPy.
+	e2ePageMarker         = "baseten-e2e-pagination"
+	e2ePageTotalLineCount = 30
 )
 
 const trussModelPy = `import logging
+import time
 
 from fastapi.responses import StreamingResponse
+
+# Imported from the external package dir, inlined into packages/ on push.
+from e2e_ext import EXTERNAL_CONST
 
 _logger = logging.getLogger(__name__)
 
@@ -47,8 +72,19 @@ class Model:
         _logger.info("baseten-e2e-log info apple")
         _logger.warning("baseten-e2e-log warning banana")
         _logger.error("baseten-e2e-log error cherry")
+        # Emit e2ePageTotalLineCount uniquely-numbered lines, spaced well past a
+        # millisecond apart so each lands in its own timestamp regardless of the
+        # logging pipeline's timestamp granularity; otherwise several lines could
+        # share one millisecond and a small --page-size would trip the
+        # single-millisecond-burst failure. The pagination sub-test filters to
+        # these with --includes and pages them with a tiny --page-size.
+        for i in range(30):
+            time.sleep(0.02)
+            _logger.info("baseten-e2e-pagination line %02d" % i)
 
     def predict(self, request):
+        if request.get("style") == "external":
+            return {"external_const": EXTERNAL_CONST}
         if request.get("style") == "streaming":
             chunks = request.get("chunks", ["alpha", "beta", "gamma"])
             def gen():
@@ -72,15 +108,42 @@ type pushedDeployment struct {
 	} `json:"model"`
 	Deployment struct {
 		ID     string `json:"id"`
+		Name   string `json:"name"`
 		Status string `json:"status"`
 	} `json:"deployment"`
 }
 
+// repoRoot returns the module root (two levels up from this file in
+// internal/e2e-tests), so commands like `go build ./cmd/baseten` run against
+// the current source rather than whatever the working directory happens to be.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok, "runtime.Caller failed")
+	return filepath.Join(filepath.Dir(file), "..", "..")
+}
+
+const (
+	// defaultCLITimeout bounds an ordinary CLI call. t.Context() has no
+	// deadline, so without this a wedged backend call hangs the whole package
+	// until `go test -timeout` panics, which kills the process before cleanup
+	// can delete the resources the run created. Ordinary commands finish in
+	// seconds; the few that legitimately run for minutes pass their own context.
+	defaultCLITimeout = 5 * time.Minute
+
+	// pushCLITimeout bounds a push, which builds an image and waits for the
+	// deployment or job it created.
+	pushCLITimeout = 15 * time.Minute
+)
+
 // cli runs the CLI in-process with the given args, returning captured stdout
-// and stderr. Non-zero exits surface as a non-nil error.
+// and stderr. Non-zero exits surface as a non-nil error. The call is bounded by
+// defaultCLITimeout; use cliCtx for a command that needs longer.
 func cli(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	return cliCtx(t, t.Context(), args...)
+	ctx, cancel := context.WithTimeout(t.Context(), defaultCLITimeout)
+	defer cancel()
+	return cliCtx(t, ctx, args...)
 }
 
 // cliCtx is cli with an explicit context. Use this from t.Cleanup, since
@@ -111,7 +174,16 @@ func cliWithStdin(t *testing.T, ctx context.Context, stdin string, args ...strin
 // mustCLI runs cli and fatals on error, returning stdout.
 func mustCLI(t *testing.T, args ...string) string {
 	t.Helper()
-	out, errOut, err := cli(t, args...)
+	ctx, cancel := context.WithTimeout(t.Context(), defaultCLITimeout)
+	defer cancel()
+	return mustCLICtx(t, ctx, args...)
+}
+
+// mustCLICtx is mustCLI with an explicit context, for commands that outlast
+// defaultCLITimeout.
+func mustCLICtx(t *testing.T, ctx context.Context, args ...string) string {
+	t.Helper()
+	out, errOut, err := cliCtx(t, ctx, args...)
 	if err != nil {
 		t.Fatalf("baseten %s failed: %v\nstderr: %s", strings.Join(args, " "), err, errOut)
 	}
@@ -128,23 +200,99 @@ func mustCLIStdin(t *testing.T, stdin string, args ...string) string {
 	return out
 }
 
-// writeTruss materializes the baked-in Truss source into a temp dir with
-// the given model name baked into config.yaml.
+// writeTruss materializes the baked-in Truss source and returns the truss dir.
+// The truss lives in a "truss" subdir alongside an "extpkg" sibling so
+// config.yaml's `external_package_dirs: [../extpkg]` resolves; the sibling
+// holds the module imported by model.py.
 func writeTruss(t *testing.T, modelName string) string {
 	t.Helper()
-	dir := t.TempDir()
+	parent := t.TempDir()
+
+	extDir := filepath.Join(parent, "extpkg")
+	require.NoError(t, os.MkdirAll(extDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(extDir, "e2e_ext.py"), []byte(e2eExternalModule), 0o644))
+
+	dir := filepath.Join(parent, "truss")
 	cfg := fmt.Sprintf(trussConfigTmpl, modelName)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "model"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "model", "model.py"), []byte(trussModelPy), 0o644))
 	return dir
 }
 
-// lookupModelIDByName is the fallback used at cleanup when we couldn't parse
-// the push response (e.g. push failed mid-way). Returns "" if not found.
-func lookupModelIDByName(t *testing.T, name string) string {
+// step logs a phase boundary with a UTC wall-clock timestamp. CI runs these
+// tests with -v, so step lines stream as the run progresses: they are what
+// identifies where a hung run stopped, and their timestamps line up with the
+// build and deployment logs the platform shows for the same window.
+func step(t *testing.T, format string, args ...any) {
 	t.Helper()
-	out, _, err := cli(t, "api", "management", "models")
+	t.Logf("[%s] %s", time.Now().UTC().Format("15:04:05"), fmt.Sprintf(format, args...))
+}
+
+// failureLogLineLimit caps how many log lines are pulled per deployment when
+// dumping after a failure. Enough to cover a load() and a few requests without
+// burying the failure itself.
+const failureLogLineLimit = 300
+
+// dumpModelLogsIfFailure writes every deployment's recent logs into the test
+// output when the test has failed, and does nothing otherwise. Call it from the
+// top of a test's cleanup, before the model is deleted: the platform drops the
+// logs with the model, so this is the only durable copy of what the container
+// printed. Every step is best-effort, including a recover, since this runs
+// after the real failure and must not replace it with one of its own.
+func dumpModelLogsIfFailure(t *testing.T, modelName string) {
+	if !t.Failed() {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Logf("dumping logs for model %q panicked: %v", modelName, r)
+		}
+	}()
+	// t.Context() is canceled before cleanup, and the log fetches should not
+	// eat into the deletion's budget, so this gets its own context.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	out, errOut, err := cliCtx(t, ctx, "model", "deployment", "list",
+		"--model-name", modelName, "--output", "json")
+	if err != nil {
+		t.Logf("could not list deployments of model %q for log dump: %v\nstderr: %s",
+			modelName, err, errOut)
+		return
+	}
+	var resp struct {
+		Deployments []struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		} `json:"deployments"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Logf("could not parse deployments of model %q for log dump: %v", modelName, err)
+		return
+	}
+	for _, d := range resp.Deployments {
+		logs, errOut, err := cliCtx(t, ctx, "model", "deployment", "logs",
+			"--model-name", modelName, "--deployment-id", d.ID,
+			"--since", "1h", "--limit", fmt.Sprint(failureLogLineLimit))
+		if err != nil {
+			t.Logf("could not fetch logs of deployment %s (%s) for log dump: %v\nstderr: %s",
+				d.ID, d.Name, err, errOut)
+			continue
+		}
+		t.Logf("logs for model %q deployment %s (%s, status %s):\n%s",
+			modelName, d.ID, d.Name, d.Status, logs)
+	}
+}
+
+// lookupModelIDByName is the fallback used at cleanup when we couldn't parse
+// the push response (e.g. push failed mid-way). Takes an explicit context
+// because its callers run in cleanup, after t.Context() is canceled. Returns ""
+// if not found.
+func lookupModelIDByName(t *testing.T, ctx context.Context, name string) string {
+	t.Helper()
+	out, _, err := cliCtx(t, ctx, "api", "management", "models")
 	if err != nil {
 		return ""
 	}

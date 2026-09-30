@@ -290,7 +290,9 @@ func Test_Model_Push_TeamByName(t *testing.T) {
 
 // Verifies the asymmetry: --override-name and --no-build-cache mutate the API
 // `config` payload but NOT the archived config.yaml bytes. Also verifies
-// external_package_dirs are bundled under the configured directory.
+// external_package_dirs are bundled under the configured directory and
+// stripped from the config the server builds from, while raw_config keeps
+// the original on-disk bytes verbatim.
 func Test_Model_Push_OverridesAndExternalPackages(t *testing.T) {
 	h := newModelPushHarness(t)
 	dir := h.WriteModelDir("model_name: original\nexternal_package_dirs:\n  - extras\n")
@@ -311,12 +313,16 @@ func Test_Model_Push_OverridesAndExternalPackages(t *testing.T) {
 	h.Require.Equal("renamed", cfg["model_name"])
 	build := cfg["build"].(map[string]any)
 	h.Require.Equal(true, build["no_cache"])
+	// external_package_dirs is stripped from the parsed config: the server's
+	// truss validation would reject the now-nonexistent relative paths.
+	h.Require.NotContains(cfg, "external_package_dirs")
 	// raw_config is the on-disk bytes, NOT the mutated map.
 	h.Require.Equal("model_name: original\nexternal_package_dirs:\n  - extras\n", dep["raw_config"])
 
 	entries := h.UntarUploaded()
-	// Archived config.yaml is verbatim — no override leak.
-	h.Require.Equal("model_name: original\nexternal_package_dirs:\n  - extras\n", entries["config.yaml"])
+	// Archived config.yaml (what the build reads) has external_package_dirs
+	// stripped; the override-name rename only lands on the API-level config.
+	h.Require.Equal("model_name: original\n", entries["config.yaml"])
 	// External package dir contents bundled under the default "packages/".
 	h.Require.Equal("X = 1\n", entries["packages/util.py"])
 }
@@ -445,12 +451,14 @@ func Test_Model_Push_Validation(t *testing.T) {
 		h.Require.NoError(h.Execute("model", "push", "--dir", dir,
 			"--labels", `{"team":"ml","priority":1}`,
 			"--deploy-timeout", "30m",
+			"--region", "us-west-2",
 		))
 		prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 		h.Require.NotNil(prep)
 		dep := prep.BodyJSON(h.T)["deployment"].(map[string]any)
 		h.Require.Equal(map[string]any{"team": "ml", "priority": float64(1)}, dep["labels"])
 		h.Require.Equal(float64(30), dep["deploy_timeout_minutes"])
+		h.Require.Equal("us-west-2", dep["region"])
 	})
 }
 
@@ -500,6 +508,9 @@ func Test_Model_Push_WaitSuccess(t *testing.T) {
 
 	h.Require.Contains(h.Stderr.String(), "Status: BUILDING")
 	h.Require.Contains(h.Stderr.String(), "Status: ACTIVE")
+	// Summary up front, settled verdict at the end, both on stderr in JSON mode.
+	h.Require.Contains(h.Stderr.String(), "was successfully pushed")
+	h.Require.Contains(h.Stderr.String(), "is deployed and active")
 
 	var result map[string]any
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
@@ -528,11 +539,121 @@ func Test_Model_Push_WaitFailure(t *testing.T) {
 	h.Require.Error(err)
 	h.Require.Contains(err.Error(), "failed deployment status: BUILD_FAILED")
 	h.Require.NotZero(h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), "did not become active (status: BUILD_FAILED)")
 
+	// The result carries the failed status, so it stands as the only document
+	// on stdout: no error envelope follows it.
 	var result map[string]any
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
 	dep, _ := result["deployment"].(map[string]any)
 	h.Require.Equal("BUILD_FAILED", dep["status"])
+	h.Require.NotContains(result, "error")
+}
+
+// A development push replaces the dev deployment in place, and the server
+// reports FAILED while the old service is gone, so --wait keeps polling
+// through it and settles on the ACTIVE that follows.
+func Test_Model_Push_WaitDevelopmentToleratesTransientFailed(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	h.API.SetRoute("POST", "/v1/models", 200, map[string]any{
+		"model": map[string]any{
+			"id":                 "model-123",
+			"name":               "test-model",
+			"created_at":         "2026-01-01T00:00:00Z",
+			"deployments_count":  1,
+			"instance_type_name": "1x2",
+		},
+		"deployment": map[string]any{
+			"id":             "deploy-456",
+			"model_id":       "model-123",
+			"name":           "v1",
+			"created":        "2026-01-01T00:00:00Z",
+			"updated":        "2026-01-01T00:00:00Z",
+			"is_development": true,
+			"status":         "LOADING_MODEL",
+		},
+	})
+	statuses := []string{"LOADING_MODEL", "FAILED", "FAILED", "ACTIVE"}
+	idx := 0
+	h.API.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456", func(w http.ResponseWriter, _ *http.Request) {
+		dep := deploymentResponse(statuses[idx])
+		dep["is_development"] = true
+		if idx < len(statuses)-1 {
+			idx++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(dep)
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--develop", "--wait", "--output", "json"))
+	h.Require.Contains(h.Stderr.String(), "is deployed and active")
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("ACTIVE", dep["status"])
+}
+
+// The development grace period is bounded: a FAILED that outlasts it settles
+// as a failed deploy rather than polling forever.
+func Test_Model_Push_WaitDevelopmentFailedOutlastsGrace(t *testing.T) {
+	h := newModelPushHarness(t)
+	// Sleeping advances the clock, so the grace period actually elapses.
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+		now = now.Add(d)
+		return nil
+	})
+	h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
+	h.API.SetRoute("POST", "/v1/models", 200, map[string]any{
+		"model": map[string]any{
+			"id":                 "model-123",
+			"name":               "test-model",
+			"created_at":         "2026-01-01T00:00:00Z",
+			"deployments_count":  1,
+			"instance_type_name": "1x2",
+		},
+		"deployment": map[string]any{
+			"id":             "deploy-456",
+			"model_id":       "model-123",
+			"name":           "v1",
+			"created":        "2026-01-01T00:00:00Z",
+			"updated":        "2026-01-01T00:00:00Z",
+			"is_development": true,
+			"status":         "LOADING_MODEL",
+		},
+	})
+	dep := deploymentResponse("FAILED")
+	dep["is_development"] = true
+	h.API.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456", 200, dep)
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--develop", "--wait", "--output", "json")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "failed deployment status: FAILED")
+}
+
+// The grace period is specific to the development deployment a push replaces:
+// on any other deployment the first FAILED settles immediately.
+func Test_Model_Push_WaitFailedNotToleratedOutsideDevelopment(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	gets := 0
+	h.API.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456", func(w http.ResponseWriter, _ *http.Request) {
+		gets++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(deploymentResponse("FAILED"))
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--wait", "--output", "json")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "failed deployment status: FAILED")
+	// Time is pinned here, so a grace period would poll forever; one read
+	// proves FAILED was terminal on sight.
+	h.Require.Equal(1, gets)
 }
 
 // --tail without --wait stops only on terminal-failure statuses; logs go
@@ -541,7 +662,7 @@ func Test_Model_Push_WaitFailure(t *testing.T) {
 func Test_Model_Push_TailFailure(t *testing.T) {
 	h := newModelPushHarness(t)
 	stubModelPushTimeAndSleep(h)
-	h.API.SetRoute("POST", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
+	h.API.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
 		"logs": []any{
 			map[string]any{"timestamp": "1", "message": "build started", "replica": nil},
 		},
@@ -553,6 +674,8 @@ func Test_Model_Push_TailFailure(t *testing.T) {
 	h.Require.Error(err)
 	h.Require.Contains(err.Error(), "failed deployment status: BUILD_FAILED")
 	h.Require.Contains(h.Stderr.String(), "build started")
+	// The settled verdict belongs to --wait; a bare --tail only gets the error.
+	h.Require.NotContains(h.Stderr.String(), "did not become active")
 
 	// JSON result is on stdout regardless of --tail.
 	var result map[string]any
@@ -566,7 +689,7 @@ func Test_Model_Push_TailFailure(t *testing.T) {
 func Test_Model_Push_TailWaitSuccess(t *testing.T) {
 	h := newModelPushHarness(t)
 	stubModelPushTimeAndSleep(h)
-	h.API.SetRoute("POST", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
+	h.API.SetRoute("GET", "/v1/models/model-123/deployments/deploy-456/logs", 200, map[string]any{
 		"logs": []any{
 			map[string]any{"timestamp": "1", "message": "almost ready", "replica": nil},
 		},
@@ -591,7 +714,7 @@ func Test_Model_Push_TailWarmup404(t *testing.T) {
 	stubModelPushTimeAndSleep(h)
 
 	logsCall := 0
-	h.API.SetRouteFunc("POST", "/v1/models/model-123/deployments/deploy-456/logs", func(w http.ResponseWriter, _ *http.Request) {
+	h.API.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456/logs", func(w http.ResponseWriter, _ *http.Request) {
 		logsCall++
 		w.Header().Set("Content-Type", "application/json")
 		if logsCall <= 2 {
@@ -646,12 +769,69 @@ func Test_Model_Push_Develop_SetsIsDevelopment(t *testing.T) {
 	h.Require.Equal(true, dep["is_development"])
 }
 
+// Both environment behaviors are opt-in, so a plain environment push sends them
+// off rather than leaving the server to apply its own defaults.
+func Test_Model_Push_EnvironmentFlagsDefaultOff(t *testing.T) {
+	h := newModelPushHarness(t)
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--environment", "staging"))
+
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
+	h.Require.NotNil(prep)
+	dep := prep.BodyJSON(h.T)["deployment"].(map[string]any)
+	h.Require.Equal(false, dep["preserve_env_instance_type"])
+	h.Require.Equal(false, dep["create_environment_if_missing"])
+}
+
+func Test_Model_Push_EnvironmentFlagsOptIn(t *testing.T) {
+	h := newModelPushHarness(t)
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--environment", "staging",
+		"--preserve-env-instance-type", "--create-environment-if-missing"))
+
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
+	h.Require.NotNil(prep)
+	dep := prep.BodyJSON(h.T)["deployment"].(map[string]any)
+	h.Require.Equal(true, dep["preserve_env_instance_type"])
+	h.Require.Equal(true, dep["create_environment_if_missing"])
+}
+
+// A push into a region reports the per-region invoke URL, since the plain host
+// resolves to the model's default workload plane rather than the pinned one.
+func Test_Model_Push_Region(t *testing.T) {
+	h := newModelPushHarness(t)
+	h.API.SetRoute("POST", "/v1/models", 200, map[string]any{
+		"model": map[string]any{
+			"id": "model-123", "name": "test-model", "created_at": "2026-01-01T00:00:00Z",
+			"deployments_count": 1, "instance_type_name": "1x2",
+		},
+		"deployment": map[string]any{
+			"id": "deploy-456", "model_id": "model-123", "name": "v1",
+			"created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z",
+			"is_development": false, "status": "BUILDING",
+			"region": map[string]any{"slug": "us", "display_name": "United States"},
+		},
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--region", "us"))
+
+	h.Require.Contains(h.Stdout.String(), "model-model-123-region-us.")
+}
+
 func Test_Model_Push_WatchValidation(t *testing.T) {
 	t.Run("watch_and_environment", func(t *testing.T) {
 		h := newModelPushHarness(t)
 		dir := h.WriteModelDir(modelPushMinimalConfig)
 		err := h.Execute("model", "push", "--dir", dir, "--watch", "--environment", "production")
 		h.Require.ErrorContains(err, "cannot be combined with --environment")
+	})
+
+	t.Run("watch_and_wait", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		err := h.Execute("model", "push", "--dir", dir, "--watch", "--wait")
+		h.Require.ErrorContains(err, "--watch cannot be combined with --wait")
 	})
 
 	t.Run("hot_reload_requires_watch", func(t *testing.T) {
@@ -674,7 +854,9 @@ func Test_Model_Push_Watch_ReadinessFailureNoJSON(t *testing.T) {
 	err := h.Execute("model", "push", "--dir", dir, "--watch", "--output", "json")
 	h.Require.Error(err)
 	h.Require.Contains(h.Stderr.String(), "not ready")
-	h.Require.Zero(h.Stdout.Len(), "no JSON result on a failed watch")
+	// A failed watch produces no push result, so the error envelope stands
+	// alone on stdout.
+	h.Require.Contains(decodeJSONErrorEnvelope(h.CommandHarness).Message, "not ready")
 
 	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
 	h.Require.NotNil(prep)
@@ -683,7 +865,9 @@ func Test_Model_Push_Watch_ReadinessFailureNoJSON(t *testing.T) {
 }
 
 // push --watch pushes a development deployment then enters the patch loop; a
-// simulated Ctrl-C during the first sync ends it as an interrupt.
+// simulated Ctrl-C during the first sync ends it as an interrupt. The summary
+// precedes the loop, so its links are on stdout even though the run was
+// interrupted.
 func Test_Model_Push_Watch_EntersLoopThenInterrupt(t *testing.T) {
 	h := newModelPushHarness(t)
 	addPushWatchRoutes(h)
@@ -694,5 +878,5 @@ func Test_Model_Push_Watch_EntersLoopThenInterrupt(t *testing.T) {
 	h.Require.Error(err)
 	h.Require.Equal(130, h.ExitCode)
 	h.Require.NotNil(h.API.FindCall("POST", watchSyncPath))
-	h.Require.Zero(h.Stdout.Len(), "interrupt is not a clean completion")
+	h.Require.Contains(h.Stdout.String(), "was successfully pushed")
 }

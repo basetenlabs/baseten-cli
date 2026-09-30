@@ -3,17 +3,20 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
-	"github.com/charmbracelet/huh"
 )
 
 func init() {
 	Register("model list", commandModelList)
 	Register("model describe", commandModelDescribe)
 	Register("model delete", commandModelDelete)
+	Register("model rename", commandModelRename)
+	Register("model audit-logs", commandModelAuditLogs)
 }
 
 // ModelRef is the result of resolving [cmd.ModelRefFlags] against the
@@ -54,27 +57,33 @@ func ResolveModelRef(
 }
 
 // findModelIDByName returns the ID of the unique model with the given name,
-// scoped to teamID when non-empty. Returns "" with nil error when no model
+// scoped to teamID when non-empty. The server filters by exact name, so this
+// matches at most one model per team; the org-wide route may still return the
+// same name from multiple teams. Returns "" with nil error when no model
 // matches. Returns an error when multiple models match (only possible when
 // teamID is empty, since (org, team, name) is unique server-side).
 func findModelIDByName(
 	ctx context.Context, api *managementapi.Client, name, teamID string,
 ) (string, error) {
-	models, err := listModels(ctx, api, teamID)
-	if err != nil {
-		return "", err
-	}
-	var matches []managementapi.Model
-	for _, m := range models {
-		if m.Name == name {
-			matches = append(matches, m)
+	var models []managementapi.Model
+	if teamID == "" {
+		resp, err := api.GetModels(ctx, managementapi.GetV1ModelsParams{Name: &name})
+		if err != nil {
+			return "", fmt.Errorf("list models: %w", err)
 		}
+		models = resp.Models
+	} else {
+		resp, err := api.GetTeamsModels(ctx, teamID, managementapi.GetV1TeamsTeamIdModelsParams{Name: &name})
+		if err != nil {
+			return "", fmt.Errorf("list models for team %s: %w", teamID, err)
+		}
+		models = resp.Models
 	}
-	switch len(matches) {
+	switch len(models) {
 	case 0:
 		return "", nil
 	case 1:
-		return matches[0].Id, nil
+		return models[0].Id, nil
 	default:
 		return "", fmt.Errorf("multiple models named %q across teams; pass --team to disambiguate", name)
 	}
@@ -86,13 +95,13 @@ func listModels(
 	ctx context.Context, api *managementapi.Client, teamID string,
 ) ([]managementapi.Model, error) {
 	if teamID == "" {
-		resp, err := api.GetModels(ctx)
+		resp, err := api.GetModels(ctx, managementapi.GetV1ModelsParams{})
 		if err != nil {
 			return nil, fmt.Errorf("list models: %w", err)
 		}
 		return resp.Models, nil
 	}
-	resp, err := api.GetTeamsModels(ctx, teamID)
+	resp, err := api.GetTeamsModels(ctx, teamID, managementapi.GetV1TeamsTeamIdModelsParams{})
 	if err != nil {
 		return nil, fmt.Errorf("list models for team %s: %w", teamID, err)
 	}
@@ -212,5 +221,75 @@ func commandModelDelete(ctx *CommandContext, flags *cmd.ModelDeleteFlags) error 
 		return nil
 	}
 	ctx.Logf("Deleted model %s (%s)\n", model.Name, ref.ID)
+	return nil
+}
+
+func commandModelAuditLogs(ctx *CommandContext, flags *cmd.ModelAuditLogsFlags) error {
+	api, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveModelRef(ctx, api.API(), flags.ModelRefFlags)
+	if err != nil {
+		return err
+	}
+	fetch := func(q auditLogQuery) (*managementapi.ListAuditLogsResponse, error) {
+		return api.API().GetModelsAuditLogs(ctx, ref.ID, modelAuditLogParams(q))
+	}
+	return runAuditLogs(ctx, &flags.AuditLogFlags, fetch)
+}
+
+// modelAuditLogParams maps a transport-neutral auditLogQuery onto the
+// model-scoped audit-logs GET query-params type.
+func modelAuditLogParams(q auditLogQuery) managementapi.GetV1ModelsModelIdAuditLogsParams {
+	return managementapi.GetV1ModelsModelIdAuditLogsParams{
+		Cursor:           q.Cursor,
+		Limit:            q.Limit,
+		Direction:        q.Direction,
+		Search:           q.Search,
+		EventTypeGroups:  q.EventTypeGroups,
+		UserIds:          q.UserIds,
+		DeploymentIds:    q.DeploymentIds,
+		EnvironmentNames: q.EnvironmentNames,
+		Sources:          q.Sources,
+		StartEpochMillis: q.StartEpochMillis,
+		EndEpochMillis:   q.EndEpochMillis,
+	}
+}
+
+// enumToAPIValue converts a lowercase-kebab CLI enum value to the ALL_CAPS form
+// the API uses. The mapping is mechanical, so a value added to a flag's enum
+// tag needs no change here.
+func enumToAPIValue(value string) string {
+	return strings.ToUpper(strings.ReplaceAll(value, "-", "_"))
+}
+
+// enumFromAPIValue is the inverse of [enumToAPIValue]. The settings commands
+// use it when displaying an enum a flag also accepts, so a value read out of
+// describe can be passed straight back in. Read-only enums such as deployment
+// status are left as the API spells them.
+func enumFromAPIValue(value string) string {
+	return strings.ToLower(strings.ReplaceAll(value, "_", "-"))
+}
+
+func commandModelRename(ctx *CommandContext, flags *cmd.ModelRenameFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	if err != nil {
+		return err
+	}
+	model, err := cl.API().PatchModels(ctx, ref.ID, managementapi.UpdateModelRequest{Name: &flags.NewName})
+	if err != nil {
+		return fmt.Errorf("rename model %s: %w", ref.ID, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(model)
+	}
+	ctx.Logf("Renamed model %s to %s\n", ref.ID, model.Name)
+	ctx.LogLine("warning: update model_name in config.yaml, or pushes that still use the old name will create another model")
 	return nil
 }

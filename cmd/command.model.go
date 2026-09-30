@@ -1,6 +1,10 @@
 package cmd
 
-import "github.com/basetenlabs/baseten-go/client/managementapi"
+import (
+	"time"
+
+	"github.com/basetenlabs/baseten-go/client/managementapi"
+)
 
 var commandModel = Command{
 	Name:    "model",
@@ -181,8 +185,67 @@ var commandModel = Command{
 				},
 			},
 		},
+		{
+			Name:    "rename",
+			Summary: "Rename a model",
+			Description: "Change a model's name. The new name must be unique within the model's team.\n\n" +
+				"Renaming does not change the model ID, endpoints, or deployments. Pushes that " +
+				"still use the old `model_name` create another model or target a model that now " +
+				"uses that name, so update config.yaml after renaming.\n\n" +
+				"Run 'baseten model describe' to see the current values.",
+			Flags: ModelRenameFlags{},
+			Output: &CommandOutput[managementapi.Model]{
+				TextDescription: "On success, prints \"Renamed model <id> to <name>\" and a reminder to " +
+					"update `model_name` in config.yaml to stderr (also under --output json); no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Rename by ID.",
+						Command:     "baseten model rename --model-id <model-id> --new-name my-model-v2",
+					},
+					{
+						Description: "Rename by name, scoped to a team.",
+						Command:     "baseten model rename --model-name <name> --team <team> --new-name my-model-v2",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the model's new name.",
+					Command:     "baseten model rename --model-id <model-id> --new-name my-model-v2 --jq '.name'",
+				},
+			},
+		},
+		{
+			Name:    "audit-logs",
+			Summary: "List audit-log entries for a model",
+			Description: "List audit-log entries scoped to a single model, newest first.\n\n" +
+				"Returns up to --limit entries (default 20) across the full history by default. " +
+				"Use --start/--end or --since to scope the time window, and the filter flags " +
+				"(--event-type-group, --source, --user-id, --deployment-id, --environment, --search) " +
+				"to narrow results within the model.\n\n" +
+				"For machine-readable streaming, prefer --output jsonl over --output json.",
+			Flags: ModelAuditLogsFlags{},
+			Output: &CommandOutput[managementapi.AuditLogEntry]{
+				JSONArrayStreamed: true,
+				TextDescription: "Table with columns: TIME, ACTOR, EVENT, SOURCE. When no entries " +
+					"match, prints \"No audit-log entries found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List the 20 most recent audit-log entries for a model.",
+						Command:     "baseten model audit-logs --model-id <model-id>",
+					},
+					{
+						Description: "List promote events for a model over the last 30 days.",
+						Command:     "baseten model audit-logs --model-name <name> --since 30d --event-type-group promoted",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Stream each entry's event type as a JSONL stream.",
+					Command:     "baseten model audit-logs --model-id <model-id> --output jsonl --jq '.event_type'",
+				},
+			},
+		},
 		commandModelDeployment,
 		commandModelEnvironment,
+		commandModelImage,
 	},
 }
 
@@ -204,6 +267,78 @@ type ModelRefFlags struct {
 	Team      string `flag:"team" desc:"Team name or ID. Only valid with --model-name."`
 }
 
+// ModelRenameFlags configures `baseten model rename`. The new name is --new-name
+// rather than --name, which would read as identifying the model being renamed.
+type ModelRenameFlags struct {
+	CommandFlags
+	ModelRefFlags
+
+	NewName string `flag:"new-name" desc:"New name for the model, unique within its team." required:"true"`
+}
+
+// AutoscalingSettingsFlags is the shared autoscaling flag set for
+// `baseten model deployment update-autoscaling` and its environment twin. Each
+// field is a pointer because the settings endpoints patch only what the request
+// body carries: a nil field means the flag was never passed, so that setting is
+// left unchanged rather than reset.
+type AutoscalingSettingsFlags struct {
+	MinReplica                  OptionalFlag[int] `flag:"min-replica" desc:"Minimum number of replicas."`
+	MaxReplica                  OptionalFlag[int] `flag:"max-replica" desc:"Maximum number of replicas."`
+	AutoscalingWindow           OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds."`
+	ScaleDownDelay              OptionalFlag[int] `flag:"scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds."`
+	ConcurrencyTarget           OptionalFlag[int] `flag:"concurrency-target" desc:"Number of requests per replica before scaling up."`
+	TargetUtilizationPercentage OptionalFlag[int] `flag:"target-utilization-percentage" desc:"Target utilization percentage for scaling up and down."`
+	TargetInFlightTokens        OptionalFlag[int] `flag:"target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only."`
+	MaxScaleDownRate            OptionalFlag[int] `flag:"max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window."`
+}
+
+// RequestBackpressureFlags is the shared policy flag for
+// `baseten model deployment update-request-backpressure` and its environment
+// twin. Passing null clears an existing policy, which the API treats as
+// distinct from omitting the field.
+type RequestBackpressureFlags struct {
+	Policy OptionalFlag[string] `flag:"policy" desc:"Backpressure policy to apply. Pass null to clear an existing policy." enum:"queue-on-full,reject-on-full" nullable:"true" required:"true"`
+}
+
+// LogFlags is the shared log-query flag set for `baseten model deployment logs`
+// and `baseten model environment logs`. Both commands accept the same window,
+// filter, and tail flags; only the log source differs.
+type LogFlags struct {
+	Tail bool `flag:"tail" desc:"Stream new logs as they arrive until the deployment leaves a runnable state or you interrupt with Ctrl-C. Cannot be combined with the time-range or filter flags. For machine-readable streaming, prefer --output jsonl over --output json."`
+
+	Start time.Time     `flag:"start" desc:"Start of the log time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. Default is 30 minutes before the end. Window must be at most 7 days."`
+	End   time.Time     `flag:"end" desc:"End of the log time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. Default is now. Window must be at most 7 days."`
+	Since time.Duration `flag:"since" desc:"Shortcut for fetching logs from a relative time ago until now. Accepts a duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
+
+	Limit int `flag:"limit" desc:"Maximum number of log lines to return, paging backward from the end of the window. Use 0 for no limit (every log line in the window). Not applicable with --tail." default:"5000"`
+
+	// PageSize is the per-request fetch size while paging. Hidden; exists so
+	// tests can force multiple pages without generating a full page of logs.
+	PageSize int `flag:"page-size" hidden:"true" desc:"Log lines fetched per backend request while paging." default:"1000"`
+
+	MinLevel      string   `flag:"min-level" desc:"Only return logs at or above this severity level." enum:"debug,info,warning,error"`
+	Includes      []string `flag:"includes" desc:"Case-sensitive substring that must appear in the log message. May be repeated; all must match."`
+	Excludes      []string `flag:"excludes" desc:"Case-sensitive substring; lines containing it are dropped. May be repeated."`
+	SearchPattern string   `flag:"search-pattern" desc:"RE2 regular expression matched against the log message. Prefer --includes and --excludes for plain substring matches."`
+	Replica       string   `flag:"replica" desc:"Only return logs emitted by this replica (5-char short ID)."`
+	RequestID     string   `flag:"request-id" desc:"Only return logs tagged with this inference request ID."`
+}
+
+// MetricsFlags is the shared metric-query flag set for `baseten model deployment
+// metrics` and `baseten model environment metrics`. Both commands accept the
+// same mode, window, and metric-selection flags; only the metric source differs.
+type MetricsFlags struct {
+	Mode string `flag:"mode" desc:"Aggregation mode. 'current' returns an instantaneous snapshot at now; 'summary' aggregates the whole window into one value per metric; 'series' returns evenly-spaced points across the window. --start/--end/--since are only meaningful for summary and series." enum:"current,summary,series" default:"current"`
+
+	Start time.Time     `flag:"start" desc:"Start of the metrics time range. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. If omitted, the server defaults the start to one hour before the end. Window must be at most 7 days."`
+	End   time.Time     `flag:"end" desc:"End of the metrics time range. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. If omitted, the server defaults the end to now. Window must be at most 7 days."`
+	Since time.Duration `flag:"since" desc:"Shortcut for a window from a relative time ago until now. Accepts a duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Maximum '7d'. Mutually exclusive with --start and --end."`
+
+	Metric []string `flag:"metric" desc:"Name of a metric to return; see https://docs.baseten.co/observability/export-metrics/supported-metrics for the available names. May be repeated. When omitted, a default set is returned."`
+
+	NoChart bool `flag:"no-chart" desc:"For --mode series, emit a per-step table instead of sparklines."`
+}
+
 // ModelPushFlags configures `baseten model push`.
 type ModelPushFlags struct {
 	CommandFlags
@@ -214,8 +349,10 @@ type ModelPushFlags struct {
 
 	DryRun bool `flag:"dry-run" desc:"Validate the push and request upload credentials without uploading or creating anything."`
 
-	Environment    string `flag:"environment" desc:"Stable environment to push to."`
-	DeploymentName string `flag:"deployment-name" desc:"Human-readable name for the new deployment."`
+	Environment                string `flag:"environment" desc:"Stable environment to push to. Run 'baseten model environment list' to see a model's environments."`
+	CreateEnvironmentIfMissing bool   `flag:"create-environment-if-missing" desc:"Create the environment named by --environment when the model does not have it yet. Without this, pushing to an environment that does not exist fails. Only meaningful for an environment other than production, which every model has."`
+	DeploymentName             string `flag:"deployment-name" desc:"Human-readable name for the new deployment."`
+	Region                     string `flag:"region" desc:"Slug of the region to deploy the model in. Defaults to a region Baseten selects. Run 'baseten org regions' to see the slugs available."`
 
 	NoBuildCache bool   `flag:"no-build-cache" desc:"Force a full rebuild without using cached layers."`
 	Labels       string `flag:"labels" desc:"User-provided labels for the deployment as a JSON object, e.g. '{\"team\":\"ml\",\"priority\":1}'."`
@@ -229,10 +366,10 @@ type ModelPushFlags struct {
 	WatchHotReload   bool `flag:"watch-hot-reload" desc:"With --watch, hot-reload the running container when every change is to model code; mixed changes fall back to a cold patch."`
 	WatchNoKeepalive bool `flag:"watch-no-keepalive" desc:"With --watch, let the development deployment scale to zero while watching. By default it is kept warm by periodic pings."`
 
-	DeployTimeout string `flag:"deploy-timeout" desc:"Deployment timeout as a Go duration (e.g. 30m, 1h); allowed range 10m to 24h."`
+	DeployTimeout string `flag:"deploy-timeout" desc:"Deployment timeout as a duration (e.g. 30m, 1h); allowed range 10m to 24h."`
 
 	OverrideName            string `flag:"override-name" desc:"Override the model_name from config.yaml for this push only. The on-disk config.yaml is not modified."`
-	OverrideEnvInstanceType bool   `flag:"override-env-instance-type" desc:"Use this deployment's instance type instead of preserving the target environment's. Only meaningful when an environment is targeted."`
+	PreserveEnvInstanceType bool   `flag:"preserve-env-instance-type" desc:"Keep the target environment's current instance type instead of applying the one from config.yaml. Only meaningful when an environment is targeted."`
 
 	DisableArchiveDownload bool `flag:"disable-archive-download" desc:"Disable archive download for the new model. Only valid for new models."`
 }
@@ -275,12 +412,21 @@ type ModelPredictFlags struct {
 	CommandFlags
 	ModelRefFlags
 
-	Environment  string `flag:"environment" desc:"Environment to target (e.g. production, development). Defaults to production. Mutually exclusive with --deployment-id and --regional."`
-	DeploymentID string `flag:"deployment-id" desc:"Specific deployment to target. Mutually exclusive with --environment and --regional."`
-	Regional     string `flag:"regional" desc:"Regional environment name; routes via the regional hostname. Mutually exclusive with --environment and --deployment-id."`
+	Environment    string `flag:"environment" desc:"Environment to target (e.g. production, development). Defaults to production. Mutually exclusive with --deployment-id, --deployment-name, and --regional. Run 'baseten model environment list' to see a model's environments."`
+	DeploymentID   string `flag:"deployment-id" desc:"Specific deployment to target. Mutually exclusive with --environment, --deployment-name, and --regional."`
+	DeploymentName string `flag:"deployment-name" desc:"Name of the deployment to target. Mutually exclusive with --environment, --deployment-id, and --regional."`
+	Regional       string `flag:"regional" desc:"Regional environment name; routes via the regional hostname. Mutually exclusive with --environment, --deployment-id, and --deployment-name."`
 
-	Data string `flag:"data" desc:"Inline JSON request body." oneof:"predict-input"`
+	Data string `flag:"data" desc:"Inline JSON request body. The shape is the deployed model's own input schema; see https://docs.baseten.co/inference/calling-your-model." oneof:"predict-input"`
 	File string `flag:"file" desc:"Path to a JSON file containing the request body. Use '-' for stdin." oneof:"predict-input"`
 
 	Websocket bool `flag:"websocket" desc:"Use the WebSocket predict endpoint. Sends the body as one frame, reads one frame back, then closes. Not for multi-message or back-and-forth sessions."`
+}
+
+// ModelAuditLogsFlags configures `baseten model audit-logs`. It reuses the
+// shared AuditLogFlags, scoped to a single model via ModelRefFlags.
+type ModelAuditLogsFlags struct {
+	CommandFlags
+	ModelRefFlags
+	AuditLogFlags
 }

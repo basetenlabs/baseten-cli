@@ -3,25 +3,28 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
+	"charm.land/huh/v2"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client"
-	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/itchyny/gojq"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
+	"golang.org/x/term"
 )
 
 // CommandContext is passed to run functions.
@@ -36,13 +39,16 @@ type CommandContext struct {
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ExitWithCode func(int)
+	OpenURL      func(string) error
 	// JQQuery is a compiled --jq expression installed by the framework. When
 	// non-nil, [OutputJSON] and [JSONArrayWriter.Write] route their input
 	// through the query before encoding. Leaves should not set this directly.
 	JQQuery *gojq.Query
 
-	verbose bool
-	jqErr   error
+	verbose           bool
+	jqErr             error
+	strictOutput      bool
+	suppressJSONError bool
 
 	// authInfo lazily resolves the remote and auth session. Use the Remote and
 	// Session accessors; do not read its cached fields directly.
@@ -117,6 +123,42 @@ func (c *CommandContext) encodeJSON(v any) {
 	panicOnOutputError(0, enc.Encode(v))
 }
 
+// SuppressJSONError declares that the JSON already written to stdout reports
+// the failure the command is about to return, so the framework must not
+// append an error envelope after it. Call it before returning an error from a
+// command whose payload encodes its own verdict, keeping stdout a single JSON
+// document under --output json.
+func (c *CommandContext) SuppressJSONError() {
+	c.suppressJSONError = true
+}
+
+// writeJSONError appends the error envelope for a failed command to stdout.
+// Does nothing unless the output format is json or jsonl: under text output
+// the stderr message is the whole report.
+//
+// The envelope bypasses [CommandContext.JQQuery], since a --jq expression is
+// written against the command's payload and would drop or mangle the error.
+// It is a document of its own rather than a wrapper on whatever preceded it,
+// so it ends up as the last JSON document on stdout. Streamed commands
+// terminate their array via the writer's deferred Close before this runs.
+//
+// A subprocess failure is the one failure the framework exempts on its own.
+// The exit code belongs to the child, and so does stdout: [ErrSubprocess]
+// commands hand the child's stream through untouched, and it is not
+// guaranteed to be JSON at all. A command can also opt out for itself via
+// [SuppressJSONError].
+func (c *CommandContext) writeJSONError(ce cmd.CommandError, runErr error) {
+	var subErr *ErrSubprocess
+	if !c.JSON || c.suppressJSONError || errors.As(runErr, &subErr) {
+		return
+	}
+	jsonErr := apiErrorFields(runErr)
+	jsonErr.Message = ce.Error()
+	jsonErr.Type = cmd.ErrorTypeName(ce)
+	jsonErr.ExitCode = ce.ExitCode()
+	c.encodeJSON(cmd.JSONErrorEnvelope{Error: jsonErr})
+}
+
 // NewJSONArrayWriter returns a writer that outputs a JSON array
 // incrementally. Call Write for each element and Close when done.
 func (c *CommandContext) NewJSONArrayWriter() *JSONArrayWriter {
@@ -140,6 +182,16 @@ type TableOutput struct {
 // OutputTable writes a borderless table to stdout with bold headers. Header
 // styling auto-degrades when stdout is not a terminal.
 func (c *CommandContext) OutputTable(out TableOutput) {
+	if c.strictOutput {
+		// A short row is padded on the right by lipgloss, so every cell past the
+		// missing one silently renders under the wrong header.
+		for i, row := range out.Rows {
+			if len(row) != len(out.Headers) {
+				panic(fmt.Sprintf("table row %d has %d cells, want %d for headers %v",
+					i, len(row), len(out.Headers), out.Headers))
+			}
+		}
+	}
 	renderer := lipgloss.NewRenderer(c.Stdout)
 	rightAligned := make(map[int]bool, len(out.RightAlignedColumns))
 	for _, col := range out.RightAlignedColumns {
@@ -294,17 +346,16 @@ func panicOnOutputError(_ any, err error) {
 
 const oauthClientID = "baseten-cli"
 
-// IsInteractive returns true if the context's stdin is a terminal.
+// IsInteractive returns true if the context's stdin is a terminal. It asks the
+// terminal driver rather than checking for a character device, because
+// /dev/null is a character device without being a terminal, and redirecting
+// stdin from it is how cron and CI usually run.
 func (c *CommandContext) IsInteractive() bool {
 	f, ok := c.Stdin.(*os.File)
 	if !ok {
 		return false
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(f.Fd()))
 }
 
 // ConfirmYesNo prompts the user with a yes/no question. Returns an ErrUsage
@@ -314,8 +365,12 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 	if !c.IsInteractive() {
 		return cmd.NewErrUsagef("cannot confirm: stdin is not a terminal; pass --yes to skip the prompt")
 	}
-	var ok bool
-	if err := huh.NewConfirm().Title(title).Value(&ok).Run(); err != nil {
+	ok := false
+	if err := huh.NewSelect[bool]().
+		Title(title).
+		Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
+		Value(&ok).
+		Run(); err != nil {
 		return err
 	}
 	if !ok {
@@ -345,6 +400,15 @@ func NewAuthStore(insecureStorage bool) (*auth.Store, error) {
 		Dir:             dir,
 		InsecureStorage: insecureStorage,
 	}), nil
+}
+
+// SetDefaultProfile sets a fallback profile, used only when no profile is
+// selected via --profile, BASETEN_API_KEY, or BASETEN_PROFILE. It must be
+// called before anything that resolves auth (AuthTransport, NewManagementClient,
+// NewInferenceClient, or the Remote/Session accessors): the session resolves
+// once and is cached, so a call afterward has no effect.
+func (c *CommandContext) SetDefaultProfile(name string) {
+	c.authInfo.defaultProfile = name
 }
 
 // AuthTransport builds an HTTP transport that injects the active session's
@@ -497,6 +561,79 @@ func (c *CommandContext) newS3APIClient(cfg aws.Config) transfermanager.S3APICli
 	return s3.NewFromConfig(cfg)
 }
 
+// VolumeTransfer reaches a volume's contents: the bytes of a version and the
+// manifest describing its file tree. Satisfied by the management client, and
+// an interface so tests can substitute a fake rather than speak the volume
+// service's protocol.
+type VolumeTransfer interface {
+	PushVolume(context.Context, client.PushVolumeOptions) (*client.PushVolumeResult, error)
+	PullVolume(context.Context, client.PullVolumeOptions) (*client.PullVolumeResult, error)
+	FetchVolumeManifest(
+		context.Context, client.FetchVolumeManifestOptions,
+	) (*client.VolumeManifest, error)
+}
+
+type volumeTransferKey struct{}
+
+// WithVolumeTransfer returns a context that overrides what reaches volume
+// contents. Intended for tests.
+func WithVolumeTransfer(ctx context.Context, t VolumeTransfer) context.Context {
+	return context.WithValue(ctx, volumeTransferKey{}, t)
+}
+
+// NewVolumeTransfer returns what reaches volume contents, honoring any
+// override installed via [WithVolumeTransfer].
+func (c *CommandContext) NewVolumeTransfer() (VolumeTransfer, error) {
+	if t, ok := c.Value(volumeTransferKey{}).(VolumeTransfer); ok {
+		return t, nil
+	}
+	return c.NewManagementClient()
+}
+
+// Execer looks up and runs external commands. The default uses os/exec; tests
+// inject a fake via WithExecer to avoid spawning real processes.
+type Execer interface {
+	// LookPath reports whether name is an executable on PATH, like exec.LookPath.
+	LookPath(name string) (string, error)
+	// Exec runs cmd (already built via exec.CommandContext, so it carries the
+	// command context and wired stdio/env) and returns an [ErrSubprocess] on a
+	// non-zero exit so the inner exit code propagates.
+	Exec(cmd *exec.Cmd) error
+}
+
+// defaultExecer is the production [Execer] backed by os/exec.
+type defaultExecer struct{}
+
+func (defaultExecer) LookPath(name string) (string, error) { return exec.LookPath(name) }
+
+func (defaultExecer) Exec(cmd *exec.Cmd) error {
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return &ErrSubprocess{Err: err, Code: exitErr.ExitCode()}
+		}
+		return err
+	}
+	return nil
+}
+
+type execerKey struct{}
+
+// WithExecer returns a context that overrides the [Execer] used by
+// CommandContext to look up and run external commands. Intended for tests.
+func WithExecer(ctx context.Context, e Execer) context.Context {
+	return context.WithValue(ctx, execerKey{}, e)
+}
+
+// Execer returns the [Execer] used to run external commands, honoring any
+// override installed via [WithExecer].
+func (c *CommandContext) Execer() Execer {
+	if e, ok := c.Value(execerKey{}).(Execer); ok {
+		return e
+	}
+	return defaultExecer{}
+}
+
 // staticAuthClient is an HTTP client that sets a fixed Authorization header.
 type staticAuthClient struct {
 	header string
@@ -530,7 +667,8 @@ func (c *hostHeaderClient) Do(req *http.Request) (*http.Response, error) {
 // resolved together by resolve (guarded by once). The remote and session
 // fields are caches; callers use the Remote and Session accessors.
 type authInfo struct {
-	profileFlag string
+	profileFlag    string
+	defaultProfile string
 
 	once    sync.Once
 	err     error
@@ -540,7 +678,7 @@ type authInfo struct {
 
 func (a *authInfo) resolve() error {
 	a.once.Do(func() {
-		if a.session, a.err = auth.ResolveSession(a.profileFlag); a.err != nil {
+		if a.session, a.err = auth.ResolveSession(a.profileFlag, a.defaultProfile); a.err != nil {
 			return
 		}
 		a.remote, a.err = NewRemote(a.session.RemoteURL())

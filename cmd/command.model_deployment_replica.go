@@ -21,12 +21,18 @@ var commandModelDeploymentReplica = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Terminate a replica without the confirmation prompt.",
-						Command:     "baseten model deployment replica terminate --model-id <model-id> --deployment-id <deployment-id> --replica-id <replica-id> --yes",
+						CommandLines: []string{
+							"baseten model deployment replica terminate --model-id <model-id>",
+							"--deployment-id <deployment-id> --replica-id <replica-id> --yes",
+						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print just the success flag.",
-					Command:     "baseten model deployment replica terminate --model-id <model-id> --deployment-id <deployment-id> --replica-id <replica-id> --yes --jq '.success'",
+					CommandLines: []string{
+						"baseten model deployment replica terminate --model-id <model-id>",
+						"--deployment-id <deployment-id> --replica-id <replica-id> --yes --jq '.success'",
+					},
 				},
 			},
 		},

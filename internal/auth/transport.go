@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -26,12 +28,17 @@ type Session struct {
 //  1. profileFlag (the --profile flag)
 //  2. BASETEN_API_KEY (+ optional BASETEN_REMOTE_URL), ephemeral
 //  3. BASETEN_PROFILE
-//  4. the current profile in auth.json
+//  4. defaultProfile (a baked-in fallback, e.g. from the SSH config)
+//  5. the current profile in auth.json
+//
+// defaultProfile is "" for most commands; the SSH sign/proxy commands pass
+// their --default-profile so a pinned profile is used only when nothing more
+// specific selects one.
 //
 // A named profile that does not exist is not an error here; the failure
 // surfaces when a credential is actually needed (or in the auth commands that
 // manage profiles directly).
-func ResolveSession(profileFlag string) (*Session, error) {
+func ResolveSession(profileFlag, defaultProfile string) (*Session, error) {
 	dir, err := DefaultConfigDir()
 	if err != nil {
 		return nil, err
@@ -61,6 +68,14 @@ func ResolveSession(profileFlag string) (*Session, error) {
 		return s, nil
 	}
 
+	if defaultProfile != "" {
+		s.profileName = defaultProfile
+		if p, ok := store.GetProfile(defaultProfile); ok {
+			s.remoteURL = p.RemoteURL
+		}
+		return s, nil
+	}
+
 	if name, p, ok := store.CurrentProfile(); ok {
 		s.profileName = name
 		s.remoteURL = p.RemoteURL
@@ -79,6 +94,33 @@ func (s *Session) ProfileName() string { return s.profileName }
 // IsEphemeral reports whether the session uses credentials from BASETEN_API_KEY
 // rather than a stored profile.
 func (s *Session) IsEphemeral() bool { return s.ephemeralAPIKey != "" }
+
+// UsesAPIKey reports whether the session authenticates with an API key, from
+// BASETEN_API_KEY or an API key profile, rather than OAuth.
+func (s *Session) UsesAPIKey() bool {
+	if s.ephemeralAPIKey != "" {
+		return true
+	}
+	p, ok := s.store.GetProfile(s.profileName)
+	return ok && p.AuthType == AuthTypeAPIKey
+}
+
+// CacheIdentity returns a stable, filesystem-safe token for the resolved
+// credential, scoping on-disk caches so an entry written under one credential is
+// never read under another. Hashed to keep the profile name (an email by default)
+// and the API key out of file paths.
+func (s *Session) CacheIdentity() string {
+	switch {
+	case s.ephemeralAPIKey != "":
+		sum := sha256.Sum256([]byte(s.ephemeralAPIKey))
+		return "key-" + hex.EncodeToString(sum[:8])
+	case s.profileName != "":
+		sum := sha256.Sum256([]byte(s.profileName))
+		return "profile-" + hex.EncodeToString(sum[:8])
+	default:
+		return "anonymous"
+	}
+}
 
 // OAuthContext returns a context that carries an oauth2 HTTP client which
 // stamps the Baseten User-Agent on every request, layered over base.
@@ -121,39 +163,51 @@ func (t *Transport) base() http.RoundTripper {
 }
 
 func (t *Transport) Do(req *http.Request) (*http.Response, error) {
-	if t.Session.ephemeralAPIKey != "" {
-		req = req.Clone(req.Context())
-		req.Header.Set("Authorization", "Api-Key "+t.Session.ephemeralAPIKey)
+	// A request that already carries a credential keeps it: volume transfers
+	// authenticate to the volume service with a capability token over this
+	// same client, and the API key would not be read there.
+	if req.Header.Get("Authorization") != "" {
 		return t.base().RoundTrip(req)
+	}
+	token, err := t.Credential(req.Context())
+	if err != nil {
+		return nil, err
+	}
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+token)
+	return t.base().RoundTrip(req)
+}
+
+// Credential resolves the session's credential as a bearer token: an API key
+// verbatim, or an OAuth access token, refreshed and persisted when it has
+// expired. The backend accepts either kind under the Bearer scheme, which is
+// also the only shape the truss CLI's forwarded credential accepts.
+func (t *Transport) Credential(ctx context.Context) (string, error) {
+	if t.Session.ephemeralAPIKey != "" {
+		return t.Session.ephemeralAPIKey, nil
 	}
 
 	if t.Session.profileName == "" {
-		return nil, fmt.Errorf("not logged in; run `baseten auth login` or set BASETEN_API_KEY")
+		return "", fmt.Errorf("not logged in; run `baseten auth login` or set BASETEN_API_KEY")
 	}
 
 	profileName := t.Session.profileName
 	profile, ok := t.Session.store.GetProfile(profileName)
 	if !ok {
-		return nil, fmt.Errorf("profile %q not found; run `baseten auth login`", profileName)
+		return "", fmt.Errorf("profile %q not found; run `baseten auth login`", profileName)
 	}
 
 	switch profile.AuthType {
 	case AuthTypeAPIKey:
-		apiKey, err := t.Session.store.GetAPIKey(profileName)
-		if err != nil {
-			return nil, err
-		}
-		req = req.Clone(req.Context())
-		req.Header.Set("Authorization", "Api-Key "+apiKey)
-		return t.base().RoundTrip(req)
+		return t.Session.store.GetAPIKey(profileName)
 
 	case AuthTypeOAuth:
 		if t.OAuthConfig == nil {
-			return nil, fmt.Errorf("OAuth credential requires OAuthConfig to be set on Transport")
+			return "", fmt.Errorf("OAuth credential requires OAuthConfig to be set on Transport")
 		}
 		cred, err := t.Session.store.GetOAuthCredential(profileName)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		token := &oauth2.Token{
 			AccessToken:  cred.AccessToken,
@@ -161,10 +215,10 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 			Expiry:       cred.Expiry,
 			TokenType:    "Bearer",
 		}
-		src := t.OAuthConfig.TokenSource(OAuthContext(req.Context(), t.base()), token)
+		src := t.OAuthConfig.TokenSource(OAuthContext(ctx, t.base()), token)
 		newToken, err := src.Token()
 		if err != nil {
-			return nil, fmt.Errorf("token expired and refresh failed: %w (run `baseten auth login` to re-authenticate)", err)
+			return "", fmt.Errorf("token expired and refresh failed: %w (run `baseten auth login` to re-authenticate)", err)
 		}
 		if newToken.AccessToken != cred.AccessToken {
 			updated := OAuthCredential{
@@ -173,14 +227,12 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 				Expiry:       newToken.Expiry,
 			}
 			if err := t.Session.store.SetOAuthProfile(profileName, profile.RemoteURL, updated, false, nil); err != nil {
-				return nil, fmt.Errorf("storing refreshed credential: %w", err)
+				return "", fmt.Errorf("storing refreshed credential: %w", err)
 			}
 		}
-		req = req.Clone(req.Context())
-		req.Header.Set("Authorization", "Bearer "+newToken.AccessToken)
-		return t.base().RoundTrip(req)
+		return newToken.AccessToken, nil
 
 	default:
-		return nil, fmt.Errorf("unknown auth type %q", profile.AuthType)
+		return "", fmt.Errorf("unknown auth type %q", profile.AuthType)
 	}
 }

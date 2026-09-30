@@ -70,6 +70,10 @@ def materialize(case: dict, root: pathlib.Path) -> None:
         path.write_bytes(base64.b64decode(b64))
     for rel in case.get("empty_dirs", []):
         (root / rel).mkdir(parents=True, exist_ok=True)
+    for rel, target in case.get("symlinks", {}).items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(target)
 
 
 def compute_golden(case: dict) -> dict:

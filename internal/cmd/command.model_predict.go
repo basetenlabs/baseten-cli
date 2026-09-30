@@ -37,11 +37,14 @@ func commandModelPredict(ctx *CommandContext, flags *cmd.ModelPredictFlags) erro
 	if flags.DeploymentID != "" {
 		targets++
 	}
+	if flags.DeploymentName != "" {
+		targets++
+	}
 	if flags.Regional != "" {
 		targets++
 	}
 	if targets > 1 {
-		return cmd.NewErrUsagef("--environment, --deployment-id, and --regional are mutually exclusive")
+		return cmd.NewErrUsagef("--environment, --deployment-id, --deployment-name, and --regional are mutually exclusive")
 	}
 
 	mgmtCl, err := ctx.NewManagementClient()
@@ -51,6 +54,15 @@ func commandModelPredict(ctx *CommandContext, flags *cmd.ModelPredictFlags) erro
 	ref, err := ResolveModelRef(ctx, mgmtCl.API(), flags.ModelRefFlags)
 	if err != nil {
 		return err
+	}
+
+	// Resolve --deployment-name to an ID so the rest of the command routes via
+	// the deployment path, exactly as --deployment-id does.
+	if flags.DeploymentName != "" {
+		flags.DeploymentID, err = findDeploymentIDByName(ctx, mgmtCl.API(), ref.ID, flags.DeploymentName)
+		if err != nil {
+			return err
+		}
 	}
 
 	icFlags := cmd.InferenceClientFlags{ModelID: ref.ID}

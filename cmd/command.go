@@ -33,11 +33,18 @@ var Root = Command{
 	Children: []Command{
 		commandAPI,
 		commandAuth,
+		commandHarness,
+		commandLoops,
 		commandModel,
 		commandModelAPI,
 		commandOrg,
+		commandRoute,
+		commandSSH,
+		commandTrain,
 		commandTruss,
 		commandVersion,
+		commandVolume,
+		commandWhoami,
 	},
 }
 
@@ -78,6 +85,9 @@ type Command struct {
 	// [ErrorDescOf] and documents one extra exit code surfaced by this leaf
 	// beyond the standard set. Rendered in --help-output.
 	Errors []ErrorDesc
+	// Hidden keeps the command out of help listings and completion. The command
+	// is still fully runnable.
+	Hidden bool
 }
 
 // LoadFlags parses the Flags struct tags and returns the flag metadata. Returns
@@ -112,13 +122,16 @@ func LoadFlagsFromType(t reflect.Type) []CommandFlag {
 
 // CommandFlag describes a single CLI flag parsed from struct tags.
 type CommandFlag struct {
-	Name      string
-	Short     string
-	Desc      string
-	Default   string
-	Enum      []string
-	Required  bool
-	Oneof     string // group name: exactly one flag in the group must be set
+	Name     string
+	Short    string
+	Desc     string
+	Default  string
+	Enum     []string
+	Required bool
+	Hidden   bool   // omitted from help output; still parsed and settable
+	Oneof    string // group name: exactly one flag in the group must be set
+	// Nullable allows an [OptionalFlag] to be passed as 'null'.
+	Nullable  bool
 	Type      reflect.Type
 	FieldName string // Go struct field name
 	// Group is the help-output flag-section bucket. Empty in raw metadata; the
@@ -149,7 +162,9 @@ func commandFlagFromField(field reflect.StructField) (CommandFlag, bool) {
 		Desc:      field.Tag.Get("desc"),
 		Default:   field.Tag.Get("default"),
 		Required:  field.Tag.Get("required") == "true",
+		Hidden:    field.Tag.Get("hidden") == "true",
 		Oneof:     field.Tag.Get("oneof"),
+		Nullable:  field.Tag.Get("nullable") == "true",
 		Type:      field.Type,
 		FieldName: field.Name,
 	}
@@ -168,4 +183,53 @@ func commandFlagFromField(field reflect.StructField) (CommandFlag, bool) {
 		f.GroupPri = n
 	}
 	return f, true
+}
+
+// NullFlagValue is the literal a caller passes to a `nullable:"true"` flag to
+// send an explicit null, clearing a setting rather than leaving it unchanged.
+const NullFlagValue = "null"
+
+// OptionalFlag is a flag that can be left unpassed, keeping `--min-replica 0`
+// distinguishable from an omitted flag. The settings endpoints patch only the
+// fields the request body carries, so that distinction decides whether a
+// setting is changed at all.
+//
+// Adding `nullable:"true"` lets the flag also be passed as [NullFlagValue].
+// Optionality and nullability are separate concerns: an OptionalFlag without
+// the tag can be omitted but not nulled.
+//
+// The state is behind methods rather than exported fields so binding cannot
+// leave it inconsistent, and so a value type carries no pointer to patch.
+type OptionalFlag[T any] struct {
+	set   bool
+	null  bool
+	value T
+}
+
+// SetValue records that the flag was passed with a value. Called by flag binding.
+func (o *OptionalFlag[T]) SetValue(value T) {
+	o.set, o.null, o.value = true, false, value
+}
+
+// SetNull records that the flag was passed as null. Called by flag binding.
+func (o *OptionalFlag[T]) SetNull() {
+	var zero T
+	o.set, o.null, o.value = true, true, zero
+}
+
+// IsSet reports whether the flag was passed at all, as a value or as null.
+func (o OptionalFlag[T]) IsSet() bool { return o.set }
+
+// IsNull reports whether the flag was passed as null.
+func (o OptionalFlag[T]) IsNull() bool { return o.null }
+
+// Pointer returns the value, or nil when the flag was omitted or passed as
+// null. Both cases marshal away, so a caller that has already rejected null can
+// use this directly as a request field.
+func (o OptionalFlag[T]) Pointer() *T {
+	if !o.set || o.null {
+		return nil
+	}
+	value := o.value
+	return &value
 }

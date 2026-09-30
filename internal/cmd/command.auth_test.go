@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/basetenlabs/baseten-cli/internal/auth"
@@ -285,6 +286,36 @@ func Test_Auth_Login_APIKey_NoSwitchKeepsCurrent(t *testing.T) {
 	h.Require.Equal("existing", name, "--no-switch must not move the current pointer")
 }
 
+// devNullStdin points the harness at /dev/null, as cron and CI do. It is a
+// character device without being a terminal, so it must take the
+// non-interactive branch rather than trying to prompt.
+func devNullStdin(t *testing.T, h *CommandHarness) {
+	f, err := os.Open(os.DevNull)
+	h.Require.NoError(err)
+	t.Cleanup(func() { _ = f.Close() })
+	h.StdinReader = f
+}
+
+func Test_Auth_Login_DevNullStdinRequiresMethodFlag(t *testing.T) {
+	h := newAuthHarness(t)
+	pointManagementAt(t, "http://127.0.0.1:1")
+	devNullStdin(t, h)
+
+	err := h.Execute("auth", "login")
+	h.Require.ErrorContains(err, "must specify --web or --with-api-key when not interactive")
+}
+
+func Test_Auth_Login_APIKey_DevNullStdinEmptyFails(t *testing.T) {
+	h := newAuthHarness(t)
+	pointManagementAt(t, "http://127.0.0.1:1")
+	devNullStdin(t, h)
+
+	// Reads stdin, hits EOF immediately, and reports the empty key rather
+	// than prompting.
+	err := h.Execute("auth", "login", "--with-api-key", "--profile", "my-laptop")
+	h.Require.ErrorContains(err, "empty")
+}
+
 func Test_Auth_Login_APIKey_EmptyFails(t *testing.T) {
 	h := newAuthHarness(t)
 	pointManagementAt(t, "http://127.0.0.1:1")
@@ -376,6 +407,7 @@ func Test_Auth_Login_Web_DeviceFlow(t *testing.T) {
 	pointManagementAt(t, srv.URL)
 
 	h.Require.NoError(h.Execute("auth", "login", "--web"))
+	h.Require.Equal([]string{"https://auth.example.com/device?user_code=ABCD-EFGH"}, h.OpenedURLs)
 
 	h.Require.Equal(1, srv.DeviceAuthCalls)
 	h.Require.GreaterOrEqual(srv.DeviceTokenCalls, 1)
@@ -400,6 +432,7 @@ func Test_Auth_Login_Web_ProfileFlagOverridesName(t *testing.T) {
 	pointManagementAt(t, srv.URL)
 
 	h.Require.NoError(h.Execute("auth", "login", "--web", "--profile", "work"))
+	h.Require.Equal([]string{"https://auth.example.com/device?user_code=ABCD-EFGH"}, h.OpenedURLs)
 
 	name, _, ok := configDirStore(t).CurrentProfile()
 	h.Require.True(ok)

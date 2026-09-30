@@ -33,7 +33,7 @@ func storeWithConfigDir(t *testing.T) *auth.Store {
 
 func mustResolve(t *testing.T, profileFlag string) *auth.Session {
 	t.Helper()
-	session, err := auth.ResolveSession(profileFlag)
+	session, err := auth.ResolveSession(profileFlag, "")
 	require.NoError(t, err)
 	return session
 }
@@ -73,7 +73,7 @@ func TestTransport_EphemeralAPIKeyWinsOverCurrentProfile(t *testing.T) {
 	resp, err := tr.Do(mustRequest(t, es.URL))
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, "Api-Key env-key", es.LastAuthHeader)
+	require.Equal(t, "Bearer env-key", es.LastAuthHeader)
 }
 
 func TestTransport_APIKeyInjected(t *testing.T) {
@@ -86,7 +86,7 @@ func TestTransport_APIKeyInjected(t *testing.T) {
 	resp, err := tr.Do(mustRequest(t, es.URL))
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, "Api-Key "+apiKeyA, es.LastAuthHeader)
+	require.Equal(t, "Bearer "+apiKeyA, es.LastAuthHeader)
 }
 
 func TestTransport_OAuthBearerInjected(t *testing.T) {
@@ -190,6 +190,55 @@ func TestTransport_CustomBaseUsed(t *testing.T) {
 	require.True(t, called, "custom Base RoundTripper must be used")
 }
 
+func TestSession_CacheIdentity(t *testing.T) {
+	s := storeWithConfigDir(t)
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(profileB, remoteURL, "api-key-bob", false, nil))
+
+	alice := mustResolve(t, profileA).CacheIdentity()
+	bob := mustResolve(t, profileB).CacheIdentity()
+
+	// Distinct credentials never share an identity, and the raw profile name (an
+	// email) does not appear in it, since it is used as a path segment.
+	require.NotEqual(t, alice, bob)
+	require.NotContains(t, alice, profileA)
+	require.Regexp(t, `^profile-[0-9a-f]{16}$`, alice)
+
+	// Stable across resolutions, so sign and proxy agree.
+	require.Equal(t, alice, mustResolve(t, profileA).CacheIdentity())
+}
+
+func TestSession_CacheIdentityEphemeralKey(t *testing.T) {
+	storeWithConfigDir(t)
+	t.Setenv("BASETEN_API_KEY", "env-key")
+	first := mustResolve(t, "").CacheIdentity()
+	require.Regexp(t, `^key-[0-9a-f]{16}$`, first)
+	require.NotContains(t, first, "env-key")
+
+	// A different key is a different identity: ephemeral sessions carry no
+	// profile name to distinguish them.
+	t.Setenv("BASETEN_API_KEY", "other-key")
+	require.NotEqual(t, first, mustResolve(t, "").CacheIdentity())
+}
+
+func TestSession_CacheIdentityUnauthenticated(t *testing.T) {
+	storeWithConfigDir(t)
+	require.Equal(t, "anonymous", mustResolve(t, "").CacheIdentity())
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestSession_UsesAPIKey(t *testing.T) {
+	s := storeWithConfigDir(t)
+	require.False(t, mustResolve(t, "").UsesAPIKey(), "unauthenticated")
+
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetOAuthProfile(profileB, remoteURL, auth.OAuthCredential{AccessToken: "token"}, false, nil))
+	require.True(t, mustResolve(t, profileA).UsesAPIKey())
+	require.False(t, mustResolve(t, profileB).UsesAPIKey())
+
+	t.Setenv("BASETEN_API_KEY", "env-key")
+	require.True(t, mustResolve(t, "").UsesAPIKey())
+}

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -32,8 +34,13 @@ type CommandHarness struct {
 	Stdout  bytes.Buffer
 	Stderr  bytes.Buffer
 
-	ExitCode int
-	exited   bool
+	// StdinReader replaces the Stdin buffer when non-nil. Needed to reach the
+	// terminal-detection paths, which only inspect an *os.File.
+	StdinReader io.Reader
+
+	OpenedURLs []string
+	ExitCode   int
+	exited     bool
 
 	mockManagementAPI *MockManagementAPI
 }
@@ -52,17 +59,27 @@ func (h *CommandHarness) Execute(args ...string) error {
 	h.Stdout.Reset()
 	h.Stderr.Reset()
 	h.ExitCode = 0
+	h.OpenedURLs = nil
 	h.exited = false
 	cmd.VerifyRunners()
+	var stdin io.Reader = &h.Stdin
+	if h.StdinReader != nil {
+		stdin = h.StdinReader
+	}
 	err := cmd.Execute(h.Context, cmd.ExecuteOptions{
 		Args:   args,
-		Stdin:  &h.Stdin,
+		Stdin:  stdin,
 		Stdout: &h.Stdout,
 		Stderr: &h.Stderr,
 		ExitWithCode: func(code int) {
 			h.ExitCode = code
 			h.exited = true
 		},
+		OpenURL: func(url string) error {
+			h.OpenedURLs = append(h.OpenedURLs, url)
+			return nil
+		},
+		StrictOutputChecks: true,
 	})
 	if err != nil && !h.exited {
 		h.ExitCode = 1
@@ -261,4 +278,24 @@ func TestOutputEnumValidation(t *testing.T) {
 	h := NewCommandHarness(t)
 	err := h.Execute("api", "management", "--output", "invalid", "some/path")
 	h.Require.ErrorContains(err, "must be one of")
+}
+
+func TestIsInteractiveDevNullIsNotATerminal(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	// /dev/null is a character device but not a terminal, and redirecting
+	// stdin from it is how cron and CI usually run.
+	require.False(t, (&cmd.CommandContext{Stdin: f}).IsInteractive())
+}
+
+func TestIsInteractiveRegularFileIsNotATerminal(t *testing.T) {
+	f, err := os.Create(filepath.Join(t.TempDir(), "stdin"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	require.False(t, (&cmd.CommandContext{Stdin: f}).IsInteractive())
+}
+
+func TestIsInteractiveNonFileIsNotATerminal(t *testing.T) {
+	require.False(t, (&cmd.CommandContext{Stdin: &bytes.Buffer{}}).IsInteractive())
 }

@@ -3,6 +3,7 @@
 package e2etests
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -10,12 +11,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // TestE2EModelLifecycle pushes a fresh model, drives the management and
@@ -27,10 +30,16 @@ func TestE2EModelLifecycle(t *testing.T) {
 	t.Run("APIInference", l.APIInference)
 	t.Run("Model", l.Model)
 	t.Run("Deployment", l.Deployment)
+	t.Run("Activate", l.Activate)
 	t.Run("Logs", l.Logs)
 	t.Run("Environment", l.Environment)
 	t.Run("ModelPredict", l.ModelPredict)
 	t.Run("Metrics", l.Metrics)
+	t.Run("AuditLogs", l.AuditLogs)
+	t.Run("SSH", l.SSH)
+	t.Run("DeploymentSettings", l.DeploymentSettings)
+	t.Run("EnvironmentSettings", l.EnvironmentSettings)
+	t.Run("AutoscalingSchedule", l.AutoscalingSchedule)
 	t.Run("Redeploy", l.Redeploy)
 	t.Run("Delete", l.Delete)
 }
@@ -43,6 +52,9 @@ type lifecycle struct {
 	modelDir            string
 	modelID             string
 	initialDeploymentID string
+	// deploymentName is the initial deployment's server-assigned name, captured
+	// in the Deployment phase and reused by the name-based lookups.
+	deploymentName string
 }
 
 // newLifecycle runs the env-gate, materializes the truss source, performs the
@@ -67,30 +79,36 @@ func newLifecycle(t *testing.T) *lifecycle {
 
 	// Register cleanup before the push so even a partial create gets removed.
 	t.Cleanup(func() {
+		dumpModelLogsIfFailure(t, l.modelName)
 		if os.Getenv("BASETEN_E2E_KEEP_MODEL") != "" {
 			t.Logf("BASETEN_E2E_KEEP_MODEL set; leaving model %q in place", l.modelName)
 			return
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		if l.modelID == "" {
-			l.modelID = lookupModelIDByName(t, l.modelName)
+			l.modelID = lookupModelIDByName(t, ctx, l.modelName)
 		}
 		if l.modelID == "" {
 			return
 		}
 		t.Logf("deleting model %s (%s)", l.modelName, l.modelID)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
 		if _, errOut, err := cliCtx(t, ctx, "model", "delete", "--model-id", l.modelID, "--yes"); err != nil {
 			t.Logf("cleanup delete failed: %v\nstderr: %s", err, errOut)
 		}
 	})
 
-	pushOut := mustCLI(t, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
+	step(t, "pushing model %s to production", l.modelName)
+	ctx, cancel := context.WithTimeout(t.Context(), pushCLITimeout)
+	defer cancel()
+	pushOut := mustCLICtx(t, ctx, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
+	step(t, "pushed model %s", l.modelName)
 	var initial pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(pushOut), &initial))
 	require.Equal(t, l.modelName, initial.Model.Name)
 	l.modelID = initial.Model.ID
 	l.initialDeploymentID = initial.Deployment.ID
+	l.deploymentName = initial.Deployment.Name
 	return l
 }
 
@@ -189,6 +207,18 @@ func (l *lifecycle) Model(t *testing.T) {
 		require.Equal(t, l.modelID, resp.ID)
 		require.Equal(t, l.modelName, resp.Name)
 	})
+
+	t.Run("Rename", func(t *testing.T) {
+		renamed := l.modelName + "-renamed"
+		mustCLI(t, "model", "rename", "--model-id", l.modelID, "--new-name", renamed)
+		out := mustCLI(t, "model", "describe", "--model-id", l.modelID, "--jq", ".name")
+		require.JSONEq(t, fmt.Sprintf("%q", renamed), out)
+
+		// Renamed back so the later name-based lookups still resolve.
+		mustCLI(t, "model", "rename", "--model-name", renamed, "--new-name", l.modelName)
+		out = mustCLI(t, "model", "describe", "--model-id", l.modelID, "--jq", ".name")
+		require.JSONEq(t, fmt.Sprintf("%q", l.modelName), out)
+	})
 }
 
 func (l *lifecycle) Deployment(t *testing.T) {
@@ -222,6 +252,19 @@ func (l *lifecycle) Deployment(t *testing.T) {
 		require.Equal(t, l.modelID, resp.ModelID)
 	})
 
+	t.Run("DescribeByName", func(t *testing.T) {
+		// Resolving both the model and the deployment by name (server-side
+		// ?name= filters) yields the same deployment as the IDs.
+		require.NotEmpty(t, l.deploymentName, "deployment missing name")
+		out := mustCLI(t, "model", "deployment", "describe",
+			"--model-name", l.modelName, "--deployment-name", l.deploymentName, "--output", "json")
+		var resp struct {
+			ID string `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, l.initialDeploymentID, resp.ID)
+	})
+
 	t.Run("Config_Text", func(t *testing.T) {
 		out := mustCLI(t, "model", "deployment", "config",
 			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID)
@@ -245,12 +288,21 @@ func (l *lifecycle) Deployment(t *testing.T) {
 		mustCLI(t, "model", "deployment", "download",
 			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--out-dir", outDir)
 
+		// The downloaded archive is the gathered truss: external_package_dirs is
+		// stripped and the external module is inlined under packages/. The config
+		// is re-marshalled server-side, so assert on structure, not exact bytes.
 		gotCfg, err := os.ReadFile(filepath.Join(outDir, "config.yaml"))
 		require.NoError(t, err)
-		require.Equal(t, fmt.Sprintf(trussConfigTmpl, l.modelName), string(gotCfg))
+		var cfgMap map[string]any
+		require.NoError(t, yaml.Unmarshal(gotCfg, &cfgMap))
+		require.Equal(t, l.modelName, cfgMap["model_name"])
+		require.NotContains(t, cfgMap, "external_package_dirs")
 		gotModel, err := os.ReadFile(filepath.Join(outDir, "model", "model.py"))
 		require.NoError(t, err)
 		require.Equal(t, trussModelPy, string(gotModel))
+		gotExt, err := os.ReadFile(filepath.Join(outDir, "packages", "e2e_ext.py"))
+		require.NoError(t, err)
+		require.Equal(t, e2eExternalModule, string(gotExt))
 	})
 
 	t.Run("Download_OutFile", func(t *testing.T) {
@@ -260,6 +312,32 @@ func (l *lifecycle) Deployment(t *testing.T) {
 		st, err := os.Stat(outFile)
 		require.NoError(t, err)
 		require.Greater(t, st.Size(), int64(0), "downloaded tar should be non-empty")
+	})
+}
+
+// Activate checks that activating a deployment is idempotent. The push in
+// newLifecycle left this deployment active, so every activate here is the
+// already-active case: the server reports no_op and the CLI says so rather than
+// claiming it activated anything.
+func (l *lifecycle) Activate(t *testing.T) {
+	t.Run("JSON", func(t *testing.T) {
+		out := mustCLI(t, "model", "deployment", "activate",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID, "--output", "json")
+		var resp struct {
+			Success bool `json:"success"`
+			NoOp    bool `json:"no_op"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.True(t, resp.Success, "activating an active deployment should still succeed")
+		require.True(t, resp.NoOp, "activating an active deployment should be a no-op")
+	})
+
+	t.Run("Text", func(t *testing.T) {
+		out, errOut, err := cli(t, "model", "deployment", "activate",
+			"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID)
+		require.NoError(t, err, "stderr: %s", errOut)
+		require.Empty(t, out, "activate writes nothing to stdout in text mode")
+		require.Contains(t, errOut, fmt.Sprintf("Deployment %s was already active", l.initialDeploymentID))
 	})
 }
 
@@ -274,9 +352,24 @@ type logLine struct {
 // returned (not fatal) so callers can retry while logs propagate.
 func (l *lifecycle) collectLogs(t *testing.T, extraArgs ...string) ([]logLine, error) {
 	t.Helper()
-	args := append([]string{"model", "deployment", "logs",
+	return l.collectLogsFrom(t, append([]string{"model", "deployment", "logs",
 		"--model-id", l.modelID, "--deployment-id", l.initialDeploymentID,
-		"--since", "1h", "--output", "jsonl"}, extraArgs...)
+		"--since", "1h", "--output", "jsonl"}, extraArgs...)...)
+}
+
+// collectEnvLogs is collectLogs over the production environment path. The model
+// is pushed to production, so its current deployment is initialDeploymentID.
+func (l *lifecycle) collectEnvLogs(t *testing.T, extraArgs ...string) ([]logLine, error) {
+	t.Helper()
+	return l.collectLogsFrom(t, append([]string{"model", "environment", "logs",
+		"--model-id", l.modelID, "--environment", "production",
+		"--since", "1h", "--output", "jsonl"}, extraArgs...)...)
+}
+
+// collectLogsFrom runs a `... logs --output jsonl` command and parses each line.
+// CLI errors are returned (not fatal) so callers can retry while logs propagate.
+func (l *lifecycle) collectLogsFrom(t *testing.T, args ...string) ([]logLine, error) {
+	t.Helper()
 	out, _, err := cli(t, args...)
 	if err != nil {
 		return nil, err
@@ -354,6 +447,54 @@ func (l *lifecycle) Logs(t *testing.T) {
 		require.True(t, contains(lines, e2eLogErrorWord))
 		require.False(t, contains(lines, e2eLogWarningWord))
 	})
+
+	// Backward pagination must return the same set as a single fetch. With a
+	// tiny --page-size the CLI is forced to walk several pages over the burst of
+	// uniquely-numbered lines; the result must match an unpaged fetch exactly,
+	// proving no line is lost or duplicated at a page seam.
+	t.Run("Pagination", func(t *testing.T) {
+		msgs := func(lines []logLine) []string {
+			out := make([]string, len(lines))
+			for i, ll := range lines {
+				out[i] = ll.Message
+			}
+			return out
+		}
+		// Wait until every pagination line is queryable so the two fetches below
+		// see a stable set rather than racing log propagation.
+		var full []logLine
+		require.Eventually(t, func() bool {
+			got, err := l.collectLogs(t, "--includes", e2ePageMarker, "--limit", "0")
+			if err != nil {
+				return false
+			}
+			full = got
+			return len(full) >= e2ePageTotalLineCount
+		}, 90*time.Second, 3*time.Second, "pagination lines never appeared")
+
+		paged, err := l.collectLogs(t, "--includes", e2ePageMarker, "--limit", "0", "--page-size", "7")
+		require.NoError(t, err)
+		// Same multiset as the single fetch, and enough lines that page-size 7
+		// spanned multiple requests.
+		require.Greater(t, len(full), 7)
+		require.ElementsMatch(t, msgs(full), msgs(paged))
+	})
+
+	// The environment logs path spans the versions active on the environment;
+	// production's current deployment is this model, so the same markers show
+	// up and filters apply identically.
+	t.Run("Environment", func(t *testing.T) {
+		lines, err := l.collectEnvLogs(t)
+		require.NoError(t, err)
+		require.True(t, contains(lines, e2eLogInfoWord), "info line missing")
+		require.True(t, contains(lines, e2eLogWarningWord), "warning line missing")
+		require.True(t, contains(lines, e2eLogErrorWord), "error line missing")
+
+		filtered, err := l.collectEnvLogs(t, "--min-level", "error")
+		require.NoError(t, err)
+		require.False(t, contains(filtered, e2eLogInfoWord), "info should be filtered out")
+		require.True(t, contains(filtered, e2eLogErrorWord))
+	})
 }
 
 func (l *lifecycle) Environment(t *testing.T) {
@@ -399,6 +540,25 @@ func (l *lifecycle) Environment(t *testing.T) {
 func (l *lifecycle) ModelPredict(t *testing.T) {
 	t.Run("Default", func(t *testing.T) {
 		out := mustCLI(t, "model", "predict", "--model-id", l.modelID, "--data", `{"x":1}`, "--output", "json")
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, map[string]any{"got request": map[string]any{"x": float64(1)}}, resp)
+	})
+
+	t.Run("ExternalPackage", func(t *testing.T) {
+		out := mustCLI(t, "model", "predict", "--model-id", l.modelID, "--data", `{"style":"external"}`, "--output", "json")
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, map[string]any{"external_const": e2eExternalConst}, resp)
+	})
+
+	t.Run("ByDeploymentName", func(t *testing.T) {
+		// Targets the deployment by resolving both the model and the deployment
+		// by name (server-side ?name= filters).
+		require.NotEmpty(t, l.deploymentName, "deployment missing name")
+		out := mustCLI(t, "model", "predict",
+			"--model-name", l.modelName, "--deployment-name", l.deploymentName,
+			"--data", `{"x":1}`, "--output", "json")
 		var resp map[string]any
 		require.NoError(t, json.Unmarshal([]byte(out), &resp))
 		require.Equal(t, map[string]any{"got request": map[string]any{"x": float64(1)}}, resp)
@@ -470,10 +630,186 @@ func (l *lifecycle) Metrics(t *testing.T) {
 		require.Equal(t, "SERIES", resp.Mode)
 		require.NotEmpty(t, resp.MetricDescriptors)
 	})
+
+	// The environment metrics path aggregates across the deployments active on
+	// the environment; production's current deployment is this model, so the
+	// same registered descriptor appears. Shape only, never a value.
+	t.Run("Environment", func(t *testing.T) {
+		out := mustCLI(t, "model", "environment", "metrics",
+			"--model-id", l.modelID, "--environment", "production", "--output", "json")
+		var resp metricsResp
+		require.NoError(t, json.Unmarshal([]byte(out), &resp))
+		require.Equal(t, "CURRENT", resp.Mode)
+		require.True(t, hasDescriptor(resp, "baseten_replicas_active"),
+			"baseten_replicas_active missing from current snapshot")
+	})
+}
+
+// AuditLogs verifies the deploy performed in newLifecycle shows up in the audit
+// log, at both model and org scope.
+//
+// Audit entries are written synchronously to Postgres in the request
+// transaction and the REST endpoint reads from that same table, so the entry is
+// committed before `model push --wait` returned. The short poll only absorbs
+// trivial read jitter; do not stretch it to match the Logs phase, whose long
+// wait is for Loki, a genuinely lagging store.
+func (l *lifecycle) AuditLogs(t *testing.T) {
+	// event_data is the discriminated deploy payload; these fields are populated
+	// for a MODEL_DEPLOYED entry.
+	type auditEntry struct {
+		EventType string `json:"event_type"`
+		EventData struct {
+			ModelID      string `json:"model_id"`
+			ModelName    string `json:"model_name"`
+			DeploymentID string `json:"deployment_id"`
+		} `json:"event_data"`
+	}
+	// fetch runs the CLI and parses the JSON array; returns an error (rather
+	// than failing) so it is safe to call inside require.Eventually.
+	fetch := func(args ...string) ([]auditEntry, error) {
+		out, _, err := cli(t, args...)
+		if err != nil {
+			return nil, err
+		}
+		var entries []auditEntry
+		if err := json.Unmarshal([]byte(out), &entries); err != nil {
+			return nil, err
+		}
+		return entries, nil
+	}
+	// findDeploy returns the first MODEL_DEPLOYED entry, or nil if none is
+	// present, for asserting on its payload after the poll succeeds.
+	findDeploy := func(entries []auditEntry) *auditEntry {
+		for i := range entries {
+			if entries[i].EventType == "MODEL_DEPLOYED" {
+				return &entries[i]
+			}
+		}
+		return nil
+	}
+
+	// Model scope: the endpoint filters by model server-side. Assert the deploy
+	// payload references this model, not just that some deploy event exists.
+	t.Run("ModelScoped", func(t *testing.T) {
+		var deploy *auditEntry
+		require.Eventually(t, func() bool {
+			entries, err := fetch("model", "audit-logs", "--model-id", l.modelID, "--output", "json")
+			if err != nil {
+				return false
+			}
+			deploy = findDeploy(entries)
+			return deploy != nil
+		}, 10*time.Second, 1*time.Second, "MODEL_DEPLOYED audit entry never appeared for the model")
+		require.Equal(t, l.modelID, deploy.EventData.ModelID, "deploy entry should reference this model")
+		require.Equal(t, l.modelName, deploy.EventData.ModelName)
+	})
+
+	// Org scope with slice filters: --deployment-id (a []string query param) and
+	// --event-type-group (a named-element enum slice) must both round-trip to the
+	// backend as repeated query params. Asserting the entry's deployment_id
+	// equals the one we filtered on proves the filter was honored, not dropped or
+	// mis-encoded.
+	t.Run("OrgScopedFiltered", func(t *testing.T) {
+		var deploy *auditEntry
+		require.Eventually(t, func() bool {
+			entries, err := fetch("org", "audit-logs",
+				"--deployment-id", l.initialDeploymentID,
+				"--event-type-group", "deployed",
+				"--output", "json")
+			if err != nil {
+				return false
+			}
+			deploy = findDeploy(entries)
+			return deploy != nil
+		}, 10*time.Second, 1*time.Second, "MODEL_DEPLOYED audit entry never appeared at org scope for the deployment")
+		require.Equal(t, l.initialDeploymentID, deploy.EventData.DeploymentID, "filtered deploy entry should reference the requested deployment")
+	})
+}
+
+// SSH exercises the full `baseten ssh` flow against the live deployment: it
+// builds the real binary, runs setup, then connects with the system ssh client
+// (which invokes the binary for the sign/proxy steps) and cats the remote
+// model.py, asserting it matches what was pushed.
+func (l *lifecycle) SSH(t *testing.T) {
+	if _, err := exec.LookPath("ssh"); err != nil {
+		t.Skip("ssh client not available")
+	}
+
+	// The generated config invokes `baseten ssh sign|proxy` via the ssh client,
+	// so the in-process harness cannot serve it: build a real binary from the
+	// current source and point the config's baked command at it via
+	// BASETEN_SSH_BINARY_OVERRIDE.
+	binPath := filepath.Join(t.TempDir(), "baseten")
+	build := exec.Command("go", "build", "-o", binPath, "./cmd/baseten")
+	build.Dir = repoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building baseten binary: %v\n%s", err, out)
+	}
+
+	// Isolate the keypair/cert/JWT cache and the ssh config in temp locations.
+	configPath := filepath.Join(t.TempDir(), "config")
+	t.Setenv("BASETEN_SSH_DIR", t.TempDir())
+	t.Setenv("BASETEN_SSH_CONFIG_PATH", configPath)
+	t.Setenv("BASETEN_SSH_BINARY_OVERRIDE", binPath)
+
+	mustCLI(t, "ssh", "setup")
+
+	// runSSH connects with the system ssh client (which invokes the built binary
+	// for the sign/proxy steps) and cats the remote model.py.
+	runSSH := func(host string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		var stdout, stderr bytes.Buffer
+		c := exec.CommandContext(ctx, "ssh", "-F", configPath,
+			"-o", "BatchMode=yes", "-o", "ConnectTimeout=30",
+			host, "cat", "/app/model/model.py")
+		c.Stdout, c.Stderr = &stdout, &stderr
+		if err := c.Run(); err != nil {
+			return "", fmt.Errorf("%w\nstderr: %s", err, stderr.String())
+		}
+		return stdout.String(), nil
+	}
+
+	// Deployment form. The workload's sshd can lag behind the deployment going
+	// ACTIVE, so retry the first connection until it succeeds or the deadline
+	// passes.
+	deploymentHost := fmt.Sprintf("model-%s-%s.ssh.baseten.co", l.modelID, l.initialDeploymentID)
+	var modelPy string
+	require.Eventually(t, func() bool {
+		out, err := runSSH(deploymentHost)
+		if err != nil {
+			t.Logf("ssh connect attempt to %s failed: %v", deploymentHost, err)
+			return false
+		}
+		modelPy = out
+		return true
+	}, 3*time.Minute, 10*time.Second, "ssh connect to %s never succeeded", deploymentHost)
+	require.Equal(t, trussModelPy, modelPy, "remote /app/model/model.py should match the pushed source")
+
+	// Environment form: <env>.model-<id> resolves the environment's current
+	// deployment (production points at initialDeploymentID) client-side in sign.
+	// The workload is already warm from the connection above, so connect directly
+	// without the retry loop.
+	environmentHost := fmt.Sprintf("production.model-%s.ssh.baseten.co", l.modelID)
+	envModelPy, err := runSSH(environmentHost)
+	require.NoError(t, err, "ssh connect to environment host %s", environmentHost)
+	require.Equal(t, trussModelPy, envModelPy,
+		"remote /app/model/model.py via the environment host should match the pushed source")
 }
 
 func (l *lifecycle) Redeploy(t *testing.T) {
-	out := mustCLI(t, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
+	// Creating the environment is opt-in, so a push naming one the model does
+	// not have is rejected. This fails at prepare, before the archive uploads.
+	missingEnv := "nope-" + randomSuffix(t)
+	_, errOut, err := cli(t, "model", "push", "--dir", l.modelDir, "--environment", missingEnv)
+	require.Error(t, err, "push to a nonexistent environment should fail; stdout was %s", errOut)
+	require.Contains(t, errOut, missingEnv)
+
+	step(t, "re-pushing model %s to production", l.modelName)
+	ctx, cancel := context.WithTimeout(t.Context(), pushCLITimeout)
+	defer cancel()
+	out := mustCLICtx(t, ctx, "model", "push", "--dir", l.modelDir, "--environment", "production", "--wait", "--output", "json")
+	step(t, "re-pushed model %s", l.modelName)
 	var redeploy pushedDeployment
 	require.NoError(t, json.Unmarshal([]byte(out), &redeploy))
 	require.Equal(t, l.modelID, redeploy.Model.ID, "redeploy should reuse existing model")

@@ -15,7 +15,7 @@ import (
 
 const metricsPath = "/v1/models/m/deployments/d/metrics"
 
-// metricsResponse builds a GetDeploymentMetricsResponse body.
+// metricsResponse builds a GetModelMetricsResponse body.
 func metricsResponse(mode string, startMs, endMs int, descriptors []any, valueSets []any) map[string]any {
 	return map[string]any{
 		"mode":               mode,

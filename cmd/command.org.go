@@ -16,10 +16,11 @@ var commandOrg = Command{
 			Summary: "Manage API keys",
 			Children: []Command{
 				{
-					Name:        "list",
-					Summary:     "List API keys",
-					Description: "List API keys (metadata only; key values are never returned).",
-					Flags:       OrgAPIKeyListFlags{},
+					Name:    "list",
+					Summary: "List API keys",
+					Description: "List API keys (metadata only; key values are never returned). " +
+						"Routes API keys, which harness setup creates and manages, are listed only with --type routes.",
+					Flags: OrgAPIKeyListFlags{},
 					Output: &CommandOutput[managementapi.APIKeys]{
 						TextDescription: "Table with columns: NAME, KEY (prefix + ****), TYPE, TEAM. When no " +
 							"keys exist, prints \"No API keys found.\" to stderr.",
@@ -136,6 +137,52 @@ var commandOrg = Command{
 			},
 		},
 		{
+			Name:        "describe",
+			Summary:     "Describe the organization",
+			Description: "Describe the caller's organization.",
+			Flags:       OrgDescribeFlags{},
+			Output: &CommandOutput[managementapi.OrganizationInfo]{
+				TextDescription: "Field-per-line summary: org ID, name (when set), and the AWS AssumeRole role ARN and external ID (if enabled).",
+				Examples: []CommandExample{
+					{
+						Description: "Describe the organization.",
+						Command:     "baseten org describe",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the organization ID.",
+					Command:     "baseten org describe --jq '.org_id'",
+				},
+			},
+		},
+		{
+			Name:    "regions",
+			Summary: "List available deployment regions",
+			Description: "List the regions the organization can deploy models in.\n\n" +
+				"Pass a region's slug to 'baseten model push --region'.\n\n" +
+				"Pass --team to list the regions available to one team instead, which may be a " +
+				"subset of the organization's.",
+			Flags: OrgRegionsFlags{},
+			Output: &CommandOutput[managementapi.Regions]{
+				TextDescription: "Table with columns: SLUG, NAME. When the organization has no " +
+					"regions, prints \"No regions found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List the organization's regions.",
+						Command:     "baseten org regions",
+					},
+					{
+						Description: "List one team's regions.",
+						Command:     "baseten org regions --team <team>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the region slugs.",
+					Command:     "baseten org regions --jq '.regions[].slug'",
+				},
+			},
+		},
+		{
 			Name:    "secret",
 			Summary: "Manage secrets",
 			Children: []Command{
@@ -211,20 +258,180 @@ var commandOrg = Command{
 				},
 			},
 		},
+		{
+			Name:        "team",
+			Summary:     "View teams",
+			Description: "List and inspect the teams in the organization.",
+			Children: []Command{
+				{
+					Name:        "describe",
+					Summary:     "Describe a team",
+					Description: "Describe a single team by name or ID.",
+					Flags:       OrgTeamDescribeFlags{},
+					Output: &CommandOutput[managementapi.Team]{
+						TextDescription: "Field-per-line summary of the team.",
+						Examples: []CommandExample{
+							{
+								Description: "Describe a team by ID or name.",
+								Command:     "baseten org team describe --team-id <team>",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print the team's name.",
+							Command:     "baseten org team describe --team-id <team> --jq '.name'",
+						},
+					},
+				},
+				{
+					Name:        "list",
+					Summary:     "List teams",
+					Description: "List the teams in the organization.",
+					Flags:       OrgTeamListFlags{},
+					Output: &CommandOutput[managementapi.Teams]{
+						TextDescription: "Table with columns: ID, NAME, DEFAULT, CREATED. When no teams " +
+							"exist, prints \"No teams found.\" to stderr.",
+						Examples: []CommandExample{
+							{
+								Description: "List all teams in the org.",
+								Command:     "baseten org team list",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print just the team names.",
+							Command:     "baseten org team list --jq '.teams[].name'",
+						},
+					},
+				},
+			},
+		},
+		{
+			Name:        "user",
+			Summary:     "View users",
+			Description: "List and inspect the users in the organization.",
+			Children: []Command{
+				{
+					Name:        "describe",
+					Summary:     "Describe a user",
+					Description: "Describe a single user by ID. Pass 'me' for the authenticated user.",
+					Flags:       OrgUserDescribeFlags{},
+					Output: &CommandOutput[managementapi.UserInfo]{
+						TextDescription: "Field-per-line summary of the user.",
+						Examples: []CommandExample{
+							{
+								Description: "Describe the authenticated user.",
+								Command:     "baseten org user describe --user-id me",
+							},
+							{
+								Description: "Describe a user by ID.",
+								Command:     "baseten org user describe --user-id <user-id>",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print the user's email.",
+							Command:     "baseten org user describe --user-id me --jq '.email'",
+						},
+					},
+				},
+				{
+					Name:        "list",
+					Summary:     "List users",
+					Description: "List the users in the organization.",
+					Flags:       OrgUserListFlags{},
+					Output: &CommandOutput[OrgUserList]{
+						TextDescription: "Table with columns: USER ID, EMAIL, NAME. When no users " +
+							"exist, prints \"No users found.\" to stderr.",
+						Examples: []CommandExample{
+							{
+								Description: "List all users in the org.",
+								Command:     "baseten org user list",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print just the user emails.",
+							Command:     "baseten org user list --jq '.items[].email'",
+						},
+					},
+				},
+			},
+		},
+		{
+			Name:    "audit-logs",
+			Summary: "List audit-log entries",
+			Description: "List audit-log entries for the workspace, newest first.\n\n" +
+				"Returns up to --limit entries (default 20) across the full history by default. " +
+				"Use --start/--end or --since to scope the time window, and the filter flags " +
+				"(--event-type-group, --source, --user-id, --deployment-id, --environment, --search) " +
+				"to narrow results.\n\n" +
+				"For machine-readable streaming, prefer --output jsonl over --output json.",
+			Flags: OrgAuditLogsFlags{},
+			Output: &CommandOutput[managementapi.AuditLogEntry]{
+				JSONArrayStreamed: true,
+				TextDescription: "Table with columns: TIME, ACTOR, EVENT, SOURCE. When no entries " +
+					"match, prints \"No audit-log entries found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List the 20 most recent audit-log entries.",
+						Command:     "baseten org audit-logs",
+					},
+					{
+						Description: "List deploy and promote events from the UI over the last 7 days.",
+						Command:     "baseten org audit-logs --since 7d --event-type-group deployed --event-type-group promoted --source ui",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Stream each entry's event type as a JSONL stream.",
+					Command:     "baseten org audit-logs --output jsonl --jq '.event_type'",
+				},
+			},
+		},
 	},
+}
+
+// OrgUserList is the JSON output of `baseten org user list`: the users
+// aggregated across all pages.
+type OrgUserList struct {
+	Items []managementapi.UserInfo `json:"items"`
+}
+
+type OrgTeamListFlags struct {
+	CommandFlags
+}
+
+type OrgTeamDescribeFlags struct {
+	CommandFlags
+
+	TeamID   string `flag:"team-id" desc:"Team ID to describe." oneof:"team-ref"`
+	TeamName string `flag:"team-name" desc:"Team name to describe." oneof:"team-ref"`
+}
+
+// OrgDescribeFlags configures `baseten org describe`.
+type OrgDescribeFlags struct {
+	CommandFlags
+}
+
+type OrgUserListFlags struct {
+	CommandFlags
+}
+
+type OrgUserDescribeFlags struct {
+	CommandFlags
+
+	UserID    string `flag:"user-id" desc:"User ID to describe. Pass 'me' for the authenticated user." oneof:"user-ref"`
+	UserEmail string `flag:"user-email" desc:"Email of the user to describe." oneof:"user-ref"`
 }
 
 type OrgAPIKeyListFlags struct {
 	CommandFlags
+	Type string `flag:"type" desc:"Only list keys of this category." enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all,workspace-manage-api-keys,routes"`
 }
 
 type OrgAPIKeyCreateFlags struct {
 	CommandFlags
 
-	Type     string   `flag:"type" desc:"API key category." required:"true" enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all"`
+	Type     string   `flag:"type" desc:"API key category." required:"true" enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all,workspace-manage-api-keys"`
 	Name     string   `flag:"name" desc:"Optional human-readable name for the key."`
 	ModelIDs []string `flag:"model-id" desc:"Restrict the key to a specific model. May be repeated. Only valid with --type workspace-export-metrics or workspace-invoke."`
-	Team     string   `flag:"team" desc:"Team name or ID to create the key in. Defaults to the organization's default team."`
+	Team     string   `flag:"team" desc:"Team name or ID to create the key in. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
 }
 
 type OrgAPIKeyDeleteFlags struct {
@@ -242,6 +449,12 @@ type OrgBillingUsageFlags struct {
 	End   time.Time     `flag:"end" desc:"End of the window. Accepts ISO 8601; values without a timezone are interpreted in the local timezone. Requires --start. Mutually exclusive with --since."`
 }
 
+type OrgRegionsFlags struct {
+	CommandFlags
+
+	Team string `flag:"team" desc:"List the regions available to this team by name or ID, instead of the organization's. Run 'baseten org team list' to see teams."`
+}
+
 type OrgSecretListFlags struct {
 	CommandFlags
 
@@ -253,12 +466,44 @@ type OrgSecretSetFlags struct {
 
 	Name  string `flag:"name" desc:"Name of the secret." required:"true"`
 	Value string `flag:"value" desc:"Secret value. Discouraged: leaks into shell history and process list. Prefer stdin or prompt."`
-	Team  string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team."`
+	Team  string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
 }
 
 type OrgSecretDeleteFlags struct {
 	CommandFlags
 
 	Name string `flag:"name" desc:"Name of the secret to delete." required:"true"`
-	Team string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team."`
+	Team string `flag:"team" desc:"Team name or ID the secret belongs to. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
+}
+
+// AuditLogFlags is the shared query flag set for `baseten org audit-logs` and
+// `baseten model audit-logs`. Both commands accept the same window, filter, and
+// paging flags; only the audit-log scope differs. Unlike the log-query flags,
+// there is no time-window default (the full history is queried) and no maximum
+// window: results are bounded by --limit.
+type AuditLogFlags struct {
+	Start time.Time     `flag:"start" desc:"Start of the time window. Accepts ISO 8601 (e.g. '2026-05-14', '2026-05-14T12:00:00', '2026-05-14T12:00:00Z'). Values without a timezone designator are interpreted in the local timezone. Defaults to the beginning of the audit-log history."`
+	End   time.Time     `flag:"end" desc:"End of the time window. Accepts ISO 8601; values without a timezone designator are interpreted in the local timezone. Defaults to now."`
+	Since time.Duration `flag:"since" desc:"Shortcut for a window from a relative time ago until now. Accepts a duration (e.g. '30m', '1h30m') or '<N>d' (e.g. '3d'). Mutually exclusive with --start and --end."`
+
+	Limit int `flag:"limit" desc:"Maximum number of entries to return, paging as needed. Use 0 for no limit (every entry in the window)." default:"20"`
+
+	// PageSize is the per-request fetch size while paging. Hidden; exists so
+	// tests can force multiple pages without a full page of entries.
+	PageSize int `flag:"page-size" hidden:"true" desc:"Entries fetched per backend request while paging." default:"200"`
+
+	Direction string `flag:"direction" desc:"Sort order by the time the action occurred: 'desc' (newest first) or 'asc' (oldest first)." enum:"asc,desc" default:"desc"`
+	Search    string `flag:"search" desc:"Case-insensitive substring matched against resource names and IDs in the entry."`
+
+	EventTypeGroups []string `flag:"event-type-group" desc:"Only return entries whose event type falls in one of these groups. May be repeated. One of: activated-deactivated, api-keys, autoscaling-settings, deleted, deployed, directory-group-management, environment-settings, gateway, instance-type-changed, promoted, replica-terminated, secrets, ssh, user-management, webhook-signing-secrets."`
+	Sources         []string `flag:"source" desc:"Only return entries issued from one of these surfaces. May be repeated. One of: ui, api, mcp, other."`
+	UserIDs         []string `flag:"user-id" desc:"Only return entries whose acting user is one of these IDs. May be repeated."`
+	DeploymentIDs   []string `flag:"deployment-id" desc:"Only return entries referencing one of these model deployment IDs. May be repeated."`
+	Environments    []string `flag:"environment" desc:"Only return entries for one of these environments. May be repeated."`
+}
+
+// OrgAuditLogsFlags configures `baseten org audit-logs`.
+type OrgAuditLogsFlags struct {
+	CommandFlags
+	AuditLogFlags
 }

@@ -25,10 +25,49 @@ const (
 	ExitInterrupted ExitCode = 130
 )
 
+// JSONErrorEnvelope is written to stdout when a command fails under
+// --output json or --output jsonl, on top of the plain-text message that goes
+// to stderr whatever the output format.
+//
+// It is the last JSON document on stdout: alone when the command produced no
+// payload, or after the records a streamed command emitted. Two kinds of
+// failure write none. A command whose own payload already reports the failure
+// suppresses it, so stdout stays a single document under --output json, and a
+// command that delegates to another tool leaves that tool's stdout untouched.
+type JSONErrorEnvelope struct {
+	Error JSONError `json:"error"`
+}
+
+// JSONError is the error object inside a [JSONErrorEnvelope].
+type JSONError struct {
+	// Message is the human-readable failure message, identical to the line
+	// written to stderr. For a failure originating in an API response this
+	// includes the raw response body.
+	Message string `json:"message"`
+	// Type is the name of the typed error, matching the names listed in the
+	// exit-code tables of `baseten --help-output` and each command's
+	// --help-output.
+	Type string `json:"type"`
+	// ExitCode is the process exit code, the same value the shell sees.
+	ExitCode ExitCode `json:"exit_code"`
+	// APIStatusCode is the HTTP status of the failed API response. Absent when
+	// the failure did not come from an API call.
+	APIStatusCode int `json:"api_status_code,omitempty"`
+	// APIErrorCode is the machine-readable error code from the API response
+	// body. Absent when the failure did not come from an API call, or when the
+	// response carried no code (some failures are reported by an upstream
+	// proxy whose body has only a message).
+	APIErrorCode string `json:"api_error_code,omitempty"`
+	// APIDetails is the structured, per-failure-kind payload from the API
+	// response body. Absent when the failure did not come from an API call, or
+	// when the response carried no details.
+	APIDetails map[string]any `json:"api_details,omitempty"`
+}
+
 // CommandError is implemented by typed errors a command may return. The
 // framework calls [errors.As] on the returned error to discover a
 // CommandError implementation and uses its [ExitCode] and [Meaning] to
-// classify the failure and populate the JSON error envelope.
+// classify the failure and populate the [JSONErrorEnvelope].
 //
 // Implementations should embed [CommandErrorMeta] for the underlying
 // error/unwrap plumbing and provide static [ExitCode] and [Meaning] on a
@@ -77,7 +116,7 @@ func ErrorDescOf[PT CommandError]() ErrorDesc {
 	if code == ExitSuccess {
 		panic(fmt.Sprintf("typed command error %s has ExitCode() == 0", pt.Elem().Name()))
 	}
-	return ErrorDesc{Name: pt.Elem().Name(), Code: code, Meaning: inst.Meaning()}
+	return ErrorDesc{Name: ErrorTypeName(inst), Code: code, Meaning: inst.Meaning()}
 }
 
 // ErrGeneric is the catch-all typed error for failures with no more specific
@@ -147,18 +186,44 @@ func (*ErrServer) Meaning() string    { return "Server error" }
 // NewErrServer wraps any error as an [ErrServer].
 func NewErrServer(err error) *ErrServer { return wrapErr[ErrServer](err) }
 
+// ErrInterrupted signals that the command's context was cancelled by a signal
+// (Ctrl-C / SIGTERM) rather than failing on its own. Surfaces
+// [ExitInterrupted].
+type ErrInterrupted struct{ CommandErrorMeta }
+
+func (*ErrInterrupted) ExitCode() ExitCode { return ExitInterrupted }
+func (*ErrInterrupted) Meaning() string    { return "Interrupted by signal" }
+
+// NewErrInterrupted wraps any error as an [ErrInterrupted].
+func NewErrInterrupted(err error) *ErrInterrupted { return wrapErr[ErrInterrupted](err) }
+
+// ErrorTypeName returns the name of a [CommandError]'s concrete type: the
+// value carried in [JSONError.Type], and the name listed alongside the exit
+// code in the --help-output exit-code tables.
+func ErrorTypeName(err CommandError) string {
+	t := reflect.TypeOf(err)
+	if t == nil {
+		return ""
+	}
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t.Name()
+}
+
 // hasCommandErrorMeta is the constraint on the typed-error structs that embed
 // [CommandErrorMeta], used by [wrapErr] to inject the meta into a fresh value.
 type hasCommandErrorMeta interface {
 	setCommandErrorMeta(CommandErrorMeta)
 }
 
-func (e *ErrGeneric) setCommandErrorMeta(m CommandErrorMeta)    { e.CommandErrorMeta = m }
-func (e *ErrUsage) setCommandErrorMeta(m CommandErrorMeta)      { e.CommandErrorMeta = m }
-func (e *ErrAuth) setCommandErrorMeta(m CommandErrorMeta)       { e.CommandErrorMeta = m }
-func (e *ErrNotFound) setCommandErrorMeta(m CommandErrorMeta)   { e.CommandErrorMeta = m }
-func (e *ErrValidation) setCommandErrorMeta(m CommandErrorMeta) { e.CommandErrorMeta = m }
-func (e *ErrServer) setCommandErrorMeta(m CommandErrorMeta)     { e.CommandErrorMeta = m }
+func (e *ErrGeneric) setCommandErrorMeta(m CommandErrorMeta)     { e.CommandErrorMeta = m }
+func (e *ErrUsage) setCommandErrorMeta(m CommandErrorMeta)       { e.CommandErrorMeta = m }
+func (e *ErrAuth) setCommandErrorMeta(m CommandErrorMeta)        { e.CommandErrorMeta = m }
+func (e *ErrNotFound) setCommandErrorMeta(m CommandErrorMeta)    { e.CommandErrorMeta = m }
+func (e *ErrValidation) setCommandErrorMeta(m CommandErrorMeta)  { e.CommandErrorMeta = m }
+func (e *ErrServer) setCommandErrorMeta(m CommandErrorMeta)      { e.CommandErrorMeta = m }
+func (e *ErrInterrupted) setCommandErrorMeta(m CommandErrorMeta) { e.CommandErrorMeta = m }
 
 // wrapErr is the shared constructor for typed command errors. Returns nil if
 // err is nil so callers can `return cmd.NewErrXxx(maybeNil)` without a guard.
@@ -186,6 +251,7 @@ func StandardErrors() []ErrorDesc {
 		ErrorDescOf[*ErrNotFound](),
 		ErrorDescOf[*ErrValidation](),
 		ErrorDescOf[*ErrServer](),
+		ErrorDescOf[*ErrInterrupted](),
 	}
 }
 

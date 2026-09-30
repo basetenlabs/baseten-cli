@@ -2,11 +2,15 @@ package cmd
 
 import (
 	"archive/tar"
+	"bufio"
+	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +28,56 @@ func init() {
 	Register("model deployment delete", commandModelDeploymentDelete)
 	Register("model deployment download", commandModelDeploymentDownload)
 	Register("model deployment promote", commandModelDeploymentPromote)
+	Register("model deployment rename", commandModelDeploymentRename)
+	Register("model deployment update-autoscaling", commandModelDeploymentUpdateAutoscaling)
+	Register("model deployment update-request-backpressure", commandModelDeploymentUpdateRequestBackpressure)
+}
+
+// DeploymentRef is the result of resolving [cmd.ModelDeploymentIDFlags]: a
+// resolved model ID paired with a resolved deployment ID.
+type DeploymentRef struct {
+	ModelID      string
+	DeploymentID string
+}
+
+// ResolveDeploymentRef resolves the model, then the deployment within it. When
+// --deployment-id is set it is used directly; when --deployment-name is set the
+// deployment is looked up by exact name within the model. Absent or ambiguous
+// name matches return an error.
+func ResolveDeploymentRef(
+	ctx context.Context, api *managementapi.Client, flags cmd.ModelDeploymentIDFlags,
+) (DeploymentRef, error) {
+	modelRef, err := ResolveModelRef(ctx, api, flags.ModelRefFlags)
+	if err != nil {
+		return DeploymentRef{}, err
+	}
+	if flags.DeploymentID != "" {
+		return DeploymentRef{ModelID: modelRef.ID, DeploymentID: flags.DeploymentID}, nil
+	}
+	deploymentID, err := findDeploymentIDByName(ctx, api, modelRef.ID, flags.DeploymentName)
+	if err != nil {
+		return DeploymentRef{}, err
+	}
+	return DeploymentRef{ModelID: modelRef.ID, DeploymentID: deploymentID}, nil
+}
+
+// findDeploymentIDByName returns the ID of the deployment with the given exact
+// name within a model. The server filters by exact name, so at most one
+// deployment matches; absent or (defensively) ambiguous matches return an error.
+func findDeploymentIDByName(
+	ctx context.Context, api *managementapi.Client, modelID, name string,
+) (string, error) {
+	resp, err := api.GetModelsDeployments(ctx, modelID,
+		managementapi.GetV1ModelsModelIdDeploymentsParams{Name: &name})
+	if err != nil {
+		return "", fmt.Errorf("list deployments for model %s: %w", modelID, err)
+	}
+	if len(resp.Deployments) == 0 {
+		return "", fmt.Errorf("no deployment named %q in model %s", name, modelID)
+	} else if len(resp.Deployments) > 1 {
+		return "", fmt.Errorf("multiple deployments named %q in model %s", name, modelID)
+	}
+	return resp.Deployments[0].Id, nil
 }
 
 func commandModelDeploymentList(ctx *CommandContext, flags *cmd.ModelDeploymentListFlags) error {
@@ -35,7 +89,8 @@ func commandModelDeploymentList(ctx *CommandContext, flags *cmd.ModelDeploymentL
 	if err != nil {
 		return err
 	}
-	resp, err := cl.API().GetModelsDeployments(ctx, ref.ID)
+	resp, err := cl.API().GetModelsDeployments(ctx, ref.ID,
+		managementapi.GetV1ModelsModelIdDeploymentsParams{})
 	if err != nil {
 		return fmt.Errorf("list deployments for model %s: %w", ref.ID, err)
 	}
@@ -48,6 +103,11 @@ func commandModelDeploymentList(ctx *CommandContext, flags *cmd.ModelDeploymentL
 		ctx.LogLine("No deployments found.")
 		return nil
 	}
+	// Pinning a region is opt-in, so the column stays out until some deployment
+	// carries one, and the unpinned ones then read as global beside it.
+	showRegion := slices.ContainsFunc(resp.Deployments, func(d managementapi.Deployment) bool {
+		return d.Region != nil
+	})
 	rows := make([][]string, 0, len(resp.Deployments))
 	for _, d := range resp.Deployments {
 		env := ""
@@ -58,20 +118,26 @@ func commandModelDeploymentList(ctx *CommandContext, flags *cmd.ModelDeploymentL
 		if d.InstanceTypeName != nil {
 			instance = *d.InstanceTypeName
 		}
-		rows = append(rows, []string{
-			d.Id,
-			d.Name,
-			env,
-			string(d.Status),
-			instance,
+		row := []string{d.Id, d.Name, env, string(d.Status), instance}
+		if showRegion {
+			if d.Region != nil {
+				row = append(row, d.Region.Slug)
+			} else {
+				row = append(row, "global")
+			}
+		}
+		row = append(row,
 			fmt.Sprintf("%d", d.ActiveReplicaCount),
 			d.CreatedAt.UTC().Format(time.RFC3339),
-		})
+		)
+		rows = append(rows, row)
 	}
-	ctx.OutputTable(TableOutput{
-		Headers: []string{"ID", "NAME", "ENVIRONMENT", "STATUS", "INSTANCE", "REPLICAS", "CREATED"},
-		Rows:    rows,
-	})
+	headers := []string{"ID", "NAME", "ENVIRONMENT", "STATUS", "INSTANCE"}
+	if showRegion {
+		headers = append(headers, "REGION")
+	}
+	headers = append(headers, "REPLICAS", "CREATED")
+	ctx.OutputTable(TableOutput{Headers: headers, Rows: rows})
 	return nil
 }
 
@@ -80,18 +146,22 @@ func commandModelDeploymentDescribe(ctx *CommandContext, flags *cmd.ModelDeploym
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
-	dep, err := cl.API().GetModelsDeploymentsDeploymentId(ctx, ref.ID, flags.DeploymentID)
+	dep, err := cl.API().GetModelsDeploymentsDeploymentId(ctx, ref.ModelID, ref.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("describe deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("describe deployment %s: %w", ref.DeploymentID, err)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(dep)
 		return nil
+	}
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return err
 	}
 	ctx.Outputf("ID:           %s\n", dep.Id)
 	ctx.Outputf("Name:         %s\n", dep.Name)
@@ -103,9 +173,56 @@ func commandModelDeploymentDescribe(ctx *CommandContext, flags *cmd.ModelDeploym
 	if dep.InstanceTypeName != nil {
 		ctx.Outputf("Instance:     %s\n", *dep.InstanceTypeName)
 	}
+	regionSlug := ""
+	if dep.Region != nil {
+		regionSlug = dep.Region.Slug
+		ctx.Outputf("Region:       %s\n", regionSlug)
+	}
 	ctx.Outputf("Replicas:     %d\n", dep.ActiveReplicaCount)
+	ctx.Outputf("Invoke URL:   %s\n", hyperlink(ctx.Stdout,
+		remote.PredictURL(dep.ModelId, dep.Id, dep.IsDevelopment, regionSlug)))
+	ctx.Outputf("Logs URL:     %s\n", hyperlink(ctx.Stdout, remote.LogsURL(dep.ModelId, dep.Id)))
 	ctx.Outputf("Created:      %s\n", dep.CreatedAt.UTC().Format(time.RFC3339))
+	ctx.Outputf("Backpressure: %s\n", backpressurePolicyText(dep.RequestBackpressureSettings.Policy))
+	// Null until the model finishes deploying.
+	if dep.AutoscalingSettings != nil {
+		outputAutoscalingSettings(ctx, *dep.AutoscalingSettings)
+	}
 	return nil
+}
+
+// outputAutoscalingSettings prints the autoscaling block for deployment and
+// environment describe, so every setting update-autoscaling can change is
+// visible without reaching for JSON. Shared with environment describe.
+func outputAutoscalingSettings(ctx *CommandContext, settings managementapi.AutoscalingSettings) {
+	ctx.Outputf("Autoscaling:\n")
+	ctx.Outputf("  Min Replicas:            %d\n", settings.MinReplica)
+	ctx.Outputf("  Max Replicas:            %d\n", settings.MaxReplica)
+	ctx.Outputf("  Concurrency Target:      %d\n", settings.ConcurrencyTarget)
+	ctx.Outputf("  Autoscaling Window:      %s\n", describeSettingText(settings.AutoscalingWindow, "%ds"))
+	ctx.Outputf("  Scale Down Delay:        %s\n", describeSettingText(settings.ScaleDownDelay, "%ds"))
+	ctx.Outputf("  Target Utilization:      %s\n", describeSettingText(settings.TargetUtilizationPercentage, "%d%%"))
+	ctx.Outputf("  Target In-Flight Tokens: %s\n", describeSettingText(settings.TargetInFlightTokens, "%d"))
+	ctx.Outputf("  Max Scale Down Rate:     %s\n", describeSettingText(settings.MaxScaleDownRate, "%d%%"))
+}
+
+// describeSettingText renders a settings value for describe output. A nil field
+// is inherited or unset rather than zero, so it reads as a dash instead of a
+// misleading 0 or false.
+func describeSettingText[T any](value *T, format string) string {
+	if value == nil {
+		return "-"
+	}
+	return fmt.Sprintf(format, *value)
+}
+
+// describeEnumText renders an enum the flags also accept, in the spelling those
+// flags take.
+func describeEnumText[T ~string](value *T) string {
+	if value == nil {
+		return "-"
+	}
+	return enumFromAPIValue(string(*value))
 }
 
 func commandModelDeploymentConfig(ctx *CommandContext, flags *cmd.ModelDeploymentConfigFlags) error {
@@ -113,14 +230,14 @@ func commandModelDeploymentConfig(ctx *CommandContext, flags *cmd.ModelDeploymen
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
-	resp, err := cl.API().GetModelsDeploymentsConfig(ctx, ref.ID, flags.DeploymentID,
+	resp, err := cl.API().GetModelsDeploymentsConfig(ctx, ref.ModelID, ref.DeploymentID,
 		managementapi.GetV1ModelsModelIdDeploymentsDeploymentIdConfigParams{})
 	if err != nil {
-		return fmt.Errorf("fetch deployment config for %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("fetch deployment config for %s: %w", ref.DeploymentID, err)
 	}
 
 	if ctx.JSON {
@@ -147,20 +264,24 @@ func commandModelDeploymentActivate(ctx *CommandContext, flags *cmd.ModelDeploym
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
-	resp, err := cl.API().PostModelsDeploymentsActivate(ctx, ref.ID, flags.DeploymentID)
+	resp, err := cl.API().PostModelsDeploymentsActivate(ctx, ref.ModelID, ref.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("activate deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("activate deployment %s: %w", ref.DeploymentID, err)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Activated deployment %s\n", flags.DeploymentID)
+	if resp.NoOp != nil && *resp.NoOp {
+		ctx.Logf("Deployment %s was already active; nothing to do\n", ref.DeploymentID)
+	} else {
+		ctx.Logf("Activated deployment %s\n", ref.DeploymentID)
+	}
 	return nil
 }
 
@@ -169,27 +290,31 @@ func commandModelDeploymentDeactivate(ctx *CommandContext, flags *cmd.ModelDeplo
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
 	if !flags.Yes {
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Deactivate deployment %s?", flags.DeploymentID)); err != nil {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Deactivate deployment %s?", ref.DeploymentID)); err != nil {
 			return err
 		}
 	}
 
-	resp, err := cl.API().PostModelsDeploymentsDeactivate(ctx, ref.ID, flags.DeploymentID)
+	resp, err := cl.API().PostModelsDeploymentsDeactivate(ctx, ref.ModelID, ref.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("deactivate deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("deactivate deployment %s: %w", ref.DeploymentID, err)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Deactivated deployment %s\n", flags.DeploymentID)
+	if resp.NoOp != nil && *resp.NoOp {
+		ctx.Logf("Deployment %s was already inactive; nothing to do\n", ref.DeploymentID)
+	} else {
+		ctx.Logf("Deactivated deployment %s\n", ref.DeploymentID)
+	}
 	return nil
 }
 
@@ -198,112 +323,148 @@ func commandModelDeploymentDelete(ctx *CommandContext, flags *cmd.ModelDeploymen
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
 	if !flags.Yes {
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete deployment %s? This cannot be undone.", flags.DeploymentID)); err != nil {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete deployment %s? This cannot be undone.", ref.DeploymentID)); err != nil {
 			return err
 		}
 	}
 
-	tombstone, err := cl.API().DeleteModelsDeployments(ctx, ref.ID, flags.DeploymentID)
+	tombstone, err := cl.API().DeleteModelsDeployments(ctx, ref.ModelID, ref.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("delete deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("delete deployment %s: %w", ref.DeploymentID, err)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(tombstone)
 		return nil
 	}
-	ctx.Logf("Deleted deployment %s\n", flags.DeploymentID)
+	ctx.Logf("Deleted deployment %s\n", ref.DeploymentID)
 	return nil
 }
 
-func commandModelDeploymentDownload(ctx *CommandContext, flags *cmd.ModelDeploymentDownloadFlags) error {
-	outPath := flags.OutFile
+// checkDownloadOutTarget rejects an output location that is already occupied,
+// unless the caller passed --overwrite. Exactly one of outFile or outDir is set,
+// matching the --out-file/--out-dir pair the download commands share.
+func checkDownloadOutTarget(outFile, outDir string, overwrite bool) error {
+	outPath := outFile
 	if outPath == "" {
-		outPath = flags.OutDir
+		outPath = outDir
 	}
 	parent := filepath.Dir(outPath)
 	if st, err := os.Stat(parent); err != nil || !st.IsDir() {
 		return fmt.Errorf("parent directory does not exist: %s", parent)
 	}
-	if !flags.Overwrite {
-		if flags.OutFile != "" {
-			if _, err := os.Stat(flags.OutFile); err == nil {
-				return fmt.Errorf("file already exists: %s; pass --overwrite to replace it", flags.OutFile)
-			}
-		} else {
-			if entries, err := os.ReadDir(flags.OutDir); err == nil && len(entries) > 0 {
-				return fmt.Errorf("directory is not empty: %s; pass --overwrite to write into it", flags.OutDir)
-			}
+	if overwrite {
+		return nil
+	}
+	if outFile != "" {
+		if _, err := os.Stat(outFile); err == nil {
+			return fmt.Errorf("file already exists: %s; pass --overwrite to replace it", outFile)
 		}
+		return nil
+	}
+	if entries, err := os.ReadDir(outDir); err == nil && len(entries) > 0 {
+		return fmt.Errorf("directory is not empty: %s; pass --overwrite to write into it", outDir)
+	}
+	return nil
+}
+
+// downloadTarArchive fetches url and either saves the bytes verbatim to outFile
+// or extracts them into outDir, reporting where they landed. Exactly one of
+// outFile or outDir must be set. what names the archive in messages ("truss",
+// "artifact"). The URL is presigned, carrying its own credentials, so it goes
+// out on the plain client rather than the authenticated management one.
+func downloadTarArchive(ctx *CommandContext, url, what, outFile, outDir string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("build download request: %w", err)
+	}
+	httpResp, err := ctx.httpClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", what, err)
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		return fmt.Errorf("download %s: HTTP %d", what, httpResp.StatusCode)
+	}
+
+	if outFile != "" {
+		f, err := os.Create(outFile)
+		if err != nil {
+			return fmt.Errorf("create %s: %w", outFile, err)
+		}
+		defer f.Close()
+		if _, err := io.Copy(f, httpResp.Body); err != nil {
+			return fmt.Errorf("write %s: %w", outFile, err)
+		}
+		ctx.Logf("Saved to %s\n", outFile)
+		return nil
+	}
+
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", outDir, err)
+	}
+	if err := extractTar(httpResp.Body, outDir); err != nil {
+		return fmt.Errorf("extract %s into %s: %w", what, outDir, err)
+	}
+	ctx.Logf("Extracted to %s\n", outDir)
+	return nil
+}
+
+func commandModelDeploymentDownload(ctx *CommandContext, flags *cmd.ModelDeploymentDownloadFlags) error {
+	if err := checkDownloadOutTarget(flags.OutFile, flags.OutDir, flags.Overwrite); err != nil {
+		return err
 	}
 
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
 	ctx.Logf("Fetching download URL...\n")
-	resp, err := cl.API().GetModelsDeploymentsDownload(ctx, ref.ID, flags.DeploymentID)
+	resp, err := cl.API().GetModelsDeploymentsDownload(ctx, ref.ModelID, ref.DeploymentID)
 	if err != nil {
-		return fmt.Errorf("fetch download URL for deployment %s: %w", flags.DeploymentID, err)
+		return fmt.Errorf("fetch download URL for deployment %s: %w", ref.DeploymentID, err)
 	}
 
-	ctx.Logf("Downloading truss...\n")
-	req, err := http.NewRequestWithContext(ctx, "GET", resp.DownloadUrl, nil)
-	if err != nil {
-		return fmt.Errorf("build download request: %w", err)
+	ctx.Logf("Downloading model source...\n")
+	if err := downloadTarArchive(ctx, resp.DownloadUrl, "model source", flags.OutFile, flags.OutDir); err != nil {
+		return err
 	}
-	httpResp, err := ctx.httpClient().Do(req)
-	if err != nil {
-		return fmt.Errorf("download truss: %w", err)
-	}
-	defer httpResp.Body.Close()
-	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		return fmt.Errorf("download truss: HTTP %d", httpResp.StatusCode)
-	}
-
-	if flags.OutFile != "" {
-		f, err := os.Create(flags.OutFile)
-		if err != nil {
-			return fmt.Errorf("create %s: %w", flags.OutFile, err)
-		}
-		defer f.Close()
-		if _, err := io.Copy(f, httpResp.Body); err != nil {
-			return fmt.Errorf("write %s: %w", flags.OutFile, err)
-		}
-		ctx.Logf("Saved to %s\n", flags.OutFile)
-		if ctx.JSON {
-			ctx.OutputJSON(cmd.ModelDeploymentDownloadResult{OutFile: flags.OutFile})
-		}
-		return nil
-	}
-
-	if err := os.MkdirAll(flags.OutDir, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", flags.OutDir, err)
-	}
-	if err := extractTar(httpResp.Body, flags.OutDir); err != nil {
-		return fmt.Errorf("extract truss into %s: %w", flags.OutDir, err)
-	}
-	ctx.Logf("Extracted to %s\n", flags.OutDir)
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.ModelDeploymentDownloadResult{OutDir: flags.OutDir})
+		ctx.OutputJSON(cmd.ModelDeploymentDownloadResult{OutFile: flags.OutFile, OutDir: flags.OutDir})
 	}
 	return nil
 }
 
-// extractTar extracts a tar stream into dir. Rejects entries with absolute
-// paths or ".." components to avoid path traversal.
+// extractTar extracts a tar stream into dir, transparently decompressing a
+// gzipped one. Rejects entries with absolute paths or ".." components to avoid
+// path traversal.
 func extractTar(r io.Reader, dir string) error {
+	// Truss packs both truss and training archives uncompressed and detects
+	// compression on the way back out, so trust the bytes rather than the file
+	// name a caller gave them. A tar header opens with the NUL-padded entry name,
+	// so the gzip magic cannot start a valid one.
+	br := bufio.NewReader(r)
+	if magic, err := br.Peek(2); err == nil && magic[0] == 0x1f && magic[1] == 0x8b {
+		gz, err := gzip.NewReader(br)
+		if err != nil {
+			return fmt.Errorf("read gzip archive: %w", err)
+		}
+		defer gz.Close()
+		r = gz
+	} else {
+		r = br
+	}
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
@@ -347,31 +508,154 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
 	if !flags.Yes {
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Promote deployment %s to environment %q?", flags.DeploymentID, flags.Environment)); err != nil {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Promote deployment %s to environment %q?", ref.DeploymentID, flags.Environment)); err != nil {
 			return err
 		}
 	}
 
-	preserve := !flags.OverrideEnvInstanceType
-	dep, err := cl.API().PostModelsEnvironmentsPromote(ctx, ref.ID, flags.Environment,
+	// Sent explicitly so the behavior is the caller's choice rather than the
+	// server default, which is the opposite of this flag's.
+	dep, err := cl.API().PostModelsEnvironmentsPromote(ctx, ref.ModelID, flags.Environment,
 		managementapi.PromoteToEnvironmentRequest{
-			DeploymentId:            flags.DeploymentID,
-			PreserveEnvInstanceType: &preserve,
+			DeploymentId:            ref.DeploymentID,
+			PreserveEnvInstanceType: &flags.PreserveEnvInstanceType,
 		})
 	if err != nil {
-		return fmt.Errorf("promote deployment %s to environment %s: %w", flags.DeploymentID, flags.Environment, err)
+		return fmt.Errorf("promote deployment %s to environment %s: %w", ref.DeploymentID, flags.Environment, err)
 	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(dep)
 		return nil
 	}
-	ctx.Logf("Promoted deployment %s to environment %s\n", flags.DeploymentID, flags.Environment)
+	ctx.Logf("Promoted deployment %s to environment %s\n", ref.DeploymentID, flags.Environment)
 	return nil
+}
+
+func commandModelDeploymentRename(ctx *CommandContext, flags *cmd.ModelDeploymentRenameFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
+	if err != nil {
+		return err
+	}
+	dep, err := cl.API().PatchModelsDeployments(ctx, ref.ModelID, ref.DeploymentID,
+		managementapi.UpdateDeploymentRequest{Name: &flags.NewName})
+	if err != nil {
+		return fmt.Errorf("rename deployment %s: %w", ref.DeploymentID, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(dep)
+		return nil
+	}
+	ctx.Logf("Renamed deployment %s to %s\n", ref.DeploymentID, dep.Name)
+	return nil
+}
+
+func commandModelDeploymentUpdateAutoscaling(
+	ctx *CommandContext, flags *cmd.ModelDeploymentUpdateAutoscalingFlags,
+) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
+	if err != nil {
+		return err
+	}
+	resp, err := cl.API().PatchModelsDeploymentsAutoscalingSettings(
+		ctx, ref.ModelID, ref.DeploymentID, autoscalingSettingsFromFlags(flags.AutoscalingSettingsFlags))
+	if err != nil {
+		return fmt.Errorf("update autoscaling settings for deployment %s: %w", ref.DeploymentID, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(resp)
+		return nil
+	}
+	ctx.Logf("%s: %s\n", resp.Status, resp.Message)
+	return nil
+}
+
+func commandModelDeploymentUpdateRequestBackpressure(
+	ctx *CommandContext, flags *cmd.ModelDeploymentUpdateRequestBackpressureFlags,
+) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
+	if err != nil {
+		return err
+	}
+	settings, err := cl.API().PatchModelsDeploymentsRequestBackpressureSettings(
+		ctx, ref.ModelID, ref.DeploymentID, requestBackpressureFromFlags(flags.RequestBackpressureFlags))
+	if err != nil {
+		return fmt.Errorf("update request backpressure settings for deployment %s: %w", ref.DeploymentID, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(settings)
+		return nil
+	}
+	ctx.Logf("Request backpressure policy: %s\n", backpressurePolicyText(settings.Policy))
+	return nil
+}
+
+// autoscalingSettingsFromFlags maps the shared autoscaling flags onto the
+// request body. A flag that was never passed stays nil and is omitted, so the
+// PATCH leaves that setting alone.
+//
+// None of these fields accepts null today, because the API reads null and
+// omitted alike as "unchanged". When one becomes null-distinct it is generated
+// as Optional[int], and the assignment below stops compiling until this mapping
+// and the flag's nullable tag are updated together.
+func autoscalingSettingsFromFlags(
+	flags cmd.AutoscalingSettingsFlags,
+) managementapi.UpdateAutoscalingSettings {
+	return managementapi.UpdateAutoscalingSettings{
+		MinReplica:                  flags.MinReplica.Pointer(),
+		MaxReplica:                  flags.MaxReplica.Pointer(),
+		AutoscalingWindow:           flags.AutoscalingWindow.Pointer(),
+		ScaleDownDelay:              flags.ScaleDownDelay.Pointer(),
+		ConcurrencyTarget:           flags.ConcurrencyTarget.Pointer(),
+		TargetUtilizationPercentage: flags.TargetUtilizationPercentage.Pointer(),
+		TargetInFlightTokens:        flags.TargetInFlightTokens.Pointer(),
+		MaxScaleDownRate:            flags.MaxScaleDownRate.Pointer(),
+	}
+}
+
+// requestBackpressureFromFlags maps --policy onto the request body. The policy
+// is null-distinct, so null clears an existing policy rather than leaving it
+// unchanged, which is why the field is an Optional and not a pointer.
+func requestBackpressureFromFlags(
+	flags cmd.RequestBackpressureFlags,
+) managementapi.UpdateRequestBackpressureSettings {
+	if flags.Policy.IsNull() {
+		return managementapi.UpdateRequestBackpressureSettings{
+			Policy: managementapi.NewOptional[managementapi.RequestBackpressurePolicy](nil),
+		}
+	}
+	policy := managementapi.RequestBackpressurePolicy(enumToAPIValue(*flags.Policy.Pointer()))
+	return managementapi.UpdateRequestBackpressureSettings{
+		Policy: managementapi.NewOptional(&policy),
+	}
+}
+
+// backpressurePolicyText renders a policy for text output, where a cleared
+// policy reads better as "none" than as an empty field.
+func backpressurePolicyText(policy *managementapi.RequestBackpressurePolicy) string {
+	if policy == nil {
+		return "none"
+	}
+	return enumFromAPIValue(string(*policy))
 }

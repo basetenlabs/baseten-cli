@@ -25,6 +25,18 @@ jobs:
           go fmt ./...
           git diff --exit-code
 
+      # The harness tests run the installed Claude Code, Codex, and OpenCode
+      # CLIs against a local gateway, and skip any that are missing. Harness
+      # setup is only supported on macOS and Linux so far.
+      - uses: actions/setup-node@v4
+        if: matrix.os != 'windows-latest'
+        with:
+          node-version: 22
+
+      - name: Install harnesses
+        if: matrix.os != 'windows-latest'
+        run: npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai
+
       - name: Test
         run: go test ./...
 
@@ -34,10 +46,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
-          if ! grep -qF "Or install $TAG with a one-liner:" README.md; then
+          if ! grep -qF "releases/download/$TAG/" README.md; then
             echo "README.md install instructions do not reference latest release $TAG; please update them."
             exit 1
           fi
+
+      # The train e2e test pushes through truss, which the CLI runs with
+      # `uv tool run`.
+      - name: Install uv
+        if: matrix.os == 'ubuntu-latest'
+        uses: astral-sh/setup-uv@v5
 
       - name: E2E test
         if: matrix.os == 'ubuntu-latest'
@@ -46,4 +64,6 @@ jobs:
           # to main will run them.
           BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
           BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
-        run: go test -tags=e2e -timeout 30m ./internal/e2e-tests/...
+        # -v so each test and its step logs stream as the run progresses; without
+        # it a hung run shows no output at all and the stuck test is unknowable.
+        run: go test -v -tags=e2e -timeout 30m ./internal/e2e-tests/...

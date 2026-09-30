@@ -15,18 +15,18 @@ func commandModelDeploymentReplicaTerminate(ctx *CommandContext, flags *cmd.Mode
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, cl.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
 	if !flags.Yes {
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Terminate replica %s of deployment %s?", flags.ReplicaID, flags.DeploymentID)); err != nil {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Terminate replica %s of deployment %s?", flags.ReplicaID, ref.DeploymentID)); err != nil {
 			return err
 		}
 	}
 
-	resp, err := cl.API().DeleteModelsDeploymentsReplicas(ctx, ref.ID, flags.DeploymentID, flags.ReplicaID)
+	resp, err := cl.API().DeleteModelsDeploymentsReplicas(ctx, ref.ModelID, ref.DeploymentID, flags.ReplicaID)
 	if err != nil {
 		return fmt.Errorf("terminate replica %s: %w", flags.ReplicaID, err)
 	}
@@ -35,6 +35,6 @@ func commandModelDeploymentReplicaTerminate(ctx *CommandContext, flags *cmd.Mode
 		ctx.OutputJSON(resp)
 		return nil
 	}
-	ctx.Logf("Terminated replica %s of deployment %s\n", flags.ReplicaID, flags.DeploymentID)
+	ctx.Logf("Terminated replica %s of deployment %s\n", flags.ReplicaID, ref.DeploymentID)
 	return nil
 }

@@ -14,148 +14,380 @@ import (
 
 const (
 	maxLogTimeRange              = 7 * 24 * time.Hour
+	defaultLogWindow             = 30 * time.Minute
+	maxLogPageSize               = 1000
 	deploymentLogPollInterval    = 2 * time.Second
 	deploymentLogClockSkewBuffer = 60 * time.Second
 	deploymentLogDedupRetention  = 30 * time.Minute
 )
+
+// errLogsHitLimit is yielded by paginateLogs immediately after emitting the
+// final line allowed by --limit. It is not a command failure: the caller turns
+// it into a stderr note and returns success. Other yielded errors (including the
+// single-millisecond-burst case) propagate as command failures.
+var errLogsHitLimit = errors.New("reached the log line limit")
 
 func init() {
 	Register("model deployment logs", commandModelDeploymentLogs)
 }
 
 func commandModelDeploymentLogs(ctx *CommandContext, flags *cmd.ModelDeploymentLogsFlags) error {
-	hasStart := !flags.Start.IsZero()
-	hasEnd := !flags.End.IsZero()
-	// Use Changed rather than the zero value so explicit --since 0 fails
-	// the positive-duration check below instead of being silently dropped.
-	hasSince := ctx.Command.Flags().Changed("since")
-	hasFilters := flags.MinLevel != "" || len(flags.Includes) > 0 || len(flags.Excludes) > 0 ||
-		flags.SearchPattern != "" || flags.Replica != "" || flags.RequestID != ""
-	if flags.Tail && (hasStart || hasEnd || hasSince || hasFilters) {
-		return cmd.NewErrUsagef("--tail cannot be combined with the time-range or filter flags")
+	if err := validateLogFlags(ctx, &flags.LogFlags); err != nil {
+		return err
 	}
-	if hasSince && (hasStart || hasEnd) {
-		return cmd.NewErrUsagef("--since cannot be combined with --start or --end")
-	}
-
 	api, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	ref, err := ResolveModelRef(ctx, api.API(), flags.ModelRefFlags)
+	ref, err := ResolveDeploymentRef(ctx, api.API(), flags.ModelDeploymentIDFlags)
 	if err != nil {
 		return err
 	}
 
+	fetchLogs := func(q logQuery) (*managementapi.GetLogsResponse, error) {
+		return api.API().GetModelsDeploymentsLogs(ctx, ref.ModelID, ref.DeploymentID, deploymentLogParams(q))
+	}
+	fetchStatus := func() (*tailStatus, error) {
+		dep, err := api.API().GetModelsDeploymentsDeploymentId(ctx, ref.ModelID, ref.DeploymentID)
+		if err != nil {
+			return nil, err
+		}
+		return deploymentTailStatus(dep, false), nil
+	}
+	return runLogsCommand(ctx, &flags.LogFlags, fetchLogs, fetchStatus)
+}
+
+// logQuery is the transport-neutral set of log-query parameters shared by the
+// deployment and environment logs endpoints. Each command maps it onto its own
+// generated query-params type.
+type logQuery struct {
+	StartEpochMillis *int
+	EndEpochMillis   *int
+	Limit            *int
+	MinLevel         *managementapi.LogLevel
+	Includes         *[]string
+	Excludes         *[]string
+	SearchPattern    *string
+	Replica          *string
+	RequestId        *string
+}
+
+// logFetcher fetches a page of logs for the given query.
+type logFetcher func(q logQuery) (*managementapi.GetLogsResponse, error)
+
+// tailStatus is the transport-neutral status that gates a --tail loop. Each log
+// source reports whether its workload is still producing logs, plus the status
+// name to show when tailing stops.
+type tailStatus struct {
+	// Label is the status name reported when tailing stops.
+	Label string
+	// Runnable reports whether the workload may still produce logs.
+	Runnable bool
+	// Deployment is the model deployment this status came from, when there is
+	// one. Only `model push` needs the full record, to fold the final state into
+	// its result; Loops trainer deployments leave it nil.
+	Deployment *managementapi.Deployment
+}
+
+// statusFetcher resolves the status gating a --tail loop. For a deployment
+// command it is the deployment itself; for an environment command it is the
+// environment's current deployment; for a Loops run it is the trainer
+// deployment.
+type statusFetcher func() (*tailStatus, error)
+
+// deploymentTailStatus classifies a model deployment for the tail loop. The
+// runnable set is {BUILDING, DEPLOYING, LOADING_MODEL, UPDATING, WAKING_UP},
+// plus ACTIVE unless stopOnActive is set. Any other status, including unknown
+// ones, stops the tail. A nil deployment, which is what an environment with
+// nothing promoted to it reports, also stops the tail.
+func deploymentTailStatus(dep *managementapi.Deployment, stopOnActive bool) *tailStatus {
+	if dep == nil {
+		return &tailStatus{Label: "NONE", Runnable: false}
+	}
+	runnable := false
+	switch dep.Status {
+	case managementapi.DeploymentStatus_BUILDING,
+		managementapi.DeploymentStatus_DEPLOYING,
+		managementapi.DeploymentStatus_LOADING_MODEL,
+		managementapi.DeploymentStatus_UPDATING,
+		managementapi.DeploymentStatus_WAKING_UP:
+		runnable = true
+	case managementapi.DeploymentStatus_ACTIVE:
+		runnable = !stopOnActive
+	}
+	return &tailStatus{Label: string(dep.Status), Runnable: runnable, Deployment: dep}
+}
+
+// deploymentLogParams maps a transport-neutral logQuery onto the deployment
+// logs GET query-params type.
+func deploymentLogParams(q logQuery) managementapi.GetV1ModelsModelIdDeploymentsDeploymentIdLogsParams {
+	direction := managementapi.SortOrder_desc
+	return managementapi.GetV1ModelsModelIdDeploymentsDeploymentIdLogsParams{
+		StartEpochMillis: q.StartEpochMillis,
+		EndEpochMillis:   q.EndEpochMillis,
+		Limit:            q.Limit,
+		Direction:        &direction,
+		MinLevel:         q.MinLevel,
+		Includes:         q.Includes,
+		Excludes:         q.Excludes,
+		SearchPattern:    q.SearchPattern,
+		Replica:          q.Replica,
+		RequestId:        q.RequestId,
+	}
+}
+
+// validateLogFlags checks the log flags that stand on their own, needing
+// neither the resolved time window nor the entity being fetched. Every logs
+// command calls this before resolving that entity, so a flag mistake fails
+// before the first network call rather than behind a lookup error. The checks
+// that depend on the resolved window stay in runLogsCommand.
+func validateLogFlags(ctx *CommandContext, flags *cmd.LogFlags) error {
+	// Use Changed rather than the zero value so explicit --since 0 fails
+	// the positive-duration check below instead of being silently dropped.
+	hasSince := ctx.Command.Flags().Changed("since")
+	hasStart := !flags.Start.IsZero()
+	hasEnd := !flags.End.IsZero()
+	hasLimit := ctx.Command.Flags().Changed("limit")
+	hasPageSize := ctx.Command.Flags().Changed("page-size")
+	hasFilters := flags.MinLevel != "" || len(flags.Includes) > 0 || len(flags.Excludes) > 0 ||
+		flags.SearchPattern != "" || flags.Replica != "" || flags.RequestID != ""
+	if flags.Tail && (hasStart || hasEnd || hasSince || hasLimit || hasPageSize || hasFilters) {
+		return cmd.NewErrUsagef("--tail cannot be combined with the time-range, --limit, or filter flags")
+	}
+	if hasSince && (hasStart || hasEnd) {
+		return cmd.NewErrUsagef("--since cannot be combined with --start or --end")
+	}
+	if hasSince && flags.Since <= 0 {
+		return cmd.NewErrUsagef("--since must be a positive duration")
+	}
+	if hasSince && flags.Since > maxLogTimeRange {
+		return cmd.NewErrUsagef("--since must be at most 7d")
+	}
+	if flags.Limit < 0 {
+		return cmd.NewErrUsagef("--limit must be zero (no limit) or a positive number")
+	}
+	// page-size is capped at the backend's max limit: requesting more would be
+	// silently clamped server-side, making a full page look short and ending
+	// pagination early.
+	if flags.PageSize < 1 || flags.PageSize > maxLogPageSize {
+		return cmd.NewErrUsagef("--page-size must be between 1 and %d", maxLogPageSize)
+	}
+	return nil
+}
+
+// runLogsCommand implements the shared logs command flow for both deployment and
+// environment logs. It resolves the time window and filters, and either tails or
+// fetches a single window via the supplied fetchers. fetchStatus is only used by
+// the --tail path. Callers validate the standalone flags with validateLogFlags
+// before resolving their fetchers, so this only performs the window checks that
+// need those flags resolved against the current time.
+func runLogsCommand(ctx *CommandContext, flags *cmd.LogFlags, fetchLogs logFetcher, fetchStatus statusFetcher) error {
+	hasSince := ctx.Command.Flags().Changed("since")
+	hasStart := !flags.Start.IsZero()
+	hasEnd := !flags.End.IsZero()
+
 	if flags.Tail {
-		res := TailDeploymentLogs(ctx, TailDeploymentLogsOptions{
-			API:          api.API(),
-			ModelID:      ref.ID,
-			DeploymentID: flags.DeploymentID,
-		})
-		if err := emitDeploymentLogs(ctx, res.Logs); err != nil {
+		res := tailLogs(ctx, tailLogsOptions{FetchLogs: fetchLogs, FetchStatus: fetchStatus})
+		if _, err := emitLogs(ctx, res.Logs); err != nil {
 			return err
 		}
-		if dep := res.FinalFetchedDeployment(); dep != nil {
-			ctx.Logf("Tailing stopped: deployment status %s\n", dep.Status)
+		if status := res.FinalFetchedStatus(); status != nil {
+			ctx.Logf("Tailing stopped: deployment status %s\n", status.Label)
 		}
 		return nil
 	}
 
-	// Resolve --start/--end/--since into epoch-millis bounds. Nil bounds mean
-	// "server default"; unset start/end/since pass nils.
-	var req managementapi.GetDeploymentLogsRequest
+	// Resolve --start/--end/--since into a concrete [startMs, endMs] window.
+	// Unlike the server-default behavior, both bounds are resolved client-side
+	// so the pagination loop has a fixed floor (startMs) to page back to;
+	// otherwise a per-request server default would slide under each page and
+	// paging could not tell a sparse window from an exhausted one.
+	now := ctx.Now()
+	var startMs, endMs int
 	if hasSince {
-		if flags.Since <= 0 {
-			return cmd.NewErrUsagef("--since must be a positive duration")
-		}
-		if flags.Since > maxLogTimeRange {
-			return cmd.NewErrUsagef("--since must be at most 7d")
-		}
-		now := ctx.Now()
-		s := int(now.Add(-flags.Since).UnixMilli())
-		e := int(now.UnixMilli())
-		req.StartEpochMillis, req.EndEpochMillis = &s, &e
-	} else if hasStart || hasEnd {
-		// Send only the bounds given and leave the other nil so the server
-		// backfills it (missing end -> now, missing start -> 30m before end).
-		// Validate the window client-side only when both bounds are given.
-		if hasStart {
-			s := int(flags.Start.UnixMilli())
-			req.StartEpochMillis = &s
-		}
+		endMs = int(now.UnixMilli())
+		startMs = int(now.Add(-flags.Since).UnixMilli())
+	} else {
 		if hasEnd {
-			e := int(flags.End.UnixMilli())
-			req.EndEpochMillis = &e
+			endMs = int(flags.End.UnixMilli())
+		} else {
+			endMs = int(now.UnixMilli())
 		}
-		if hasStart && hasEnd {
-			if !flags.Start.Before(flags.End) {
-				return cmd.NewErrUsagef("--start must be earlier than --end")
-			}
-			if flags.End.Sub(flags.Start) > maxLogTimeRange {
-				return cmd.NewErrUsagef("log time range must be at most 7 days; narrow --start/--end or use --since")
-			}
+		if hasStart {
+			startMs = int(flags.Start.UnixMilli())
+		} else {
+			startMs = endMs - int(defaultLogWindow.Milliseconds())
+		}
+		if startMs >= endMs {
+			return cmd.NewErrUsagef("--start must be earlier than --end")
+		}
+		if endMs-startMs > int(maxLogTimeRange.Milliseconds()) {
+			return cmd.NewErrUsagef("log time range must be at most 7 days; narrow --start/--end or use --since")
 		}
 	}
 
+	var q logQuery
+	q.StartEpochMillis = &startMs
 	if flags.MinLevel != "" {
 		level := managementapi.LogLevel(strings.ToUpper(flags.MinLevel))
-		req.MinLevel = &level
+		q.MinLevel = &level
 	}
 	if len(flags.Includes) > 0 {
-		req.Includes = &flags.Includes
+		q.Includes = &flags.Includes
 	}
 	if len(flags.Excludes) > 0 {
-		req.Excludes = &flags.Excludes
+		q.Excludes = &flags.Excludes
 	}
 	if flags.SearchPattern != "" {
-		req.SearchPattern = &flags.SearchPattern
+		q.SearchPattern = &flags.SearchPattern
 	}
 	if flags.Replica != "" {
-		req.Replica = &flags.Replica
+		q.Replica = &flags.Replica
 	}
 	if flags.RequestID != "" {
-		req.RequestId = &flags.RequestID
+		q.RequestId = &flags.RequestID
 	}
 
-	resp, err := api.API().PostModelsDeploymentsLogs(ctx, ref.ID, flags.DeploymentID, req)
-	if err != nil {
+	// paginateLogs signals why the stream ended via a sentinel error after the
+	// last line it emitted; hitting the limit is a note, any other error (e.g. a
+	// single-millisecond burst) is a command failure.
+	emitted, err := emitLogs(ctx, paginateLogs(q, startMs, endMs, flags.Limit, flags.PageSize, fetchLogs))
+	if errors.Is(err, errLogsHitLimit) {
+		ctx.Logf("Reached the --limit of %d log lines; older lines in the window were omitted. Increase --limit or use --limit 0 for no limit.\n", flags.Limit)
+	} else if err != nil {
 		return err
+	} else if emitted == 0 && !ctx.JSON {
+		ctx.LogLine("No logs found.")
 	}
-
-	return emitDeploymentLogs(ctx, func(yield func(*managementapi.Log, error) bool) {
-		for i := range resp.Logs {
-			if !yield(&resp.Logs[i], nil) {
-				return
-			}
-		}
-	})
+	return nil
 }
 
-// emitDeploymentLogs drains an iterator of log records onto stdout in the
-// caller-selected output mode. For ctx.JSON (both json and jsonl) it uses a
-// JSON array writer so jsonl streams one record per line and json buffers
-// into a single closed array. For text it formats each line via
-// FormatDeploymentLogLine.
-func emitDeploymentLogs(ctx *CommandContext, logs iter.Seq2[*managementapi.Log, error]) error {
+// paginateLogs streams logs newest-first, paging backward through the
+// [startMs, endMs] window until the window is exhausted or limit lines have
+// been emitted (limit 0 means no limit). Each page fetches up to pageSize lines
+// ending at the previous page's oldest line; because end is millisecond-granular
+// while log timestamps are nanosecond-granular, the seam millisecond is
+// re-fetched and deduped so no line is lost or duplicated across the boundary.
+// It ends by yielding errLogsHitLimit when the limit was hit, or a descriptive
+// error when a single millisecond overflows a page.
+func paginateLogs(q logQuery, startMs, endMs, limit, pageSize int, fetchLogs logFetcher) iter.Seq2[*managementapi.Log, error] {
+	return func(yield func(*managementapi.Log, error) bool) {
+		emitted := 0
+		curEnd := endMs
+		// prevBoundaryKeys holds the dedup keys of the previous page's lines at
+		// prevBoundaryMs (its oldest millisecond), which the next page re-fetches
+		// because end is inclusive at millisecond granularity.
+		prevBoundaryMs := int64(-1)
+		prevBoundaryKeys := map[deploymentLogDedupKey]struct{}{}
+
+		for {
+			if limit > 0 && emitted >= limit {
+				return
+			}
+			// Build this page's query: a full page ending at the current window
+			// end. We always request the full pageSize and cap emission at limit
+			// rather than shrinking the last request to the remaining count. A
+			// shrunk page could be entirely consumed by the seam-dedup overlap,
+			// stopping one line short of limit and misreporting a burst.
+			pq := q
+			e := curEnd
+			pq.EndEpochMillis = &e
+			pq.Limit = &pageSize
+
+			resp, err := fetchLogs(pq)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			n := len(resp.Logs)
+			if n == 0 {
+				return
+			}
+
+			// Logs arrive newest-first, so the last line is the oldest and
+			// anchors the next page's end.
+			oldestMs, oldestOK := logTimestampMs(resp.Logs[n-1].Timestamp)
+			newBoundaryKeys := map[deploymentLogDedupKey]struct{}{}
+			newInPage := 0
+			for i := range resp.Logs {
+				log := resp.Logs[i]
+				key := logDedupKey(log)
+				ms, ok := logTimestampMs(log.Timestamp)
+				if ok && ms == prevBoundaryMs {
+					if _, dup := prevBoundaryKeys[key]; dup {
+						continue
+					}
+				}
+				if ok && oldestOK && ms == oldestMs {
+					newBoundaryKeys[key] = struct{}{}
+				}
+				if !yield(&log, nil) {
+					return
+				}
+				emitted++
+				newInPage++
+				if limit > 0 && emitted >= limit {
+					yield(nil, errLogsHitLimit)
+					return
+				}
+			}
+
+			// A short page means the window is fully covered.
+			if n < pageSize {
+				return
+			}
+			// A full page that yielded nothing new means one millisecond holds
+			// more lines than a page can carry; paging by millisecond cannot
+			// advance past it, so fail loudly rather than silently drop lines.
+			if newInPage == 0 {
+				yield(nil, fmt.Errorf("cannot page past a single millisecond holding at least %d log lines; narrow --start/--end/--since or add filters to reduce log density", pageSize))
+				return
+			}
+			if !oldestOK || oldestMs <= int64(startMs) {
+				return
+			}
+			prevBoundaryMs = oldestMs
+			prevBoundaryKeys = newBoundaryKeys
+			curEnd = int(oldestMs)
+		}
+	}
+}
+
+// logTimestampMs parses an epoch-nanosecond log timestamp into epoch millis.
+func logTimestampMs(ts string) (int64, bool) {
+	ns, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return ns / int64(time.Millisecond), true
+}
+
+// emitLogs drains an iterator of log records onto stdout in the caller-selected
+// output mode. For ctx.JSON (both json and jsonl) it uses a JSON array writer so
+// jsonl streams one record per line and json buffers into a single closed
+// array. For text it formats each line via FormatDeploymentLogLine.
+func emitLogs(ctx *CommandContext, logs iter.Seq2[*managementapi.Log, error]) (int, error) {
+	emitted := 0
 	if ctx.JSON {
 		w := ctx.NewJSONArrayWriter()
 		defer w.Close()
 		for log, err := range logs {
 			if err != nil {
-				return err
+				return emitted, err
 			}
 			w.Write(log)
+			emitted++
 		}
-		return nil
+		return emitted, nil
 	}
 	for log, err := range logs {
 		if err != nil {
-			return err
+			return emitted, err
 		}
 		ctx.OutputLine(FormatDeploymentLogLine(*log))
+		emitted++
 	}
-	return nil
+	return emitted, nil
 }
 
 // FormatDeploymentLogLine renders a log record as
@@ -195,29 +427,59 @@ type TailDeploymentLogsOptions struct {
 }
 
 // TailDeploymentLogsResult bundles the streaming log iterator with an
-// accessor for the final fetched deployment.
+// accessor for the final fetched status.
 type TailDeploymentLogsResult struct {
 	// Logs yields log records in arrival order. A non-nil error indicates
 	// the stream is ending due to that error and the log pointer is nil.
 	// The iterator is single-use.
 	Logs iter.Seq2[*managementapi.Log, error]
 
-	// FinalFetchedDeployment returns the deployment as last fetched when
-	// the tail loop ended. Valid only after Logs is fully consumed. Nil
-	// if the loop ended before any status fetch (no logs ever arrived, or
-	// ctx was cancelled during phase 1).
-	FinalFetchedDeployment func() *managementapi.Deployment
+	// FinalFetchedStatus returns the status as last fetched when the tail
+	// loop ended. Valid only after Logs is fully consumed. Nil if the loop
+	// ended before any status fetch (no logs ever arrived, or ctx was
+	// cancelled during phase 1).
+	FinalFetchedStatus func() *tailStatus
 }
 
-// TailDeploymentLogs polls a deployment's logs and streams new records until
-// the status leaves the runnable set or the context is cancelled. The
-// runnable set is {BUILDING, DEPLOYING, LOADING_MODEL, UPDATING, WAKING_UP}
-// plus ACTIVE when StopOnActive is false (default). Any other status,
-// including unknown ones, stops the tail. Dedup is by (timestamp, message,
-// replica) across overlapping clock-skew windows. Clock-and-sleep behavior
-// is taken from ctx (overridable via WithNow / WithSleep for tests).
+// TailDeploymentLogs tails a specific deployment's logs. It is a thin adapter
+// over tailLogs that wires the deployment logs and describe endpoints.
 func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *TailDeploymentLogsResult {
-	var finalFetched *managementapi.Deployment
+	return tailLogs(ctx, tailLogsOptions{
+		FetchLogs: func(q logQuery) (*managementapi.GetLogsResponse, error) {
+			return opts.API.GetModelsDeploymentsLogs(ctx, opts.ModelID, opts.DeploymentID, deploymentLogParams(q))
+		},
+		FetchStatus: func() (*tailStatus, error) {
+			dep, err := opts.API.GetModelsDeploymentsDeploymentId(ctx, opts.ModelID, opts.DeploymentID)
+			if err != nil {
+				return nil, err
+			}
+			return deploymentTailStatus(dep, opts.StopOnActive), nil
+		},
+		WarmupTimeout: opts.WarmupTimeout,
+	})
+}
+
+// tailLogsOptions configures tailLogs, the transport-neutral tail loop shared by
+// the deployment and environment logs commands.
+type tailLogsOptions struct {
+	// FetchLogs fetches a poll window of logs. Required.
+	FetchLogs logFetcher
+	// FetchStatus resolves the status gating the tail. Required.
+	FetchStatus statusFetcher
+
+	// WarmupTimeout is how long to silently retry 404s from the logs API at
+	// the start of the tail, before any successful poll. Zero means no
+	// warmup retries.
+	WarmupTimeout time.Duration
+}
+
+// tailLogs polls logs and streams new records until FetchStatus reports the
+// workload is no longer runnable or the context is cancelled; which statuses
+// count as runnable is the fetcher's call. Dedup is by (timestamp, message,
+// replica) across overlapping clock-skew windows. Clock-and-sleep behavior is
+// taken from ctx (overridable via WithNow / WithSleep for tests).
+func tailLogs(ctx *CommandContext, opts tailLogsOptions) *TailDeploymentLogsResult {
+	var finalFetched *tailStatus
 
 	seq := func(yield func(*managementapi.Log, error) bool) {
 		// seen maps each delivered log key to the wall-clock time it was
@@ -232,6 +494,7 @@ func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *Ta
 			warmupDeadline = ctx.Now().Add(opts.WarmupTimeout)
 		}
 		warmedUp := false
+		firstPoll := true
 
 		for {
 			nowMs := ctx.Now().UnixMilli()
@@ -241,8 +504,7 @@ func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *Ta
 				startMs = &v
 			}
 			endMs := int(nowMs + deploymentLogClockSkewBuffer.Milliseconds())
-			resp, err := opts.API.PostModelsDeploymentsLogs(ctx, opts.ModelID, opts.DeploymentID,
-				managementapi.GetDeploymentLogsRequest{StartEpochMillis: startMs, EndEpochMillis: &endMs})
+			resp, err := opts.FetchLogs(logQuery{StartEpochMillis: startMs, EndEpochMillis: &endMs})
 			if err != nil {
 				// Brand-new deployments may 404 on the logs index for a few
 				// seconds after creation; retry quietly within the warmup
@@ -267,17 +529,19 @@ func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *Ta
 					delete(seen, k)
 				}
 			}
+			// Every log fetcher requests direction=desc, so a poll batch
+			// arrives newest-first while batches themselves arrive
+			// chronologically. Walk each batch backward so a followed stream
+			// is ascending throughout rather than descending within a batch
+			// and ascending across them.
+			//
 			// Poll windows overlap by deploymentLogClockSkewBuffer on each
 			// side to tolerate server/client clock skew, so the same record
 			// can reappear across polls; dedup by (timestamp, message,
 			// replica).
-			for i := range resp.Logs {
+			for i := len(resp.Logs) - 1; i >= 0; i-- {
 				log := resp.Logs[i]
-				replica := ""
-				if log.Replica != nil {
-					replica = *log.Replica
-				}
-				key := deploymentLogDedupKey{Timestamp: log.Timestamp, Message: log.Message, Replica: replica}
+				key := logDedupKey(log)
 				if _, dup := seen[key]; dup {
 					continue
 				}
@@ -288,33 +552,27 @@ func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *Ta
 			}
 			lastPollMs = nowMs
 
-			// Once any log has been seen, refresh status each poll so we can
-			// stop when the deployment leaves a runnable state. This is skipped
-			// until the first log is seen, similar to Truss.
+			// Refresh status once any log has been seen, so the tail ends when the
+			// deployment leaves a runnable state. Truss gates this on the first log
+			// alone; we also check on the very first poll, because a workload that
+			// stopped before the log window opened has no logs to trigger the check
+			// and would otherwise be tailed forever with nothing to show. Staying
+			// silent while a live workload produces nothing is intentional: that is
+			// what tailing is for, and it keeps the poll at one request.
 			// TODO: should the management logs API return current status so
 			// we can drop this extra round-trip per poll?
-			if len(seen) > 0 {
-				dep, err := opts.API.GetModelsDeploymentsDeploymentId(ctx, opts.ModelID, opts.DeploymentID)
+			if firstPoll || len(seen) > 0 {
+				status, err := opts.FetchStatus()
 				if err != nil {
 					yield(nil, fmt.Errorf("fetch deployment status: %w", err))
 					return
 				}
-				finalFetched = dep
-				switch dep.Status {
-				case managementapi.DeploymentStatus_BUILDING,
-					managementapi.DeploymentStatus_DEPLOYING,
-					managementapi.DeploymentStatus_LOADING_MODEL,
-					managementapi.DeploymentStatus_UPDATING,
-					managementapi.DeploymentStatus_WAKING_UP:
-					// keep polling
-				case managementapi.DeploymentStatus_ACTIVE:
-					if opts.StopOnActive {
-						return
-					}
-				default:
+				finalFetched = status
+				if !status.Runnable {
 					return
 				}
 			}
+			firstPoll = false
 
 			if err := ctx.Sleep(deploymentLogPollInterval); err != nil {
 				yield(nil, err)
@@ -324,8 +582,8 @@ func TailDeploymentLogs(ctx *CommandContext, opts TailDeploymentLogsOptions) *Ta
 	}
 
 	return &TailDeploymentLogsResult{
-		Logs:                   seq,
-		FinalFetchedDeployment: func() *managementapi.Deployment { return finalFetched },
+		Logs:               seq,
+		FinalFetchedStatus: func() *tailStatus { return finalFetched },
 	}
 }
 
@@ -335,4 +593,14 @@ type deploymentLogDedupKey struct {
 	Timestamp string
 	Message   string
 	Replica   string
+}
+
+// logDedupKey builds a comparable dedup key for a log line, flattening the
+// optional replica to the empty string.
+func logDedupKey(log managementapi.Log) deploymentLogDedupKey {
+	replica := ""
+	if log.Replica != nil {
+		replica = *log.Replica
+	}
+	return deploymentLogDedupKey{Timestamp: log.Timestamp, Message: log.Message, Replica: replica}
 }

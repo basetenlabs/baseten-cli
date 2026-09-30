@@ -26,12 +26,22 @@ func TestLeafJSONSchemas(t *testing.T) {
 		t.Helper()
 		spec := c.Output
 		r.NotNil(spec, "leaf %q missing Output", path)
-		typ := spec.JSONOutputType()
-		if typ == jsonAny || typ == jsonUndefined {
-			return
+		// Every declared shape, primary and alternative alike: an alternative
+		// is only reached by an input the schema test would otherwise never
+		// exercise.
+		types := []reflect.Type{spec.JSONOutputType()}
+		for _, alt := range spec.JSONAlternativeList() {
+			r.NotEmpty(alt.When, "leaf %q has an alternative shape with no condition", path)
+			r.NotNil(alt.Type, "leaf %q alternative %q has no type", path, alt.When)
+			types = append(types, alt.Type)
 		}
-		schema := (&jsonschema.Reflector{}).ReflectFromType(typ)
-		r.NotNil(schema, "leaf %q produced nil schema for %v", path, typ)
+		for _, typ := range types {
+			if typ == jsonAny || typ == jsonUndefined {
+				continue
+			}
+			schema := (&jsonschema.Reflector{}).ReflectFromType(typ)
+			r.NotNil(schema, "leaf %q produced nil schema for %v", path, typ)
+		}
 	})
 }
 

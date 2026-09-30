@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -123,6 +124,10 @@ func Test_Model_Describe_ByName(t *testing.T) {
 
 	h.Require.NoError(h.Execute("model", "describe", "--model-name", "alpha"))
 	h.Require.NotNil(m.FindCall("GET", "/v1/models/m-1"))
+	// The name filter is applied server-side via the ?name= query param.
+	listCall := m.FindCall("GET", "/v1/models")
+	h.Require.NotNil(listCall)
+	h.Require.Equal("alpha", listCall.Query().Get("name"))
 }
 
 func Test_Model_Describe_ByNameAmbiguous(t *testing.T) {
@@ -272,4 +277,78 @@ func Test_Model_Delete_NotFound(t *testing.T) {
 
 	err := h.Execute("model", "delete", "--model-name", "ghost", "--yes")
 	h.Require.ErrorContains(err, `no model named "ghost"`)
+}
+
+func Test_Model_AuditLogs_ByID(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/models/m-1/audit_logs", 200, auditLogsBody())
+
+	h.Require.NoError(h.Execute("model", "audit-logs", "--model-id", "m-1"))
+	call := m.FindCall("GET", "/v1/models/m-1/audit_logs")
+	h.Require.NotNil(call)
+	h.Require.Contains(h.Stdout.String(), "MODEL_DEPLOYED")
+}
+
+func Test_Model_AuditLogs_ByName(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/models", 200, map[string]any{
+		"models": []any{
+			map[string]any{"id": "m-1", "name": "alpha", "created_at": "2026-01-01T00:00:00Z", "deployments_count": 1},
+		},
+	})
+	m.SetRoute("GET", "/v1/models/m-1/audit_logs", 200, auditLogsBody())
+
+	h.Require.NoError(h.Execute("model", "audit-logs", "--model-name", "alpha"))
+	h.Require.NotNil(m.FindCall("GET", "/v1/models/m-1/audit_logs"))
+}
+
+func modelFixture(id, name string) map[string]any {
+	return map[string]any{
+		"id": id, "name": name, "team_name": "default",
+		"deployments_count": 1, "created_at": "2026-01-02T03:04:05Z",
+		"instance_type_name": "A10G",
+	}
+}
+
+func Test_Model_Rename_ByID(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", "/v1/models/m-1", 200, modelFixture("m-1", "beta"))
+
+	h.Require.NoError(h.Execute("model", "rename", "--model-id", "m-1", "--new-name", "beta"))
+	h.Require.Equal("", h.Stdout.String())
+	h.Require.Contains(h.Stderr.String(), "Renamed model m-1 to beta")
+	h.Require.Contains(h.Stderr.String(), "warning: update model_name in config.yaml")
+	body := m.FindCall("PATCH", "/v1/models/m-1").BodyJSON(h.T)
+	h.Require.Equal(map[string]any{"name": "beta"}, body)
+	h.Require.Nil(m.FindCall("POST", "/v1/models"))
+}
+
+func Test_Model_Rename_ByNameWithTeam(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/teams", 200, map[string]any{
+		"teams": []any{map[string]any{"id": "team-abc", "name": "ml"}},
+	})
+	m.SetRoute("GET", "/v1/teams/team-abc/models", 200, map[string]any{
+		"models": []any{modelFixture("m-2", "alpha")},
+	})
+	m.SetRoute("PATCH", "/v1/models/m-2", 200, modelFixture("m-2", "beta"))
+
+	h.Require.NoError(h.Execute("model", "rename", "--model-name", "alpha", "--team", "ml", "--new-name", "beta"))
+	h.Require.Equal("alpha", m.FindCall("GET", "/v1/teams/team-abc/models").Query().Get("name"))
+	h.Require.Equal("beta", m.FindCall("PATCH", "/v1/models/m-2").BodyJSON(h.T)["name"])
+}
+
+func Test_Model_Rename_JSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("PATCH", "/v1/models/m-1", 200, modelFixture("m-1", "beta"))
+
+	h.Require.NoError(h.Execute("model", "rename", "--model-id", "m-1", "--new-name", "beta", "--output", "json"))
+	var out map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &out))
+	h.Require.Equal("beta", out["name"])
+	h.Require.Contains(h.Stderr.String(), "warning: update model_name in config.yaml")
 }

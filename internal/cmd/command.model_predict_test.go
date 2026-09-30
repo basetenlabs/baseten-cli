@@ -53,6 +53,27 @@ func Test_Model_Predict_DeploymentID(t *testing.T) {
 	h.Require.NotNil(m.FindCall("POST", "/deployment/d-1/predict"))
 }
 
+func Test_Model_Predict_DeploymentName(t *testing.T) {
+	h, m := newPredictHarness(t)
+	m.SetRoute("GET", "/v1/models/m-1/deployments", 200,
+		map[string]any{"deployments": []any{depFixture("d-1", "first", "production", "ACTIVE")}})
+	m.SetRoute("POST", "/deployment/d-1/predict", 200, map[string]any{"r": 1})
+
+	err := h.Execute("model", "predict", "--model-id", "m-1", "--deployment-name", "first", "--data", `{}`)
+	h.Require.NoError(err)
+	call := m.FindCall("GET", "/v1/models/m-1/deployments")
+	h.Require.NotNil(call)
+	h.Require.Equal("first", call.Query().Get("name"))
+	h.Require.NotNil(m.FindCall("POST", "/deployment/d-1/predict"))
+}
+
+func Test_Model_Predict_DeploymentNameExclusive(t *testing.T) {
+	h, _ := newPredictHarness(t)
+	err := h.Execute("model", "predict", "--model-id", "m-1",
+		"--deployment-name", "first", "--deployment-id", "d-1", "--data", `{}`)
+	h.Require.ErrorContains(err, "mutually exclusive")
+}
+
 func Test_Model_Predict_Regional(t *testing.T) {
 	h, m := newPredictHarness(t)
 	m.SetRoute("POST", "/predict", 200, map[string]any{"r": 1})

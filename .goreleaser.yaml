@@ -47,13 +47,27 @@ release:
   draft: false
   prerelease: auto
 
+# Publishes Formula/baseten.rb to the basetenlabs/homebrew-baseten tap on each
+# release. Uses the deprecated `brews` (formula) rather than `homebrew_casks`
+# because the formula installs on both macOS and Linuxbrew.
+brews:
+  - name: baseten
+    repository:
+      owner: basetenlabs
+      name: homebrew-baseten
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/basetenlabs/baseten-cli"
+    description: "CLI for Baseten"
+    license: MIT
+    skip_upload: auto
+    test: |
+      system "#{bin}/baseten", "--version"
+
 # TODO: Publish a Docker image to the official Baseten Docker Hub namespace.
 # dockers:
 #   - image_templates:
 #       - "baseten/baseten-cli:{{ .Version }}"
 #       - "baseten/baseten-cli:latest"
 #     dockerfile: Dockerfile
-
-# TODO: After first stable release, submit a Homebrew formula to
-# homebrew/homebrew-core. goreleaser can only publish to a custom tap, not
-# homebrew-core, so the initial submission is a manual PR.

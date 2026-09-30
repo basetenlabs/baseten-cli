@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"strings"
 
+	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
-	"github.com/charmbracelet/huh"
 	"github.com/cli/browser"
 )
 
@@ -109,7 +109,7 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 }
 
 func revokeOAuthSession(ctx *CommandContext, profileName string) error {
-	session, err := auth.ResolveSession(profileName)
+	session, err := auth.ResolveSession(profileName, "")
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 		return err
 	}
 
-	session, err := auth.ResolveSession(flags.Profile)
+	session, err := auth.ResolveSession(flags.Profile, "")
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 		if ctx.JSON {
 			ctx.OutputJSON(cmd.AuthStatusResult{RemoteURL: remoteURL, AuthType: string(auth.AuthTypeAPIKey)})
 		} else {
-			ctx.Outputf("Using API key from BASETEN_API_KEY\n  Remote: %s\n", remoteURL)
+			ctx.Outputf("Using API key from BASETEN_API_KEY\n  Remote: %s\n", hyperlink(ctx.Stdout, remoteURL))
 		}
 		return nil
 	}
@@ -227,9 +227,15 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 			AuthType:  string(profile.AuthType),
 		})
 	} else {
-		ctx.Outputf("%s\n  Remote: %s\n  Auth type: %s\n", profileName, profile.RemoteURL, profile.AuthType)
+		ctx.Outputf("%s\n  Remote: %s\n  Auth type: %s\n", profileName, hyperlink(ctx.Stdout, profile.RemoteURL), profile.AuthType)
 	}
 	return nil
+}
+
+func openBrowserURL(url string) error {
+	browser.Stdout = io.Discard
+	browser.Stderr = io.Discard
+	return browser.OpenURL(url)
 }
 
 func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) error {
@@ -245,9 +251,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 	if verificationURI == "" {
 		verificationURI = devResp.VerificationURI
 	}
-	browser.Stdout = io.Discard
-	browser.Stderr = io.Discard
-	_ = browser.OpenURL(verificationURI)
+	_ = ctx.OpenURL(verificationURI)
 	ctx.Logf("Browser opened to authenticate...\n\nIf it didn't open, visit:\n  %s\n\n", verificationURI)
 	ctx.Logf("Verification code: %s\n\n", devResp.UserCode)
 	ctx.Logf("Waiting...\n")
@@ -265,7 +269,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 	if err != nil {
 		return err
 	}
-	user, err := cl.API().GetUsers(ctx.Context, "me")
+	user, err := cl.API().GetUsersMe(ctx.Context)
 	if err != nil {
 		return fmt.Errorf("validating credentials: %w", err)
 	}
@@ -320,7 +324,7 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *
 	if err != nil {
 		return err
 	}
-	user, err := cl.API().GetUsers(ctx.Context, "me")
+	user, err := cl.API().GetUsersMe(ctx.Context)
 	if err != nil {
 		return fmt.Errorf("validating API key: %w", err)
 	}

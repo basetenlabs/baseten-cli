@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -61,6 +63,13 @@ type ExecuteOptions struct {
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ExitWithCode func(int)
+	// OpenURL overrides the system browser opener.
+	OpenURL func(string) error
+	// StrictOutputChecks panics on output that is malformed in a way a user
+	// would see but the code cannot detect for itself, such as a table row whose
+	// cell count does not match its headers. Tests set it; production renders
+	// whatever it was given rather than failing a command over its formatting.
+	StrictOutputChecks bool
 }
 
 func (o *ExecuteOptions) applyDefaults() {
@@ -75,6 +84,9 @@ func (o *ExecuteOptions) applyDefaults() {
 	}
 	if o.Stderr == nil {
 		o.Stderr = os.Stderr
+	}
+	if o.OpenURL == nil {
+		o.OpenURL = openBrowserURL
 	}
 	if o.ExitWithCode == nil {
 		o.ExitWithCode = os.Exit
@@ -94,12 +106,30 @@ func Execute(ctx context.Context, options ExecuteOptions) error {
 	for _, child := range cmd.Root.Children {
 		root.AddCommand(buildCommand(child, "", &options))
 	}
-	return help.Execute(ctx, root, help.Options{
+	err := help.Execute(ctx, root, help.Options{
 		Args:    options.Args,
 		Version: Version,
 		Signals: []os.Signal{os.Interrupt, syscall.SIGTERM},
 		Tree:    cmd.Root,
 	})
+	if err == nil {
+		return nil
+	}
+
+	// The invocation was rejected before any runner ran: an unparseable flag,
+	// an unknown subcommand, or the wrong argument count. Cobra has already
+	// printed the message to stderr, but the failure never passed through a
+	// leaf's error handling, so classify it here as the usage error it is and
+	// give it the same exit code and envelope a leaf would produce.
+	ce := cmd.NewErrUsage(err)
+	format := outputFormatFromArgs(options.Args)
+	(&CommandContext{
+		Stdout:      options.Stdout,
+		JSON:        format == "json" || format == "jsonl",
+		JSONCompact: format == "jsonl",
+	}).writeJSONError(ce, err)
+	options.ExitWithCode(int(ce.ExitCode()))
+	return err
 }
 
 func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *cobra.Command {
@@ -114,9 +144,10 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 	}
 
 	c := &cobra.Command{
-		Use:   use,
-		Short: def.Summary,
-		Long:  def.Description,
+		Use:    use,
+		Short:  def.Summary,
+		Long:   def.Description,
+		Hidden: def.Hidden,
 	}
 	c.InitDefaultHelpFlag()
 	if f := c.Flags().Lookup("help"); f != nil {
@@ -200,6 +231,8 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				Stdout:       options.Stdout,
 				Stderr:       options.Stderr,
 				ExitWithCode: options.ExitWithCode,
+				OpenURL:      options.OpenURL,
+				strictOutput: options.StrictOutputChecks,
 				authInfo:     authInfo{profileFlag: cmdFlags.Profile},
 			}
 
@@ -256,9 +289,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			// generic failure. Gated on the context, not the error's identity:
 			// only an actual interrupt should be treated this way.
 			if ctx.Err() != nil {
-				fmt.Fprintln(options.Stderr, "Canceled.")
-				ctx.ExitWithCode(int(cmd.ExitInterrupted))
-				return nil
+				runErr = cmd.NewErrInterrupted(errors.New("Canceled."))
 			}
 
 			// Render the error and set exit code.
@@ -266,8 +297,17 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			c.SilenceErrors = true
 			c.SilenceUsage = true
 			fmt.Fprintln(options.Stderr, ce)
-			if ce.ExitCode() == cmd.ExitUsage {
-				_ = c.Usage()
+			ctx.writeJSONError(ce, runErr)
+			// A subprocess exit code is the child's, not ours. Delegated tools
+			// like truss exit 2 for their own validation errors, which collides
+			// with ExitUsage, so only dump usage for errors that originated here.
+			var subErr *ErrSubprocess
+			if ce.ExitCode() == cmd.ExitUsage && !errors.As(runErr, &subErr) {
+				// Rendered through UsageString rather than Usage, which writes
+				// to cobra's out writer: that is stdout here, where the usage
+				// text would corrupt the error envelope and any payload
+				// already emitted.
+				fmt.Fprint(options.Stderr, c.UsageString())
 			}
 			ctx.ExitWithCode(int(ce.ExitCode()))
 			return nil
@@ -278,22 +318,33 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 }
 
 // validateOutput panics if a leaf command's Output is malformed: missing
-// examples, or a JQExample whose Command doesn't actually invoke --jq.
-// Leaves with DisableFlagParsing, or whose JSON output is marked unimportant,
-// are exempt from the JQExample requirement since --jq is not honored (or not
-// useful) for them.
+// examples, an example declaring both Command and CommandLines, or a
+// JQExample that doesn't actually invoke --jq. Leaves with
+// DisableFlagParsing, or whose JSON output is marked unimportant, are exempt
+// from the JQExample requirement since --jq is not honored (or not useful)
+// for them.
 func validateOutput(path string, def cmd.Command) {
 	if len(def.Output.ExampleList()) == 0 {
 		panic(fmt.Sprintf("command %q Output requires at least one example", path))
 	}
+	for _, ex := range append(def.Output.ExampleList(), def.Output.JQ()) {
+		if ex.Command != "" && len(ex.CommandLines) > 0 {
+			panic(fmt.Sprintf("command %q example %q declares both Command and CommandLines", path, ex.Description))
+		}
+	}
+	for _, line := range help.OverlongExampleLines(def.Output) {
+		panic(fmt.Sprintf("command %q example line would render truncated in help; shorten it, or "+
+			"for a command split it with CommandLines: %q", path, line))
+	}
 	if def.DisableFlagParsing || def.Output.JSONOutputUnimportantBool() {
 		return
 	}
-	if def.Output.JQ().Command == "" {
+	jq := def.Output.JQ().CommandString()
+	if jq == "" {
 		panic(fmt.Sprintf("command %q Output requires a JQExample", path))
 	}
-	if !strings.Contains(def.Output.JQ().Command, "--jq") {
-		panic(fmt.Sprintf("command %q JQExample.Command must invoke --jq, got %q", path, def.Output.JQ().Command))
+	if !strings.Contains(jq, "--jq") {
+		panic(fmt.Sprintf("command %q JQExample must invoke --jq, got %q", path, jq))
 	}
 }
 
@@ -332,7 +383,13 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 	for _, meta := range metas {
 		desc := meta.Desc
 		if len(meta.Enum) > 0 {
-			desc += " {" + strings.Join(meta.Enum, ",") + "}"
+			// A nullable flag accepts null on top of its enum, so show it as a
+			// choice rather than leaving callers to read the description.
+			values := meta.Enum
+			if meta.Nullable {
+				values = append(slices.Clone(values), cmd.NullFlagValue)
+			}
+			desc += " {" + strings.Join(values, ",") + "}"
 		}
 
 		ptr := val.FieldByName(meta.FieldName).Addr().Interface()
@@ -353,7 +410,27 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 		case *bool:
 			flags.BoolVarP(ptr, meta.Name, meta.Short, meta.Default == "true", desc)
 		case *[]string:
-			flags.StringArrayVarP(ptr, meta.Name, meta.Short, nil, desc)
+			if len(meta.Enum) > 0 {
+				if meta.Default != "" {
+					*ptr = strings.Split(meta.Default, ",")
+				}
+				flags.VarP(&enumSliceValue{value: ptr, allowed: meta.Enum}, meta.Name, meta.Short, desc)
+			} else {
+				flags.StringArrayVarP(ptr, meta.Name, meta.Short, nil, desc)
+			}
+		case *cmd.OptionalFlag[int]:
+			flags.VarP(newOptionalFlagValue(ptr, "int", meta, parseFlagInt), meta.Name, meta.Short, desc)
+		case *cmd.OptionalFlag[bool]:
+			// Deliberately no NoOptDefVal, so a bare --flag is an error rather
+			// than an implicit true. These are settings a caller turns off as
+			// often as on, and `--rolling-deploy=false` is a poor way to spell
+			// that. The note is appended here rather than written into each
+			// description because it holds for every flag of this type, and
+			// because plain bool flags elsewhere in the CLI do take no value.
+			flags.VarP(newOptionalFlagValue(ptr, "bool", meta, strconv.ParseBool),
+				meta.Name, meta.Short, desc+" Takes an explicit value. {true,false}")
+		case *cmd.OptionalFlag[string]:
+			flags.VarP(newOptionalFlagValue(ptr, "string", meta, enumStringParser(meta.Enum)), meta.Name, meta.Short, desc)
 		case *time.Time:
 			flags.VarP(&friendlyTimeValue{value: ptr}, meta.Name, meta.Short, desc)
 		case *time.Duration:
@@ -367,6 +444,7 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 		}
 		f := flags.Lookup(meta.Name)
 		if f != nil {
+			f.Hidden = meta.Hidden
 			if f.Annotations == nil {
 				f.Annotations = map[string][]string{}
 			}
@@ -376,6 +454,143 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 			}
 		}
 	}
+}
+
+// outputFormatFromArgs returns the --output value read straight out of argv,
+// for the failures cobra rejects before it finishes parsing flags. Repeats
+// follow pflag: the last value wins, and nothing after a bare -- is a flag.
+// Returns "" when the invocation names no format. A typo'd value comes back
+// as written, and so matches neither json nor jsonl: the failure gets no
+// envelope, since there is no telling what the caller meant by it. --jq counts
+// as json only when no --output appears at all. Shorthands combined into one
+// arg (-vojson) are not recognized.
+func outputFormatFromArgs(args []string) string {
+	format, sawOutput, sawJQ := "", false, false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		switch {
+		case arg == "--output" || arg == "-o":
+			sawOutput = true
+			// A trailing --output with no value is the parse error cobra is
+			// already reporting; it names no format.
+			format = ""
+			if i+1 < len(args) {
+				format = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(arg, "--output="):
+			sawOutput, format = true, strings.TrimPrefix(arg, "--output=")
+		case strings.HasPrefix(arg, "-o"):
+			sawOutput, format = true, strings.TrimPrefix(strings.TrimPrefix(arg, "-o"), "=")
+		case arg == "--jq" || strings.HasPrefix(arg, "--jq=") || strings.HasPrefix(arg, "-q"):
+			sawJQ = true
+		}
+	}
+	if !sawOutput && sawJQ {
+		return "json"
+	}
+	return format
+}
+
+// optionalFlagValue binds a [cmd.OptionalFlag] to pflag. Only parsing varies by
+// type, so parse is supplied per type and the rest is shared. On a flag tagged
+// nullable, the literal 'null' is intercepted before parsing, so no parser has
+// to know about it.
+type optionalFlagValue[T any] struct {
+	flag     *cmd.OptionalFlag[T]
+	typeName string
+	nullable bool
+	parse    func(string) (T, error)
+}
+
+func newOptionalFlagValue[T any](
+	flag *cmd.OptionalFlag[T], typeName string, meta cmd.CommandFlag, parse func(string) (T, error),
+) *optionalFlagValue[T] {
+	return &optionalFlagValue[T]{
+		flag:     flag,
+		typeName: typeName,
+		nullable: meta.Nullable,
+		parse:    parse,
+	}
+}
+
+func (v *optionalFlagValue[T]) String() string {
+	if !v.flag.IsSet() {
+		return ""
+	}
+	if v.flag.IsNull() {
+		return cmd.NullFlagValue
+	}
+	return fmt.Sprint(*v.flag.Pointer())
+}
+
+func (v *optionalFlagValue[T]) Type() string { return v.typeName }
+
+func (v *optionalFlagValue[T]) Set(s string) error {
+	// Only a flag that opted in treats null specially. On any other flag it is
+	// just input: a plain string flag may legitimately be given "null".
+	if v.nullable && s == cmd.NullFlagValue {
+		v.flag.SetNull()
+		return nil
+	}
+	parsed, err := v.parse(s)
+	if err != nil {
+		return err
+	}
+	v.flag.SetValue(parsed)
+	return nil
+}
+
+func parseFlagInt(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer %q", s)
+	}
+	return n, nil
+}
+
+// enumStringParser returns a parser constrained to allowed, or an unconstrained
+// one when the flag declares no enum.
+func enumStringParser(allowed []string) func(string) (string, error) {
+	return func(s string) (string, error) {
+		if len(allowed) > 0 && !slices.Contains(allowed, s) {
+			return "", fmt.Errorf("must be one of: %s", strings.Join(allowed, ", "))
+		}
+		return s, nil
+	}
+}
+
+// enumSliceValue implements pflag.Value for a repeatable, comma-separated
+// enum-constrained list. Repeating the flag appends, so
+// `--weekdays MONDAY,TUESDAY` and `--weekdays MONDAY --weekdays TUESDAY` agree.
+type enumSliceValue struct {
+	value   *[]string
+	allowed []string
+	changed bool
+}
+
+func (v *enumSliceValue) String() string { return strings.Join(*v.value, ",") }
+
+func (v *enumSliceValue) Type() string { return "strings" }
+
+func (v *enumSliceValue) Set(s string) error {
+	parsed := strings.Split(s, ",")
+	for _, item := range parsed {
+		if !slices.Contains(v.allowed, item) {
+			return fmt.Errorf("%q must be one of: %s", item, strings.Join(v.allowed, ", "))
+		}
+	}
+	// The first Set discards any default so a caller's list replaces it rather
+	// than extending it.
+	if !v.changed {
+		*v.value = nil
+		v.changed = true
+	}
+	*v.value = append(*v.value, parsed...)
+	return nil
 }
 
 // friendlyTimeValue implements pflag.Value for a time.Time accepting a few
@@ -403,6 +618,10 @@ func (v *friendlyTimeValue) Set(s string) error {
 		time.RFC3339,
 		"2006-01-02T15:04:05",
 		"2006-01-02 15:04:05",
+		// Minute precision, which is what the autoscaling schedule flags ask
+		// for: a schedule window has no use for seconds.
+		"2006-01-02T15:04",
+		"2006-01-02 15:04",
 		"2006-01-02",
 	} {
 		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
@@ -410,7 +629,7 @@ func (v *friendlyTimeValue) Set(s string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("invalid time %q: expected ISO 8601 (e.g. 2026-05-14, 2026-05-14T12:00:00, 2026-05-14T12:00:00Z)", s)
+	return fmt.Errorf("invalid time %q: expected ISO 8601 (e.g. 2026-05-14, 2026-05-14T12:00, 2026-05-14T12:00:00, 2026-05-14T12:00:00Z)", s)
 }
 
 // friendlyDurationValue implements pflag.Value for a time.Duration that also
@@ -437,7 +656,7 @@ func (v *friendlyDurationValue) Set(s string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("invalid duration %q: expected a Go duration (e.g. 30m, 1h30m) or <N>d (e.g. 3d)", s)
+	return fmt.Errorf("invalid duration %q: expected a value like 30m, 1h30m, or 3d", s)
 }
 
 // applyOneofGroups wires `oneof:"<group>"`-tagged flags as mutually exclusive

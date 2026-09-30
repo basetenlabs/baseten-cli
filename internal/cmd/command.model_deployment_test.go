@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -84,9 +85,101 @@ func Test_Model_Deployment_Describe(t *testing.T) {
 	h.Require.Contains(out, "ACTIVE")
 }
 
+// The region column is absent until a deployment is pinned to a region, so an
+// unpinned model's list is unchanged.
+func Test_Model_Deployment_List_NoRegionColumn(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments", 200,
+		map[string]any{"deployments": []any{depFixture("d-1", "first", "production", "ACTIVE")}})
+
+	h.Require.NoError(h.Execute("model", "deployment", "list", "--model-id", "m-1"))
+	h.Require.NotContains(h.Stdout.String(), "REGION")
+}
+
+// One pinned deployment brings the column in for every row, where the unpinned
+// ones read as global.
+func Test_Model_Deployment_List_Region(t *testing.T) {
+	h := NewCommandHarness(t)
+	pinned := depFixture("d-1", "first", "production", "ACTIVE")
+	pinned["region"] = map[string]any{"slug": "us", "display_name": "United States"}
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments", 200,
+		map[string]any{"deployments": []any{pinned, depFixture("d-2", "second", "", "ACTIVE")}})
+
+	h.Require.NoError(h.Execute("model", "deployment", "list", "--model-id", "m-1"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "REGION")
+	h.Require.Contains(out, "us")
+	h.Require.Contains(out, "global")
+}
+
+// A pinned deployment is served by its per-region host, not the model's plain
+// host, so describe has to report the regional invoke URL.
+func Test_Model_Deployment_Describe_Region(t *testing.T) {
+	h := NewCommandHarness(t)
+	dep := depFixture("d-1", "first", "production", "ACTIVE")
+	dep["region"] = map[string]any{"slug": "us", "display_name": "United States"}
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments/d-1", 200, dep)
+
+	h.Require.NoError(h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-id", "d-1"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Region:       us")
+	h.Require.Contains(out, "model-m-1-region-us.")
+	h.Require.Contains(out, "/deployment/d-1/predict")
+}
+
+// An unpinned deployment keeps the plain host, and describe omits the region
+// line rather than claiming the deployment is placed anywhere in particular.
+func Test_Model_Deployment_Describe_NoRegion(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments/d-1", 200,
+		depFixture("d-1", "first", "production", "ACTIVE"))
+
+	h.Require.NoError(h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-id", "d-1"))
+	out := h.Stdout.String()
+	h.Require.NotContains(out, "Region:")
+	h.Require.NotContains(out, "-region-")
+	h.Require.Contains(out, "model-m-1.")
+}
+
 func Test_Model_Deployment_Describe_MissingDeploymentID(t *testing.T) {
 	h := NewCommandHarness(t)
 	err := h.Execute("model", "deployment", "describe", "--model-id", "m-1")
+	h.Require.Error(err)
+}
+
+func Test_Model_Deployment_Describe_ByName(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/models/m-1/deployments", 200,
+		map[string]any{"deployments": []any{depFixture("d-1", "first", "production", "ACTIVE")}})
+	m.SetRoute("GET", "/v1/models/m-1/deployments/d-1", 200,
+		depFixture("d-1", "first", "production", "ACTIVE"))
+
+	h.Require.NoError(h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-name", "first"))
+	h.Require.Contains(h.Stdout.String(), "d-1")
+	call := m.FindCall("GET", "/v1/models/m-1/deployments")
+	h.Require.NotNil(call)
+	h.Require.Equal("first", call.Query().Get("name"))
+	h.Require.NotNil(m.FindCall("GET", "/v1/models/m-1/deployments/d-1"))
+}
+
+func Test_Model_Deployment_Describe_ByName_NotFound(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments", 200,
+		map[string]any{"deployments": []any{}})
+
+	err := h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-name", "ghost")
+	h.Require.ErrorContains(err, `no deployment named "ghost"`)
+}
+
+func Test_Model_Deployment_Describe_IDAndName_Rejected(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--deployment-name", "first")
 	h.Require.Error(err)
 }
 
@@ -134,6 +227,17 @@ func Test_Model_Deployment_Activate(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Activated deployment d-1")
 }
 
+func Test_Model_Deployment_Activate_NoOp(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/deployments/d-1/activate", 200,
+		map[string]any{"success": true, "no_op": true})
+
+	h.Require.NoError(h.Execute("model", "deployment", "activate",
+		"--model-id", "m-1", "--deployment-id", "d-1"))
+	h.Require.Contains(h.Stderr.String(), "Deployment d-1 was already active; nothing to do")
+}
+
 func Test_Model_Deployment_Deactivate_Yes(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
@@ -144,6 +248,17 @@ func Test_Model_Deployment_Deactivate_Yes(t *testing.T) {
 		"--model-id", "m-1", "--deployment-id", "d-1", "--yes"))
 	h.Require.NotNil(m.FindCall("POST", "/v1/models/m-1/deployments/d-1/deactivate"))
 	h.Require.Contains(h.Stderr.String(), "Deactivated deployment d-1")
+}
+
+func Test_Model_Deployment_Deactivate_NoOp(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/deployments/d-1/deactivate", 200,
+		map[string]any{"success": true, "no_op": true})
+
+	h.Require.NoError(h.Execute("model", "deployment", "deactivate",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "Deployment d-1 was already inactive; nothing to do")
 }
 
 func Test_Model_Deployment_Deactivate_NoTTY_RequiresYes(t *testing.T) {
@@ -203,11 +318,11 @@ func Test_Model_Deployment_Promote_Default(t *testing.T) {
 	call := m.FindCall("POST", "/v1/models/m-1/environments/production/promote")
 	h.Require.NotNil(call)
 	h.Require.Contains(call.Body, `"deployment_id":"d-1"`)
-	h.Require.Contains(call.Body, `"preserve_env_instance_type":true`)
+	h.Require.Contains(call.Body, `"preserve_env_instance_type":false`)
 	h.Require.Contains(h.Stderr.String(), "Promoted deployment d-1 to environment production")
 }
 
-func Test_Model_Deployment_Promote_OverrideInstanceType(t *testing.T) {
+func Test_Model_Deployment_Promote_PreserveInstanceType(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("POST", "/v1/models/m-1/environments/staging/promote", 200,
@@ -215,10 +330,10 @@ func Test_Model_Deployment_Promote_OverrideInstanceType(t *testing.T) {
 
 	h.Require.NoError(h.Execute("model", "deployment", "promote",
 		"--model-id", "m-1", "--deployment-id", "d-1",
-		"--environment", "staging", "--override-env-instance-type", "--yes"))
+		"--environment", "staging", "--preserve-env-instance-type", "--yes"))
 	call := m.FindCall("POST", "/v1/models/m-1/environments/staging/promote")
 	h.Require.NotNil(call)
-	h.Require.Contains(call.Body, `"preserve_env_instance_type":false`)
+	h.Require.Contains(call.Body, `"preserve_env_instance_type":true`)
 }
 
 func Test_Model_Deployment_Promote_NoTTY_RequiresYes(t *testing.T) {
@@ -317,6 +432,116 @@ func Test_Model_Deployment_Download_OutDir(t *testing.T) {
 	model, err := os.ReadFile(filepath.Join(outDir, "model", "model.py"))
 	h.Require.NoError(err)
 	h.Require.Equal("print('hi')\n", string(model))
+}
+
+func Test_Model_Deployment_Describe_ShowsSettings(t *testing.T) {
+	h := NewCommandHarness(t)
+	dep := depFixture("d-1", "first", "production", "ACTIVE")
+	dep["autoscaling_settings"] = map[string]any{
+		"min_replica": 1, "max_replica": 5, "concurrency_target": 2,
+		"autoscaling_window": 600, "max_scale_down_rate": nil,
+	}
+	dep["request_backpressure_settings"] = map[string]any{"policy": nil}
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments/d-1", 200, dep)
+
+	h.Require.NoError(h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-id", "d-1"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Backpressure: none")
+	h.Require.Contains(out, "Autoscaling:")
+	h.Require.Contains(out, "Min Replicas:            1")
+	h.Require.Contains(out, "Autoscaling Window:      600s")
+	h.Require.Contains(out, "Max Scale Down Rate:     -")
+}
+
+func Test_Model_Deployment_Rename(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("PATCH", "/v1/models/m-1/deployments/d-1", 200,
+		depFixture("d-1", "canary", "", "ACTIVE"))
+
+	h.Require.NoError(h.Execute("model", "deployment", "rename",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--new-name", "canary"))
+	h.Require.Contains(h.Stderr.String(), "Renamed deployment d-1 to canary")
+	body := h.MockManagementAPI().FindCall("PATCH", "/v1/models/m-1/deployments/d-1").BodyJSON(h.T)
+	h.Require.Equal("canary", body["name"])
+}
+
+// Only the flags that were passed reach the request body. Anything else would
+// overwrite settings the caller never mentioned.
+func Test_Model_Deployment_UpdateAutoscaling_OmitsUnsetFlags(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("PATCH", "/v1/models/m-1/deployments/d-1/autoscaling_settings", 200,
+		map[string]any{"status": "ACCEPTED", "message": "Update accepted"})
+
+	h.Require.NoError(h.Execute("model", "deployment", "update-autoscaling",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--min-replica", "2"))
+	h.Require.Contains(h.Stderr.String(), "ACCEPTED: Update accepted")
+
+	body := h.MockManagementAPI().FindCall(
+		"PATCH", "/v1/models/m-1/deployments/d-1/autoscaling_settings").BodyJSON(h.T)
+	h.Require.Len(body, 1)
+	h.Require.Equal(float64(2), body["min_replica"])
+}
+
+// Zero is a real replica count, so it has to survive as a value rather than
+// being treated as "unset" the way a plain int would be.
+func Test_Model_Deployment_UpdateAutoscaling_ZeroIsSent(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("PATCH", "/v1/models/m-1/deployments/d-1/autoscaling_settings", 200,
+		map[string]any{"status": "ACCEPTED", "message": "Update accepted"})
+
+	h.Require.NoError(h.Execute("model", "deployment", "update-autoscaling",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--min-replica", "0"))
+
+	body := h.MockManagementAPI().FindCall(
+		"PATCH", "/v1/models/m-1/deployments/d-1/autoscaling_settings").BodyJSON(h.T)
+	h.Require.Equal(float64(0), body["min_replica"])
+}
+
+func Test_Model_Deployment_UpdateAutoscaling_RejectsNull(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("model", "deployment", "update-autoscaling",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--min-replica", "null")
+	h.Require.Error(err)
+}
+
+func Test_Model_Deployment_UpdateRequestBackpressure_SetsPolicy(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute(
+		"PATCH", "/v1/models/m-1/deployments/d-1/request_backpressure_settings", 200,
+		map[string]any{"policy": "REJECT_ON_FULL"})
+
+	h.Require.NoError(h.Execute("model", "deployment", "update-request-backpressure",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--policy", "reject-on-full"))
+	h.Require.Contains(h.Stderr.String(), "Request backpressure policy: reject-on-full")
+
+	body := h.MockManagementAPI().FindCall(
+		"PATCH", "/v1/models/m-1/deployments/d-1/request_backpressure_settings").BodyJSON(h.T)
+	h.Require.Equal("REJECT_ON_FULL", body["policy"])
+}
+
+// Clearing the policy has to send an explicit null. Omitting the field would
+// read as "leave unchanged", so the policy would survive.
+func Test_Model_Deployment_UpdateRequestBackpressure_NullClearsPolicy(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute(
+		"PATCH", "/v1/models/m-1/deployments/d-1/request_backpressure_settings", 200,
+		map[string]any{"policy": nil})
+
+	h.Require.NoError(h.Execute("model", "deployment", "update-request-backpressure",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--policy", "null"))
+	h.Require.Contains(h.Stderr.String(), "Request backpressure policy: none")
+
+	call := h.MockManagementAPI().FindCall(
+		"PATCH", "/v1/models/m-1/deployments/d-1/request_backpressure_settings")
+	h.Require.Equal(`{"policy":null}`, strings.TrimSpace(call.Body))
+}
+
+func Test_Model_Deployment_UpdateRequestBackpressure_RejectsUnknownPolicy(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("model", "deployment", "update-request-backpressure",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--policy", "REJECT_ON_FULL")
+	h.Require.Error(err)
 }
 
 func buildTar(t *testing.T, files map[string]string) []byte {
