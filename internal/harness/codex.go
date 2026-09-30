@@ -30,17 +30,16 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 		return Detection{}, err
 	}
 	path := filepath.Join(dir, "config.toml")
-	d, err := detect(ctx, execer, h.Name(), "codex", path)
-	if err != nil || d.Installed {
-		return d, err
-	}
-	for _, binary := range desktopCodexBinaries() {
-		d, err = detect(ctx, execer, h.Name(), binary, path)
-		if err != nil || d.Installed {
-			return d, err
+	return detect(ctx, execer, h.Name(), codexBinary(execer), path)
+}
+
+func codexBinary(execer Execer) string {
+	for _, binary := range append([]string{"codex"}, desktopCodexBinaries()...) {
+		if _, err := execer.LookPath(binary); err == nil {
+			return binary
 		}
 	}
-	return d, nil
+	return "codex"
 }
 
 // linuxDesktopCodex is where the ChatGPT desktop app's x64 .deb package
@@ -86,7 +85,7 @@ func desktopCodexBinaries() []string {
 }
 
 func codexDaemonCommand(ctx context.Context, execer Execer, dir string, args ...string) (map[string]any, error) {
-	bin, err := execer.LookPath("codex")
+	bin, err := execer.LookPath(codexBinary(execer))
 	if err != nil {
 		return nil, err
 	}
@@ -153,8 +152,13 @@ func codexSocketClients(lsof, socket string) (int, error) {
 }
 
 func RestartCodexDaemon(ctx context.Context, execer Execer, dir string) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	result, err := codexDaemonCommand(ctx, execer, dir, "restart")
 	if err != nil {
+		if ctx.Err() != nil {
+			return 0, fmt.Errorf("%w: %v", ctx.Err(), err)
+		}
 		return 0, err
 	}
 	pid, _ := result["pid"].(float64)

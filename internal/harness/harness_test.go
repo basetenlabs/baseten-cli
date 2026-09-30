@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -531,12 +532,21 @@ func TestMalformedSettingsAreReported(t *testing.T) {
 
 type codexDaemonExecer struct {
 	fakeExecer
-	outputs map[string]string
-	env     []string
+	outputs  map[string]string
+	binaries map[string]bool
+	env      []string
+	path     string
+}
+
+func (e *codexDaemonExecer) LookPath(name string) (string, error) {
+	if e.binaries != nil && !e.binaries[name] {
+		return "", exec.ErrNotFound
+	}
+	return e.fakeExecer.LookPath(name)
 }
 
 func (e *codexDaemonExecer) Exec(command *exec.Cmd) error {
-	e.env = command.Env
+	e.env, e.path = command.Env, command.Path
 	out, ok := e.outputs[strings.Join(command.Args[1:], " ")]
 	if !ok {
 		return errors.New("exit status 1")
@@ -547,19 +557,35 @@ func (e *codexDaemonExecer) Exec(command *exec.Cmd) error {
 
 func TestCodexDaemonSocket(t *testing.T) {
 	dir := t.TempDir()
-	for name, tc := range map[string]struct {
-		outputs map[string]string
-		want    string
+	running := map[string]string{"app-server daemon version": `{"status":"running","socketPath":"/tmp/codex.sock"}`}
+	cases := map[string]struct {
+		outputs  map[string]string
+		binaries map[string]bool
+		want     string
+		bin      string
 	}{
-		"running":  {map[string]string{"app-server daemon version": `{"status":"running","socketPath":"/tmp/codex.sock"}`}, "/tmp/codex.sock"},
-		"stopped":  {map[string]string{"app-server daemon version": `{"status":"stopped"}`}, ""},
-		"not json": {map[string]string{"app-server daemon version": "1.2.3"}, ""},
-		"failed":   {nil, ""},
-	} {
+		"running":   {running, nil, "/tmp/codex.sock", filepath.Join(string(filepath.Separator), "fake", "codex")},
+		"stopped":   {map[string]string{"app-server daemon version": `{"status":"stopped"}`}, nil, "", ""},
+		"not json":  {map[string]string{"app-server daemon version": "1.2.3"}, nil, "", ""},
+		"failed":    {nil, nil, "", ""},
+		"no binary": {running, map[string]bool{}, "", ""},
+	}
+	if desktop := desktopCodexBinaries(); len(desktop) > 0 {
+		cases["desktop binary"] = struct {
+			outputs  map[string]string
+			binaries map[string]bool
+			want     string
+			bin      string
+		}{running, map[string]bool{desktop[0]: true}, "/tmp/codex.sock", filepath.Join(string(filepath.Separator), "fake", desktop[0])}
+	}
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			e := &codexDaemonExecer{outputs: tc.outputs}
+			e := &codexDaemonExecer{outputs: tc.outputs, binaries: tc.binaries}
 			require.Equal(t, tc.want, CodexDaemonSocket(t.Context(), e, dir))
-			require.Contains(t, e.env, "CODEX_HOME="+dir)
+			if tc.bin != "" {
+				require.Equal(t, tc.bin, e.path)
+				require.Contains(t, e.env, "CODEX_HOME="+dir)
+			}
 		})
 	}
 	require.Empty(t, CodexDaemonSocket(t.Context(), fakeExecer{missing: true}, dir))
@@ -618,4 +644,9 @@ func TestRestartCodexDaemon(t *testing.T) {
 	require.Contains(t, e.env, "CODEX_HOME="+dir)
 	_, err = RestartCodexDaemon(t.Context(), &codexDaemonExecer{}, dir)
 	require.Error(t, err)
+	require.NotErrorIs(t, err, context.DeadlineExceeded)
+	expired, cancel := context.WithTimeout(t.Context(), 0)
+	defer cancel()
+	_, err = RestartCodexDaemon(expired, &codexDaemonExecer{}, dir)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
