@@ -2,16 +2,25 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/sandboxconnect"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/basetenlabs/baseten-go/sandbox"
 )
 
 func init() {
 	Register("sandbox list", commandSandboxList)
+	Register("sandbox image list", commandSandboxImageList)
+	Register("sandbox image describe", commandSandboxImageDescribe)
+	Register("sandbox image push", commandSandboxImagePush)
+	Register("sandbox image delete", commandSandboxImageDelete)
+	Register("sandbox connect", commandSandboxConnect)
 	Register("sandbox describe", commandSandboxDescribe)
 	Register("sandbox create", commandSandboxCreate)
 	Register("sandbox update", commandSandboxUpdate)
@@ -395,4 +404,184 @@ func shellQuote(arg string) string {
 		return "'" + strings.ReplaceAll(arg, "'", "'\\''") + "'"
 	}
 	return arg
+}
+
+func commandSandboxImageList(ctx *CommandContext, flags *cmd.SandboxTeamFlags) error {
+	client, err := ctx.NewSandboxesClient(flags.Team)
+	if err != nil {
+		return err
+	}
+	var items []sandbox.ImageInfo
+	for info, err := range client.Images().List(ctx, &sandbox.ImageListOptions{}) {
+		if err != nil {
+			return fmt.Errorf("listing sandbox images: %w", err)
+		}
+		items = append(items, *info)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(cmd.SandboxImageList{Items: items})
+		return nil
+	}
+	if len(items) == 0 {
+		ctx.LogLine("No sandbox images found.")
+		return nil
+	}
+	rows := make([][]string, 0, len(items))
+	for _, info := range items {
+		rows = append(rows, []string{
+			info.Name,
+			info.Status,
+			strconv.FormatInt(info.TagCount, 10),
+			formatBytes(info.SizeBytes),
+			info.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	ctx.OutputTable(TableOutput{
+		Headers:             []string{"NAME", "STATUS", "TAGS", "SIZE", "CREATED"},
+		Rows:                rows,
+		RightAlignedColumns: []int{2, 3},
+	})
+	return nil
+}
+
+func commandSandboxImageDescribe(ctx *CommandContext, flags *cmd.SandboxTeamFlags) error {
+	client, err := ctx.NewSandboxesClient(flags.Team)
+	if err != nil {
+		return err
+	}
+	info, err := client.Images().GetInfo(ctx, ctx.Args[0])
+	if err != nil {
+		return fmt.Errorf("describing sandbox image %s: %w", ctx.Args[0], err)
+	}
+	outputSandboxImageInfo(ctx, *info)
+	return nil
+}
+
+func commandSandboxImagePush(ctx *CommandContext, flags *cmd.SandboxImagePushFlags) error {
+	client, err := ctx.NewSandboxesClient(flags.Team)
+	if err != nil {
+		return err
+	}
+	name := ctx.Args[0]
+	if !flags.NoWait {
+		ctx.Logf("Waiting for image %s to build. Press Ctrl+C to stop waiting; the build continues.\n\n", name)
+	}
+	info, err := client.Images().Push(ctx, &sandbox.ImagePushOptions{
+		Name:          name,
+		Directory:     flags.Dir,
+		RegistryImage: flags.Image,
+		WaitForBuilt:  !flags.NoWait,
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return cmd.NewErrInterrupted(fmt.Errorf(
+				"Stopped waiting. The push of image %s continues in the background.\n\n"+
+					"Check status: baseten sandbox image describe %s",
+				name, name))
+		}
+		return fmt.Errorf("pushing sandbox image %s: %w", name, err)
+	}
+	outputSandboxImageInfo(ctx, *info)
+	return nil
+}
+
+func commandSandboxImageDelete(ctx *CommandContext, flags *cmd.SandboxDeleteFlags) error {
+	name := ctx.Args[0]
+	if !flags.Yes {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete sandbox image %s? This cannot be undone.", name)); err != nil {
+			return err
+		}
+	}
+	client, err := ctx.NewSandboxesClient(flags.Team)
+	if err != nil {
+		return err
+	}
+	info, err := client.Images().Delete(ctx, name)
+	if err != nil {
+		return fmt.Errorf("deleting sandbox image %s: %w", name, err)
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(*info)
+		return nil
+	}
+	ctx.Logf("Deleting sandbox image %s.\n", name)
+	outputSandboxImageInfo(ctx, *info)
+	return nil
+}
+
+func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxTeamFlags) error {
+	if !ctx.IsInteractive() {
+		return cmd.NewErrUsagef("connect requires an interactive terminal")
+	}
+	name := ctx.Args[0]
+	client, err := ctx.NewSandboxesClient(flags.Team)
+	if err != nil {
+		return err
+	}
+	info, err := client.GetInfo(ctx, name)
+	if err != nil {
+		return fmt.Errorf("describing sandbox %s: %w", name, err)
+	}
+	if info.Status != sandbox.SandboxStatusDeployed {
+		return cmd.NewErrUsagef(
+			"sandbox %s is %s, not DEPLOYED; only deployed sandboxes accept terminals", name, info.Status)
+	}
+
+	// The terminal reads the sandbox token from the WebSocket query, so mint
+	// one through the session's management credential.
+	managementClient, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	minted, err := managementClient.API().PostToken(ctx, managementapi.CreateTokenRequest{
+		Scopes: []managementapi.TokenScope{managementapi.TokenScope_sandboxes},
+	})
+	if err != nil {
+		return fmt.Errorf("minting a sandbox token: %w", err)
+	}
+	wsURL, err := sandboxconnect.WebSocketURL(info.URL, minted.Token)
+	if err != nil {
+		return err
+	}
+	stdin, stdinIsFile := ctx.Stdin.(*os.File)
+	stdout, stdoutIsFile := ctx.Stdout.(*os.File)
+	if !stdinIsFile || !stdoutIsFile {
+		return cmd.NewErrUsagef("connect requires terminal stdin and stdout")
+	}
+
+	ctx.Logf("Connecting to sandbox %s. Press Ctrl+D to disconnect.\n\n", name)
+	terminal, err := sandboxconnect.Dial(ctx, wsURL, stdin, stdout)
+	if err != nil {
+		return err
+	}
+	if err := terminal.Run(ctx); err != nil {
+		return err
+	}
+	ctx.Logf("\nDisconnected from sandbox %s.\n", name)
+	return nil
+}
+
+func outputSandboxImageInfo(ctx *CommandContext, info sandbox.ImageInfo) {
+	if ctx.JSON {
+		ctx.OutputJSON(info)
+		return
+	}
+	ctx.Outputf("Name:        %s\n", info.Name)
+	ctx.Outputf("Status:      %s\n", info.Status)
+	if info.DisplayName != "" {
+		ctx.Outputf("Display:     %s\n", info.DisplayName)
+	}
+	if info.TagCount > 0 {
+		ctx.Outputf("Tags:        %d\n", info.TagCount)
+	}
+	if info.SizeBytes > 0 {
+		ctx.Outputf("Size:        %s\n", formatBytes(info.SizeBytes))
+	}
+	if !info.CreatedAt.IsZero() {
+		ctx.Outputf("Created:     %s\n", info.CreatedAt.UTC().Format(time.RFC3339))
+	}
+	if !info.LastDeployedAt.IsZero() {
+		ctx.Outputf("Last used:   %s\n", info.LastDeployedAt.UTC().Format(time.RFC3339))
+	}
 }

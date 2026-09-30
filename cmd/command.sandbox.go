@@ -16,6 +16,7 @@ var commandSandbox = Command{
 		"During development, the sandbox control plane may live on a different domain than the " +
 		"management API; set BASETEN_SANDBOXES_API_URL_OVERRIDE to route it there.",
 	Children: []Command{
+		imageSubcommands,
 		{
 			Name:    "list",
 			Summary: "List sandboxes (PRE-RELEASE)",
@@ -191,6 +192,25 @@ var commandSandbox = Command{
 			},
 		},
 		{
+			Name:      "connect",
+			Summary:   "Open an interactive terminal to a sandbox (PRE-RELEASE)",
+			ArgsUsage: "NAME",
+			ExactArgs: 1,
+			Description: sandboxPreRelease +
+				"Opens a raw-mode terminal to a deployed sandbox over its execution API, like SSH: " +
+				"full ANSI output, resize handling, interactive applications. Press Ctrl+D to " +
+				"disconnect. Requires an interactive terminal.",
+			Flags: SandboxTeamFlags{},
+			Output: &CommandOutput[struct{}]{
+				TextDescription: "The sandbox's terminal, until Ctrl+D or the sandbox closes the session.",
+				Examples: []CommandExample{{
+					Description: "Open a terminal to a sandbox.",
+					Command:     "baseten sandbox connect my-sandbox",
+				}},
+				JSONOutputUnimportant: true,
+			},
+		},
+		{
 			Name:      "exec",
 			Summary:   "Run a command in a sandbox (PRE-RELEASE)",
 			ArgsUsage: "NAME -- COMMAND [ARGS...]",
@@ -279,4 +299,123 @@ type SandboxDeleteFlags struct {
 type SandboxExecFlags struct {
 	SandboxTeamFlags
 	Env []string `flag:"env" desc:"Environment variable as KEY=VALUE for the command, on top of the sandbox's own. May be repeated."`
+}
+
+// imageSubcommands is the image family under baseten sandbox image. Images
+// are the sources sandboxes are created from; push builds one from a
+// directory or imports one from a registry.
+var imageSubcommands = Command{
+	Name:    "image",
+	Summary: "Manage sandbox images (PRE-RELEASE)",
+	Description: sandboxPreRelease +
+		"Images are the sources sandboxes are created from: push one from a directory or " +
+		"import one from a registry, then create sandboxes with image <name>:<tag>.\n\n" +
+		"A FAILED build carries no reason yet: the API's build-log endpoint is not in the " +
+		"Baseten spec, so only the status is readable.",
+	Children: []Command{
+		{
+			Name:    "list",
+			Summary: "List sandbox images (PRE-RELEASE)",
+			Description: sandboxPreRelease +
+				"Lists every image repository in the team, following every server page.",
+			Flags: SandboxTeamFlags{},
+			Output: &CommandOutput[SandboxImageList]{
+				TextDescription: "Table with columns: NAME, STATUS, TAGS, SIZE, CREATED. " +
+					"Prints \"No sandbox images found.\" to stderr when the list is empty.",
+				Examples: []CommandExample{{
+					Description: "List images.",
+					Command:     "baseten sandbox image list",
+				}},
+				JQExample: CommandExample{
+					Description: "Print every built image's name.",
+					Command:     "baseten sandbox image list --jq '.items[].name'",
+				},
+			},
+		},
+		{
+			Name:      "describe",
+			Summary:   "Describe a sandbox image (PRE-RELEASE)",
+			ArgsUsage: "NAME",
+			ExactArgs: 1,
+			Description: sandboxPreRelease +
+				"Retrieves one image repository's current record: status, version count, size.",
+			Flags: SandboxTeamFlags{},
+			Output: &CommandOutput[sandbox.ImageInfo]{
+				TextDescription: "One field per line describing the image.",
+				Examples: []CommandExample{{
+					Description: "Describe an image.",
+					Command:     "baseten sandbox image describe my-image",
+				}},
+				JQExample: CommandExample{
+					Description: "Print the image's status.",
+					Command:     "baseten sandbox image describe my-image --jq '.status'",
+				},
+			},
+		},
+		{
+			Name:      "push",
+			Summary:   "Push a sandbox image (PRE-RELEASE)",
+			ArgsUsage: "NAME",
+			ExactArgs: 1,
+			Description: sandboxPreRelease +
+				"Pushes one image version. Exactly one source: --dir zips the directory and " +
+				"uploads it (a Dockerfile must sit at its root), or --image imports a registry " +
+				"image.\n\n" +
+				"By default the command waits until the image is BUILT. Pass --no-wait to return " +
+				"as soon as the push is accepted.",
+			Flags: SandboxImagePushFlags{},
+			Output: &CommandOutput[sandbox.ImageInfo]{
+				TextDescription: "One field per line describing the image. With --no-wait, the " +
+					"record as of the push, usually still UPLOADING.",
+				Examples: []CommandExample{
+					{
+						Description: "Build an image from the current directory and wait for it.",
+						Command:     "baseten sandbox image push my-image --dir .",
+					},
+					{
+						Description: "Import an image from a registry.",
+						Command:     "baseten sandbox image push my-image --image registry.example/app:v1",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Push from a directory and print the resulting status.",
+					Command:     "baseten sandbox image push my-image --dir . --jq '.status'",
+				},
+			},
+		},
+		{
+			Name:      "delete",
+			Summary:   "Delete a sandbox image (PRE-RELEASE)",
+			ArgsUsage: "NAME",
+			ExactArgs: 1,
+			Description: sandboxPreRelease +
+				"Deletes an image repository and every version in it. This cannot be undone.",
+			Flags: SandboxDeleteFlags{},
+			Output: &CommandOutput[sandbox.ImageInfo]{
+				TextDescription: "One field per line describing the image as deletion starts.",
+				Examples: []CommandExample{{
+					Description: "Delete an image without the confirmation prompt.",
+					Command:     "baseten sandbox image delete my-image --yes",
+				}},
+				JQExample: CommandExample{
+					Description: "Delete an image and print its status.",
+					Command:     "baseten sandbox image delete my-image --yes --jq '.status'",
+				},
+			},
+		},
+	},
+}
+
+// SandboxImageList is the JSON shape of 'baseten sandbox image list'.
+type SandboxImageList struct {
+	Items []sandbox.ImageInfo `json:"items"`
+}
+
+// SandboxImagePushFlags configures 'baseten sandbox image push'. Exactly one
+// of Dir and Image is given.
+type SandboxImagePushFlags struct {
+	SandboxTeamFlags
+	Dir    string `flag:"dir" desc:"Directory to zip and upload as the image source. It must hold a Dockerfile at its root."`
+	Image  string `flag:"image" desc:"Registry image reference including a registry hostname, imported instead of building from a directory."`
+	NoWait bool   `flag:"no-wait" desc:"Return as soon as the push is accepted, without waiting for the build."`
 }
