@@ -256,28 +256,31 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	return nil
 }
 
-const codexLogoutHint = "Run `codex logout` to stop the workspace default model from overriding the Baseten route."
-
 func logoutCodex(ctx *CommandContext, dir string, yes bool) {
-	if !harness.CodexChatGPTLogin(ctx, ctx.Execer(), dir) {
+	if !harness.CodexLoggedIn(ctx, ctx.Execer(), dir) {
 		return
 	}
-	ctx.LogLine("Signing out of ChatGPT/OpenAI in codex: your ChatGPT workspace pushes a default model for new threads that this gateway does not serve. Codex only needs the Baseten route from now on; run `codex login` to sign back in.")
-	if !yes && ctx.ConfirmYesNo("Sign out of ChatGPT/OpenAI in codex now?") != nil {
-		ctx.LogLine(codexLogoutHint)
+	hint := "Run `codex logout` and delete `" + harnessDisplayPath(harness.CodexCloudConfigPath(dir)) + "` to stop the workspace default model from overriding the Baseten route."
+	ctx.LogLine("Signing codex out of OpenAI/ChatGPT: codex only needs the Baseten route, and a ChatGPT login lets your workspace override the model for new threads. Run `codex login` to sign back in.")
+	if !yes && ctx.ConfirmYesNo("Sign codex out of OpenAI/ChatGPT now?") != nil {
+		ctx.LogLine(hint)
 		return
 	}
 	if err := harness.CodexLogout(ctx, ctx.Execer(), dir); err != nil {
 		auth := filepath.Join(dir, "auth.json")
 		if os.Remove(auth) != nil {
 			ctx.Logf("warning: codex logout failed: %v\n", err)
-			ctx.LogLine(codexLogoutHint)
+			ctx.LogLine(hint)
 			return
 		}
 		ctx.Logf("warning: codex logout failed (%v); removed %s instead\n", err, harnessDisplayPath(auth))
+	}
+	if err := harness.CodexClearCloudConfig(dir); err != nil {
+		ctx.Logf("warning: could not remove the cached workspace policy: %v\n", err)
+		ctx.LogLine(hint)
 		return
 	}
-	ctx.LogLine("Signed codex out of ChatGPT.")
+	ctx.LogLine("Signed codex out of OpenAI/ChatGPT and cleared the cached workspace policy.")
 }
 
 const codexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done to pick up the new models."

@@ -836,32 +836,39 @@ func Test_Harness_Setup_RestartsCodexDaemon(t *testing.T) {
 
 func Test_Harness_Setup_SignsOutCodex(t *testing.T) {
 	skipUnlessSupported(t)
-	signingOut := "Signing out of ChatGPT/OpenAI in codex"
+	signingOut := "Signing codex out of OpenAI/ChatGPT"
+	signedOut := "Signed codex out of OpenAI/ChatGPT and cleared the cached workspace policy."
+	hint := "Run `codex logout` and delete `"
 	for name, tc := range map[string]struct {
-		execer          *codexDaemonHarnessExecer
-		auth, authAfter bool
-		logouts         int
-		stderr          []string
-		absent          []string
+		execer                             *codexDaemonHarnessExecer
+		auth, authAfter, cache, cacheAfter bool
+		logouts                            int
+		stderr                             []string
+		absent                             []string
 	}{
-		"not logged in":        {&codexDaemonHarnessExecer{}, true, true, 0, nil, []string{signingOut, "codex logout"}},
-		"api key login":        {&codexDaemonHarnessExecer{apiKey: true}, true, true, 0, nil, []string{signingOut, "codex logout"}},
-		"logged in":            {&codexDaemonHarnessExecer{loggedIn: true}, true, true, 1, []string{signingOut, "Signed codex out of ChatGPT."}, []string{"warning"}},
-		"logout fails":         {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, true, false, 1, []string{signingOut, "codex logout failed", "removed"}, []string{"Run `codex logout`", "Signed codex out"}},
-		"logout fails no file": {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, false, false, 1, []string{"codex logout failed", "Run `codex logout` to stop the workspace default model from overriding the Baseten route."}, []string{"removed", "Signed codex out"}},
+		"not logged in":        {&codexDaemonHarnessExecer{}, true, true, true, true, 0, nil, []string{signingOut, "codex logout"}},
+		"api key login":        {&codexDaemonHarnessExecer{apiKey: true}, true, true, true, false, 1, []string{signingOut, signedOut}, []string{"warning"}},
+		"logged in":            {&codexDaemonHarnessExecer{loggedIn: true}, true, true, false, false, 1, []string{signingOut, signedOut}, []string{"warning"}},
+		"logout fails":         {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, true, false, true, false, 1, []string{signingOut, "codex logout failed", "removed", signedOut}, []string{hint}},
+		"logout fails no file": {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, false, false, true, true, 1, []string{"codex logout failed", hint, "cloud-config-bundle-cache.json` to stop the workspace default model from overriding the Baseten route."}, []string{"removed", signedOut}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _ := harnessAPI(t, "")
 			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
 			dir := t.TempDir()
 			auth := filepath.Join(dir, "auth.json")
-			if tc.auth {
-				h.Require.NoError(os.WriteFile(auth, []byte("{}"), 0o600))
+			cache := filepath.Join(dir, "cloud-config-bundle-cache.json")
+			for path, present := range map[string]bool{auth: tc.auth, cache: tc.cache} {
+				if present {
+					h.Require.NoError(os.WriteFile(path, []byte("{}"), 0o600))
+				}
 			}
 			h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", dir, "--yes"))
 			h.Require.Equal(tc.logouts, tc.execer.logouts)
 			_, err := os.Stat(auth)
 			h.Require.Equal(tc.authAfter, err == nil)
+			_, err = os.Stat(cache)
+			h.Require.Equal(tc.cacheAfter, err == nil)
 			for _, want := range tc.stderr {
 				h.Require.Contains(h.Stderr.String(), want)
 			}

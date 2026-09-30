@@ -84,10 +84,10 @@ func desktopCodexBinaries() []string {
 	return nil
 }
 
-func codexCommand(ctx context.Context, execer Execer, dir string, args ...string) (string, string, error) {
+func codexCommand(ctx context.Context, execer Execer, dir string, args ...string) (string, error) {
 	bin, err := execer.LookPath(codexBinary(execer))
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	var out, errOut bytes.Buffer
 	command := exec.CommandContext(ctx, bin, args...)
@@ -98,15 +98,15 @@ func codexCommand(ctx context.Context, execer Execer, dir string, args ...string
 			err = fmt.Errorf("%w: %v", ctx.Err(), err)
 		}
 		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return "", "", fmt.Errorf("%w: %s", err, msg)
+			return "", fmt.Errorf("%w: %s", err, msg)
 		}
-		return "", "", err
+		return "", err
 	}
-	return out.String(), errOut.String(), nil
+	return out.String(), nil
 }
 
 func codexDaemonCommand(ctx context.Context, execer Execer, dir string, args ...string) (map[string]any, error) {
-	out, _, err := codexCommand(ctx, execer, dir, append([]string{"app-server", "daemon"}, args...)...)
+	out, err := codexCommand(ctx, execer, dir, append([]string{"app-server", "daemon"}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -117,20 +117,29 @@ func codexDaemonCommand(ctx context.Context, execer Execer, dir string, args ...
 	return result, nil
 }
 
-const codexChatGPTLogin = "Logged in using ChatGPT"
-
-func CodexChatGPTLogin(ctx context.Context, execer Execer, dir string) bool {
+func CodexLoggedIn(ctx context.Context, execer Execer, dir string) bool {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	stdout, stderr, err := codexCommand(ctx, execer, dir, "login", "status")
-	return err == nil && strings.Contains(stdout+stderr, codexChatGPTLogin)
+	_, err := codexCommand(ctx, execer, dir, "login", "status")
+	return err == nil
 }
 
 func CodexLogout(ctx context.Context, execer Execer, dir string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	_, _, err := codexCommand(ctx, execer, dir, "logout")
+	_, err := codexCommand(ctx, execer, dir, "logout")
 	return err
+}
+
+func CodexCloudConfigPath(dir string) string {
+	return filepath.Join(dir, "cloud-config-bundle-cache.json")
+}
+
+func CodexClearCloudConfig(dir string) error {
+	if err := os.Remove(CodexCloudConfigPath(dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func CodexDaemonSocket(ctx context.Context, execer Execer, dir string) string {

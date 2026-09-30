@@ -653,16 +653,25 @@ func TestRestartCodexDaemon(t *testing.T) {
 
 func TestCodexLogin(t *testing.T) {
 	dir := t.TempDir()
-	e := &codexDaemonExecer{outputs: map[string]string{"login status": "Logged in using ChatGPT\n", "logout": "Successfully logged out\n"}}
-	require.True(t, CodexChatGPTLogin(t.Context(), e, dir))
+	e := &codexDaemonExecer{outputs: map[string]string{"login status": "Logged in using an API key - sk-***\n", "logout": "Successfully logged out\n"}}
+	require.True(t, CodexLoggedIn(t.Context(), e, dir))
 	require.Contains(t, e.env, "CODEX_HOME="+dir)
 	require.NoError(t, CodexLogout(t.Context(), e, dir))
-	apiKey := &codexDaemonExecer{outputs: map[string]string{"login status": "Logged in using an API key - sk-***\n"}}
-	require.False(t, CodexChatGPTLogin(t.Context(), apiKey, dir))
-	require.False(t, CodexChatGPTLogin(t.Context(), &codexDaemonExecer{}, dir))
-	require.False(t, CodexChatGPTLogin(t.Context(), fakeExecer{missing: true}, dir))
+	require.False(t, CodexLoggedIn(t.Context(), &codexDaemonExecer{}, dir))
+	require.False(t, CodexLoggedIn(t.Context(), fakeExecer{missing: true}, dir))
 	require.Error(t, CodexLogout(t.Context(), &codexDaemonExecer{}, dir))
 	expired, cancel := context.WithTimeout(t.Context(), 0)
 	defer cancel()
 	require.ErrorIs(t, CodexLogout(expired, &codexDaemonExecer{}, dir), context.DeadlineExceeded)
+}
+
+func TestCodexClearCloudConfig(t *testing.T) {
+	dir := t.TempDir()
+	cache := CodexCloudConfigPath(dir)
+	require.NoError(t, os.WriteFile(cache, []byte("{}"), 0o600))
+	require.NoError(t, CodexClearCloudConfig(dir))
+	require.NoFileExists(t, cache)
+	require.NoError(t, CodexClearCloudConfig(dir))
+	require.NoError(t, os.MkdirAll(filepath.Join(cache, "child"), 0o700))
+	require.Error(t, CodexClearCloudConfig(dir))
 }
