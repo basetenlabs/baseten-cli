@@ -23,6 +23,8 @@ var commandLoops = Command{
 				"By default, Truss makes BASETEN_API_KEY available to the job from a per-team workspace " +
 				"secret, creating the credential and secret on first use when necessary. Pass --no-api-key " +
 				"to disable this behavior, or set BASETEN_API_KEY explicitly with --env or --secret.\n\n" +
+				"Pass --no-ssh to submit a job without an interactive SSH session. Otherwise, Training SSH " +
+				"must be enabled for the workspace.\n\n" +
 				"Returns once the job is created. Pass --tail to stream logs to stderr using the Baseten " +
 				"client, which supports OAuth refresh. The job result stays on stdout. " +
 				"With --tail, exits nonzero if the job fails to deploy or execute. " +
@@ -31,7 +33,7 @@ var commandLoops = Command{
 			MaxArgs: -1,
 			Flags:   LoopsExecFlags{},
 			Output: &CommandOutput[LoopsExecResult]{
-				TextDescription: "The created job's ID and SSH hostname, followed by a command to follow its logs.",
+				TextDescription: "The created job's ID, SSH hostname when enabled, and a command to follow its logs.",
 				JSONDescription: "The job ID, project, SSH hostname, start command, environment variable names, compute configuration, and job response.",
 				Examples: []CommandExample{
 					{
@@ -456,6 +458,7 @@ type LoopsExecFlags struct {
 	Env      []string `flag:"env" desc:"Environment variable for the job as KEY=VALUE. Repeatable."`
 	Secret   []string `flag:"secret" desc:"Environment variable sourced from a Baseten workspace secret as KEY=SECRET_NAME. Repeatable."`
 	NoAPIKey bool     `flag:"no-api-key" desc:"Do not provision BASETEN_API_KEY in the job from a per-team workspace secret."`
+	NoSSH    bool     `flag:"no-ssh" desc:"Do not create an interactive SSH session. The job can run without Training SSH enabled for the workspace."`
 	WithUV   bool     `flag:"with-uv" desc:"Make uv available in the job image. The start command must invoke uv itself."`
 	Team     string   `flag:"team" desc:"Team name that owns the training project."`
 	Tail     bool     `flag:"tail" desc:"Stream job logs to stderr until the job stops or you press Ctrl-C. Cannot be combined with --truss-no-forward-auth."`
@@ -468,7 +471,7 @@ type LoopsExecResult struct {
 		ID   *string `json:"id"`
 		Name *string `json:"name"`
 	} `json:"project"`
-	SSHHostname          string   `json:"ssh_hostname"`
+	SSHHostname          *string  `json:"ssh_hostname"`
 	StartCommand         string   `json:"start_command"`
 	EnvironmentVariables []string `json:"environment_variables"`
 	Compute              struct {

@@ -2,10 +2,8 @@
 
 Run the live CPU tests against a disposable test workspace:
 
-The workspace must have Training SSH enabled. Truss requests an on-demand SSH
-session for `loops exec`, even when the test does not connect over SSH. If job
-creation reports that SSH interactive sessions are disabled, ask the workspace
-owner to enable `ORG_ENABLE_TRAINING_SSH` before rerunning the test.
+The tests use `--no-ssh`, so the workspace does not need Training SSH enabled.
+The installed Truss must support `loops exec --no-ssh`.
 
 ```sh
 export BASETEN_E2E_TEST_API_KEY=<test-workspace-key>
@@ -31,7 +29,8 @@ name. No GPU or new API key is requested.
 - Command tests in `command.loops_test.go` cover the delayed-log race, flag validation, and credential forwarding.
 
 The CPU fixture tests the managed client launcher, not Loops model training.
-It uses `--no-api-key` to avoid provisioning remote credentials.
+It uses `--no-api-key` to avoid provisioning remote credentials and `--no-ssh`
+to avoid creating interactive sessions.
 
 ## Coverage gaps
 

@@ -86,6 +86,7 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 		args = trussArg(args, "secret", secret)
 	}
 	args = trussBoolArg(args, "no-api-key", flags.NoAPIKey)
+	args = trussBoolArg(args, "no-ssh", flags.NoSSH)
 	args = trussBoolArg(args, "with-uv", flags.WithUV)
 	args = trussArg(args, "team", flags.Team)
 	if !ctx.IsInteractive() {
@@ -144,7 +145,11 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 	if ctx.JSON {
 		ctx.OutputJSON(result)
 	} else {
-		ctx.Outputf("Created job %s\nSSH: %s\nFollow logs: baseten train job logs --job-id %s --tail\n", result.JobID, result.SSHHostname, result.JobID)
+		ctx.Outputf("Created job %s\n", result.JobID)
+		if result.SSHHostname != nil && *result.SSHHostname != "" {
+			ctx.Outputf("SSH: %s\n", *result.SSHHostname)
+		}
+		ctx.Outputf("Follow logs: baseten train job logs --job-id %s --tail\n", result.JobID)
 	}
 	if !flags.Tail {
 		return nil

@@ -200,6 +200,22 @@ func Test_Loops_Exec_TextFormatsTrussResult(t *testing.T) {
 	h.Require.Equal("Created job job-123\nSSH: training-job-job-123-0.ssh.baseten.co\nFollow logs: baseten train job logs --job-id job-123 --tail\n", h.Stdout.String())
 }
 
+func Test_Loops_Exec_NoSSH(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = strings.Replace(loopsExecJSON, `"ssh_hostname":"training-job-job-123-0.ssh.baseten.co"`, `"ssh_hostname":null`, 1)
+			h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--no-ssh", "--output", format, "--", "python", "client.py"))
+			h.Require.Contains(fake.only(t).Args, "--no-ssh")
+			if format == "json" {
+				h.Require.JSONEq(fake.stdout, h.Stdout.String())
+			} else {
+				h.Require.Equal("Created job job-123\nFollow logs: baseten train job logs --job-id job-123 --tail\n", h.Stdout.String())
+			}
+		})
+	}
+}
+
 func Test_Loops_Exec_PropagatesTrussFailure(t *testing.T) {
 	h, fake := newTrussHarness(t)
 	fake.exitCode = 7

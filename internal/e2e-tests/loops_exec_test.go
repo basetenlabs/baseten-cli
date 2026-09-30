@@ -76,7 +76,7 @@ func TestE2ELoopsExec(t *testing.T) {
 		result := runLoopsCLI(commandCtx, stopOn,
 			"loops", "exec", "--dir", dir, "--project-name", projectName,
 			"--image", "python:3.12-slim", "--cpu-count", "1", "--memory", "8Gi",
-			"--no-api-key", "--env", "BASETEN_E2E_LOOPS=environment with spaces",
+			"--no-api-key", "--no-ssh", "--env", "BASETEN_E2E_LOOPS=environment with spaces",
 			"--tail", "--output", "json", "--", "python", "client.py", mode, "argument with spaces")
 		t.Cleanup(func() {
 			if t.Failed() {
@@ -93,6 +93,7 @@ func TestE2ELoopsExec(t *testing.T) {
 			}
 		}
 		require.NotEmpty(t, job.JobID, "stderr:\n%s", result.stderr)
+		require.Nil(t, job.SSHHostname, "--no-ssh must not advertise an SSH hostname")
 		require.NotNil(t, job.Project.Name)
 		require.Equal(t, projectName, *job.Project.Name)
 		require.NotContains(t, job.EnvironmentVariables, "BASETEN_API_KEY")
