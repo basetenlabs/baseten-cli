@@ -736,3 +736,80 @@ func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
 	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/gpt", "--yes"))
 	h.Require.Contains(h.Stderr.String(), `route "acme/gpt" is not one of the team's routes this harness can call`)
 }
+
+type codexDaemonHarnessExecer struct {
+	fakeHarnessExecer
+	socket       string
+	lsof         string
+	noLsof       bool
+	restartFails bool
+	restarts     int
+}
+
+func (e *codexDaemonHarnessExecer) LookPath(name string) (string, error) {
+	if name == "lsof" && e.noLsof {
+		return "", exec.ErrNotFound
+	}
+	return e.fakeHarnessExecer.LookPath(name)
+}
+
+func (e *codexDaemonHarnessExecer) Exec(command *exec.Cmd) error {
+	switch strings.Join(command.Args[1:], " ") {
+	case "app-server daemon version":
+		if e.socket == "" {
+			return errors.New("exit status 1")
+		}
+		_, err := fmt.Fprintf(command.Stdout, `{"status":"running","socketPath":%q}`, e.socket)
+		return err
+	case "app-server daemon restart":
+		e.restarts++
+		if e.restartFails {
+			return errors.New("exit status 1")
+		}
+		_, err := fmt.Fprint(command.Stdout, `{"status":"restarted","pid":4242}`)
+		return err
+	case "-U -F n":
+		_, err := fmt.Fprint(command.Stdout, e.lsof)
+		return err
+	}
+	return e.fakeHarnessExecer.Exec(command)
+}
+
+func Test_Harness_Setup_RestartsCodexDaemon(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	for name, tc := range map[string]struct {
+		execer   *codexDaemonHarnessExecer
+		restarts int
+		stderr   []string
+		absent   []string
+	}{
+		"no daemon":        {&codexDaemonHarnessExecer{}, 0, nil, []string{"codex app-server daemon"}},
+		"no sessions":      {&codexDaemonHarnessExecer{socket: socket, lsof: listener}, 1, []string{"Restarted codex app-server daemon (pid 4242) so the new model catalog takes effect."}, []string{"warning"}},
+		"sessions":         {&codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\nf15\nn" + socket + " type=STREAM\n"}, 1, []string{"will disconnect 2 running codex session(s)", "Restarted codex app-server daemon (pid 4242)"}, nil},
+		"sessions unknown": {&codexDaemonHarnessExecer{socket: socket, noLsof: true}, 1, []string{"could not check for running codex sessions", "Restarted codex app-server daemon (pid 4242)"}, nil},
+		"restart fails":    {&codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}, 1, []string{"could not restart the codex app-server daemon", "Run `codex app-server daemon restart` when you're done to pick up the new models."}, []string{"Restarted"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := harnessAPI(t, "")
+			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
+			h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--yes"))
+			h.Require.Equal(tc.restarts, tc.execer.restarts)
+			h.Require.Contains(h.Stderr.String(), "Configuration saved.")
+			for _, want := range tc.stderr {
+				h.Require.Contains(h.Stderr.String(), want)
+			}
+			for _, unwanted := range tc.absent {
+				h.Require.NotContains(h.Stderr.String(), unwanted)
+			}
+		})
+	}
+}

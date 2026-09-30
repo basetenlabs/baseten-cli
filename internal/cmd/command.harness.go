@@ -236,15 +236,51 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err := harness.ApplyPlans(plans, token); err != nil {
 		return err
 	}
+	if !ctx.JSON {
+		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
+	}
+	for _, choice := range selected {
+		if choice.Name() == harness.Codex {
+			restartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
+		}
+	}
 	if ctx.JSON {
 		outputHarnessPlansJSON(ctx, plans, nil)
 		return nil
 	}
-	ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
 	for _, choice := range selected {
 		ctx.Logf("Undo with: %s\n", harnessFollowupCommand("teardown", choice, f.ConfigDir))
 	}
 	return nil
+}
+
+const codexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done to pick up the new models."
+
+func restartCodexDaemon(ctx *CommandContext, dir string, yes bool) {
+	socket := harness.CodexDaemonSocket(ctx, ctx.Execer(), dir)
+	if socket == "" {
+		return
+	}
+	clients, err := harness.CodexDaemonClients(ctx, ctx.Execer(), socket)
+	switch {
+	case err != nil:
+		ctx.Logf("warning: could not check for running codex sessions (%v); restarting the codex app-server daemon would interrupt their in-progress turns\n", err)
+	case clients > 0:
+		ctx.Logf("warning: restarting the codex app-server daemon will disconnect %d running codex session(s); in-progress turns will be interrupted (thread history is preserved and can be resumed with `codex resume`)\n", clients)
+	}
+	if (err != nil || clients > 0) && !yes {
+		if ctx.ConfirmYesNo("Restart the codex app-server daemon now?") != nil {
+			ctx.LogLine(codexDaemonRestartHint)
+			return
+		}
+	}
+	pid, err := harness.RestartCodexDaemon(ctx, ctx.Execer(), dir)
+	if err != nil {
+		ctx.Logf("warning: could not restart the codex app-server daemon: %v\n", err)
+		ctx.LogLine(codexDaemonRestartHint)
+		return
+	}
+	ctx.Logf("Restarted codex app-server daemon (pid %d) so the new model catalog takes effect.\n", pid)
 }
 
 func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error {

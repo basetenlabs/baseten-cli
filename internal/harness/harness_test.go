@@ -1,11 +1,13 @@
 package harness
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -525,4 +527,95 @@ func TestMalformedSettingsAreReported(t *testing.T) {
 			require.ErrorContains(t, err, "invalid settings")
 		})
 	}
+}
+
+type codexDaemonExecer struct {
+	fakeExecer
+	outputs map[string]string
+	env     []string
+}
+
+func (e *codexDaemonExecer) Exec(command *exec.Cmd) error {
+	e.env = command.Env
+	out, ok := e.outputs[strings.Join(command.Args[1:], " ")]
+	if !ok {
+		return errors.New("exit status 1")
+	}
+	_, err := fmt.Fprint(command.Stdout, out)
+	return err
+}
+
+func TestCodexDaemonSocket(t *testing.T) {
+	dir := t.TempDir()
+	for name, tc := range map[string]struct {
+		outputs map[string]string
+		want    string
+	}{
+		"running":  {map[string]string{"app-server daemon version": `{"status":"running","socketPath":"/tmp/codex.sock"}`}, "/tmp/codex.sock"},
+		"stopped":  {map[string]string{"app-server daemon version": `{"status":"stopped"}`}, ""},
+		"not json": {map[string]string{"app-server daemon version": "1.2.3"}, ""},
+		"failed":   {nil, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := &codexDaemonExecer{outputs: tc.outputs}
+			require.Equal(t, tc.want, CodexDaemonSocket(t.Context(), e, dir))
+			require.Contains(t, e.env, "CODEX_HOME="+dir)
+		})
+	}
+	require.Empty(t, CodexDaemonSocket(t.Context(), fakeExecer{missing: true}, dir))
+}
+
+func TestCodexSocketClients(t *testing.T) {
+	const socket = "/tmp/codex-daemon-1000/abc"
+	for name, tc := range map[string]struct {
+		lsof    string
+		clients int
+		err     string
+	}{
+		"linux one client":   {"p1\nf31\nn" + socket + " type=STREAM\nf14\nn" + socket + " type=STREAM\nf7\nntype=STREAM\n", 1, ""},
+		"darwin two clients": {"p1\nf3\nn" + socket + "\nf4\nn->0x3d9b71d2b764900d\nf5\nn" + socket + "\nf7\nn" + socket + "\n", 2, ""},
+		"listener only":      {"p1\nf31\nn" + socket + " type=STREAM\n", 0, ""},
+		"other socket":       {"p1\nf3\nn/tmp/other.sock\n", 0, "not listed"},
+		"no output":          {"", 0, "not listed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clients, err := codexSocketClients(tc.lsof, socket)
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.clients, clients)
+		})
+	}
+}
+
+func TestCodexDaemonClientsResolvesSocket(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "app-server-control.sock")
+	target := filepath.Join(t.TempDir(), "real.sock")
+	require.NoError(t, os.WriteFile(target, nil, 0o600))
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(link)
+	require.NoError(t, err)
+	e := &codexDaemonExecer{outputs: map[string]string{"-U -F n": "p1\nf3\nn" + resolved + "\nf5\nn" + resolved + "\n"}}
+	clients, err := CodexDaemonClients(t.Context(), e, link)
+	require.NoError(t, err)
+	require.Equal(t, 1, clients)
+	_, err = CodexDaemonClients(t.Context(), fakeExecer{missing: true}, link)
+	require.Error(t, err)
+	_, err = CodexDaemonClients(t.Context(), e, filepath.Join(t.TempDir(), "missing.sock"))
+	require.Error(t, err)
+}
+
+func TestRestartCodexDaemon(t *testing.T) {
+	dir := t.TempDir()
+	e := &codexDaemonExecer{outputs: map[string]string{"app-server daemon restart": `{"status":"restarted","pid":4242}`}}
+	pid, err := RestartCodexDaemon(t.Context(), e, dir)
+	require.NoError(t, err)
+	require.Equal(t, 4242, pid)
+	require.Contains(t, e.env, "CODEX_HOME="+dir)
+	_, err = RestartCodexDaemon(t.Context(), &codexDaemonExecer{}, dir)
+	require.Error(t, err)
 }

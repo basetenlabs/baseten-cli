@@ -1,13 +1,18 @@
 package harness
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 )
 
 type codexHarness struct{}
@@ -78,6 +83,82 @@ func desktopCodexBinaries() []string {
 		return []string{linuxDesktopCodex}
 	}
 	return nil
+}
+
+func codexDaemonCommand(ctx context.Context, execer Execer, dir string, args ...string) (map[string]any, error) {
+	bin, err := execer.LookPath("codex")
+	if err != nil {
+		return nil, err
+	}
+	var out, errOut bytes.Buffer
+	command := exec.CommandContext(ctx, bin, append([]string{"app-server", "daemon"}, args...)...)
+	command.Env = append(os.Environ(), "CODEX_HOME="+dir)
+	command.Stdout, command.Stderr = &out, &errOut
+	if err := execer.Exec(command); err != nil {
+		if msg := strings.TrimSpace(errOut.String()); msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg)
+		}
+		return nil, err
+	}
+	result := map[string]any{}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func CodexDaemonSocket(ctx context.Context, execer Execer, dir string) string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	result, err := codexDaemonCommand(ctx, execer, dir, "version")
+	if err != nil || result["status"] != "running" {
+		return ""
+	}
+	socket, _ := result["socketPath"].(string)
+	return socket
+}
+
+func CodexDaemonClients(ctx context.Context, execer Execer, socket string) (int, error) {
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		return 0, err
+	}
+	lsof, err := execer.LookPath("lsof")
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var out bytes.Buffer
+	command := exec.CommandContext(ctx, lsof, "-U", "-F", "n")
+	command.Stdout = &out
+	if err := execer.Exec(command); err != nil {
+		return 0, err
+	}
+	return codexSocketClients(out.String(), socket)
+}
+
+func codexSocketClients(lsof, socket string) (int, error) {
+	sockets := 0
+	for _, line := range strings.Split(lsof, "\n") {
+		name, _, _ := strings.Cut(strings.TrimPrefix(line, "n"), " type=")
+		if strings.HasPrefix(line, "n") && name == socket {
+			sockets++
+		}
+	}
+	if sockets == 0 {
+		return 0, errors.New("the daemon socket is not listed by lsof")
+	}
+	return sockets - 1, nil
+}
+
+func RestartCodexDaemon(ctx context.Context, execer Execer, dir string) (int, error) {
+	result, err := codexDaemonCommand(ctx, execer, dir, "restart")
+	if err != nil {
+		return 0, err
+	}
+	pid, _ := result["pid"].(float64)
+	return int(pid), nil
 }
 
 func (codexHarness) BackgroundRoute(Selection) string { return "" }
