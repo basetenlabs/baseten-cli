@@ -250,6 +250,27 @@ func Test_Loops_Exec_SubprocessFailureWithoutJSON(t *testing.T) {
 	}
 }
 
+func Test_Loops_Exec_SubprocessFailurePreservesMixedOutput(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.exitCode = 1
+	fake.stdout = "Client error: SSH sessions are not enabled\n" +
+		`{"error":{"status_code":400,"response_body":{"message":"SSH sessions are not enabled"}}}`
+
+	h.Require.Error(h.Execute("loops", "exec", "--dir", t.TempDir(), "--output", "json", "--", "python", "client.py"))
+	h.Require.Equal(1, h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), fake.stdout)
+	h.Require.NotContains(h.Stdout.String(), "SSH sessions")
+	var body struct {
+		Error struct {
+			Type     string `json:"type"`
+			ExitCode int    `json:"exit_code"`
+		} `json:"error"`
+	}
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &body), "stdout must contain a single JSON error")
+	h.Require.Equal("ErrSubprocess", body.Error.Type)
+	h.Require.Equal(1, body.Error.ExitCode)
+}
+
 type cancelingTrussExecer struct {
 	*trussFakeExecer
 	cancel context.CancelFunc

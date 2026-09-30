@@ -123,6 +123,11 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 			if json.Valid(stdout.Bytes()) {
 				ctx.encodeJSON(json.RawMessage(stdout.Bytes()))
 			} else {
+				// Truss can mix a printed API error with its JSON envelope.
+				// Preserve those diagnostics without corrupting our stdout JSON.
+				if output := strings.TrimSpace(stdout.String()); output != "" {
+					ctx.Logf("%s\n", output)
+				}
 				ctx.writeJSONError(normalizeError(err), nil)
 			}
 			ctx.SuppressJSONError()

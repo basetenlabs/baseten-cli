@@ -85,6 +85,13 @@ func TestE2ELoopsExec(t *testing.T) {
 		})
 		var job publiccmd.LoopsExecResult
 		require.NoError(t, json.Unmarshal([]byte(result.stdout), &job), "stderr:\n%s", result.stderr)
+		if job.JobID == "" {
+			diagnosticCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			if org, _, err := cliCtx(t, diagnosticCtx, "org", "describe", "--jq", ".org_id"); err == nil {
+				t.Logf("job submission failed in organization %s", strings.TrimSpace(org))
+			}
+		}
 		require.NotEmpty(t, job.JobID, "stderr:\n%s", result.stderr)
 		require.NotNil(t, job.Project.Name)
 		require.Equal(t, projectName, *job.Project.Name)

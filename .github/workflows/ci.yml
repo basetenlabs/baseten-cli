@@ -56,16 +56,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: astral-sh/setup-uv@v5
 
-      - name: E2E test
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          # Forks won't have these secrets so e2e tests skip, but pushes
-          # to main will run them.
-          BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
-          BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
-        # Stream test progress to make stalled live runs identifiable.
-        run: go test -v -tags=e2e -skip '^TestE2ELoopsExec$' -timeout 30m ./internal/e2e-tests/...
-
       - name: Loops exec E2E test
         if: matrix.os == 'ubuntu-latest' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         env:
@@ -77,3 +67,13 @@ jobs:
             exit 1
           fi
           go test -v -tags=e2e -run '^TestE2ELoopsExec$' -count=1 -timeout 25m ./internal/e2e-tests/...
+
+      - name: E2E test
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          # Forks won't have these secrets so e2e tests skip, but pushes
+          # to main will run them.
+          BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
+          BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
+        # Stream test progress to make stalled live runs identifiable.
+        run: go test -v -tags=e2e -skip '^TestE2ELoopsExec$' -timeout 30m ./internal/e2e-tests/...
