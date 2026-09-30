@@ -145,11 +145,12 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 	}
 	// Preserve the submitted job's JSON on stdout if tailing fails.
 	ctx.SuppressJSONError()
-	logCtx := *ctx
-	logCtx.Stdout = ctx.Stderr
-	logCtx.JSON = false
-	logCtx.JQQuery = nil
-	err = commandTrainJobLogs(&logCtx, &cmd.TrainJobLogsFlags{
+	originalStdout, originalJSON, originalJQQuery := ctx.Stdout, ctx.JSON, ctx.JQQuery
+	defer func() {
+		ctx.Stdout, ctx.JSON, ctx.JQQuery = originalStdout, originalJSON, originalJQQuery
+	}()
+	ctx.Stdout, ctx.JSON, ctx.JQQuery = ctx.Stderr, false, nil
+	err = commandTrainJobLogs(ctx, &cmd.TrainJobLogsFlags{
 		TrainJobRefFlags: cmd.TrainJobRefFlags{JobID: result.JobID},
 		TrainLogFlags:    cmd.TrainLogFlags{Tail: true, PageSize: maxLogPageSize},
 	})
