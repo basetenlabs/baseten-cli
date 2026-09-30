@@ -16,6 +16,7 @@
   - `volume` is the exception: it addresses a file tree, so refs are positional and shorthands follow the unix namesakes.
 - Enum values are `lowercase-kebab-case`.
 - Tests: `command.<name>_test.go` (package `cmd_test`); name `Test_ParentCmd_SubCmd_WhatThisTests` (e.g. `Test_API_Management_DefaultGET`).
+- JSONL preserves JSON's response structure without indentation; only explicitly streamed arrays (`JSONArrayStreamed: true`, `NewJSONArrayWriter`) emit one record per line.
 
 ## End-to-end tests
 
