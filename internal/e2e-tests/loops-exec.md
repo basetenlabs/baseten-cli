@@ -33,27 +33,9 @@ name. No GPU or new API key is requested.
 The CPU fixture tests the managed client launcher, not Loops model training.
 It uses `--no-api-key` to avoid provisioning remote credentials.
 
-## Validation record
+## Coverage gaps
 
-September 30, 2026: the initial CPU success case passed. The failure case hit a
-TCP read timeout fetching logs, then passed on an unchanged retry. All test
-projects were deleted. `go test ./...`, `go vet ./...`, and E2E-tagged static
-checks passed. This run predates the automated interrupt-and-resume case.
-
-## Live GPU validation and remaining coverage
-
-On September 30, 2026, commit `56368cf` was tested with Truss 0.18.32 and
-Loops SDK 0.24.1. An H100 client executed a checked CUDA kernel and completed
-a Qwen3.5-2B forward/backward pass and optimizer step on one B200. Success,
-intentional failure, Ctrl-C leaving the job running, and log resumption were
-checked. Test jobs and compute were cleaned up. These were manual checks,
-not tests run by CI.
-
-The default CUDA image failed with `--with-uv` because it lacked both `pip`
-and `curl`. The successful run used
-`pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel`. The upstream Truss bootstrap
-issue remains; the CPU test does not cover it.
-
-GPU training, OAuth refresh, and first-use team API-key provisioning still need
-automated coverage. Sampling, checkpoint deployment, and long-running training
-are outside this launcher's tests.
+GPU training, default GPU image setup with `--with-uv`, OAuth refresh, and
+first-use team API-key provisioning still need automated coverage. Sampling,
+checkpoint deployment, and long-running training are outside this launcher's
+tests.
