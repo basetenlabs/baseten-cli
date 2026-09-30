@@ -42,8 +42,16 @@ func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags
 	}
 
 	if flags.Wait {
+		ctx.Logf("Waiting for sync %s. Press Ctrl+C to stop waiting; the sync will continue in the background.\n", sync.SyncId)
 		waited, err := waitVolumeSync(ctx, api, *sync)
 		if err != nil {
+			if ctx.Err() != nil {
+				return cmd.NewErrInterrupted(fmt.Errorf(
+					"Stopped waiting. Sync %s was not cancelled and can continue in the background.\n\n"+
+						"Check status: baseten volume sync describe --sync-id %s\n"+
+						"Cancel sync:  baseten volume sync cancel --sync-id %s",
+					sync.SyncId, sync.SyncId, sync.SyncId))
+			}
 			return err
 		}
 		sync = &waited
