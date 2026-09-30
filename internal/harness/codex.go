@@ -118,7 +118,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 			"wire_api":                  "responses",
 			"requires_openai_auth":      false,
 			"experimental_bearer_token": "",
-			"http_headers":              map[string]any{clientHeader: Codex},
+			"http_headers":              map[string]any{clientHeader: Codex, harnessHeader: Codex},
 		}),
 	}
 	p, err := prepareSettings(path, codexCredentialPath, func(map[string]any) ([]setting, error) { return values, nil })

@@ -443,21 +443,28 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.NotContains(t, models["acme/subagent"], "provider")
 }
 
-func TestClientHeaderNamesHarness(t *testing.T) {
+func TestHeadersNameHarness(t *testing.T) {
 	paths := map[string][]string{
-		ClaudeCode: {"env", "ANTHROPIC_CUSTOM_HEADERS"},
-		Codex:      {"model_providers", providerID, "http_headers", clientHeader},
-		OpenCode:   {"provider", providerID, "options", "headers", clientHeader},
+		Codex:    {"model_providers", providerID, "http_headers"},
+		OpenCode: {"provider", providerID, "options", "headers"},
 	}
 	for _, h := range All() {
 		t.Run(h.Name(), func(t *testing.T) {
 			path := settingsPath(t, h)
+			save(t, path, map[string]any{"env": map[string]any{"EDITOR": "vim"}})
 			setup(t, h, path, testRoutes(), Selection{})
-			want := h.Name()
+			d := load(t, path)
+			require.Equal(t, "vim", get(d, []string{"env", "EDITOR"}).Data)
 			if h.Name() == ClaudeCode {
-				want = clientHeader + ": " + ClaudeCode
+				require.Equal(t, "X-Baseten-Client: claude-code\nX-Baseten-Harness: claude-code", get(d, []string{"env", "ANTHROPIC_CUSTOM_HEADERS"}).Data)
+				require.Equal(t, "1", get(d, []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Data)
+				teardown(t, h, path)
+				require.Equal(t, map[string]any{"env": map[string]any{"EDITOR": "vim"}}, load(t, path))
+				return
 			}
-			require.Equal(t, want, get(load(t, path), paths[h.Name()]).Data)
+			headers := get(d, paths[h.Name()]).Data.(map[string]any)
+			require.Equal(t, h.Name(), headers["X-Baseten-Client"])
+			require.Equal(t, h.Name(), headers["X-Baseten-Harness"])
 		})
 	}
 }
