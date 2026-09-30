@@ -15,6 +15,7 @@ func WalkCommand(parentPath []string, c cmdpkg.Command) Command {
 		Summary:            c.Summary,
 		Description:        c.Description,
 		IsLeaf:             len(c.Children) == 0,
+		Hidden:             c.Hidden,
 		ArgsUsage:          c.ArgsUsage,
 		ExactArgs:          c.ExactArgs,
 		MaxArgs:            c.MaxArgs,
@@ -36,15 +37,23 @@ func applyOutput(dst *Command, spec cmdpkg.CommandOutputSpec) {
 	dst.TextDescription = spec.Text()
 	dst.JSONDescription = spec.JSON()
 	dst.JSONArrayStreamed = spec.JSONArrayStreamedBool()
+	dst.JSONOutputUnimportant = spec.JSONOutputUnimportantBool()
 	if t := spec.JSONOutputType(); t != nil {
 		dst.JSONOutputType = t.String()
 	}
 	for _, ex := range spec.ExampleList() {
-		dst.Examples = append(dst.Examples, Example{Description: ex.Description, Command: ex.Command})
+		dst.Examples = append(dst.Examples, Example{Description: ex.Description, Command: ex.CommandString()})
 	}
 	jq := spec.JQ()
-	if jq.Command != "" || jq.Description != "" {
-		dst.JQExample = &Example{Description: jq.Description, Command: jq.Command}
+	if jq.CommandString() != "" || jq.Description != "" {
+		dst.JQExample = &Example{Description: jq.Description, Command: jq.CommandString()}
+	}
+	for _, alt := range spec.JSONAlternativeList() {
+		entry := OutputAlternative{When: alt.When}
+		if alt.Type != nil {
+			entry.JSONOutputType = alt.Type.String()
+		}
+		dst.JSONAlternatives = append(dst.JSONAlternatives, entry)
 	}
 }
 
@@ -62,6 +71,8 @@ func flagsFor(c cmdpkg.Command) []Flag {
 			Default:     f.Default,
 			Enum:        f.Enum,
 			Required:    f.Required,
+			Hidden:      f.Hidden,
+			Nullable:    f.Nullable,
 			Oneof:       f.Oneof,
 			Type:        f.Type.String(),
 			FieldName:   f.FieldName,

@@ -22,24 +22,27 @@ type Schema struct {
 // Command is one node in the command tree. Non-leaf commands (with Children)
 // have empty Flags/Examples/Output fields.
 type Command struct {
-	Name               string       `json:"name"`
-	Path               []string     `json:"path"`
-	Summary            string       `json:"summary"`
-	Description        string       `json:"description"`
-	IsLeaf             bool         `json:"is_leaf"`
-	ArgsUsage          string       `json:"args_usage"`
-	ExactArgs          int          `json:"exact_args"`
-	MaxArgs            int          `json:"max_args"`
-	DisableFlagParsing bool         `json:"disable_flag_parsing"`
-	Flags              []Flag       `json:"flags"`
-	Examples           []Example    `json:"examples"`
-	JQExample          *Example     `json:"jq_example"`
-	TextDescription    string       `json:"text_description"`
-	JSONDescription    string       `json:"json_description"`
-	JSONOutputType     string       `json:"json_output_type"`
-	JSONArrayStreamed  bool         `json:"json_array_streamed"`
-	Errors             []ErrorEntry `json:"errors"`
-	Children           []Command    `json:"children"`
+	Name                  string              `json:"name"`
+	Path                  []string            `json:"path"`
+	Summary               string              `json:"summary"`
+	Description           string              `json:"description"`
+	IsLeaf                bool                `json:"is_leaf"`
+	Hidden                bool                `json:"hidden,omitempty"`
+	ArgsUsage             string              `json:"args_usage"`
+	ExactArgs             int                 `json:"exact_args"`
+	MaxArgs               int                 `json:"max_args"`
+	DisableFlagParsing    bool                `json:"disable_flag_parsing"`
+	Flags                 []Flag              `json:"flags"`
+	Examples              []Example           `json:"examples"`
+	JQExample             *Example            `json:"jq_example"`
+	TextDescription       string              `json:"text_description"`
+	JSONDescription       string              `json:"json_description"`
+	JSONOutputType        string              `json:"json_output_type"`
+	JSONArrayStreamed     bool                `json:"json_array_streamed"`
+	JSONOutputUnimportant bool                `json:"json_output_unimportant,omitempty"`
+	JSONAlternatives      []OutputAlternative `json:"json_alternatives,omitempty"`
+	Errors                []ErrorEntry        `json:"errors"`
+	Children              []Command           `json:"children"`
 }
 
 // Flag is one CLI flag on a leaf command.
@@ -50,6 +53,8 @@ type Flag struct {
 	Default     string   `json:"default"`
 	Enum        []string `json:"enum"`
 	Required    bool     `json:"required"`
+	Hidden      bool     `json:"hidden,omitempty"`
+	Nullable    bool     `json:"nullable,omitempty"`
 	Oneof       string   `json:"oneof"`
 	Type        string   `json:"type"`
 	FieldName   string   `json:"field_name"`
@@ -59,6 +64,13 @@ type Flag struct {
 	// of 0 means the field set no group-pri; the consumer applies the framework
 	// default (DefaultFlagGroupPri = 100). The walker does not resolve it.
 	GroupPri int `json:"group_pri"`
+}
+
+// OutputAlternative describes an additional JSON output type and the input
+// that selects it. Type names identify Go types, not JSON field schemas.
+type OutputAlternative struct {
+	When           string `json:"when"`
+	JSONOutputType string `json:"json_output_type"`
 }
 
 // Example is one documented invocation of a command.

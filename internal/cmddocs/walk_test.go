@@ -171,6 +171,83 @@ func Test_Walk_OutputNilForParent(t *testing.T) {
 	}
 }
 
+func Test_Walk_MultilineExamples(t *testing.T) {
+	leaf := cmdpkg.Command{
+		Name: "ping",
+		Output: &cmdpkg.CommandOutput[pingResult]{
+			Examples: []cmdpkg.CommandExample{{
+				Description:  "Ping a host.",
+				CommandLines: []string{"baseten ping", "--host example.com"},
+			}},
+			JQExample: cmdpkg.CommandExample{
+				CommandLines: []string{"baseten ping", "--jq '.host'"},
+			},
+		},
+	}
+	got := WalkCommand([]string{"baseten"}, leaf)
+	if len(got.Examples) != 1 || got.Examples[0].Command != "baseten ping --host example.com" {
+		t.Fatalf("multiline example = %+v", got.Examples)
+	}
+	if got.JQExample == nil || got.JQExample.Command != "baseten ping --jq '.host'" {
+		t.Fatalf("multiline jq example = %+v", got.JQExample)
+	}
+}
+
+type visibilityFlags struct {
+	cmdpkg.CommandFlags
+	Internal int                         `flag:"internal" hidden:"true"`
+	Policy   cmdpkg.OptionalFlag[string] `flag:"policy" nullable:"true" enum:"reject,queue"`
+}
+
+func Test_Walk_VisibilityAndNullableFlags(t *testing.T) {
+	root := cmdpkg.Command{
+		Name:     "baseten",
+		Children: []cmdpkg.Command{{Name: "internal", Hidden: true, Flags: visibilityFlags{}}},
+	}
+	got := WalkCommand(nil, root)
+	if len(got.Children) != 1 || !got.Children[0].Hidden {
+		t.Fatalf("hidden command metadata missing: %+v", got.Children)
+	}
+	byName := map[string]Flag{}
+	for _, flag := range got.Children[0].Flags {
+		byName[flag.Name] = flag
+	}
+	if !byName["internal"].Hidden {
+		t.Fatal("hidden flag metadata missing")
+	}
+	policy := byName["policy"]
+	if !policy.Nullable || !sliceEq(policy.Enum, []string{"reject", "queue"}) {
+		t.Fatalf("nullable enum metadata = %+v", policy)
+	}
+	if byName["verbose"].Hidden || byName["verbose"].Nullable {
+		t.Fatal("ordinary flags should remain visible and non-nullable")
+	}
+}
+
+func Test_Walk_OutputModes(t *testing.T) {
+	leaf := cmdpkg.Command{
+		Name: "ping",
+		Output: &cmdpkg.CommandOutput[pingResult]{
+			JSONArrayStreamed: true,
+			JSONAlternatives: []cmdpkg.CommandOutputAlternative{
+				cmdpkg.JSONAlternativeFor[[]pingResult]("command selects all hosts"),
+			},
+		},
+	}
+	got := WalkCommand([]string{"baseten"}, leaf)
+	if !got.JSONArrayStreamed || got.JSONOutputUnimportant {
+		t.Fatalf("output mode metadata = %+v", got)
+	}
+	if len(got.JSONAlternatives) != 1 || got.JSONAlternatives[0].When != "command selects all hosts" || got.JSONAlternatives[0].JSONOutputType != "[]main.pingResult" {
+		t.Fatalf("alternative output metadata = %+v", got.JSONAlternatives)
+	}
+	leaf.Output = &cmdpkg.CommandOutput[cmdpkg.JSONUndefined]{JSONOutputUnimportant: true}
+	got = WalkCommand([]string{"baseten"}, leaf)
+	if !got.JSONOutputUnimportant || len(got.JSONAlternatives) != 0 {
+		t.Fatalf("unimportant output metadata = %+v", got)
+	}
+}
+
 func Test_Walk_PerCommandErrors(t *testing.T) {
 	leaf := cmdpkg.Command{
 		Name:   "fetch",
