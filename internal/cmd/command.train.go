@@ -470,13 +470,13 @@ func commandTrainJobDescribe(ctx *CommandContext, flags *cmd.TrainJobDescribeFla
 }
 
 func commandTrainJobLogs(ctx *CommandContext, flags *cmd.TrainJobLogsFlags) error {
-	_, err := runTrainJobLogs(ctx, flags)
+	_, err := runTrainJobLogs(ctx, flags, 0)
 	return err
 }
 
 // runTrainJobLogs returns the last status fetched while tailing so callers can
 // distinguish a failed job from a log stream that completed successfully.
-func runTrainJobLogs(ctx *CommandContext, flags *cmd.TrainJobLogsFlags) (string, error) {
+func runTrainJobLogs(ctx *CommandContext, flags *cmd.TrainJobLogsFlags, terminalGracePeriod time.Duration) (string, error) {
 	// The filters training logs do not offer stay zero-valued, which the shared
 	// logs flow treats as absent.
 	logFlags := cmd.LogFlags{
@@ -527,7 +527,13 @@ func runTrainJobLogs(ctx *CommandContext, flags *cmd.TrainJobLogsFlags) (string,
 			Runnable: slices.Contains(trainJobRunnableStatuses, status),
 		}, nil
 	}
-	err = runLogsCommand(ctx, &logFlags, fetchLogs, fetchStatus)
+	if flags.Tail {
+		err = runTailLogs(ctx, tailLogsOptions{
+			FetchLogs: fetchLogs, FetchStatus: fetchStatus, TerminalGracePeriod: terminalGracePeriod,
+		})
+	} else {
+		err = runLogsCommand(ctx, &logFlags, fetchLogs, fetchStatus)
+	}
 	return finalStatus, err
 }
 

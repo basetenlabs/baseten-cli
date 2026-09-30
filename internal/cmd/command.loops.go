@@ -113,6 +113,10 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 	var stdout bytes.Buffer
 	c.Stdout = &stdout
 	if err := ctx.Execer().Exec(c); err != nil {
+		if ctx.Err() != nil {
+			// Let the framework normalize interruption before writing its JSON error.
+			return err
+		}
 		if ctx.JSON {
 			// Unlike passthrough commands, we captured the child's error payload.
 			// Emit it without applying the success-only jq filter.
@@ -153,7 +157,7 @@ func commandLoopsExec(ctx *CommandContext, flags *cmd.LoopsExecFlags) error {
 	status, err := runTrainJobLogs(ctx, &cmd.TrainJobLogsFlags{
 		TrainJobRefFlags: cmd.TrainJobRefFlags{JobID: result.JobID},
 		TrainLogFlags:    cmd.TrainLogFlags{Tail: true, PageSize: maxLogPageSize},
-	})
+	}, 10*time.Second)
 	if err != nil {
 		// Print before returning: the framework replaces interrupted errors with "Canceled".
 		ctx.Logf("Job %s was created. Resume logs with 'baseten train job logs --job-id %s --tail'.\n", result.JobID, result.JobID)

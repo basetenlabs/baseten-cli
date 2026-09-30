@@ -187,14 +187,7 @@ func runLogsCommand(ctx *CommandContext, flags *cmd.LogFlags, fetchLogs logFetch
 	hasEnd := !flags.End.IsZero()
 
 	if flags.Tail {
-		res := tailLogs(ctx, tailLogsOptions{FetchLogs: fetchLogs, FetchStatus: fetchStatus})
-		if _, err := emitLogs(ctx, res.Logs); err != nil {
-			return err
-		}
-		if status := res.FinalFetchedStatus(); status != nil {
-			ctx.Logf("Tailing stopped: deployment status %s\n", status.Label)
-		}
-		return nil
+		return runTailLogs(ctx, tailLogsOptions{FetchLogs: fetchLogs, FetchStatus: fetchStatus})
 	}
 
 	// Resolve --start/--end/--since into a concrete [startMs, endMs] window.
@@ -258,6 +251,17 @@ func runLogsCommand(ctx *CommandContext, flags *cmd.LogFlags, fetchLogs logFetch
 		return err
 	} else if emitted == 0 && !ctx.JSON {
 		ctx.LogLine("No logs found.")
+	}
+	return nil
+}
+
+func runTailLogs(ctx *CommandContext, opts tailLogsOptions) error {
+	res := tailLogs(ctx, opts)
+	if _, err := emitLogs(ctx, res.Logs); err != nil {
+		return err
+	}
+	if status := res.FinalFetchedStatus(); status != nil {
+		ctx.Logf("Tailing stopped: deployment status %s\n", status.Label)
 	}
 	return nil
 }
@@ -471,6 +475,11 @@ type tailLogsOptions struct {
 	// the start of the tail, before any successful poll. Zero means no
 	// warmup retries.
 	WarmupTimeout time.Duration
+
+	// TerminalGracePeriod keeps polling logs after the first terminal status
+	// so delayed final lines can arrive. Status is checked even before logs
+	// arrive, then retained throughout the grace period. Zero stops immediately.
+	TerminalGracePeriod time.Duration
 }
 
 // tailLogs polls logs and streams new records until FetchStatus reports the
@@ -495,6 +504,7 @@ func tailLogs(ctx *CommandContext, opts tailLogsOptions) *TailDeploymentLogsResu
 		}
 		warmedUp := false
 		firstPoll := true
+		var terminalDeadline time.Time
 
 		for {
 			nowMs := ctx.Now().UnixMilli()
@@ -558,10 +568,12 @@ func tailLogs(ctx *CommandContext, opts tailLogsOptions) *TailDeploymentLogsResu
 			// stopped before the log window opened has no logs to trigger the check
 			// and would otherwise be tailed forever with nothing to show. Staying
 			// silent while a live workload produces nothing is intentional: that is
-			// what tailing is for, and it keeps the poll at one request.
+			// what tailing is for, and it keeps the poll at one request. Callers
+			// opting into a terminal grace period check every poll, including
+			// silent jobs, until the first terminal status starts the deadline.
 			// TODO: should the management logs API return current status so
 			// we can drop this extra round-trip per poll?
-			if firstPoll || len(seen) > 0 {
+			if terminalDeadline.IsZero() && (firstPoll || len(seen) > 0 || opts.TerminalGracePeriod > 0) {
 				status, err := opts.FetchStatus()
 				if err != nil {
 					yield(nil, fmt.Errorf("fetch deployment status: %w", err))
@@ -569,12 +581,23 @@ func tailLogs(ctx *CommandContext, opts tailLogsOptions) *TailDeploymentLogsResu
 				}
 				finalFetched = status
 				if !status.Runnable {
-					return
+					if opts.TerminalGracePeriod <= 0 {
+						return
+					}
+					terminalDeadline = ctx.Now().Add(opts.TerminalGracePeriod)
 				}
 			}
 			firstPoll = false
 
-			if err := ctx.Sleep(deploymentLogPollInterval); err != nil {
+			pollInterval := deploymentLogPollInterval
+			if !terminalDeadline.IsZero() {
+				remaining := terminalDeadline.Sub(ctx.Now())
+				if remaining <= 0 {
+					return
+				}
+				pollInterval = min(pollInterval, remaining)
+			}
+			if err := ctx.Sleep(pollInterval); err != nil {
 				yield(nil, err)
 				return
 			}

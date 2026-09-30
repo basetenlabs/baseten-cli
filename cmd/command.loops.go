@@ -43,8 +43,13 @@ var commandLoops = Command{
 						Command:     "baseten loops exec --dir . --tail -- python train.py",
 					},
 					{
-						Description:  "Run a client on one H100 with an environment variable and workspace secret.",
-						CommandLines: []string{"baseten loops exec --dir . --accelerator H100", "--env MODE=train --secret HF_TOKEN=hf-token -- python train.py"},
+						Description: "Run a client on one H100 using a CUDA image with Python.",
+						CommandLines: []string{
+							"baseten loops exec --dir . --accelerator H100",
+							"--image pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel --with-uv",
+							"--env MODE=train --secret HF_TOKEN=hf-token",
+							"-- uv run --python 3.12 --with baseten-loops python train.py",
+						},
 					},
 				},
 				JQExample: CommandExample{

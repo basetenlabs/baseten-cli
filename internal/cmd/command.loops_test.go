@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -249,6 +250,48 @@ func Test_Loops_Exec_SubprocessFailureWithoutJSON(t *testing.T) {
 	}
 }
 
+type cancelingTrussExecer struct {
+	*trussFakeExecer
+	cancel context.CancelFunc
+}
+
+func (e *cancelingTrussExecer) Exec(c *exec.Cmd) error {
+	err := e.trussFakeExecer.Exec(c)
+	e.cancel()
+	return err
+}
+
+func Test_Loops_Exec_SubmissionInterruptedJSON(t *testing.T) {
+	for _, output := range []string{"", "partial JSON", `{"error":{"message":"child interrupted"}}`} {
+		for _, format := range []string{"json", "jsonl", "jq"} {
+			t.Run(output+"/"+format, func(t *testing.T) {
+				h, fake := newTrussHarness(t)
+				fake.stdout, fake.exitCode = output, -1
+				ctx, cancel := context.WithCancel(h.Context)
+				defer cancel()
+				h.Context = cmd.WithExecer(ctx, &cancelingTrussExecer{fake, cancel})
+				args := []string{"loops", "exec", "--dir", t.TempDir()}
+				if format == "jq" {
+					args = append(args, "--jq", ".job_id")
+				} else {
+					args = append(args, "--output", format)
+				}
+				h.Require.Error(h.Execute(append(args, "--", "python", "client.py")...))
+				h.Require.Equal(130, h.ExitCode)
+				var body struct {
+					Error struct {
+						Type     string `json:"type"`
+						ExitCode int    `json:"exit_code"`
+					} `json:"error"`
+				}
+				h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &body))
+				h.Require.Equal("ErrInterrupted", body.Error.Type)
+				h.Require.Equal(h.ExitCode, body.Error.ExitCode)
+			})
+		}
+	}
+}
+
 func Test_Loops_Exec_HelpDocumentsContract(t *testing.T) {
 	h, fake := newTrussHarness(t)
 
@@ -297,6 +340,12 @@ func Test_Loops_Exec_TailStreamsNatively(t *testing.T) {
 	for _, format := range []string{"text", "json", "jsonl", "none", "jq"} {
 		t.Run(format, func(t *testing.T) {
 			h, fake := newTrussHarness(t)
+			now := time.Now()
+			h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
+			h.Context = cmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+				now = now.Add(d)
+				return nil
+			})
 			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
 			m := h.MockManagementAPI()
 			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
@@ -342,6 +391,12 @@ func Test_Loops_Exec_TailReportsJobFailure(t *testing.T) {
 	} {
 		t.Run(tc.status, func(t *testing.T) {
 			h, fake := newTrussHarness(t)
+			now := time.Now()
+			h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
+			h.Context = cmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+				now = now.Add(d)
+				return nil
+			})
 			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
 			m := h.MockManagementAPI()
 			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
@@ -374,17 +429,107 @@ func Test_Loops_Exec_TailReportsJobFailure(t *testing.T) {
 	}
 }
 
+func Test_Loops_Exec_TailDrainsAfterTerminalStatus(t *testing.T) {
+	for _, status := range []string{"TRAINING_JOB_COMPLETED", "TRAINING_JOB_FAILED"} {
+		t.Run(status, func(t *testing.T) {
+			h, fake := newTrussHarness(t)
+			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
+			m := h.MockManagementAPI()
+			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+			start := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+			now := start
+			logCalls, statusCalls := 0, 0
+			m.SetRouteFunc("GET", trainJobPath+"/logs", func(w http.ResponseWriter, _ *http.Request) {
+				logCalls++
+				logs := []map[string]any{{"timestamp": strconv.FormatInt(start.UnixNano(), 10), "message": "client started"}}
+				if now.Sub(start) >= 12*time.Second {
+					// The final line arrives at the end of the grace period. New
+					// lines must not extend the deadline or be emitted twice.
+					logs = append([]map[string]any{{"timestamp": strconv.FormatInt(start.Add(time.Second).UnixNano(), 10), "message": "final client details"}}, logs...)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(logsResponse(logs...))
+			})
+			m.SetRouteFunc("GET", trainJobPath, func(w http.ResponseWriter, _ *http.Request) {
+				statusCalls++
+				current := "TRAINING_JOB_RUNNING"
+				if now.After(start) {
+					current = status
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"training_job": trainJobFixture("job-1", current)})
+			})
+			h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
+			h.Context = cmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+				now = now.Add(d)
+				if now.Sub(start) > 12*time.Second {
+					return context.DeadlineExceeded
+				}
+				return nil
+			})
+			err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--output", "json", "--", "python", "client.py")
+			if status == "TRAINING_JOB_FAILED" {
+				h.Require.ErrorContains(err, "job-1 failed")
+				h.Require.Equal(1, h.ExitCode)
+			} else {
+				h.Require.NoError(err)
+			}
+			h.Require.JSONEq(fake.stdout, h.Stdout.String())
+			h.Require.Equal(1, strings.Count(h.Stderr.String(), "client started"))
+			h.Require.Equal(1, strings.Count(h.Stderr.String(), "final client details"))
+			h.Require.Equal(12*time.Second, now.Sub(start))
+			h.Require.Equal(7, logCalls)
+			h.Require.Equal(2, statusCalls, "the first terminal status is sufficient")
+		})
+	}
+}
+
+func Test_Loops_Exec_TailStopsWithoutLogs(t *testing.T) {
+	h, fake := newTrussHarness(t)
+	fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
+	m := h.MockManagementAPI()
+	mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
+	m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse())
+	start := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	now := start
+	m.SetRouteFunc("GET", trainJobPath, func(w http.ResponseWriter, _ *http.Request) {
+		status := "TRAINING_JOB_RUNNING"
+		if now.After(start) {
+			status = "TRAINING_JOB_DEPLOY_FAILED"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"training_job": trainJobFixture("job-1", status)})
+	})
+	h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
+	h.Context = cmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+		now = now.Add(d)
+		if now.Sub(start) > 12*time.Second {
+			return context.DeadlineExceeded
+		}
+		return nil
+	})
+	h.Require.ErrorContains(h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--output", "json", "--", "python", "client.py"), "job-1 deploy-failed")
+	h.Require.Equal(1, h.ExitCode)
+	h.Require.JSONEq(fake.stdout, h.Stdout.String())
+	h.Require.Equal(12*time.Second, now.Sub(start))
+	h.Require.NotContains(h.Stderr.String(), "Resume logs")
+}
+
 func Test_Loops_Exec_TailFailurePreservesCreatedJob(t *testing.T) {
-	for _, failure := range []string{"forbidden", "interrupted"} {
+	for _, failure := range []string{"forbidden", "interrupted", "interrupted during terminal drain"} {
 		t.Run(failure, func(t *testing.T) {
 			h, fake := newTrussHarness(t)
 			fake.stdout = strings.ReplaceAll(loopsExecJSON, "job-123", "job-1")
 			m := h.MockManagementAPI()
 			mockTrainJobSearch(m, trainJobFixture("job-1", "TRAINING_JOB_RUNNING"))
-			if failure == "interrupted" {
+			if strings.HasPrefix(failure, "interrupted") {
+				status := "TRAINING_JOB_RUNNING"
+				if failure == "interrupted during terminal drain" {
+					status = "TRAINING_JOB_FAILED"
+				}
 				m.SetRoute("GET", trainJobPath+"/logs", 200, logsResponse())
 				m.SetRoute("GET", trainJobPath, 200, map[string]any{
-					"training_job": trainJobFixture("job-1", "TRAINING_JOB_RUNNING"),
+					"training_job": trainJobFixture("job-1", status),
 				})
 				watchContext, cancel := context.WithCancel(h.Context)
 				defer cancel()
@@ -397,7 +542,7 @@ func Test_Loops_Exec_TailFailurePreservesCreatedJob(t *testing.T) {
 			}
 			err := h.Execute("loops", "exec", "--dir", t.TempDir(), "--tail", "--output", "json", "--", "python", "client.py")
 			h.Require.Error(err)
-			if failure == "interrupted" {
+			if strings.HasPrefix(failure, "interrupted") {
 				h.Require.Equal(130, h.ExitCode)
 			}
 			h.Require.JSONEq(fake.stdout, h.Stdout.String())
