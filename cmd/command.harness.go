@@ -230,8 +230,8 @@ type HarnessSetupFlags struct {
 	HarnessFlags
 	Team            string `flag:"team" desc:"Team name or ID whose routes to use. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
 	KeyName         string `flag:"key-name" desc:"Name of the routes API key created in Baseten. Defaults to baseten-harness-<hostname>, numbered (-2, -3, ...) if one of your keys has that name."`
-	Route           string `flag:"route" desc:"Default route. Defaults to the first route the harness lists."`
-	BackgroundRoute string `flag:"background-route" desc:"Route for lightweight background tasks (Claude Code and OpenCode). Defaults to deepseek-ai/DeepSeek-V4.1-Flash."`
+	Route           string `flag:"route" desc:"Default route. Defaults to the team's default for the harness, else the first route the harness lists."`
+	BackgroundRoute string `flag:"background-route" desc:"Route for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
 	SubagentRoute   string `flag:"subagent-route" desc:"Route for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
 	FallbackRoute   string `flag:"fallback-route" desc:"Route to fall back to when the default is unavailable (Claude Code). Defaults to the default route."`
 	DryRun          bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
