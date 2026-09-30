@@ -241,7 +241,9 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	}
 	for _, choice := range selected {
 		if choice.Name() == harness.Codex {
-			restartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
+			dir := filepath.Dir(choice.detection.Path)
+			logoutCodex(ctx, dir, f.Yes)
+			restartCodexDaemon(ctx, dir, f.Yes)
 		}
 	}
 	if ctx.JSON {
@@ -252,6 +254,28 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		ctx.Logf("Undo with: %s\n", harnessFollowupCommand("teardown", choice, f.ConfigDir))
 	}
 	return nil
+}
+
+const codexLogoutHint = "Run `codex logout` to stop the workspace default model from overriding the Baseten route."
+
+func logoutCodex(ctx *CommandContext, dir string, yes bool) {
+	if !harness.CodexLoggedIn(ctx, ctx.Execer(), dir) {
+		return
+	}
+	ctx.LogLine("Signing out of ChatGPT/OpenAI in codex: your ChatGPT workspace pushes a default model for new threads that this gateway does not serve. Codex only needs the Baseten route from now on; run `codex login` to sign back in.")
+	if !yes && ctx.ConfirmYesNo("Sign out of ChatGPT/OpenAI in codex now?") != nil {
+		ctx.LogLine(codexLogoutHint)
+		return
+	}
+	if err := harness.CodexLogout(ctx, ctx.Execer(), dir); err != nil {
+		auth := filepath.Join(dir, "auth.json")
+		if os.Remove(auth) != nil {
+			ctx.Logf("warning: codex logout failed: %v\n", err)
+			ctx.LogLine(codexLogoutHint)
+			return
+		}
+		ctx.Logf("warning: codex logout failed (%v); removed %s instead\n", err, harnessDisplayPath(auth))
+	}
 }
 
 const codexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done to pick up the new models."

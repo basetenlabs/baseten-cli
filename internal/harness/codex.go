@@ -84,26 +84,51 @@ func desktopCodexBinaries() []string {
 	return nil
 }
 
-func codexDaemonCommand(ctx context.Context, execer Execer, dir string, args ...string) (map[string]any, error) {
+func codexCommand(ctx context.Context, execer Execer, dir string, args ...string) (string, error) {
 	bin, err := execer.LookPath(codexBinary(execer))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	var out, errOut bytes.Buffer
-	command := exec.CommandContext(ctx, bin, append([]string{"app-server", "daemon"}, args...)...)
+	command := exec.CommandContext(ctx, bin, args...)
 	command.Env = append(os.Environ(), "CODEX_HOME="+dir)
 	command.Stdout, command.Stderr = &out, &errOut
 	if err := execer.Exec(command); err != nil {
-		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return nil, fmt.Errorf("%w: %s", err, msg)
+		if ctx.Err() != nil {
+			err = fmt.Errorf("%w: %v", ctx.Err(), err)
 		}
+		if msg := strings.TrimSpace(errOut.String()); msg != "" {
+			return "", fmt.Errorf("%w: %s", err, msg)
+		}
+		return "", err
+	}
+	return out.String(), nil
+}
+
+func codexDaemonCommand(ctx context.Context, execer Execer, dir string, args ...string) (map[string]any, error) {
+	out, err := codexCommand(ctx, execer, dir, append([]string{"app-server", "daemon"}, args...)...)
+	if err != nil {
 		return nil, err
 	}
 	result := map[string]any{}
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func CodexLoggedIn(ctx context.Context, execer Execer, dir string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := codexCommand(ctx, execer, dir, "login", "status")
+	return err == nil
+}
+
+func CodexLogout(ctx context.Context, execer Execer, dir string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	_, err := codexCommand(ctx, execer, dir, "logout")
+	return err
 }
 
 func CodexDaemonSocket(ctx context.Context, execer Execer, dir string) string {
@@ -156,9 +181,6 @@ func RestartCodexDaemon(ctx context.Context, execer Execer, dir string) (int, er
 	defer cancel()
 	result, err := codexDaemonCommand(ctx, execer, dir, "restart")
 	if err != nil {
-		if ctx.Err() != nil {
-			return 0, fmt.Errorf("%w: %v", ctx.Err(), err)
-		}
 		return 0, err
 	}
 	pid, _ := result["pid"].(float64)

@@ -24,7 +24,8 @@ var commandHarness = Command{
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the default unless --route is set.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
 				"The routes API key is created on first setup and reused afterward. Restart the harness after setup. " +
-				"Codex serves its model list from a background app-server daemon, so setup restarts a running daemon and asks first when Codex sessions are attached to it.",
+				"Codex serves its model list from a background app-server daemon, so setup restarts a running daemon and asks first when Codex sessions are attached to it. " +
+				"Setup also signs Codex out of ChatGPT/OpenAI, whose workspace settings would otherwise override the Baseten route for new threads; run 'codex login' to sign back in.",
 			Flags: HarnessSetupFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",

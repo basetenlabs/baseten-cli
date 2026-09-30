@@ -650,3 +650,17 @@ func TestRestartCodexDaemon(t *testing.T) {
 	_, err = RestartCodexDaemon(expired, &codexDaemonExecer{}, dir)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
+
+func TestCodexLogin(t *testing.T) {
+	dir := t.TempDir()
+	e := &codexDaemonExecer{outputs: map[string]string{"login status": "", "logout": ""}}
+	require.True(t, CodexLoggedIn(t.Context(), e, dir))
+	require.Contains(t, e.env, "CODEX_HOME="+dir)
+	require.NoError(t, CodexLogout(t.Context(), e, dir))
+	require.False(t, CodexLoggedIn(t.Context(), &codexDaemonExecer{}, dir))
+	require.False(t, CodexLoggedIn(t.Context(), fakeExecer{missing: true}, dir))
+	require.Error(t, CodexLogout(t.Context(), &codexDaemonExecer{}, dir))
+	expired, cancel := context.WithTimeout(t.Context(), 0)
+	defer cancel()
+	require.ErrorIs(t, CodexLogout(expired, &codexDaemonExecer{}, dir), context.DeadlineExceeded)
+}
