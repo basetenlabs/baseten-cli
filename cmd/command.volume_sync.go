@@ -105,6 +105,8 @@ var commandVolumeSync = Command{
 				"match one exact destination ref. The CLI follows every server page.",
 			Flags: VolumeSyncListFlags{},
 			Output: &CommandOutput[VolumeSyncList]{
+				JSONDescription: "With --output jsonl, emits one sync object per line and no lines for an empty list. " +
+					"With --output jsonl, --jq applies to each sync object.",
 				TextDescription: "Table with columns: ID, STATUS, SOURCE, DESTINATION, SIZE, CREATED, COMPLETED. " +
 					"Prints \"No volume syncs found.\" to stderr when the list is empty.",
 				Examples: []CommandExample{

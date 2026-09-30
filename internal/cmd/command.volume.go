@@ -75,7 +75,13 @@ func volumeLsNamespaces(ctx *CommandContext) error {
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.VolumeNamespaceList{Items: items})
+		if ctx.JSONLines {
+			for _, item := range items {
+				ctx.OutputJSON(cmd.VolumeNamespace{Namespace: item})
+			}
+		} else {
+			ctx.OutputJSON(cmd.VolumeNamespaceList{Items: items})
+		}
 		return nil
 	}
 	if len(items) == 0 {
@@ -114,7 +120,13 @@ func volumeLsVolumes(ctx *CommandContext, namespace string) error {
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.VolumeList{Items: items})
+		if ctx.JSONLines {
+			for _, item := range items {
+				ctx.OutputJSON(item)
+			}
+		} else {
+			ctx.OutputJSON(cmd.VolumeList{Items: items})
+		}
 		return nil
 	}
 	if len(items) == 0 {
@@ -181,7 +193,13 @@ func volumeLsEntries(ctx *CommandContext, flags *cmd.VolumeLsFlags, ref client.V
 		for _, entry := range entries {
 			items = append(items, volumeEntryOf(entry))
 		}
-		ctx.OutputJSON(cmd.VolumeEntryList{VersionRef: manifest.VersionRef.String(), Items: items})
+		if ctx.JSONLines {
+			for _, item := range items {
+				ctx.OutputJSON(cmd.VolumeEntryDetail{VersionRef: manifest.VersionRef.String(), VolumeEntry: item})
+			}
+		} else {
+			ctx.OutputJSON(cmd.VolumeEntryList{VersionRef: manifest.VersionRef.String(), Items: items})
+		}
 		return nil
 	}
 	if len(entries) == 0 {
