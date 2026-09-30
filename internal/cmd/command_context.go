@@ -19,6 +19,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client"
+	"github.com/basetenlabs/baseten-go/sandbox"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/itchyny/gojq"
@@ -443,6 +444,29 @@ func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error)
 		BaseURL:    remote.ManagementURL(),
 		DeferAuth:  true,
 		HTTPClient: transport,
+	})
+}
+
+// NewSandboxesClient creates the high-level sandbox client, minting sandbox
+// tokens through the session's management credential (an API key, or an OAuth
+// access token the backend accepts the same way). The sandbox control plane
+// follows the management remote unless BASETEN_SANDBOXES_API_URL_OVERRIDE
+// routes it elsewhere, which development does while the domain moves.
+func (c *CommandContext) NewSandboxesClient(teamID string) (*sandbox.SandboxesClient, error) {
+	transport, remote, err := c.AuthTransport()
+	if err != nil {
+		return nil, err
+	}
+	credential, err := transport.Credential(c.Context)
+	if err != nil {
+		return nil, err
+	}
+	return sandbox.NewSandboxesClient(sandbox.SandboxesClientOptions{
+		APIKey:            credential,
+		TeamID:            teamID,
+		ManagementBaseURL: remote.ManagementURL(),
+		SandboxesBaseURL:  os.Getenv("BASETEN_SANDBOXES_API_URL_OVERRIDE"),
+		HTTPClient:        c.httpClient(),
 	})
 }
 
