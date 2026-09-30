@@ -30,13 +30,10 @@ It uses `--no-api-key` to avoid provisioning remote credentials.
 
 ## Validation record
 
-On September 30, 2026, the new CPU success case passed against Baseten.
-The first failure-case attempt hit a TCP read timeout while fetching logs;
-the test failed and cleaned up its project. That attempt does not validate
-remote failure reporting. An unchanged rerun of the failure case passed in
-47 seconds, capturing the traceback, CLI error, and `TRAINING_JOB_FAILED`
-status. The ordinary `go test ./...` suite, `go vet ./...`, and E2E-tagged
-static checks passed. Running without credentials confirmed that it skips.
+September 30, 2026: the initial CPU success case passed. The failure case hit a
+TCP read timeout fetching logs, then passed on an unchanged retry. All test
+projects were deleted. `go test ./...`, `go vet ./...`, and E2E-tagged static
+checks passed. This run predates the automated interrupt-and-resume case.
 
 ## Live GPU validation and remaining coverage
 
@@ -52,6 +49,6 @@ and `curl`. The successful run used
 `pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel`. The upstream Truss bootstrap
 issue remains; the CPU test does not cover it.
 
-Automated GPU training with guaranteed trainer cleanup, OAuth refresh,
-and first-use team API-key provisioning remain outside the CPU suite. Sampling, checkpoint deployment, and
-long-running training are outside this launcher's tests.
+GPU training, OAuth refresh, and first-use team API-key provisioning still need
+automated coverage. Sampling, checkpoint deployment, and long-running training
+are outside this launcher's tests.

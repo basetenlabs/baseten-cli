@@ -51,8 +51,7 @@ jobs:
             exit 1
           fi
 
-      # Training and Loops exec tests submit jobs through truss, which runs with
-      # `uv tool run`.
+      # Job submission invokes Truss through `uv tool run`.
       - name: Install uv
         if: matrix.os == 'ubuntu-latest'
         uses: astral-sh/setup-uv@v5
@@ -64,8 +63,7 @@ jobs:
           # to main will run them.
           BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
           BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
-        # -v so each test and its step logs stream as the run progresses; without
-        # it a hung run shows no output at all and the stuck test is unknowable.
+        # Stream test progress to make stalled live runs identifiable.
         run: go test -v -tags=e2e -skip '^TestE2ELoopsExec$' -timeout 30m ./internal/e2e-tests/...
 
       - name: Loops exec E2E test

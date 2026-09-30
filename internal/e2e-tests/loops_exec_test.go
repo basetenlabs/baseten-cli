@@ -19,10 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// No SDK or trainer is needed to test the managed client process. Every mode
-// checks the uploaded directory, argument quoting, environment, and lack of a
-// provisioned API key before emitting its marker. Even an orphaned hold exits
-// within ten minutes; cleanup normally stops it as soon as tailing is checked.
+// The alarm bounds the remote job's lifetime if test cleanup cannot reach it.
 const loopsExecClientPy = `import os
 from pathlib import Path
 import signal
@@ -50,9 +47,6 @@ else:
     raise ValueError(mode)
 `
 
-// TestE2ELoopsExec checks real CPU jobs through submission and native tailing.
-// GPU training is separate: this smoke covers the CLI process lifecycle and
-// allocates neither a Loops trainer nor a persistent job credential.
 func TestE2ELoopsExec(t *testing.T) {
 	apiKey := os.Getenv("BASETEN_E2E_TEST_API_KEY")
 	if apiKey == "" {
@@ -173,8 +167,7 @@ type loopsCLIResult struct {
 	err            error
 }
 
-// Cancellation from an output marker follows the same command-context path as
-// Ctrl-C, without races or a timer guessing when the remote process is ready.
+// Cancel on a log marker to exercise Ctrl-C handling after the job starts.
 func runLoopsCLI(ctx context.Context, stopOn func(string) bool, args ...string) loopsCLIResult {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
