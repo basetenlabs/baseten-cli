@@ -16,23 +16,7 @@
   - `volume` is the exception: it addresses a file tree, so refs are positional and shorthands follow the unix namesakes.
 - Enum values are `lowercase-kebab-case`.
 - Tests: `command.<name>_test.go` (package `cmd_test`); name `Test_ParentCmd_SubCmd_WhatThisTests` (e.g. `Test_API_Management_DefaultGET`).
-
-## JSON and JSONL output
-
-For commands that return a complete response, use `ctx.OutputJSON(response)` for
-both `--output json` and `--output jsonl`. JSONL preserves the same response
-structure as JSON, but writes it on one line without indentation. Do not unwrap
-an array just because the command lists multiple items or fetches multiple pages.
-For example, a collected list remains `{"items":[{"name":"a"},{"name":"b"}]}`
-under JSONL. Keep response-level metadata, such as `volume ls`'s `version_ref`,
-alongside the items. `--jq` applies to the complete response.
-
-For commands that explicitly stream an array of records, use
-`ctx.NewJSONArrayWriter()`, call `Write` for each record, and defer `Close`.
-Declare `JSONArrayStreamed: true` in the command's output specification. The
-writer wraps records in an array under JSON and emits one record per line under
-JSONL; `--jq` applies to each record. Examples include deployment logs, Model API
-usage, and `loops checkpoint files`, which emits files as each page arrives.
+- JSONL preserves JSON's response structure without indentation; only explicitly streamed arrays (`JSONArrayStreamed: true`, `NewJSONArrayWriter`) emit one record per line.
 
 ## End-to-end tests
 
