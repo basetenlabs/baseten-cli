@@ -51,22 +51,11 @@ jobs:
             exit 1
           fi
 
-      # Job submission invokes Truss through `uv tool run`.
+      # The train e2e test pushes through truss, which the CLI runs with
+      # `uv tool run`.
       - name: Install uv
         if: matrix.os == 'ubuntu-latest'
         uses: astral-sh/setup-uv@v5
-
-      - name: Loops exec E2E test
-        if: matrix.os == 'ubuntu-latest' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
-        env:
-          BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
-          BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
-        run: |
-          if [[ -z "$BASETEN_E2E_TEST_API_KEY" || -z "$BASETEN_E2E_TEST_REMOTE_URL" ]]; then
-            echo "Missing E2E credentials for a trusted CI run."
-            exit 1
-          fi
-          go test -v -tags=e2e -run '^TestE2ELoopsExec$' -count=1 -timeout 25m ./internal/e2e-tests/...
 
       - name: E2E test
         if: matrix.os == 'ubuntu-latest'
@@ -75,5 +64,6 @@ jobs:
           # to main will run them.
           BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
           BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
-        # Stream test progress to make stalled live runs identifiable.
-        run: go test -v -tags=e2e -skip '^TestE2ELoopsExec$' -timeout 30m ./internal/e2e-tests/...
+        # -v so each test and its step logs stream as the run progresses; without
+        # it a hung run shows no output at all and the stuck test is unknowable.
+        run: go test -v -tags=e2e -timeout 30m ./internal/e2e-tests/...

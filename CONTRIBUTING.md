@@ -33,5 +33,3 @@ BASETEN_E2E_TEST_API_KEY=... \
 BASETEN_E2E_TEST_REMOTE_URL=... \
     go test -v -tags=e2e ./internal/e2e-tests/...
 ```
-
-`TestE2ELoopsExec` runs CPU jobs in a separate Ubuntu CI step using the existing E2E credentials. Fork PRs skip this step. On same-repository PRs and pushes to `main`, missing credentials fail the step. See [Loops exec tests](internal/e2e-tests/loops-exec.md) for coverage, cleanup, and the command to run it locally.
