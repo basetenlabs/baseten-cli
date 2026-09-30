@@ -653,12 +653,14 @@ func TestRestartCodexDaemon(t *testing.T) {
 
 func TestCodexLogin(t *testing.T) {
 	dir := t.TempDir()
-	e := &codexDaemonExecer{outputs: map[string]string{"login status": "", "logout": ""}}
-	require.True(t, CodexLoggedIn(t.Context(), e, dir))
+	e := &codexDaemonExecer{outputs: map[string]string{"login status": "Logged in using ChatGPT\n", "logout": "Successfully logged out\n"}}
+	require.True(t, CodexChatGPTLogin(t.Context(), e, dir))
 	require.Contains(t, e.env, "CODEX_HOME="+dir)
 	require.NoError(t, CodexLogout(t.Context(), e, dir))
-	require.False(t, CodexLoggedIn(t.Context(), &codexDaemonExecer{}, dir))
-	require.False(t, CodexLoggedIn(t.Context(), fakeExecer{missing: true}, dir))
+	apiKey := &codexDaemonExecer{outputs: map[string]string{"login status": "Logged in using an API key - sk-***\n"}}
+	require.False(t, CodexChatGPTLogin(t.Context(), apiKey, dir))
+	require.False(t, CodexChatGPTLogin(t.Context(), &codexDaemonExecer{}, dir))
+	require.False(t, CodexChatGPTLogin(t.Context(), fakeExecer{missing: true}, dir))
 	require.Error(t, CodexLogout(t.Context(), &codexDaemonExecer{}, dir))
 	expired, cancel := context.WithTimeout(t.Context(), 0)
 	defer cancel()

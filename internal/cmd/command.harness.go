@@ -259,7 +259,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 const codexLogoutHint = "Run `codex logout` to stop the workspace default model from overriding the Baseten route."
 
 func logoutCodex(ctx *CommandContext, dir string, yes bool) {
-	if !harness.CodexLoggedIn(ctx, ctx.Execer(), dir) {
+	if !harness.CodexChatGPTLogin(ctx, ctx.Execer(), dir) {
 		return
 	}
 	ctx.LogLine("Signing out of ChatGPT/OpenAI in codex: your ChatGPT workspace pushes a default model for new threads that this gateway does not serve. Codex only needs the Baseten route from now on; run `codex login` to sign back in.")
@@ -275,7 +275,9 @@ func logoutCodex(ctx *CommandContext, dir string, yes bool) {
 			return
 		}
 		ctx.Logf("warning: codex logout failed (%v); removed %s instead\n", err, harnessDisplayPath(auth))
+		return
 	}
+	ctx.LogLine("Signed codex out of ChatGPT.")
 }
 
 const codexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done to pick up the new models."

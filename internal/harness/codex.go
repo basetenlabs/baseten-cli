@@ -84,10 +84,10 @@ func desktopCodexBinaries() []string {
 	return nil
 }
 
-func codexCommand(ctx context.Context, execer Execer, dir string, args ...string) (string, error) {
+func codexCommand(ctx context.Context, execer Execer, dir string, args ...string) (string, string, error) {
 	bin, err := execer.LookPath(codexBinary(execer))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var out, errOut bytes.Buffer
 	command := exec.CommandContext(ctx, bin, args...)
@@ -98,15 +98,15 @@ func codexCommand(ctx context.Context, execer Execer, dir string, args ...string
 			err = fmt.Errorf("%w: %v", ctx.Err(), err)
 		}
 		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return "", fmt.Errorf("%w: %s", err, msg)
+			return "", "", fmt.Errorf("%w: %s", err, msg)
 		}
-		return "", err
+		return "", "", err
 	}
-	return out.String(), nil
+	return out.String(), errOut.String(), nil
 }
 
 func codexDaemonCommand(ctx context.Context, execer Execer, dir string, args ...string) (map[string]any, error) {
-	out, err := codexCommand(ctx, execer, dir, append([]string{"app-server", "daemon"}, args...)...)
+	out, _, err := codexCommand(ctx, execer, dir, append([]string{"app-server", "daemon"}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -117,17 +117,19 @@ func codexDaemonCommand(ctx context.Context, execer Execer, dir string, args ...
 	return result, nil
 }
 
-func CodexLoggedIn(ctx context.Context, execer Execer, dir string) bool {
+const codexChatGPTLogin = "Logged in using ChatGPT"
+
+func CodexChatGPTLogin(ctx context.Context, execer Execer, dir string) bool {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_, err := codexCommand(ctx, execer, dir, "login", "status")
-	return err == nil
+	stdout, stderr, err := codexCommand(ctx, execer, dir, "login", "status")
+	return err == nil && strings.Contains(stdout+stderr, codexChatGPTLogin)
 }
 
 func CodexLogout(ctx context.Context, execer Execer, dir string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	_, err := codexCommand(ctx, execer, dir, "logout")
+	_, _, err := codexCommand(ctx, execer, dir, "logout")
 	return err
 }
 
