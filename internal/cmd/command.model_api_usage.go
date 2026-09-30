@@ -166,8 +166,18 @@ func modelAPIUsageGroupBy(values []string) ([]managementapi.UsageDimension, erro
 // none of them set the window spans the bucket width's default bucket count,
 // matching what the endpoint returns for a single default page.
 func modelAPIUsageWindow(ctx *CommandContext, flags *cmd.ModelAPIUsageFlags, bucket time.Duration) (start, end time.Time, err error) {
-	hasStart := !flags.Start.IsZero()
-	hasEnd := !flags.End.IsZero()
+	// start_time is required on the first page, so an --end-only window still
+	// needs a start; span the same default bucket count back from the end.
+	return usageWindow(ctx, flags.Start, flags.End, flags.Since, func(end time.Time) time.Time {
+		return end.Add(-bucket * time.Duration(modelAPIUsageDefaultBuckets(bucket)))
+	})
+}
+
+// usageWindow resolves a query range from --start, --end, and --since flag
+// values. --end defaults to now, and --start to defaultStart(end).
+func usageWindow(ctx *CommandContext, flagStart, flagEnd time.Time, since time.Duration, defaultStart func(end time.Time) time.Time) (start, end time.Time, err error) {
+	hasStart := !flagStart.IsZero()
+	hasEnd := !flagEnd.IsZero()
 	// Use Changed rather than the zero value so an explicit --since 0 fails the
 	// positive-duration check below instead of being silently dropped.
 	hasSince := ctx.Command.Flags().Changed("since")
@@ -178,28 +188,26 @@ func modelAPIUsageWindow(ctx *CommandContext, flags *cmd.ModelAPIUsageFlags, buc
 	now := ctx.Now()
 	switch {
 	case hasSince:
-		if flags.Since <= 0 {
+		if since <= 0 {
 			return start, end, cmd.NewErrUsagef("--since must be a positive duration")
 		}
-		return now.Add(-flags.Since), now, nil
+		return now.Add(-since), now, nil
 	case hasStart && hasEnd:
-		if !flags.Start.Before(flags.End) {
+		if !flagStart.Before(flagEnd) {
 			return start, end, cmd.NewErrUsagef("--start must be earlier than --end")
 		}
-		return flags.Start, flags.End, nil
+		return flagStart, flagEnd, nil
 	case hasStart:
 		// --end defaults to now, so name that rather than a flag the user never
 		// passed.
-		if !flags.Start.Before(now) {
+		if !flagStart.Before(now) {
 			return start, end, cmd.NewErrUsagef("--start must be in the past when --end is omitted")
 		}
-		return flags.Start, now, nil
+		return flagStart, now, nil
 	case hasEnd:
-		// start_time is required on the first page, so an --end-only window still
-		// needs a start; span the same default bucket count back from --end.
-		return flags.End.Add(-bucket * time.Duration(modelAPIUsageDefaultBuckets(bucket))), flags.End, nil
+		return defaultStart(flagEnd), flagEnd, nil
 	default:
-		return now.Add(-bucket * time.Duration(modelAPIUsageDefaultBuckets(bucket))), now, nil
+		return defaultStart(now), now, nil
 	}
 }
 

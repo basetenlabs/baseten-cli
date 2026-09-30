@@ -95,6 +95,16 @@ func (s *Session) ProfileName() string { return s.profileName }
 // rather than a stored profile.
 func (s *Session) IsEphemeral() bool { return s.ephemeralAPIKey != "" }
 
+// UsesAPIKey reports whether the session authenticates with an API key, from
+// BASETEN_API_KEY or an API key profile, rather than OAuth.
+func (s *Session) UsesAPIKey() bool {
+	if s.ephemeralAPIKey != "" {
+		return true
+	}
+	p, ok := s.store.GetProfile(s.profileName)
+	return ok && p.AuthType == AuthTypeAPIKey
+}
+
 // CacheIdentity returns a stable, filesystem-safe token for the resolved
 // credential, scoping on-disk caches so an entry written under one credential is
 // never read under another. Hashed to keep the profile name (an email by default)

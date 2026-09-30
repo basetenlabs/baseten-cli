@@ -411,6 +411,9 @@ func bindFlags(flags *pflag.FlagSet, val reflect.Value, metas []cmd.CommandFlag)
 			flags.BoolVarP(ptr, meta.Name, meta.Short, meta.Default == "true", desc)
 		case *[]string:
 			if len(meta.Enum) > 0 {
+				if meta.Default != "" {
+					*ptr = strings.Split(meta.Default, ",")
+				}
 				flags.VarP(&enumSliceValue{value: ptr, allowed: meta.Enum}, meta.Name, meta.Short, desc)
 			} else {
 				flags.StringArrayVarP(ptr, meta.Name, meta.Short, nil, desc)

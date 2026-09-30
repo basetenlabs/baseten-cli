@@ -1,6 +1,10 @@
 package cmd
 
-import "github.com/basetenlabs/baseten-go/client/managementapi"
+import (
+	"time"
+
+	"github.com/basetenlabs/baseten-go/client/managementapi"
+)
 
 const routePrereleaseNotice = "PRE-RELEASE: route commands are not GA yet. " +
 	"Their arguments, flags, and output may change.\n\n"
@@ -154,6 +158,47 @@ var commandRoute = Command{
 			},
 		},
 		{
+			Name:    "usage",
+			Summary: "Show daily routes usage and estimated costs (PRE-RELEASE)",
+			Description: routePrereleaseNotice +
+				"Show routes usage and estimated costs as daily UTC buckets, oldest first, broken down by the " +
+				"dimensions passed to --group-by. Defaults match the API: the previous UTC day through today, grouped " +
+				"by model. Organization admins see usage from every routes API key in the organization; other members " +
+				"see only usage from keys they created.\n\n" +
+				"Usage comes in whole UTC days: --start is snapped down to its day and --end is rounded up to the end of " +
+				"its day. Every bucket in the window is fetched, paging as needed, until --limit buckets are collected. " +
+				"Usage can lag by up to 15 minutes and is retained for 92 days. Model API costs use your prices and " +
+				"include tool calls. OpenAI, Anthropic, and xAI costs estimate what those providers charge and are not " +
+				"Baseten charges. Vertex and OpenAI-compatible usage isn't included.\n\n" +
+				"For your own usage this month, see 'baseten harness usage'. For machine-readable streaming, prefer " +
+				"--output jsonl over --output json.",
+			Flags: RouteUsageFlags{},
+			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
+				JSONArrayStreamed: true,
+				TextDescription: "Table with a DATE column, one column per --group-by dimension, then INPUT, CACHED, and " +
+					"OUTPUT token counts and COST, followed by an ALL totals row. A day with no usage renders as a single " +
+					"\"(no usage)\" row. A cost of \"-\" means some of that usage couldn't be priced. The window goes to " +
+					"stderr. When no day in the window has any usage, prints \"No usage in the selected window.\" to " +
+					"stderr instead of a table.",
+				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-dimension usage in " +
+					"results, including days with no usage. cost_usd values are exact decimal strings.",
+				Examples: []CommandExample{
+					{
+						Description: "Show usage per model since yesterday.",
+						Command:     "baseten route usage",
+					},
+					{
+						Description: "Show which users drove usage over the last 7 days (admins).",
+						Command:     "baseten route usage --since 7d --group-by user",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Stream each day's cost per model as a JSONL stream.",
+					Command:     "baseten route usage --output jsonl --jq '.results[] | {model, cost_usd}'",
+				},
+			},
+		},
+		{
 			Name:        "api-key",
 			Summary:     "Manage your routes API keys (PRE-RELEASE)",
 			Description: routePrereleaseNotice + "Manage the routes API keys you created, such as with harness setup, across all your machines and teams.",
@@ -252,4 +297,32 @@ type RouteDeleteFlags struct {
 	CommandFlags
 	RouteRefFlags
 	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+}
+
+// RouteUsageQueryFlags are the usage filters and paging flags shared by
+// `baseten route usage` and `baseten harness usage`.
+type RouteUsageQueryFlags struct {
+	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated." enum:"user,model,provider" default:"model"`
+
+	Models    []string `flag:"model" desc:"Only return usage for these models. May be repeated."`
+	Providers []string `flag:"provider" desc:"Only return usage for these providers. May be repeated." enum:"baseten-model-api,openai,anthropic,xai,vertex,openai-compatible"`
+
+	Limit int `flag:"limit" desc:"Maximum number of daily buckets, paging as needed. 0 for no limit."`
+
+	// PageSize is the per-request fetch size while paging. Hidden; exists so
+	// tests can force multiple pages. Zero uses the backend's maximum.
+	PageSize int `flag:"page-size" hidden:"true" desc:"Daily buckets fetched per backend request while paging."`
+}
+
+// RouteUsageFlags are the flags for `baseten route usage`.
+type RouteUsageFlags struct {
+	CommandFlags
+
+	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the day before --end."`
+	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
+	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
+
+	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. 'baseten whoami' shows your own."`
+
+	RouteUsageQueryFlags
 }

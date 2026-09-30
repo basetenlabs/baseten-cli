@@ -1,5 +1,11 @@
 package cmd
 
+import (
+	"time"
+
+	"github.com/basetenlabs/baseten-go/client/managementapi"
+)
+
 const harnessPreRelease = "PRE-RELEASE: Harness commands are not GA yet and support only macOS and Linux for now. " +
 	"Their arguments, flags, and output may change.\n\n"
 
@@ -63,6 +69,60 @@ var commandHarness = Command{
 				JQExample: CommandExample{
 					Description: "Print each harness's state.",
 					Command:     "baseten harness status --jq '.items[] | {harness, state}'",
+				},
+			},
+		},
+		{
+			Name:    "usage",
+			Summary: "Show your routes spend and tokens, month to date by default (PRE-RELEASE)",
+			Description: harnessPreRelease +
+				"Show your routes spend and token usage for the month so far, the period monthly spend limits apply to.\n\n" +
+				"This is a shortcut for 'baseten route usage --user-id <your user ID> --start <first of this month, UTC>' " +
+				"and takes " +
+				"the same flags. The only other difference is the text table, which totals each --group-by combination " +
+				"over the window instead of listing each day; JSON output is identical. Organization admins can pass " +
+				"--user-id for other users; other members only ever see usage from keys they created.\n\n" +
+				"Usage comes in whole UTC days: --start is snapped down to its day and --end is rounded up to the end of " +
+				"its day. Every bucket in the window is fetched, paging as needed, until --limit buckets are collected.\n\n" +
+				"This is the same spend that spend limits are checked against, and it can lag by up to 15 minutes. " +
+				"Model API costs use your prices and include tool calls. OpenAI, Anthropic, and xAI costs estimate what " +
+				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage isn't included. " +
+				"Usage is retained for 92 days.\n\n" +
+				"For machine-readable streaming, prefer --output jsonl over --output json.",
+			// TODO: Revisit this description, and null-cost handling in
+			// internal/cmd/command.harness_usage.go, as server-side usage changes:
+			// which providers are included (Vertex and OpenAI-compatible aren't
+			// yet), whether costs are always present, the 15-minute lag, and the
+			// 92-day retention.
+			Flags: HarnessUsageFlags{},
+			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
+				JSONArrayStreamed: true,
+				TextDescription: "Table with one column per --group-by dimension, then INPUT, CACHED, and OUTPUT token " +
+					"counts and COST, totaled over the window, most expensive first, followed by an ALL totals row. A cost " +
+					"of \"-\" means some of that usage couldn't be priced. The window goes to stderr. With no usage in the " +
+					"window, prints \"No usage in the selected window.\" to stderr instead of a table.",
+				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-dimension usage in " +
+					"results, including days with no usage. cost_usd values are exact decimal strings.",
+				Examples: []CommandExample{
+					{
+						Description: "Show your usage this month so far, by model.",
+						Command:     "baseten harness usage",
+					},
+					{
+						Description: "Show usage over the last 7 days by provider.",
+						Command:     "baseten harness usage --since 7d --group-by provider",
+					},
+					{
+						Description: "Break August's usage down by user and model for two users (admins).",
+						CommandLines: []string{
+							"baseten harness usage --start 2026-08-01T00:00:00Z --end 2026-09-01T00:00:00Z",
+							"--group-by user --group-by model --user-id <id> --user-id <id>",
+						},
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Stream each day's cost per model as a JSONL stream.",
+					Command:     "baseten harness usage --output jsonl --jq '.results[] | {model, cost_usd}'",
 				},
 			},
 		},
@@ -136,6 +196,19 @@ type HarnessStatus struct {
 // HarnessStatusList is the JSON output of `baseten harness status`.
 type HarnessStatusList struct {
 	Items []HarnessStatus `json:"items"`
+}
+
+// HarnessUsageFlags are the flags for `baseten harness usage`.
+type HarnessUsageFlags struct {
+	CommandFlags
+
+	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the start of the current UTC month."`
+	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
+	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
+
+	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. Defaults to your own user ID."`
+
+	RouteUsageQueryFlags
 }
 
 // HarnessFlags selects the harnesses a command applies to.

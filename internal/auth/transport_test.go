@@ -229,3 +229,16 @@ func TestSession_CacheIdentityUnauthenticated(t *testing.T) {
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestSession_UsesAPIKey(t *testing.T) {
+	s := storeWithConfigDir(t)
+	require.False(t, mustResolve(t, "").UsesAPIKey(), "unauthenticated")
+
+	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetOAuthProfile(profileB, remoteURL, auth.OAuthCredential{AccessToken: "token"}, false, nil))
+	require.True(t, mustResolve(t, profileA).UsesAPIKey())
+	require.False(t, mustResolve(t, profileB).UsesAPIKey())
+
+	t.Setenv("BASETEN_API_KEY", "env-key")
+	require.True(t, mustResolve(t, "").UsesAPIKey())
+}
