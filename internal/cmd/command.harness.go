@@ -443,10 +443,17 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	if err := harness.ApplyPlans(plans, ""); err != nil {
 		return err
 	}
+	if !ctx.JSON {
+		ctx.LogLine("Baseten settings removed. Restart the harnesses to load the changes.")
+	}
+	for _, choice := range selected {
+		if choice.Name() == harness.Codex && slices.Contains(names, harness.Codex) {
+			restartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
+			ctx.LogLine("Codex was signed out of OpenAI/ChatGPT during setup. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch.")
+		}
+	}
 	if ctx.JSON {
 		outputHarnessPlansJSON(ctx, plans, deleted)
-	} else {
-		ctx.LogLine("Baseten settings removed. Restart the harnesses to load the changes.")
 	}
 	return nil
 }

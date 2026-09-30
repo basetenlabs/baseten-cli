@@ -878,3 +878,45 @@ func Test_Harness_Setup_SignsOutCodex(t *testing.T) {
 		})
 	}
 }
+
+func Test_Harness_Teardown_RestartsCodexDaemon(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	signBackIn := "Codex was signed out of OpenAI/ChatGPT during setup. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch."
+	for name, tc := range map[string]struct {
+		execer   *codexDaemonHarnessExecer
+		restarts int
+		stderr   []string
+		absent   []string
+	}{
+		"no daemon":     {&codexDaemonHarnessExecer{}, 0, nil, []string{"app-server daemon"}},
+		"sessions":      {&codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\nf15\nn" + socket + " type=STREAM\n"}, 1, []string{"will disconnect 2 running codex session(s)", "Restarted codex app-server daemon (pid 4242)"}, nil},
+		"restart fails": {&codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}, 1, []string{"could not restart the codex app-server daemon", "Run `codex app-server daemon restart` when you're done to pick up the new models."}, []string{"Restarted"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := harnessAPI(t, "")
+			h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+			dir := t.TempDir()
+			h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", dir, "--key-name", "laptop", "--yes"))
+			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
+			h.Require.NoError(h.Execute("harness", "teardown", "--harness", "codex", "--config-dir", dir, "--yes"))
+			h.Require.Equal(tc.restarts, tc.execer.restarts)
+			h.Require.Contains(h.Stderr.String(), "Baseten settings removed.")
+			h.Require.Contains(h.Stderr.String(), signBackIn)
+			for _, want := range tc.stderr {
+				h.Require.Contains(h.Stderr.String(), want)
+			}
+			for _, unwanted := range tc.absent {
+				h.Require.NotContains(h.Stderr.String(), unwanted)
+			}
+		})
+	}
+}

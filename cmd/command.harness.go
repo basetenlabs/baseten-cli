@@ -135,7 +135,7 @@ var commandHarness = Command{
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
 				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path.\n\n" +
 				"Teardown also deletes the routes API key the removed harnesses use, once no other harness on this machine uses it. " +
-				"It works after the harness is uninstalled.",
+				"It works after the harness is uninstalled. For Codex, teardown restarts a running app-server daemon so the stock model list returns, asking first when Codex sessions are attached to it.",
 			Flags: HarnessTeardownFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
 				TextDescription: "The settings removed from each harness. Use --verbose for configuration paths and setting names.",
