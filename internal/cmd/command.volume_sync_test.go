@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -342,70 +341,6 @@ func Test_Volume_Sync_Start_RejectsOldDestinationFlag(t *testing.T) {
 		"--source", "hf://org/model",
 		"--destination", "bdn:weights/model")
 	h.Require.ErrorContains(err, "unknown flag: --destination")
-}
-
-func Test_Volume_Sync_List_JSONL(t *testing.T) {
-	syncs := []any{volumeSyncPayload("first", "READY"), volumeSyncPayload("second", "FAILED")}
-	for _, mode := range []string{"jsonl", "json", "jq", "empty"} {
-		t.Run(mode, func(t *testing.T) {
-			h := NewCommandHarness(t)
-			calls := 0
-			h.MockManagementAPI().SetRouteFunc("GET", "/v1/volumes/syncs", func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				items := syncs[:1]
-				more := true
-				if r.URL.Query().Get("cursor") == "next" {
-					items = syncs[1:]
-					more = false
-				}
-				if mode == "empty" {
-					items = []any{}
-					more = false
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "pagination": map[string]any{"has_more": more, "cursor": "next"}})
-			})
-			args := append([]string{}, []string{"volume", "sync", "list"}...)
-			format := "jsonl"
-			if mode == "json" {
-				format = "json"
-			}
-			args = append(args, "-o", format)
-			if mode == "jq" {
-				args = append(args, "--jq", ".sync_id")
-			}
-			h.Require.NoError(h.Execute(args...))
-			out := h.Stdout.String()
-			if mode == "empty" {
-				h.Require.Empty(out)
-				return
-			}
-			h.Require.Equal(2, calls)
-			if mode == "json" {
-				var result struct {
-					Items []any `json:"items"`
-				}
-				h.Require.NoError(json.Unmarshal([]byte(out), &result))
-				h.Require.Len(result.Items, 2)
-				return
-			}
-			lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-			h.Require.Len(lines, 2)
-			for i, line := range lines {
-				expected := []string{"first", "second"}[i]
-				if mode == "jq" {
-					var value string
-					h.Require.NoError(json.Unmarshal([]byte(line), &value))
-					h.Require.Equal(expected, value)
-					continue
-				}
-				var item map[string]any
-				h.Require.NoError(json.Unmarshal([]byte(line), &item))
-				h.Require.Equal(expected, item["sync_id"])
-				h.Require.NotContains(item, "items")
-			}
-		})
-	}
 }
 
 func Test_Volume_Sync_ListFollowsPagination(t *testing.T) {
