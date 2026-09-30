@@ -18,7 +18,7 @@ import (
 // calling api.GetRoutesHarnessConfigs(ctx, managementapi.GetV1RoutesHarnessConfigsParams{TeamId: &teamID}).
 
 type routeHarnessConfigsResponse struct {
-	// HarnessConfigs is keyed by the API's harness names, such as claude_code.
+	// HarnessConfigs is keyed by harness name, such as claude-code.
 	HarnessConfigs map[string]routeHarnessConfig `json:"harness_configs"`
 }
 
@@ -28,23 +28,23 @@ type routeHarnessConfig struct {
 }
 
 type routeHarnessModel struct {
-	// Route is nil when the caller cannot invoke it.
-	Route *managementapi.Route `json:"route"`
-	// Source is configured, or inherited when the team left the role unset
-	// and it uses the primary route.
+	Route managementapi.Route `json:"route"`
+	// Source is team when the team set the role, or baseten when it is
+	// Baseten's default from the team's Model API routes.
 	Source string `json:"source"`
 }
 
 // Harness default sources and roles, as the harness configs API reports them.
 const (
-	harnessSourceInherited = "inherited"
+	harnessSourceTeam    = "team"
+	harnessSourceBaseten = "baseten"
 
 	harnessRolePrimary    = "primary"
 	harnessRoleBackground = "background"
 )
 
-// getRouteHarnessConfigs lists the team's default models for each harness
-// that has a primary model.
+// getRouteHarnessConfigs lists the default models for each harness that has at
+// least one, using Baseten's default for any role the team hasn't set.
 func getRouteHarnessConfigs(ctx context.Context, api *managementapi.Client, teamID string) (*routeHarnessConfigsResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api.BaseURL+"/v1/routes/harness-configs?"+url.Values{"team_id": {teamID}}.Encode(), nil)
 	if err != nil {

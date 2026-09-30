@@ -1023,16 +1023,16 @@ func Test_Harness_Setup_Defaults(t *testing.T) {
 	h, api, root := harnessDefaultsAPI(t, nil)
 	route := func(name string) map[string]any { return harnessRoute(api, name) }
 	api.SetRoute("GET", "/v1/routes/harness-configs", 200, map[string]any{"harness_configs": map[string]any{
-		"claude_code": map[string]any{"models": map[string]any{
-			"primary":    harnessDefaultModel("configured", route("claude")),
-			"background": harnessDefaultModel("configured", route("fast")),
+		"claude-code": map[string]any{"models": map[string]any{
+			"primary":    harnessDefaultModel("team", route("claude")),
+			"background": harnessDefaultModel("baseten", route("fast")),
 		}},
 		"opencode": map[string]any{"models": map[string]any{
-			"primary":    harnessDefaultModel("configured", route("gpt")),
-			"background": harnessDefaultModel("inherited", route("gpt")),
+			"primary":    harnessDefaultModel("baseten", route("gpt")),
+			"background": harnessDefaultModel("team", route("claude")),
 		}},
 		"codex": map[string]any{"models": map[string]any{
-			"primary": harnessDefaultModel("configured", route("gpt")),
+			"primary": harnessDefaultModel("team", route("gpt")),
 		}},
 	}})
 	args := []string{"harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "codex"}
@@ -1041,9 +1041,9 @@ func Test_Harness_Setup_Defaults(t *testing.T) {
 	h.Require.Equal([]string{"team-a"}, api.FindCall("GET", "/v1/routes/harness-configs").Query()["team_id"])
 	for _, want := range []string{
 		"Default route     acme/claude (team default)",
-		"Background route  acme/fast (team default)",
-		"Default route     acme/gpt (team default)",
-		"Background route  acme/gpt (same as default route)",
+		"Background route  acme/fast (Baseten default)",
+		"Default route     acme/gpt (Baseten default)",
+		"Background route  acme/claude (team default)",
 		"Default route     acme/gpt (team default)",
 	} {
 		h.Require.Contains(h.Stdout.String(), want)
@@ -1053,52 +1053,58 @@ func Test_Harness_Setup_Defaults(t *testing.T) {
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
 	h.Require.Equal(map[string][2]string{
 		"claude-code": {"acme/claude", "acme/fast"},
-		"opencode":    {"acme/gpt", "acme/gpt"},
+		"opencode":    {"acme/gpt", "acme/claude"},
 		"codex":       {"acme/gpt", ""},
 	}, harnessSetupRoutes(t, root))
+	env := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))["env"].(map[string]any)
+	h.Require.Equal("acme/fast", env["ANTHROPIC_SMALL_FAST_MODEL"])
 
 	// Flags override the defaults for every harness.
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--route", "acme/primary", "--background-route", "acme/claude", "--dry-run"))
 	h.Require.Contains(h.Stdout.String(), "Default route     acme/primary (flag)")
 	h.Require.Contains(h.Stdout.String(), "Background route  acme/claude (flag)")
-	h.Require.NotContains(h.Stdout.String(), "team default")
+	h.Require.NotContains(h.Stdout.String(), " default)")
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--route", "acme/primary", "--background-route", "acme/claude", "--yes"))
 	h.Require.Equal([2]string{"acme/primary", "acme/claude"}, harnessSetupRoutes(t, root)["claude-code"])
 	h.Require.Equal([2]string{"acme/primary", "acme/claude"}, harnessSetupRoutes(t, root)["opencode"])
 
-	// An inherited background follows a --route primary.
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--route", "acme/fast", "--yes"))
-	h.Require.Equal([2]string{"acme/fast", "acme/fast"}, harnessSetupRoutes(t, root)["opencode"])
+	// A primary flag keeps the background default.
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/primary", "--yes"))
+	h.Require.Equal([2]string{"acme/primary", "acme/fast"}, harnessSetupRoutes(t, root)["claude-code"])
 }
 
 func Test_Harness_Setup_DefaultsSetupCannotUse(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api, root := harnessDefaultsAPI(t, nil)
+	// The API doesn't check that the harness can call a route, and acme/gpt
+	// serves only the Responses API.
+	gpt := harnessRoute(api, "gpt")
 	api.SetRoute("GET", "/v1/routes/harness-configs", 200, map[string]any{"harness_configs": map[string]any{
-		"claude_code": map[string]any{"models": map[string]any{
-			// The API doesn't check that the harness can call a route.
-			"primary": harnessDefaultModel("configured", harnessRoute(api, "gpt")),
-			// A route the caller can't invoke comes back as null.
-			"background": harnessDefaultModel("configured", nil),
+		"claude-code": map[string]any{"models": map[string]any{
+			"primary":    harnessDefaultModel("team", gpt),
+			"background": harnessDefaultModel("baseten", gpt),
 		}},
 		"opencode": map[string]any{"models": map[string]any{
-			"primary":    harnessDefaultModel("configured", nil),
-			"background": harnessDefaultModel("inherited", nil),
+			"primary": harnessDefaultModel("mystery", gpt),
 		}},
 	}})
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--yes"))
 	stderr := h.Stderr.String()
 	h.Require.Contains(stderr, "warning: ignoring the team default for the claude-code primary route: claude-code can't call route acme/gpt\n")
-	h.Require.Contains(stderr, "warning: ignoring the team default for the claude-code background route: route not accessible\n")
-	h.Require.Contains(stderr, "warning: ignoring the team default for the opencode primary route: route not accessible\n")
-	h.Require.Equal(3, strings.Count(stderr, "warning:"), "an inherited background doesn't warn again")
-	// Skipped slots keep the CLI's defaults.
+	h.Require.Contains(stderr, `warning: ignoring the opencode primary default: unknown source "mystery"`+"\n")
+	h.Require.Equal(2, strings.Count(stderr, "warning:"), "a Baseten default setup can't use doesn't warn")
+	// Skipped roles keep the CLI's defaults.
 	h.Require.Equal(map[string][2]string{
 		"claude-code": {"acme/primary", "deepseek-ai/DeepSeek-V4.1-Flash"},
 		"opencode":    {"acme/primary", "deepseek-ai/DeepSeek-V4.1-Flash"},
 	}, harnessSetupRoutes(t, root))
 
+	h.Stderr.Reset()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--verbose", "--dry-run"))
+	h.Require.Contains(h.Stderr.String(), "Ignoring the Baseten default for the claude-code background route: claude-code can't call route acme/gpt\n")
+
 	// A flag replaces a default setup can't use, without a warning.
+	h.Stderr.Reset()
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/claude", "--background-route", "acme/fast", "--yes"))
 	h.Require.NotContains(h.Stderr.String(), "ignoring the")
 }
@@ -1150,18 +1156,3 @@ func Test_Harness_Setup_DryRunSkipsCodexSignOut(t *testing.T) {
 	h.Require.NotContains(h.Stderr.String(), "Signing codex out")
 }
 
-func Test_Harness_Setup_InheritedBackground(t *testing.T) {
-	skipUnlessSupported(t)
-	h, api, root := harnessDefaultsAPI(t, nil)
-	claude := harnessRoute(api, "claude")
-	api.SetRoute("GET", "/v1/routes/harness-configs", 200, map[string]any{"harness_configs": map[string]any{
-		"claude_code": map[string]any{"models": map[string]any{
-			"primary":    harnessDefaultModel("configured", claude),
-			"background": harnessDefaultModel("inherited", claude),
-		}},
-	}})
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--yes"))
-	h.Require.Equal([2]string{"acme/claude", "acme/claude"}, harnessSetupRoutes(t, root)["claude-code"])
-	env := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))["env"].(map[string]any)
-	h.Require.Equal("acme/claude", env["ANTHROPIC_SMALL_FAST_MODEL"])
-}
