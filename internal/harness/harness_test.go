@@ -1,11 +1,14 @@
 package harness
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -279,6 +282,7 @@ func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 			d := load(t, path)
 			d["model"] = "other/user-model"
 			if h.Name() == Codex {
+				require.Equal(t, "api", d["forced_login_method"])
 				d["model_provider"] = "other"
 				d["review_model"] = "other/reviewer"
 				d["model_catalog_json"] = "/user/custom-catalog.json"
@@ -298,6 +302,7 @@ func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 				providers = "model_providers"
 			}
 			require.NoError(t, put(d, []string{providers, providerID}, value{}))
+			delete(d, "forced_login_method")
 			require.Equal(t, d, load(t, path))
 		})
 	}
@@ -525,4 +530,150 @@ func TestMalformedSettingsAreReported(t *testing.T) {
 			require.ErrorContains(t, err, "invalid settings")
 		})
 	}
+}
+
+type codexDaemonExecer struct {
+	fakeExecer
+	outputs  map[string]string
+	binaries map[string]bool
+	env      []string
+	path     string
+}
+
+func (e *codexDaemonExecer) LookPath(name string) (string, error) {
+	if e.binaries != nil && !e.binaries[name] {
+		return "", exec.ErrNotFound
+	}
+	return e.fakeExecer.LookPath(name)
+}
+
+func (e *codexDaemonExecer) Exec(command *exec.Cmd) error {
+	e.env, e.path = command.Env, command.Path
+	out, ok := e.outputs[strings.Join(command.Args[1:], " ")]
+	if !ok {
+		return errors.New("exit status 1")
+	}
+	_, err := fmt.Fprint(command.Stdout, out)
+	return err
+}
+
+func TestCodexDaemonSocket(t *testing.T) {
+	dir := t.TempDir()
+	running := map[string]string{"app-server daemon version": `{"status":"running","socketPath":"/tmp/codex.sock"}`}
+	cases := map[string]struct {
+		outputs  map[string]string
+		binaries map[string]bool
+		want     string
+		bin      string
+	}{
+		"running":   {running, nil, "/tmp/codex.sock", filepath.Join(string(filepath.Separator), "fake", "codex")},
+		"stopped":   {map[string]string{"app-server daemon version": `{"status":"stopped"}`}, nil, "", ""},
+		"not json":  {map[string]string{"app-server daemon version": "1.2.3"}, nil, "", ""},
+		"failed":    {nil, nil, "", ""},
+		"no binary": {running, map[string]bool{}, "", ""},
+	}
+	if desktop := desktopCodexBinaries(); len(desktop) > 0 {
+		cases["desktop binary"] = struct {
+			outputs  map[string]string
+			binaries map[string]bool
+			want     string
+			bin      string
+		}{running, map[string]bool{desktop[0]: true}, "/tmp/codex.sock", filepath.Join(string(filepath.Separator), "fake", desktop[0])}
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := &codexDaemonExecer{outputs: tc.outputs, binaries: tc.binaries}
+			require.Equal(t, tc.want, CodexDaemonSocket(t.Context(), e, dir))
+			if tc.bin != "" {
+				require.Equal(t, tc.bin, e.path)
+				require.Contains(t, e.env, "CODEX_HOME="+dir)
+			}
+		})
+	}
+	require.Empty(t, CodexDaemonSocket(t.Context(), fakeExecer{missing: true}, dir))
+}
+
+func TestCodexSocketClients(t *testing.T) {
+	const socket = "/tmp/codex-daemon-1000/abc"
+	for name, tc := range map[string]struct {
+		lsof    string
+		clients int
+		err     string
+	}{
+		"linux one client":   {"p1\nf31\nn" + socket + " type=STREAM\nf14\nn" + socket + " type=STREAM\nf7\nntype=STREAM\n", 1, ""},
+		"darwin two clients": {"p1\nf3\nn" + socket + "\nf4\nn->0x3d9b71d2b764900d\nf5\nn" + socket + "\nf7\nn" + socket + "\n", 2, ""},
+		"listener only":      {"p1\nf31\nn" + socket + " type=STREAM\n", 0, ""},
+		"other socket":       {"p1\nf3\nn/tmp/other.sock\n", 0, "not listed"},
+		"no output":          {"", 0, "not listed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clients, err := codexSocketClients(tc.lsof, socket)
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.clients, clients)
+		})
+	}
+}
+
+func TestCodexDaemonClientsResolvesSocket(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "app-server-control.sock")
+	target := filepath.Join(t.TempDir(), "real.sock")
+	require.NoError(t, os.WriteFile(target, nil, 0o600))
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(link)
+	require.NoError(t, err)
+	e := &codexDaemonExecer{outputs: map[string]string{"-U -F n": "p1\nf3\nn" + resolved + "\nf5\nn" + resolved + "\n"}}
+	clients, err := CodexDaemonClients(t.Context(), e, link)
+	require.NoError(t, err)
+	require.Equal(t, 1, clients)
+	_, err = CodexDaemonClients(t.Context(), fakeExecer{missing: true}, link)
+	require.Error(t, err)
+	_, err = CodexDaemonClients(t.Context(), e, filepath.Join(t.TempDir(), "missing.sock"))
+	require.Error(t, err)
+}
+
+func TestRestartCodexDaemon(t *testing.T) {
+	dir := t.TempDir()
+	e := &codexDaemonExecer{outputs: map[string]string{"app-server daemon restart": `{"status":"restarted","pid":4242}`}}
+	pid, err := RestartCodexDaemon(t.Context(), e, dir)
+	require.NoError(t, err)
+	require.Equal(t, 4242, pid)
+	require.Contains(t, e.env, "CODEX_HOME="+dir)
+	_, err = RestartCodexDaemon(t.Context(), &codexDaemonExecer{}, dir)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, context.DeadlineExceeded)
+	expired, cancel := context.WithTimeout(t.Context(), 0)
+	defer cancel()
+	_, err = RestartCodexDaemon(expired, &codexDaemonExecer{}, dir)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestCodexLogin(t *testing.T) {
+	dir := t.TempDir()
+	e := &codexDaemonExecer{outputs: map[string]string{"login status": "Logged in using an API key - sk-***\n", "logout": "Successfully logged out\n"}}
+	require.True(t, CodexLoggedIn(t.Context(), e, dir))
+	require.Contains(t, e.env, "CODEX_HOME="+dir)
+	require.NoError(t, CodexLogout(t.Context(), e, dir))
+	require.False(t, CodexLoggedIn(t.Context(), &codexDaemonExecer{}, dir))
+	require.False(t, CodexLoggedIn(t.Context(), fakeExecer{missing: true}, dir))
+	require.Error(t, CodexLogout(t.Context(), &codexDaemonExecer{}, dir))
+	expired, cancel := context.WithTimeout(t.Context(), 0)
+	defer cancel()
+	require.ErrorIs(t, CodexLogout(expired, &codexDaemonExecer{}, dir), context.DeadlineExceeded)
+}
+
+func TestCodexClearCloudConfig(t *testing.T) {
+	dir := t.TempDir()
+	cache := CodexCloudConfigPath(dir)
+	require.NoError(t, os.WriteFile(cache, []byte("{}"), 0o600))
+	require.NoError(t, CodexClearCloudConfig(dir))
+	require.NoFileExists(t, cache)
+	require.NoError(t, CodexClearCloudConfig(dir))
+	require.NoError(t, os.MkdirAll(filepath.Join(cache, "child"), 0o700))
+	require.Error(t, CodexClearCloudConfig(dir))
 }

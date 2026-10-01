@@ -23,7 +23,8 @@ var commandHarness = Command{
 				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code lists the routes that serve " +
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the default unless --route is set.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
-				"The routes API key is created on first setup and reused afterward. Restart the harness after setup.",
+				"The routes API key is created on first setup and reused afterward. Restart the harness after setup. " +
+				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it.",
 			Flags: HarnessSetupFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
@@ -133,7 +134,7 @@ var commandHarness = Command{
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
 				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path.\n\n" +
 				"Teardown also deletes the routes API key the removed harnesses use, once no other harness on this machine uses it. " +
-				"It works after the harness is uninstalled.",
+				"It works after the harness is uninstalled. For Codex, teardown re-enables ChatGPT login and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. Run 'codex login' to sign back in.",
 			Flags: HarnessTeardownFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
 				TextDescription: "The settings removed from each harness. Use --verbose for configuration paths and setting names.",

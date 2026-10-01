@@ -186,6 +186,9 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 			h.Require.Contains(string(settings), "secret-team-a")
 			h.Require.Contains(string(settings), "acme/primary")
 			h.Require.Equal("dark", readHarnessSettings(t, name, path)["theme"])
+			if name == "codex" {
+				h.Require.Equal("api", readHarnessSettings(t, name, path)["forced_login_method"])
+			}
 
 			h.Require.NoError(h.Execute(append(args, "--yes")...))
 			var rerun public.HarnessPlanList
@@ -209,6 +212,9 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 			h.Require.Equal("configured", statuses.Items[0].State)
 			h.Require.Equal("acme/primary", statuses.Items[0].DefaultRoute)
 			h.Require.Equal([]public.HarnessRoute{{Name: "acme/primary", DisplayName: "Primary"}}, statuses.Items[0].Routes)
+			if name == "codex" {
+				h.Require.Contains(statuses.Items[0].ManagedSettings, "forced_login_method")
+			}
 			h.Require.NotContains(h.Stdout.String(), "secret-team-a")
 
 			h.Require.NoError(h.Execute("harness", "teardown", "--harness", name, "--config-dir", dir, "--dry-run"))
@@ -753,4 +759,212 @@ func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
 
 	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/gpt", "--yes"))
 	h.Require.Contains(h.Stderr.String(), `route "acme/gpt" is not one of the team's routes this harness can call`)
+}
+
+type codexDaemonHarnessExecer struct {
+	fakeHarnessExecer
+	socket        string
+	lsof          string
+	noLsof        bool
+	restartFails  bool
+	restarts      int
+	loggedIn      bool
+	apiKey        bool
+	logoutFails   bool
+	logouts       int
+	probes        int
+	forcedAtProbe bool
+}
+
+func (e *codexDaemonHarnessExecer) LookPath(name string) (string, error) {
+	if name == "lsof" && e.noLsof {
+		return "", exec.ErrNotFound
+	}
+	return e.fakeHarnessExecer.LookPath(name)
+}
+
+func (e *codexDaemonHarnessExecer) Exec(command *exec.Cmd) error {
+	switch strings.Join(command.Args[1:], " ") {
+	case "app-server daemon version":
+		if e.socket == "" {
+			return errors.New("exit status 1")
+		}
+		_, err := fmt.Fprintf(command.Stdout, `{"status":"running","socketPath":%q}`, e.socket)
+		return err
+	case "app-server daemon restart":
+		e.restarts++
+		if e.restartFails {
+			return errors.New("exit status 1")
+		}
+		_, err := fmt.Fprint(command.Stdout, `{"status":"restarted","pid":4242}`)
+		return err
+	case "-U -F n":
+		_, err := fmt.Fprint(command.Stdout, e.lsof)
+		return err
+	case "login status":
+		e.probes++
+		for _, kv := range command.Env {
+			if dir, ok := strings.CutPrefix(kv, "CODEX_HOME="); ok {
+				config, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+				e.forcedAtProbe = e.forcedAtProbe || strings.Contains(string(config), "forced_login_method")
+			}
+		}
+		switch {
+		case e.apiKey:
+			_, err := fmt.Fprintln(command.Stderr, "Logged in using an API key - sk-***")
+			return err
+		case e.loggedIn:
+			_, err := fmt.Fprintln(command.Stderr, "Logged in using ChatGPT")
+			return err
+		}
+		return errors.New("exit status 1")
+	case "logout":
+		e.logouts++
+		if e.logoutFails {
+			return errors.New("exit status 1")
+		}
+		return nil
+	}
+	return e.fakeHarnessExecer.Exec(command)
+}
+
+func Test_Harness_Setup_RestartsCodexDaemon(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	for name, tc := range map[string]struct {
+		execer   *codexDaemonHarnessExecer
+		restarts int
+		stderr   []string
+		absent   []string
+	}{
+		"no daemon":        {&codexDaemonHarnessExecer{}, 0, nil, []string{"codex app-server daemon"}},
+		"no sessions":      {&codexDaemonHarnessExecer{socket: socket, lsof: listener}, 1, []string{"Restarted codex app-server daemon (pid 4242) so the new model catalog takes effect."}, []string{"warning"}},
+		"sessions":         {&codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\nf15\nn" + socket + " type=STREAM\n"}, 1, []string{"will disconnect 2 running codex session(s)", "Restarted codex app-server daemon (pid 4242)"}, nil},
+		"sessions unknown": {&codexDaemonHarnessExecer{socket: socket, noLsof: true}, 1, []string{"could not check for running codex sessions", "Restarted codex app-server daemon (pid 4242)"}, nil},
+		"restart fails":    {&codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}, 1, []string{"could not restart the codex app-server daemon", "Run `codex app-server daemon restart` when you're done to pick up the new models."}, []string{"Restarted"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := harnessAPI(t, "")
+			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
+			h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--yes"))
+			h.Require.Equal(tc.restarts, tc.execer.restarts)
+			h.Require.Contains(h.Stderr.String(), "Configuration saved.")
+			for _, want := range tc.stderr {
+				h.Require.Contains(h.Stderr.String(), want)
+			}
+			for _, unwanted := range tc.absent {
+				h.Require.NotContains(h.Stderr.String(), unwanted)
+			}
+		})
+	}
+}
+
+func Test_Harness_Setup_SignsOutCodex(t *testing.T) {
+	skipUnlessSupported(t)
+	signingOut := "Signing codex out of OpenAI/ChatGPT"
+	signedOut := "Signed codex out of OpenAI/ChatGPT and cleared the cached workspace policy."
+	hint := "Run `codex logout` and delete `"
+	for name, tc := range map[string]struct {
+		execer                             *codexDaemonHarnessExecer
+		auth, authAfter, cache, cacheAfter bool
+		logouts                            int
+		stderr                             []string
+		absent                             []string
+	}{
+		"not logged in":        {&codexDaemonHarnessExecer{}, true, true, true, true, 0, nil, []string{signingOut, "codex logout"}},
+		"api key login":        {&codexDaemonHarnessExecer{apiKey: true}, true, true, true, false, 1, []string{signingOut, signedOut}, []string{"warning"}},
+		"logged in":            {&codexDaemonHarnessExecer{loggedIn: true}, true, true, false, false, 1, []string{signingOut, signedOut}, []string{"warning"}},
+		"logout fails":         {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, true, false, true, false, 1, []string{signingOut, "codex logout failed", "removed", signedOut}, []string{hint}},
+		"logout fails no file": {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, false, false, true, true, 1, []string{"codex logout failed", hint, "cloud-config-bundle-cache.json` to stop the workspace default model from overriding the Baseten route."}, []string{"removed", signedOut}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := harnessAPI(t, "")
+			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
+			dir := t.TempDir()
+			auth := filepath.Join(dir, "auth.json")
+			cache := filepath.Join(dir, "cloud-config-bundle-cache.json")
+			for path, present := range map[string]bool{auth: tc.auth, cache: tc.cache} {
+				if present {
+					h.Require.NoError(os.WriteFile(path, []byte("{}"), 0o600))
+				}
+			}
+			h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", dir, "--yes"))
+			h.Require.Equal(tc.logouts, tc.execer.logouts)
+			h.Require.Equal(1, tc.execer.probes)
+			h.Require.False(tc.execer.forcedAtProbe, "login status must be probed before forced_login_method is written")
+			h.Require.Equal("api", readHarnessSettings(t, "codex", filepath.Join(dir, "config.toml"))["forced_login_method"])
+			_, err := os.Stat(auth)
+			h.Require.Equal(tc.authAfter, err == nil)
+			_, err = os.Stat(cache)
+			h.Require.Equal(tc.cacheAfter, err == nil)
+			for _, want := range tc.stderr {
+				h.Require.Contains(h.Stderr.String(), want)
+			}
+			for _, unwanted := range tc.absent {
+				h.Require.NotContains(h.Stderr.String(), unwanted)
+			}
+		})
+	}
+}
+
+func Test_Harness_Teardown_RestartsCodexDaemon(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	signBackIn := "Teardown removed the ChatGPT login restriction. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch."
+	for name, tc := range map[string]struct {
+		execer   *codexDaemonHarnessExecer
+		restarts int
+		stderr   []string
+		absent   []string
+	}{
+		"no daemon":     {&codexDaemonHarnessExecer{}, 0, nil, []string{"app-server daemon"}},
+		"sessions":      {&codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\nf15\nn" + socket + " type=STREAM\n"}, 1, []string{"will disconnect 2 running codex session(s)", "Restarted codex app-server daemon (pid 4242)"}, nil},
+		"restart fails": {&codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}, 1, []string{"could not restart the codex app-server daemon", "Run `codex app-server daemon restart` when you're done to pick up the new models."}, []string{"Restarted"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := harnessAPI(t, "")
+			h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+			dir := t.TempDir()
+			h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", dir, "--key-name", "laptop", "--yes"))
+			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
+			h.Require.NoError(h.Execute("harness", "teardown", "--harness", "codex", "--config-dir", dir, "--yes"))
+			h.Require.Equal(tc.restarts, tc.execer.restarts)
+			h.Require.Contains(h.Stderr.String(), "Baseten settings removed.")
+			h.Require.Contains(h.Stderr.String(), signBackIn)
+			for _, want := range tc.stderr {
+				h.Require.Contains(h.Stderr.String(), want)
+			}
+			for _, unwanted := range tc.absent {
+				h.Require.NotContains(h.Stderr.String(), unwanted)
+			}
+		})
+	}
+}
+
+func Test_Harness_Setup_DryRunSkipsCodexSignOut(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := harnessAPI(t, "")
+	execer := &codexDaemonHarnessExecer{loggedIn: true, socket: "/tmp/unused.sock"}
+	h.Context = internalcmd.WithExecer(h.Context, execer)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--dry-run"))
+	h.Require.Equal(0, execer.probes)
+	h.Require.Equal(0, execer.logouts)
+	h.Require.Equal(0, execer.restarts)
+	h.Require.NotContains(h.Stderr.String(), "Signing codex out")
 }

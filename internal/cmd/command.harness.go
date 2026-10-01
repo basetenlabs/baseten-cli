@@ -233,18 +233,86 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	for _, choice := range selected {
+		if choice.Name() == harness.Codex {
+			harnessLogoutCodex(ctx, filepath.Dir(choice.detection.Path), f.Yes)
+		}
+	}
 	if err := harness.ApplyPlans(plans, token); err != nil {
 		return err
+	}
+	if !ctx.JSON {
+		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
+	}
+	for _, choice := range selected {
+		if choice.Name() == harness.Codex {
+			harnessRestartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
+		}
 	}
 	if ctx.JSON {
 		outputHarnessPlansJSON(ctx, plans, nil)
 		return nil
 	}
-	ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
 	for _, choice := range selected {
 		ctx.Logf("Undo with: %s\n", harnessFollowupCommand("teardown", choice, f.ConfigDir))
 	}
 	return nil
+}
+
+func harnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
+	if !harness.CodexLoggedIn(ctx, ctx.Execer(), dir) {
+		return
+	}
+	hint := "Run `codex logout` and delete `" + harnessDisplayPath(harness.CodexCloudConfigPath(dir)) + "` to stop the workspace default model from overriding the Baseten route."
+	ctx.LogLine("Signing codex out of OpenAI/ChatGPT and disabling ChatGPT login while the Baseten harness is configured: codex only needs the Baseten route, and a ChatGPT login lets your workspace override the model for new threads.")
+	if !yes && ctx.ConfirmYesNo("Sign codex out of OpenAI/ChatGPT now?") != nil {
+		ctx.LogLine(hint)
+		return
+	}
+	if err := harness.CodexLogout(ctx, ctx.Execer(), dir); err != nil {
+		auth := filepath.Join(dir, "auth.json")
+		if os.Remove(auth) != nil {
+			ctx.Logf("warning: codex logout failed: %v\n", err)
+			ctx.LogLine(hint)
+			return
+		}
+		ctx.Logf("warning: codex logout failed (%v); removed %s instead\n", err, harnessDisplayPath(auth))
+	}
+	if err := harness.CodexClearCloudConfig(dir); err != nil {
+		ctx.Logf("warning: could not remove the cached workspace policy: %v\n", err)
+		ctx.LogLine(hint)
+		return
+	}
+	ctx.LogLine("Signed codex out of OpenAI/ChatGPT and cleared the cached workspace policy.")
+}
+
+const harnessCodexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done to pick up the new models."
+
+func harnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) {
+	socket := harness.CodexDaemonSocket(ctx, ctx.Execer(), dir)
+	if socket == "" {
+		return
+	}
+	clients, err := harness.CodexDaemonClients(ctx, ctx.Execer(), socket)
+	switch {
+	case err != nil:
+		ctx.Logf("warning: could not check for running codex sessions (%v); restarting the codex app-server daemon would interrupt their in-progress turns\n", err)
+	case clients > 0:
+		ctx.Logf("warning: restarting the codex app-server daemon will disconnect %d running codex session(s); in-progress turns will be interrupted (thread history is preserved and can be resumed with `codex resume`)\n", clients)
+	}
+	if (err != nil || clients > 0) && !yes {
+		if ctx.ConfirmYesNo("Restart the codex app-server daemon now?") != nil {
+			ctx.LogLine(harnessCodexDaemonRestartHint)
+			return
+		}
+	}
+	pid, err := harness.RestartCodexDaemon(ctx, ctx.Execer(), dir)
+	if err != nil {
+		ctx.Logf("warning: could not restart the codex app-server daemon: %v\n", err)
+		ctx.LogLine(harnessCodexDaemonRestartHint)
+		return
+	}
+	ctx.Logf("Restarted codex app-server daemon (pid %d) so the new model catalog takes effect.\n", pid)
 }
 
 func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error {
@@ -378,10 +446,17 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	if err := harness.ApplyPlans(plans, ""); err != nil {
 		return err
 	}
+	if !ctx.JSON {
+		ctx.LogLine("Baseten settings removed. Restart the harnesses to load the changes.")
+	}
+	for _, choice := range selected {
+		if choice.Name() == harness.Codex && slices.Contains(names, harness.Codex) {
+			harnessRestartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
+			ctx.LogLine("Teardown removed the ChatGPT login restriction. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch.")
+		}
+	}
 	if ctx.JSON {
 		outputHarnessPlansJSON(ctx, plans, deleted)
-	} else {
-		ctx.LogLine("Baseten settings removed. Restart the harnesses to load the changes.")
 	}
 	return nil
 }

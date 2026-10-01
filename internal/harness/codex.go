@@ -1,13 +1,18 @@
 package harness
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 )
 
 type codexHarness struct{}
@@ -25,17 +30,16 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 		return Detection{}, err
 	}
 	path := filepath.Join(dir, "config.toml")
-	d, err := detect(ctx, execer, h.Name(), "codex", path)
-	if err != nil || d.Installed {
-		return d, err
-	}
-	for _, binary := range desktopCodexBinaries() {
-		d, err = detect(ctx, execer, h.Name(), binary, path)
-		if err != nil || d.Installed {
-			return d, err
+	return detect(ctx, execer, h.Name(), codexBinary(execer), path)
+}
+
+func codexBinary(execer Execer) string {
+	for _, binary := range append([]string{"codex"}, desktopCodexBinaries()...) {
+		if _, err := execer.LookPath(binary); err == nil {
+			return binary
 		}
 	}
-	return d, nil
+	return "codex"
 }
 
 // linuxDesktopCodex is where the ChatGPT desktop app's x64 .deb package
@@ -80,6 +84,120 @@ func desktopCodexBinaries() []string {
 	return nil
 }
 
+func codexCommand(ctx context.Context, execer Execer, dir string, args ...string) (string, error) {
+	bin, err := execer.LookPath(codexBinary(execer))
+	if err != nil {
+		return "", err
+	}
+	var out, errOut bytes.Buffer
+	command := exec.CommandContext(ctx, bin, args...)
+	command.Env = append(os.Environ(), "CODEX_HOME="+dir)
+	command.Stdout, command.Stderr = &out, &errOut
+	if err := execer.Exec(command); err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("%w: %v", ctx.Err(), err)
+		}
+		if msg := strings.TrimSpace(errOut.String()); msg != "" {
+			return "", fmt.Errorf("%w: %s", err, msg)
+		}
+		return "", err
+	}
+	return out.String(), nil
+}
+
+func codexDaemonCommand(ctx context.Context, execer Execer, dir string, args ...string) (map[string]any, error) {
+	out, err := codexCommand(ctx, execer, dir, append([]string{"app-server", "daemon"}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func CodexLoggedIn(ctx context.Context, execer Execer, dir string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := codexCommand(ctx, execer, dir, "login", "status")
+	return err == nil
+}
+
+func CodexLogout(ctx context.Context, execer Execer, dir string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	_, err := codexCommand(ctx, execer, dir, "logout")
+	return err
+}
+
+func CodexCloudConfigPath(dir string) string {
+	return filepath.Join(dir, "cloud-config-bundle-cache.json")
+}
+
+func CodexClearCloudConfig(dir string) error {
+	if err := os.Remove(CodexCloudConfigPath(dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func CodexDaemonSocket(ctx context.Context, execer Execer, dir string) string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	result, err := codexDaemonCommand(ctx, execer, dir, "version")
+	if err != nil || result["status"] != "running" {
+		return ""
+	}
+	socket, _ := result["socketPath"].(string)
+	return socket
+}
+
+func CodexDaemonClients(ctx context.Context, execer Execer, socket string) (int, error) {
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		return 0, err
+	}
+	lsof, err := execer.LookPath("lsof")
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var out bytes.Buffer
+	command := exec.CommandContext(ctx, lsof, "-U", "-F", "n")
+	command.Stdout = &out
+	if err := execer.Exec(command); err != nil {
+		return 0, err
+	}
+	return codexSocketClients(out.String(), socket)
+}
+
+func codexSocketClients(lsof, socket string) (int, error) {
+	sockets := 0
+	for _, line := range strings.Split(lsof, "\n") {
+		name, _, _ := strings.Cut(strings.TrimPrefix(line, "n"), " type=")
+		if strings.HasPrefix(line, "n") && name == socket {
+			sockets++
+		}
+	}
+	if sockets == 0 {
+		return 0, errors.New("the daemon socket is not listed by lsof")
+	}
+	return sockets - 1, nil
+}
+
+func RestartCodexDaemon(ctx context.Context, execer Execer, dir string) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	result, err := codexDaemonCommand(ctx, execer, dir, "restart")
+	if err != nil {
+		return 0, err
+	}
+	pid, _ := result["pid"].(float64)
+	return int(pid), nil
+}
+
 func (codexHarness) BackgroundRoute(Selection) string { return "" }
 
 var codexCredentialPath = []string{"model_providers", providerID, "experimental_bearer_token"}
@@ -112,6 +230,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 		desired([]string{"model_provider"}, providerID),
 		desired([]string{"model_catalog_json"}, catalogPath(path)),
 		desired([]string{"review_model"}, s.Primary),
+		desired([]string{"forced_login_method"}, "api"),
 		desired([]string{"model_providers", providerID}, map[string]any{
 			"name":                      "Baseten",
 			"base_url":                  strings.TrimRight(endpoint, "/") + "/v1",
@@ -174,6 +293,9 @@ func codexTeardownPaths(data map[string]any, catalog string) [][]string {
 	}
 	if data["model_catalog_json"] == catalog {
 		paths = append(paths, []string{"model_catalog_json"})
+	}
+	if data["forced_login_method"] == "api" {
+		paths = append(paths, []string{"forced_login_method"})
 	}
 	return paths
 }
