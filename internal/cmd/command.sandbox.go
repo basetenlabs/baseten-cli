@@ -113,6 +113,12 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 	if len(ctx.Args) > 0 {
 		request.Name = ctx.Args[0]
 	}
+	if flags.MemoryMB < 0 {
+		return cmd.NewErrUsagef("--memory-mb cannot be negative, got %d", flags.MemoryMB)
+	}
+	if flags.IfNotExists && request.Name == "" {
+		return cmd.NewErrUsagef("--or-get-existing needs a sandbox name")
+	}
 	if flags.MemoryMB > 0 {
 		request.Memory = flags.MemoryMB
 	}
@@ -238,6 +244,9 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 	execOptions := &sandbox.ExecOptions{Command: commandLine, Env: envs}
 
 	if ctx.JSON {
+		// JSON mode prints the final record, so it waits; the streamed
+		// path below waits by construction.
+		execOptions.WaitForCompletion = true
 		finalInfo, err := instance.Process().Exec(ctx, execOptions)
 		if err != nil {
 			return fmt.Errorf("executing in sandbox %s: %w", name, err)
@@ -468,9 +477,9 @@ func commandSandboxImagePush(ctx *CommandContext, flags *cmd.SandboxImagePushFla
 	if err != nil {
 		if ctx.Err() != nil {
 			return cmd.NewErrInterrupted(fmt.Errorf(
-				"Stopped waiting. The push of image %s continues in the background.\n\n"+
+				"Stopped waiting. Whatever the server accepted before this continues; a build that never started does not.\n\n"+
 					"Check status: baseten sandbox image describe %s",
-				name, name))
+				name))
 		}
 		return fmt.Errorf("pushing sandbox image %s: %w", name, err)
 	}

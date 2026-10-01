@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,10 @@ import (
 	"github.com/coder/websocket"
 	"golang.org/x/term"
 )
+
+// tokenInQuery matches a token query value wherever a dial failure echoes the
+// URL, so the sandbox token never reaches an error message.
+var tokenInQuery = regexp.MustCompile(`token=[^&\s]+`)
 
 // Message is one frame of the terminal protocol.
 type Message struct {
@@ -88,7 +93,10 @@ func Dial(ctx context.Context, wsURL string, stdin, stdout *os.File) (*Terminal,
 
 	conn, _, err := websocket.Dial(ctx, parsed.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("connecting terminal: %w", err)
+		// The URL carries the sandbox token, and dial failures echo it;
+		// redact so the token never reaches stderr or logs.
+		return nil, fmt.Errorf("connecting terminal: %s",
+			tokenInQuery.ReplaceAllString(err.Error(), "token=REDACTED"))
 	}
 	return &Terminal{
 		conn: conn, stdin: stdin, stdout: stdout,
@@ -113,16 +121,15 @@ func (t *Terminal) Run(ctx context.Context) error {
 	})
 	t.watchResize(ctx)
 
-	outputDone := make(chan struct{})
+	readDone := make(chan error, 1)
 	go func() {
-		defer close(outputDone)
-		t.readLoop(ctx)
+		readDone <- t.readLoop(ctx)
 	}()
 	go t.inputLoop(ctx)
-	<-outputDone
+	readErr := <-readDone
 	t.restore()
 	close(t.done)
-	return nil
+	return readErr
 }
 
 func (t *Terminal) send(message Message) error {
@@ -135,12 +142,17 @@ func (t *Terminal) send(message Message) error {
 	return t.conn.Write(context.Background(), websocket.MessageText, payload)
 }
 
-func (t *Terminal) readLoop(ctx context.Context) {
+func (t *Terminal) readLoop(ctx context.Context) error {
 	for {
 		_, payload, err := t.conn.Read(ctx)
 		if err != nil {
-			// The server closed the session: the ordinary exit path.
-			return
+			// Normal closure and cancellation end the session; anything
+			// else is a failure the caller should see.
+			if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
+				ctx.Err() != nil {
+				return nil
+			}
+			return err
 		}
 		var message Message
 		if err := json.Unmarshal(payload, &message); err != nil {

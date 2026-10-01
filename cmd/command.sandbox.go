@@ -218,9 +218,9 @@ var imageSubcommands = Command{
 	Summary: "Manage sandbox images (PRE-RELEASE)",
 	Description: sandboxPreRelease +
 		"Images are the sources sandboxes are created from: push one from a directory or " +
-		"import one from a registry, then create sandboxes with image <name>:<tag>.\n\n" +
-		"A FAILED build carries no reason yet: the API's build-log endpoint is not in the " +
-		"Baseten spec, so only the status is readable.",
+		"import one from a registry, then create sandboxes with image <name>:<tag>. A build " +
+		"that fails reports its status with the last build-log lines when the log service " +
+		"answers.",
 	Children: []Command{
 		{
 			Name:    "list",
