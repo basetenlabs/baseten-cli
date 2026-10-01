@@ -451,8 +451,10 @@ func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error)
 // tokens through the session's management credential (an API key, or an OAuth
 // access token the backend accepts the same way). The sandbox control plane
 // follows the management remote unless BASETEN_SANDBOXES_API_URL_OVERRIDE
-// routes it elsewhere, which development does while the domain moves.
-func (c *CommandContext) NewSandboxesClient(teamID string) (*sandbox.SandboxesClient, error) {
+// routes it elsewhere, which development does while the domain moves. The
+// team argument is a team name or ID, resolved like every other command's
+// --team.
+func (c *CommandContext) NewSandboxesClient(team string) (*sandbox.SandboxesClient, error) {
 	transport, remote, err := c.AuthTransport()
 	if err != nil {
 		return nil, err
@@ -460,6 +462,17 @@ func (c *CommandContext) NewSandboxesClient(teamID string) (*sandbox.SandboxesCl
 	credential, err := transport.Credential(c.Context)
 	if err != nil {
 		return nil, err
+	}
+	teamID := ""
+	if team != "" {
+		managementClient, err := c.NewManagementClient()
+		if err != nil {
+			return nil, err
+		}
+		teamID, err = ResolveTeam(c.Context, managementClient.API(), team)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return sandbox.NewSandboxesClient(sandbox.SandboxesClientOptions{
 		APIKey:            credential,

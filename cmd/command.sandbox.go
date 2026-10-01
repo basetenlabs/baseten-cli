@@ -12,11 +12,11 @@ var commandSandbox = Command{
 	Summary: "Manage sandboxes (PRE-RELEASE)",
 	Description: sandboxPreRelease +
 		"Sandboxes run arbitrary commands in isolated environments. Create one, wait for it to " +
-		"deploy, run commands in it with 'sandbox exec', and delete it when done.\n\n" +
+		"deploy, run commands in it with 'sandbox process exec', and delete it when done.\n\n" +
 		"During development, the sandbox control plane may live on a different domain than the " +
 		"management API; set BASETEN_SANDBOXES_API_URL_OVERRIDE to route it there.",
 	Children: append([]Command{
-		imageHubSubcommands,
+		imageLibrarySubcommands,
 		{
 			Name:    "list",
 			Summary: "List sandboxes (PRE-RELEASE)",
@@ -44,10 +44,8 @@ var commandSandbox = Command{
 			},
 		},
 		{
-			Name:      "describe",
-			Summary:   "Describe a sandbox (PRE-RELEASE)",
-			ArgsUsage: "NAME",
-			ExactArgs: 1,
+			Name:    "describe",
+			Summary: "Describe a sandbox (PRE-RELEASE)",
 			Description: sandboxPreRelease +
 				"Retrieves one sandbox's current record: status, execution URL, image, memory, " +
 				"region, and labels.",
@@ -56,37 +54,38 @@ var commandSandbox = Command{
 				TextDescription: "One field per line describing the sandbox.",
 				Examples: []CommandExample{{
 					Description: "Describe a sandbox.",
-					Command:     "baseten sandbox describe my-sandbox",
+					Command:     "baseten sandbox describe --name my-sandbox",
 				}},
 				JQExample: CommandExample{
 					Description: "Print the sandbox's execution URL.",
-					Command:     "baseten sandbox describe my-sandbox --jq '.url'",
+					Command:     "baseten sandbox describe --name my-sandbox --jq '.url'",
 				},
 			},
 		},
 		{
-			Name:      "create",
-			Summary:   "Create a sandbox (PRE-RELEASE)",
-			ArgsUsage: "[NAME]",
-			MaxArgs:   1,
+			Name:    "create",
+			Summary: "Create a sandbox (PRE-RELEASE)",
 			Description: sandboxPreRelease +
 				"Creates a sandbox. Only the flags passed go into the request; the server applies " +
 				"its defaults to the rest (built-in image, 4096 MB, closest region).\n\n" +
-				"By default the command waits until the sandbox is DEPLOYED and then prints its " +
-				"execution URL. Pass --no-wait to return as soon as the server accepts the create; " +
-				"check status later with 'baseten sandbox describe'.",
+				"By default the command returns as soon as the server accepts the create; " +
+				"--wait blocks until the sandbox is DEPLOYED and then prints its execution URL.",
 			Flags: SandboxCreateFlags{},
 			Output: &CommandOutput[sandbox.SandboxInfo]{
-				TextDescription: "One field per line describing the sandbox. With --no-wait, the " +
+				TextDescription: "One field per line describing the sandbox. Without --wait, the " +
 					"record as of creation, usually still DEPLOYING and without its URL.",
 				Examples: []CommandExample{
 					{
-						Description: "Create a sandbox with server defaults and wait for it.",
-						Command:     "baseten sandbox create my-sandbox",
+						Description: "Create a sandbox with server defaults.",
+						Command:     "baseten sandbox create --name my-sandbox",
+					},
+					{
+						Description: "Create and wait for the sandbox to deploy.",
+						Command:     "baseten sandbox create --name my-sandbox --wait",
 					},
 					{
 						Description: "Create, or get the existing live sandbox back on a name conflict.",
-						Command:     "baseten sandbox create my-sandbox --or-get-existing",
+						Command:     "baseten sandbox create --name my-sandbox --or-get-existing",
 					},
 					{
 						Description: "Create one in a specific region with extra memory.",
@@ -98,7 +97,7 @@ var commandSandbox = Command{
 					{
 						Description: "Create one with environment variables and labels.",
 						CommandLines: []string{
-							"baseten sandbox create worker",
+							"baseten sandbox create --name worker",
 							"--env WORKERS=4 --label team=cli",
 						},
 					},
@@ -110,10 +109,8 @@ var commandSandbox = Command{
 			},
 		},
 		{
-			Name:      "update",
-			Summary:   "Update a sandbox (PRE-RELEASE)",
-			ArgsUsage: "NAME",
-			ExactArgs: 1,
+			Name:    "update",
+			Summary: "Update a sandbox (PRE-RELEASE)",
 			Description: sandboxPreRelease +
 				"Updates a sandbox's display name, labels, environment variables, or image. " +
 				"Omitted flags leave their fields unchanged; a supplied --label or --env set " +
@@ -124,19 +121,23 @@ var commandSandbox = Command{
 				TextDescription: "One field per line describing the updated sandbox.",
 				Examples: []CommandExample{{
 					Description: "Rename a sandbox's display name.",
-					Command:     "baseten sandbox update my-sandbox --display-name \"My sandbox\"",
+					CommandLines: []string{
+						"baseten sandbox update --name my-sandbox",
+						"--display-name \"My sandbox\"",
+					},
 				}},
 				JQExample: CommandExample{
 					Description: "Update labels and print them.",
-					Command:     "baseten sandbox update my-sandbox --label env=dev --jq '.labels'",
+					CommandLines: []string{
+						"baseten sandbox update --name my-sandbox",
+						"--label env=dev --jq '.labels'",
+					},
 				},
 			},
 		},
 		{
-			Name:      "delete",
-			Summary:   "Delete a sandbox (PRE-RELEASE)",
-			ArgsUsage: "NAME",
-			ExactArgs: 1,
+			Name:    "delete",
+			Summary: "Delete a sandbox (PRE-RELEASE)",
 			Description: sandboxPreRelease +
 				"Deletes a sandbox and everything in it. This cannot be undone. Deletion continues " +
 				"after this command returns.",
@@ -145,11 +146,11 @@ var commandSandbox = Command{
 				TextDescription: "One field per line describing the sandbox as deletion starts.",
 				Examples: []CommandExample{{
 					Description: "Delete a sandbox without the confirmation prompt.",
-					Command:     "baseten sandbox delete my-sandbox --yes",
+					Command:     "baseten sandbox delete --name my-sandbox --yes",
 				}},
 				JQExample: CommandExample{
 					Description: "Delete a sandbox and print its status.",
-					Command:     "baseten sandbox delete my-sandbox --yes --jq '.status'",
+					Command:     "baseten sandbox delete --name my-sandbox --yes --jq '.status'",
 				},
 			},
 		},
@@ -165,7 +166,13 @@ type SandboxList struct {
 // SandboxTeamFlags carries the sandbox commands' shared team selection.
 type SandboxTeamFlags struct {
 	CommandFlags
-	Team string `flag:"team" desc:"Team ID to act in. Defaults to the caller's only accessible team. Run 'baseten org team list' to see teams."`
+	Team string `flag:"team" desc:"Team name or ID to act in. Defaults to the caller's only accessible team. Run 'baseten org team list' to see teams."`
+}
+
+// SandboxNameFlags selects one sandbox by name.
+type SandboxNameFlags struct {
+	SandboxTeamFlags
+	Name string `flag:"name" desc:"Name of the sandbox." required:"true"`
 }
 
 // SandboxListFlags filters 'baseten sandbox list'.
@@ -179,35 +186,38 @@ type SandboxListFlags struct {
 // optional; unset fields fall back to the server's defaults.
 type SandboxCreateFlags struct {
 	SandboxTeamFlags
-	IfNotExists bool     `flag:"or-get-existing" desc:"Get the existing live sandbox with this name back instead of a conflict, or recreate one that is failed, terminated, or being deleted. The API's create_if_not_exists form; requires a name."`
+	Name        string   `flag:"name" desc:"Unique name of the sandbox. The server generates one when omitted."`
+	IfNotExists bool     `flag:"or-get-existing" desc:"Get the existing live sandbox with this name back instead of a conflict, or recreate one that is failed, terminated, or being deleted. The API's create_if_not_exists form; requires --name."`
 	Region      string   `flag:"region" desc:"Region to run in. Defaults to the closest region."`
 	MemoryMB    int      `flag:"memory-mb" desc:"Memory in megabytes, which also sets the CPU allocation. Defaults to 4096."`
 	Image       string   `flag:"image" desc:"Image reference including its tag. Defaults to the built-in sandbox image."`
 	DisplayName string   `flag:"display-name" desc:"Human-readable name for display in the UI."`
 	Env         []string `flag:"env" desc:"Environment variable as KEY=VALUE. May be repeated."`
 	Label       []string `flag:"label" desc:"Label as KEY=VALUE. May be repeated."`
-	NoWait      bool     `flag:"no-wait" desc:"Return as soon as the server accepts the create, without waiting for the sandbox to deploy."`
+	Wait        bool     `flag:"wait" desc:"Wait until the sandbox is DEPLOYED, then print its execution URL."`
 }
 
 // SandboxUpdateFlags configures 'baseten sandbox update'. Omitted flags leave
 // their fields unchanged.
 type SandboxUpdateFlags struct {
-	SandboxTeamFlags
+	SandboxNameFlags
 	DisplayName string   `flag:"display-name" desc:"Human-readable name for display in the UI. Omitted leaves it unchanged."`
 	Image       string   `flag:"image" desc:"Image reference including its tag. Omitted leaves it unchanged."`
 	Env         []string `flag:"env" desc:"Environment variable as KEY=VALUE. May be repeated. A supplied set replaces all previous environment variables."`
 	Label       []string `flag:"label" desc:"Label as KEY=VALUE. May be repeated. A supplied set replaces all previous labels."`
 }
 
-// SandboxDeleteFlags configures 'baseten sandbox delete'.
+// SandboxDeleteFlags configures 'baseten sandbox delete' and 'baseten sandbox
+// image delete'.
 type SandboxDeleteFlags struct {
-	SandboxTeamFlags
+	SandboxNameFlags
 	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
-// SandboxExecFlags configures 'baseten sandbox exec'.
+// SandboxExecFlags configures 'baseten sandbox exec' and 'baseten sandbox
+// process exec'.
 type SandboxExecFlags struct {
-	SandboxTeamFlags
+	SandboxNameFlags
 	Env []string `flag:"env" desc:"Environment variable as KEY=VALUE for the command, on top of the sandbox's own. May be repeated."`
 }
 
@@ -243,61 +253,58 @@ var imageSubcommands = Command{
 			},
 		},
 		{
-			Name:      "describe",
-			Summary:   "Describe a sandbox image (PRE-RELEASE)",
-			ArgsUsage: "NAME",
-			ExactArgs: 1,
+			Name:    "describe",
+			Summary: "Describe a sandbox image (PRE-RELEASE)",
 			Description: sandboxPreRelease +
 				"Retrieves one image repository's current record: status, version count, size.",
-			Flags: SandboxTeamFlags{},
+			Flags: SandboxImageNameFlags{},
 			Output: &CommandOutput[sandbox.ImageInfo]{
 				TextDescription: "One field per line describing the image.",
 				Examples: []CommandExample{{
 					Description: "Describe an image.",
-					Command:     "baseten sandbox image describe my-image",
+					Command:     "baseten sandbox image describe --name my-image",
 				}},
 				JQExample: CommandExample{
 					Description: "Print the image's status.",
-					Command:     "baseten sandbox image describe my-image --jq '.status'",
+					Command:     "baseten sandbox image describe --name my-image --jq '.status'",
 				},
 			},
 		},
 		{
-			Name:      "push",
-			Summary:   "Push a sandbox image (PRE-RELEASE)",
-			ArgsUsage: "NAME",
-			ExactArgs: 1,
+			Name:    "push",
+			Summary: "Push a sandbox image (PRE-RELEASE)",
 			Description: sandboxPreRelease +
 				"Pushes one image version. Exactly one source: --dir zips the directory and " +
 				"uploads it (a Dockerfile must sit at its root), or --image imports a registry " +
 				"image.\n\n" +
-				"By default the command waits until the image is BUILT. Pass --no-wait to return " +
-				"as soon as the push is accepted.",
+				"By default the command returns as soon as the push is accepted; --wait blocks " +
+				"until the image is BUILT.",
 			Flags: SandboxImagePushFlags{},
 			Output: &CommandOutput[sandbox.ImageInfo]{
-				TextDescription: "One field per line describing the image. With --no-wait, the " +
+				TextDescription: "One field per line describing the image. Without --wait, the " +
 					"record as of the push, usually still UPLOADING.",
 				Examples: []CommandExample{
 					{
 						Description: "Build an image from the current directory and wait for it.",
-						Command:     "baseten sandbox image push my-image --dir .",
+						Command:     "baseten sandbox image push --name my-image --dir . --wait",
 					},
 					{
 						Description: "Import an image from a registry.",
-						Command:     "baseten sandbox image push my-image --image registry.example/app:v1",
+						CommandLines: []string{
+							"baseten sandbox image push --name my-image",
+							"--image registry.example/app:v1",
+						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Push from a directory and print the resulting status.",
-					Command:     "baseten sandbox image push my-image --dir . --jq '.status'",
+					Command:     "baseten sandbox image push --name my-image --dir . --jq '.status'",
 				},
 			},
 		},
 		{
-			Name:      "delete",
-			Summary:   "Delete a sandbox image (PRE-RELEASE)",
-			ArgsUsage: "NAME",
-			ExactArgs: 1,
+			Name:    "delete",
+			Summary: "Delete a sandbox image (PRE-RELEASE)",
 			Description: sandboxPreRelease +
 				"Deletes an image repository and every version in it. This cannot be undone.",
 			Flags: SandboxDeleteFlags{},
@@ -305,11 +312,11 @@ var imageSubcommands = Command{
 				TextDescription: "One field per line describing the image as deletion starts.",
 				Examples: []CommandExample{{
 					Description: "Delete an image without the confirmation prompt.",
-					Command:     "baseten sandbox image delete my-image --yes",
+					Command:     "baseten sandbox image delete --name my-image --yes",
 				}},
 				JQExample: CommandExample{
 					Description: "Delete an image and print its status.",
-					Command:     "baseten sandbox image delete my-image --yes --jq '.status'",
+					Command:     "baseten sandbox image delete --name my-image --yes --jq '.status'",
 				},
 			},
 		},
@@ -321,25 +328,31 @@ type SandboxImageList struct {
 	Items []sandbox.ImageInfo `json:"items"`
 }
 
+// SandboxImageNameFlags selects one sandbox image by name.
+type SandboxImageNameFlags struct {
+	SandboxTeamFlags
+	Name string `flag:"name" desc:"Name of the image." required:"true"`
+}
+
 // SandboxImagePushFlags configures 'baseten sandbox image push'. Exactly one
 // of Dir and Image is given.
 type SandboxImagePushFlags struct {
-	SandboxTeamFlags
-	Dir    string `flag:"dir" desc:"Directory to zip and upload as the image source. It must hold a Dockerfile at its root."`
-	Image  string `flag:"image" desc:"Registry image reference including a registry hostname, imported instead of building from a directory."`
-	NoWait bool   `flag:"no-wait" desc:"Return as soon as the push is accepted, without waiting for the build."`
+	SandboxImageNameFlags
+	Dir   string `flag:"dir" desc:"Directory to zip and upload as the image source. It must hold a Dockerfile at its root."`
+	Image string `flag:"image" desc:"Registry image reference including a registry hostname, imported instead of building from a directory."`
+	Wait  bool   `flag:"wait" desc:"Wait until the image is BUILT."`
 }
 
 // SandboxDescribeFlags configures 'baseten sandbox describe'.
 type SandboxDescribeFlags struct {
-	SandboxTeamFlags
+	SandboxNameFlags
 	ShowSecrets bool `flag:"show-secrets" desc:"Reveal environment variable values. Requires the workspace administrator role; other callers still see masked values."`
 }
 
-// imageHubSubcommands is the starter-image catalog under baseten sandbox
-// image-hub. The catalog is workspace-global, so no team selection applies.
-var imageHubSubcommands = Command{
-	Name:    "image-hub",
+// imageLibrarySubcommands is the starter-image library under baseten sandbox
+// image-library. The library is workspace-global, so no team selection applies.
+var imageLibrarySubcommands = Command{
+	Name:    "image-library",
 	Summary: "Browse starter sandbox images (PRE-RELEASE)",
 	Description: sandboxPreRelease +
 		"Lists the platform's starter images, available to any sandbox without building or " +
@@ -352,30 +365,31 @@ var imageHubSubcommands = Command{
 			Description: sandboxPreRelease +
 				"Lists every visible starter image: its reference, description, default memory, and " +
 				"categories.",
-			Flags: SandboxHubListFlags{},
-			Output: &CommandOutput[SandboxHubImageList]{
+			Flags: SandboxLibraryListFlags{},
+			Output: &CommandOutput[SandboxLibraryImageList]{
 				TextDescription: "Table with columns: NAME, IMAGE, DEFAULT MB, CATEGORIES. " +
-					"Prints \"No starter images found.\" to stderr when the catalog is empty.",
+					"Prints \"No starter images found.\" to stderr when the library is empty.",
 				Examples: []CommandExample{{
-					Description: "List the starter catalog.",
-					Command:     "baseten sandbox image-hub list",
+					Description: "List the starter library.",
+					Command:     "baseten sandbox image-library list",
 				}},
 				JQExample: CommandExample{
 					Description: "Print every starter image's reference.",
-					Command:     "baseten sandbox image-hub list --jq '.items[].image'",
+					Command:     "baseten sandbox image-library list --jq '.items[].image'",
 				},
 			},
 		},
 	},
 }
 
-// SandboxHubImageList is the JSON shape of 'baseten sandbox image-hub list'.
-type SandboxHubImageList struct {
-	Items []SandboxHubImage `json:"items"`
+// SandboxLibraryImageList is the JSON shape of 'baseten sandbox image-library
+// list'.
+type SandboxLibraryImageList struct {
+	Items []SandboxLibraryImage `json:"items"`
 }
 
-// SandboxHubImage is one starter image from the hub catalog.
-type SandboxHubImage struct {
+// SandboxLibraryImage is one starter image from the library.
+type SandboxLibraryImage struct {
 	Name        string   `json:"name"`
 	DisplayName string   `json:"display_name,omitempty"`
 	Image       string   `json:"image"`
@@ -384,8 +398,8 @@ type SandboxHubImage struct {
 	Categories  []string `json:"categories"`
 }
 
-// SandboxHubListFlags are the standard flags only; the hub catalog is
-// workspace-global, so no team selection applies.
-type SandboxHubListFlags struct {
+// SandboxLibraryListFlags are the standard flags only; the starter-image
+// library is workspace-global, so no team selection applies.
+type SandboxLibraryListFlags struct {
 	CommandFlags
 }
