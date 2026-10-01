@@ -6,10 +6,13 @@ package sandboxconnect
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -60,25 +63,37 @@ func WebSocketURL(sandboxURL, token string) (string, error) {
 	return parsed.String(), nil
 }
 
-// Dial connects the terminal and sends the initial window size.
+// Dial connects the terminal. Each dial is its own session: the server's
+// default session is shared, so reusing it would rejoin a shell an earlier
+// connect may have left. The window size rides the URL, the same place the
+// reference client puts it.
 func Dial(ctx context.Context, wsURL string, stdin, stdout *os.File) (*Terminal, error) {
-	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	parsed, err := url.Parse(wsURL)
+	if err != nil {
+		return nil, err
+	}
+	cols, rows, sizeErr := term.GetSize(int(stdout.Fd()))
+	if sizeErr != nil {
+		cols, rows = 80, 24
+	}
+	session := make([]byte, 8)
+	if _, err := rand.Read(session); err != nil {
+		return nil, err
+	}
+	query := parsed.Query()
+	query.Set("cols", strconv.Itoa(cols))
+	query.Set("rows", strconv.Itoa(rows))
+	query.Set("sessionId", hex.EncodeToString(session))
+	parsed.RawQuery = query.Encode()
+
+	conn, _, err := websocket.Dial(ctx, parsed.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("connecting terminal: %w", err)
 	}
-	terminal := &Terminal{
+	return &Terminal{
 		conn: conn, stdin: stdin, stdout: stdout,
 		done: make(chan struct{}),
-	}
-	cols, rows, err := term.GetSize(int(stdout.Fd()))
-	if err != nil {
-		cols, rows = 80, 24
-	}
-	if err := terminal.send(Message{Type: "resize", Cols: cols, Rows: rows}); err != nil {
-		conn.Close(websocket.StatusInternalError, "")
-		return nil, err
-	}
-	return terminal, nil
+	}, nil
 }
 
 // Run puts the terminal in raw mode and ferries bytes until the session
