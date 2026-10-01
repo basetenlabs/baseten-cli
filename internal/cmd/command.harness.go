@@ -225,7 +225,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		}
 	}
 	// The routes API key is only read or created once the user has confirmed.
-	key, err := loadHarnessKey(ctx, api, team.Id, f.KeyName)
+	key, err := loadHarnessKey(ctx, api, team, f.KeyName)
 	if err != nil {
 		return err
 	}
@@ -618,8 +618,9 @@ type harnessKey struct {
 	saved string
 }
 
-func loadHarnessKey(ctx *CommandContext, api *managementapi.Client, teamID, name string) (*harnessKey, error) {
-	if name == "" {
+func loadHarnessKey(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, name string) (*harnessKey, error) {
+	explicit := name != ""
+	if !explicit {
 		hostname, err := os.Hostname()
 		if err != nil {
 			return nil, err
@@ -630,28 +631,47 @@ func loadHarnessKey(ctx *CommandContext, api *managementapi.Client, teamID, name
 	if err != nil {
 		return nil, fmt.Errorf("getting current user: %w", err)
 	}
-	scope, err := routesKeyScope(ctx, user.UserId, teamID, name)
-	if err != nil {
-		return nil, err
-	}
 	store, err := NewAuthStore(false)
 	if err != nil {
 		return nil, err
 	}
-	k := &harnessKey{store: store, scope: scope}
-	if k.saved, err = store.GetRoutesKey(k.scope); err != nil || k.saved == "" {
-		return k, err
-	}
-	// The saved key may have been deleted, here or on another machine; setup
-	// then creates a new one.
 	keys, err := listRouteAPIKeys(ctx, api)
 	if err != nil {
 		return nil, err
 	}
-	if !slices.ContainsFunc(keys.Keys, func(key managementapi.APIKeyInfo) bool { return strings.HasPrefix(k.saved, key.Prefix) }) {
-		k.saved = ""
+	// Key names are unique per team, and a key made elsewhere, such as under
+	// another profile, can't be reused here. The default name then moves on to
+	// a numbered name saved on this machine, or else the first free one.
+	var free *harnessKey
+	for i := 1; i <= len(keys.Keys)+1; i++ {
+		candidate := name
+		if i > 1 {
+			candidate = fmt.Sprintf("%s-%d", name, i)
+		}
+		scope, err := routesKeyScope(ctx, user.UserId, team.Id, candidate)
+		if err != nil {
+			return nil, err
+		}
+		k := &harnessKey{store: store, scope: scope}
+		if k.saved, err = store.GetRoutesKey(scope); err != nil {
+			return nil, err
+		}
+		// The saved key may have been deleted, here or on another machine; setup
+		// then creates a new one.
+		if !slices.ContainsFunc(keys.Keys, func(key managementapi.APIKeyInfo) bool { return strings.HasPrefix(k.saved, key.Prefix) }) {
+			k.saved = ""
+		}
+		if k.saved != "" || explicit {
+			return k, nil
+		}
+		taken := slices.ContainsFunc(keys.Keys, func(key managementapi.APIKeyInfo) bool {
+			return deref(key.Name) == candidate && deref(key.TeamName) == team.Name
+		})
+		if free == nil && !taken {
+			free = k
+		}
 	}
-	return k, nil
+	return free, nil
 }
 
 // ensure returns the saved key, creating and saving one if there is none.
