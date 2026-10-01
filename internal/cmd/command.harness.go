@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -178,9 +179,13 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 			return fmt.Errorf("team %s has routes with different invoke URLs", team.Name)
 		}
 	}
-	serverDefaults, err := fetchServerDefaults(ctx, api, listed[0].TeamId)
-	if err != nil {
-		ctx.VerboseLogf("warning: could not load the team's harness defaults: %v\n", err)
+	var serverDefaults harness.ServerDefaults
+	configuresClaudeCode := slices.ContainsFunc(selected, func(s selectedHarness) bool { return s.Name() == harness.ClaudeCode })
+	if configuresClaudeCode && (f.Route == "" || f.BackgroundRoute == "") {
+		serverDefaults, err = fetchServerDefaults(ctx, api, listed[0].TeamId)
+		if err != nil {
+			ctx.VerboseLogf("warning: could not load the team's harness defaults: %v\n", err)
+		}
 	}
 	var plans []*harness.Plan
 	for i := range selected {
@@ -278,6 +283,8 @@ type serverHarnessModel struct {
 }
 
 func fetchServerDefaults(ctx context.Context, api *managementapi.Client, teamID string) (harness.ServerDefaults, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	var defaults harness.ServerDefaults
 	query := url.Values{"team_id": []string{teamID}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(api.BaseURL, "/")+"/v1/routes/harness-configs?"+query.Encode(), nil)

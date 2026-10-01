@@ -480,6 +480,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 		harnessName    string
 		flags          []string
 		endpoint       func(api *MockManagementAPI)
+		wantFetch      bool
 		wantPrimary    string
 		wantBackground string
 	}{
@@ -489,6 +490,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			endpoint: func(api *MockManagementAPI) {
 				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/background"))
 			},
+			wantFetch:      true,
 			wantPrimary:    "acme/server",
 			wantBackground: "acme/background",
 		},
@@ -499,6 +501,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			endpoint: func(api *MockManagementAPI) {
 				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/background"))
 			},
+			wantFetch:      true,
 			wantPrimary:    "acme/first",
 			wantBackground: "acme/background",
 		},
@@ -509,6 +512,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			endpoint: func(api *MockManagementAPI) {
 				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/background"))
 			},
+			wantFetch:      true,
 			wantPrimary:    "acme/server",
 			wantBackground: "acme/first",
 		},
@@ -518,6 +522,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			endpoint: func(api *MockManagementAPI) {
 				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/missing", "acme/background"))
 			},
+			wantFetch:      true,
 			wantPrimary:    "acme/first",
 			wantBackground: "acme/background",
 		},
@@ -527,6 +532,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			endpoint: func(api *MockManagementAPI) {
 				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/missing"))
 			},
+			wantFetch:      true,
 			wantPrimary:    "acme/server",
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
@@ -540,6 +546,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 					},
 				})
 			},
+			wantFetch:      true,
 			wantPrimary:    "acme/first",
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
@@ -553,12 +560,14 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 					},
 				})
 			},
+			wantFetch:      true,
 			wantPrimary:    "acme/first",
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
 		{
 			name:           "an unrouted harness-configs endpoint falls back to positional",
 			harnessName:    "claude-code",
+			wantFetch:      true,
 			wantPrimary:    "acme/first",
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
@@ -568,6 +577,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			endpoint: func(api *MockManagementAPI) {
 				api.SetRoute("GET", "/v1/routes/harness-configs", 500, map[string]string{"message": "unavailable"})
 			},
+			wantFetch:      true,
 			wantPrimary:    "acme/first",
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
@@ -575,11 +585,22 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:           "a malformed harness-configs response falls back to positional",
 			harnessName:    "claude-code",
 			endpoint:       func(api *MockManagementAPI) { api.SetRoute("GET", "/v1/routes/harness-configs", 200, "not an object") },
+			wantFetch:      true,
 			wantPrimary:    "acme/first",
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
 		{
-			name:        "server defaults do not seed other harnesses",
+			name:        "both route flags set skip the fetch",
+			harnessName: "claude-code",
+			flags:       []string{"--route", "acme/first", "--background-route", "acme/background"},
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/missing"))
+			},
+			wantPrimary:    "acme/first",
+			wantBackground: "acme/background",
+		},
+		{
+			name:        "codex setup does not fetch or use server defaults",
 			harnessName: "codex",
 			endpoint: func(api *MockManagementAPI) {
 				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/background"))
@@ -613,8 +634,12 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 				h.Require.Equal(settings["model"], env["ANTHROPIC_MODEL"])
 			}
 			call := api.FindCall("GET", "/v1/routes/harness-configs")
-			h.Require.NotNil(call, "setup fetches harness configs")
-			h.Require.Equal([]string{"team-a"}, call.Query()["team_id"])
+			if tc.wantFetch {
+				h.Require.NotNil(call, "setup fetches harness configs")
+				h.Require.Equal([]string{"team-a"}, call.Query()["team_id"])
+			} else {
+				h.Require.Nil(call, "setup does not fetch harness configs")
+			}
 		})
 	}
 }
