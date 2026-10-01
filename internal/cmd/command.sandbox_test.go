@@ -201,7 +201,7 @@ func Test_Sandbox_CreateIfNotExistsAndDescribeShowSecrets(t *testing.T) {
 	m.SetRoute("POST", "/v1/sandboxes/instances", 201, sandboxRecord("sbx-1", "DEPLOYING", ""))
 	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, sandboxRecord("sbx-1", "DEPLOYED", "https://sbx-1.invalid"))
 
-	h.Require.NoError(h.Execute("sandbox", "create", "sbx-1", "--if-not-exists", "--no-wait"))
+	h.Require.NoError(h.Execute("sandbox", "create", "sbx-1", "--or-get-existing", "--no-wait"))
 	calls := sandboxCallsFor(m, "POST", "/v1/sandboxes/instances")
 	h.Require.Len(calls, 1)
 	h.Require.Equal(true, calls[0].BodyJSON(t)["create_if_not_exists"])

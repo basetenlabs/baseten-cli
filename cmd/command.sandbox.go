@@ -84,8 +84,8 @@ var commandSandbox = Command{
 						Command:     "baseten sandbox create my-sandbox",
 					},
 					{
-						Description: "Create only if no live sandbox has this name yet.",
-						Command:     "baseten sandbox create my-sandbox --if-not-exists",
+						Description: "Create, or get the existing live sandbox back on a name conflict.",
+						Command:     "baseten sandbox create my-sandbox --or-get-existing",
 					},
 					{
 						Description: "Create one in a specific region with extra memory.",
@@ -178,7 +178,7 @@ type SandboxListFlags struct {
 // optional; unset fields fall back to the server's defaults.
 type SandboxCreateFlags struct {
 	SandboxTeamFlags
-	IfNotExists bool     `flag:"if-not-exists" desc:"Return the existing live sandbox with this name instead of conflicting, or recreate one that is failed, terminated, or being deleted. The name flag or argument is required."`
+	IfNotExists bool     `flag:"or-get-existing" desc:"Get the existing live sandbox with this name back instead of a conflict, or recreate one that is failed, terminated, or being deleted. The API's create_if_not_exists form; requires a name."`
 	Region      string   `flag:"region" desc:"Region to run in. Defaults to the closest region."`
 	MemoryMB    int      `flag:"memory-mb" desc:"Memory in megabytes, which also sets the CPU allocation. Defaults to 4096."`
 	Image       string   `flag:"image" desc:"Image reference including its tag. Defaults to the built-in sandbox image."`
