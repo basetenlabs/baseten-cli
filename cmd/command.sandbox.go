@@ -219,7 +219,9 @@ var commandSandbox = Command{
 				"Runs a command in a deployed sandbox, streaming its output as it arrives. The " +
 				"command's exit code becomes the CLI's exit code.\n\n" +
 				"Put the command after a literal --, and every sandbox flag before it, so flags " +
-				"inside the command are passed through to it.",
+				"inside the command are passed through to it. One quoted argument is the whole " +
+				"command string, passed to the sandbox's shell as-is; several arguments are " +
+				"re-quoted so their boundaries survive.",
 			Flags: SandboxExecFlags{},
 			Output: &CommandOutput[sandbox.ProcessInfo]{
 				TextDescription: "The command's output, streamed, with the exit code passed " +

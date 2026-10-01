@@ -409,3 +409,25 @@ func Test_Sandbox_Connect_RequiresDeployed(t *testing.T) {
 	// refusal message only.
 	t.Skip("covered by the terminal-guard order and the e2e suite")
 }
+
+func Test_Sandbox_Exec_SingleArgumentPassesVerbatim(t *testing.T) {
+	var receivedCommand string
+	execServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		receivedCommand = request["command"].(string)
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = io.WriteString(w, `{"type":"result","data":"{\"command\":\"x\",\"name\":\"x\",\"pid\":\"9\",\"status\":\"completed\",\"exitCode\":0,\"stdout\":\"\",\"stderr\":\"\",\"logs\":\"\",\"workingDir\":\"/\",\"startedAt\":\"2026-09-30T22:00:01Z\",\"completedAt\":\"2026-09-30T22:00:02Z\"}"}
+`)
+	}))
+	t.Cleanup(execServer.Close)
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	sandboxTestTokenRoute(m)
+	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, sandboxRecord("sbx-1", "DEPLOYED", execServer.URL))
+
+	// One quoted argument is the user's whole command string, quotes intact
+	// for the sandbox's shell.
+	h.Require.NoError(h.Execute("sandbox", "exec", "sbx-1", "--", `echo "Welcom to $PWD"`))
+	h.Require.Equal(`echo "Welcom to $PWD"`, receivedCommand)
+}

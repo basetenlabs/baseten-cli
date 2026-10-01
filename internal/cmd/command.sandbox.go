@@ -222,11 +222,25 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 		return err
 	}
 	name := ctx.Args[0]
-	quotedArgs := make([]string, 0, len(ctx.Args)-1)
-	for _, arg := range ctx.Args[1:] {
-		quotedArgs = append(quotedArgs, shellQuote(arg))
+	commandArgs := ctx.Args[1:]
+	var commandLine string
+	switch len(commandArgs) {
+	case 0:
+		return cmd.NewErrUsagef("exec needs a command after --")
+	case 1:
+		// One argument is the command string as given: the user's shell
+		// already tokenized it, and its quoting is meant for the sandbox's
+		// shell to interpret.
+		commandLine = commandArgs[0]
+	default:
+		// Several arguments each carry one word, so they are re-quoted to
+		// keep their boundaries through the sandbox's shell.
+		quotedArgs := make([]string, 0, len(commandArgs))
+		for _, arg := range commandArgs {
+			quotedArgs = append(quotedArgs, shellQuote(arg))
+		}
+		commandLine = strings.Join(quotedArgs, " ")
 	}
-	commandLine := strings.Join(quotedArgs, " ")
 	client, err := ctx.NewSandboxesClient(flags.Team)
 	if err != nil {
 		return err
