@@ -321,6 +321,12 @@ const (
 	harnessRouteFromBaseten = "Baseten default"
 )
 
+// Harness default roles, the keys of a harness config's models.
+const (
+	harnessRolePrimary    = "primary"
+	harnessRoleBackground = "background"
+)
+
 // harnessSelection is the routes setup writes for one harness and where they came from.
 type harnessSelection struct {
 	harness.Selection
@@ -331,8 +337,8 @@ type harnessSelection struct {
 // harnessDefaults returns the team's harness default models, keyed by harness
 // name. Setup falls back to its own defaults when there are
 // none, when the backend lacks the endpoint, or when it can't be read.
-func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID string) map[string]routeHarnessConfig {
-	configs, err := getRouteHarnessConfigs(ctx, api, teamID)
+func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID string) map[string]managementapi.RouteHarnessConfig {
+	configs, err := api.GetRoutesHarnessConfigs(ctx, managementapi.GetV1RoutesHarnessConfigsParams{TeamId: teamID})
 	var re *managementapi.ResponseError
 	switch {
 	case errors.As(err, &re) && (re.StatusCode == http.StatusNotFound || re.StatusCode == http.StatusForbidden):
@@ -347,7 +353,7 @@ func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID stri
 
 // harnessRouteSelection picks the routes for one harness: flags first, then the
 // team's or Baseten's defaults, then the CLI's own defaults.
-func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice selectedHarness, defaults map[string]routeHarnessConfig, callable []harness.Route) harnessSelection {
+func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice selectedHarness, defaults map[string]managementapi.RouteHarnessConfig, callable []harness.Route) harnessSelection {
 	s := harnessSelection{
 		Selection: harness.Selection{
 			Primary:    f.Route,
@@ -379,16 +385,16 @@ func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice
 // call it. Baseten picks its defaults without checking API formats, so a
 // Baseten default the harness can't call is skipped quietly; a team default
 // warns, since a team admin can fix it.
-func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models map[string]routeHarnessModel, callable []harness.Route) (string, string, bool) {
+func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models map[string]managementapi.RouteHarnessModel, callable []harness.Route) (string, string, bool) {
 	model, ok := models[role]
 	if !ok {
 		return "", "", false
 	}
 	var source string
 	switch model.Source {
-	case harnessSourceTeam:
+	case managementapi.RouteHarnessModelSource_team:
 		source = harnessRouteFromTeam
-	case harnessSourceBaseten:
+	case managementapi.RouteHarnessModelSource_baseten:
 		source = harnessRouteFromBaseten
 	default:
 		ctx.Logf("warning: ignoring the %s %s default: unknown source %q\n", harnessName, role, model.Source)
@@ -397,7 +403,7 @@ func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models m
 	if slices.ContainsFunc(callable, func(r harness.Route) bool { return r.Name == model.Route.Name }) {
 		return model.Route.Name, source, true
 	}
-	if model.Source == harnessSourceBaseten {
+	if model.Source == managementapi.RouteHarnessModelSource_baseten {
 		ctx.VerboseLogf("Ignoring the Baseten default for the %s %s route: %s can't call route %s\n", harnessName, role, harnessName, model.Route.Name)
 	} else {
 		ctx.Logf("warning: ignoring the team default for the %s %s route: %s can't call route %s\n", harnessName, role, harnessName, model.Route.Name)
