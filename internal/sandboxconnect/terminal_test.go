@@ -82,11 +82,6 @@ func TestTerminalInputRoundTripAndClose(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The dial carries its own session id, so the server saw one.
-	if terminal == nil {
-		t.Fatal("no terminal")
-	}
-
 	go terminal.inputLoop(ctx)
 	outputDone := make(chan struct{})
 	go func() {
