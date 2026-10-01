@@ -2,9 +2,13 @@ package cmd
 
 import (
 	"cmp"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -174,6 +178,10 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 			return fmt.Errorf("team %s has routes with different invoke URLs", team.Name)
 		}
 	}
+	serverDefaults, err := fetchServerDefaults(ctx, api, listed[0].TeamId)
+	if err != nil {
+		ctx.VerboseLogf("warning: could not load the team's harness defaults: %v\n", err)
+	}
 	var plans []*harness.Plan
 	for i := range selected {
 		choice := &selected[i]
@@ -181,9 +189,13 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		if len(callable) == 0 {
 			return fmt.Errorf("team %s has no routes that %s can call", team.Name, choice.Name())
 		}
+		var defaults harness.ServerDefaults
+		if choice.Name() == harness.ClaudeCode {
+			defaults = serverDefaults.Selectable(callable)
+		}
 		choice.selection = harness.Selection{
-			Primary:    cmp.Or(f.Route, callable[0].Name),
-			Background: f.BackgroundRoute,
+			Primary:    cmp.Or(f.Route, defaults.Primary, callable[0].Name),
+			Background: cmp.Or(f.BackgroundRoute, defaults.Background),
 			Subagent:   f.SubagentRoute,
 			Fallback:   f.FallbackRoute,
 		}
@@ -257,6 +269,54 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		ctx.Logf("Undo with: %s\n", harnessFollowupCommand("teardown", choice, f.ConfigDir))
 	}
 	return nil
+}
+
+type serverHarnessModel struct {
+	Route *struct {
+		Name string `json:"name"`
+	} `json:"route"`
+}
+
+func fetchServerDefaults(ctx context.Context, api *managementapi.Client, teamID string) (harness.ServerDefaults, error) {
+	var defaults harness.ServerDefaults
+	query := url.Values{"team_id": []string{teamID}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(api.BaseURL, "/")+"/v1/routes/harness-configs?"+query.Encode(), nil)
+	if err != nil {
+		return defaults, err
+	}
+	for key, vals := range api.Headers {
+		for _, val := range vals {
+			req.Header.Add(key, val)
+		}
+	}
+	resp, err := api.HTTPClient.Do(req)
+	if err != nil {
+		return defaults, fmt.Errorf("GET /v1/routes/harness-configs: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return defaults, fmt.Errorf("GET /v1/routes/harness-configs: HTTP %d", resp.StatusCode)
+	}
+	var body struct {
+		HarnessConfigs map[string]struct {
+			Models struct {
+				Primary    *serverHarnessModel `json:"primary"`
+				Background *serverHarnessModel `json:"background"`
+			} `json:"models"`
+		} `json:"harness_configs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return defaults, fmt.Errorf("GET /v1/routes/harness-configs: %w", err)
+	}
+	config := body.HarnessConfigs[harness.ClaudeCode]
+	if config.Models.Primary == nil || config.Models.Primary.Route == nil || config.Models.Primary.Route.Name == "" {
+		return defaults, nil
+	}
+	defaults.Primary = config.Models.Primary.Route.Name
+	if config.Models.Background != nil && config.Models.Background.Route != nil {
+		defaults.Background = config.Models.Background.Route.Name
+	}
+	return defaults, nil
 }
 
 func harnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
