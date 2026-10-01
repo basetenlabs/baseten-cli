@@ -16,6 +16,7 @@ var commandSandbox = Command{
 		"During development, the sandbox control plane may live on a different domain than the " +
 		"management API; set BASETEN_SANDBOXES_API_URL_OVERRIDE to route it there.",
 	Children: append([]Command{
+		imageHubSubcommands,
 		{
 			Name:    "list",
 			Summary: "List sandboxes (PRE-RELEASE)",
@@ -333,4 +334,58 @@ type SandboxImagePushFlags struct {
 type SandboxDescribeFlags struct {
 	SandboxTeamFlags
 	ShowSecrets bool `flag:"show-secrets" desc:"Reveal environment variable values. Requires the workspace administrator role; other callers still see masked values."`
+}
+
+// imageHubSubcommands is the starter-image catalog under baseten sandbox
+// image-hub. The catalog is workspace-global, so no team selection applies.
+var imageHubSubcommands = Command{
+	Name:    "image-hub",
+	Summary: "Browse starter sandbox images (PRE-RELEASE)",
+	Description: sandboxPreRelease +
+		"Lists the platform's starter images, available to any sandbox without building or " +
+		"pushing. Pass an entry's image reference as image on 'sandbox create'.\n\n" +
+		"Hidden and coming-soon entries are left out, matching what the console's create form shows.",
+	Children: []Command{
+		{
+			Name:    "list",
+			Summary: "List starter sandbox images (PRE-RELEASE)",
+			Description: sandboxPreRelease +
+				"Lists every visible starter image: its reference, description, default memory, and " +
+				"categories.",
+			Flags: SandboxHubListFlags{},
+			Output: &CommandOutput[SandboxHubImageList]{
+				TextDescription: "Table with columns: NAME, IMAGE, DEFAULT MB, CATEGORIES. " +
+					"Prints \"No starter images found.\" to stderr when the catalog is empty.",
+				Examples: []CommandExample{{
+					Description: "List the starter catalog.",
+					Command:     "baseten sandbox image-hub list",
+				}},
+				JQExample: CommandExample{
+					Description: "Print every starter image's reference.",
+					Command:     "baseten sandbox image-hub list --jq '.items[].image'",
+				},
+			},
+		},
+	},
+}
+
+// SandboxHubImageList is the JSON shape of 'baseten sandbox image-hub list'.
+type SandboxHubImageList struct {
+	Items []SandboxHubImage `json:"items"`
+}
+
+// SandboxHubImage is one starter image from the hub catalog.
+type SandboxHubImage struct {
+	Name        string   `json:"name"`
+	DisplayName string   `json:"display_name,omitempty"`
+	Image       string   `json:"image"`
+	Description string   `json:"description,omitempty"`
+	MemoryMB    *int     `json:"memory_mb,omitempty"`
+	Categories  []string `json:"categories"`
+}
+
+// SandboxHubListFlags are the standard flags only; the hub catalog is
+// workspace-global, so no team selection applies.
+type SandboxHubListFlags struct {
+	CommandFlags
 }

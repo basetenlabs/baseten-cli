@@ -16,6 +16,7 @@ import (
 
 func init() {
 	Register("sandbox list", commandSandboxList)
+	Register("sandbox image-hub list", commandSandboxImageHubList)
 	Register("sandbox image list", commandSandboxImageList)
 	Register("sandbox image describe", commandSandboxImageDescribe)
 	Register("sandbox image push", commandSandboxImagePush)
@@ -585,4 +586,62 @@ func outputSandboxImageInfo(ctx *CommandContext, info sandbox.ImageInfo) {
 	if !info.LastDeployedAt.IsZero() {
 		ctx.Outputf("Last used:   %s\n", info.LastDeployedAt.UTC().Format(time.RFC3339))
 	}
+}
+
+// commandSandboxImageHubList lists the platform's starter images from the
+// sandbox hub catalog, hidden and coming-soon entries left out by the SDK.
+func commandSandboxImageHubList(ctx *CommandContext, _ *cmd.SandboxHubListFlags) error {
+	client, err := ctx.NewSandboxesClient("")
+	if err != nil {
+		return err
+	}
+	images, err := client.HubImages(ctx)
+	if err != nil {
+		return fmt.Errorf("listing starter images: %w", err)
+	}
+
+	items := make([]cmd.SandboxHubImage, 0, len(images))
+	for _, image := range images {
+		memory := image.MemoryMB
+		items = append(items, cmd.SandboxHubImage{
+			Name:        image.Name,
+			DisplayName: image.DisplayName,
+			Image:       image.Image,
+			Description: image.Description,
+			MemoryMB:    &memory,
+			Categories:  image.Categories,
+		})
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(cmd.SandboxHubImageList{Items: items})
+		return nil
+	}
+	if len(items) == 0 {
+		ctx.LogLine("No starter images found.")
+		return nil
+	}
+	rows := make([][]string, 0, len(items))
+	for _, image := range items {
+		display := image.DisplayName
+		if display == "" {
+			display = image.Name
+		}
+		memory := "-"
+		if image.MemoryMB != nil && *image.MemoryMB > 0 {
+			memory = strconv.Itoa(*image.MemoryMB)
+		}
+		rows = append(rows, []string{
+			display,
+			image.Image,
+			memory,
+			strings.Join(image.Categories, ","),
+		})
+	}
+	ctx.OutputTable(TableOutput{
+		Headers:             []string{"NAME", "IMAGE", "DEFAULT MB", "CATEGORIES"},
+		Rows:                rows,
+		RightAlignedColumns: []int{2},
+	})
+	return nil
 }

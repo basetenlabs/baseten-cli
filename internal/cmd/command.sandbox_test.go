@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/basetenlabs/baseten-cli/cmd"
 )
 
 // sandboxTestTime is what every fixture record uses, so output assertions
@@ -440,4 +442,32 @@ func Test_Sandbox_Exec_SingleArgumentPassesVerbatim(t *testing.T) {
 	// for the sandbox's shell.
 	h.Require.NoError(h.Execute("sandbox", "exec", "sbx-1", "--", `echo "Welcom to $PWD"`))
 	h.Require.Equal(`echo "Welcom to $PWD"`, receivedCommand)
+}
+
+func Test_Sandbox_ImageHub_ListFiltersAndRenders(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	sandboxTestTokenRoute(m)
+	m.SetRouteFunc("GET", "/v0/sandbox/hub", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[
+			{"name": "py-app", "displayName": "Python App", "image": "blaxel/py-app:latest", "memory": 4096, "categories": ["python"]},
+			{"name": "hidden", "image": "blaxel/hidden:latest", "hidden": true},
+			{"name": "soon", "image": "blaxel/soon:latest", "coming_soon": true}
+		]`)
+	})
+
+	h.Require.NoError(h.Execute("sandbox", "image-hub", "list"))
+	h.Require.Contains(h.Stdout.String(), "Python App")
+	h.Require.Contains(h.Stdout.String(), "blaxel/py-app:latest")
+	h.Require.NotContains(h.Stdout.String(), "hidden")
+	h.Require.NotContains(h.Stdout.String(), "soon")
+
+	h.Require.NoError(h.Execute("sandbox", "image-hub", "list", "--output", "json"))
+	var listed cmd.SandboxHubImageList
+	h.Require.NoError(json.Unmarshal([]byte(h.Stdout.String()), &listed))
+	h.Require.Len(listed.Items, 1)
+	h.Require.Equal("blaxel/py-app:latest", listed.Items[0].Image)
+	h.Require.NotNil(listed.Items[0].MemoryMB)
+	h.Require.Equal(4096, *listed.Items[0].MemoryMB)
 }
