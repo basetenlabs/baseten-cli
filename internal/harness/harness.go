@@ -268,6 +268,21 @@ func (s Selection) resolve(routes []Route) (Selection, error) {
 	return s, nil
 }
 
+type ServerDefaults struct {
+	Primary    string
+	Background string
+}
+
+func (d ServerDefaults) Selectable(routes []Route) ServerDefaults {
+	if _, ok := routeByName(routes, d.Primary); !ok {
+		d.Primary = ""
+	}
+	if _, ok := routeByName(routes, d.Background); !ok {
+		d.Background = ""
+	}
+	return d
+}
+
 // Detection describes a harness installation and its settings file.
 type Detection struct {
 	Name      string
