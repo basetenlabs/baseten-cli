@@ -79,6 +79,13 @@ func (s *sandboxSuite) Exec(t *testing.T) {
 	out := mustCLI(t, "sandbox", "exec", s.name, "--", "echo", "hello")
 	require.Contains(t, out, "hello")
 
+	// One quoted argument is the whole command string: variables and
+	// redirects are the sandbox shell's to interpret.
+	out = mustCLI(t, "sandbox", "exec", s.name, "--", "echo \"$((1+1))\" > /tmp/sum")
+	require.Empty(t, out)
+	out = mustCLI(t, "sandbox", "exec", s.name, "--", "cat", "/tmp/sum")
+	require.Contains(t, out, "2")
+
 	// A failing command's exit code becomes the CLI's.
 	_, _, err := cli(t, "sandbox", "exec", s.name, "--", "false")
 	require.Error(t, err)
