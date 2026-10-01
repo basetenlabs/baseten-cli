@@ -24,8 +24,6 @@ func init() {
 	Register("sandbox describe", commandSandboxDescribe)
 	Register("sandbox create", commandSandboxCreate)
 	Register("sandbox update", commandSandboxUpdate)
-	Register("sandbox start", commandSandboxStart)
-	Register("sandbox stop", commandSandboxStop)
 	Register("sandbox delete", commandSandboxDelete)
 	Register("sandbox exec", commandSandboxExec)
 }
@@ -78,12 +76,12 @@ func commandSandboxList(ctx *CommandContext, flags *cmd.SandboxListFlags) error 
 	return nil
 }
 
-func commandSandboxDescribe(ctx *CommandContext, flags *cmd.SandboxTeamFlags) error {
+func commandSandboxDescribe(ctx *CommandContext, flags *cmd.SandboxDescribeFlags) error {
 	client, err := ctx.NewSandboxesClient(flags.Team)
 	if err != nil {
 		return err
 	}
-	info, err := client.GetInfo(ctx, ctx.Args[0])
+	info, err := client.GetInfo(ctx, ctx.Args[0], &sandbox.GetInfoOptions{ShowSecrets: flags.ShowSecrets})
 	if err != nil {
 		return fmt.Errorf("describing sandbox %s: %w", ctx.Args[0], err)
 	}
@@ -105,11 +103,12 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 		return err
 	}
 	request := &sandbox.CreateSandboxRequest{
-		Image:       flags.Image,
-		Region:      flags.Region,
-		DisplayName: flags.DisplayName,
-		Envs:        envs,
-		Labels:      labels,
+		Image:            flags.Image,
+		Region:           flags.Region,
+		DisplayName:      flags.DisplayName,
+		Envs:             envs,
+		Labels:           labels,
+		CreateIfNotExist: flags.IfNotExists,
 	}
 	if len(ctx.Args) > 0 {
 		request.Name = ctx.Args[0]
@@ -163,27 +162,6 @@ func commandSandboxUpdate(ctx *CommandContext, flags *cmd.SandboxUpdateFlags) er
 	})
 	if err != nil {
 		return fmt.Errorf("updating sandbox %s: %w", ctx.Args[0], err)
-	}
-	outputSandboxInfo(ctx, *info)
-	return nil
-}
-
-func commandSandboxStart(ctx *CommandContext, flags *cmd.SandboxTeamFlags) error {
-	return setSandboxEnabled(ctx, flags.Team, ctx.Args[0], true)
-}
-
-func commandSandboxStop(ctx *CommandContext, flags *cmd.SandboxTeamFlags) error {
-	return setSandboxEnabled(ctx, flags.Team, ctx.Args[0], false)
-}
-
-func setSandboxEnabled(ctx *CommandContext, team, name string, enabled bool) error {
-	client, err := ctx.NewSandboxesClient(team)
-	if err != nil {
-		return err
-	}
-	info, err := client.Update(ctx, name, &sandbox.UpdateSandboxRequest{Enabled: &enabled})
-	if err != nil {
-		return fmt.Errorf("updating sandbox %s: %w", name, err)
 	}
 	outputSandboxInfo(ctx, *info)
 	return nil
@@ -245,7 +223,7 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 	if err != nil {
 		return err
 	}
-	info, err := client.GetInfo(ctx, name)
+	info, err := client.GetInfo(ctx, name, nil)
 	if err != nil {
 		return fmt.Errorf("describing sandbox %s: %w", name, err)
 	}
@@ -299,7 +277,7 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 func waitSandboxDeployed(ctx *CommandContext, client *sandbox.SandboxesClient, name string) (*sandbox.SandboxInfo, error) {
 	deadline := time.Now().Add(sandboxDeployTimeout)
 	for {
-		info, err := client.GetInfo(ctx, name)
+		info, err := client.GetInfo(ctx, name, nil)
 		if err != nil {
 			return nil, fmt.Errorf("checking sandbox %s: %w", name, err)
 		}
@@ -533,7 +511,7 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxTeamFlags) err
 	if err != nil {
 		return err
 	}
-	info, err := client.GetInfo(ctx, name)
+	info, err := client.GetInfo(ctx, name, nil)
 	if err != nil {
 		return fmt.Errorf("describing sandbox %s: %w", name, err)
 	}

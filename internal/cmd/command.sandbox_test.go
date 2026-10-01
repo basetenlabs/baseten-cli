@@ -194,19 +194,29 @@ func Test_Sandbox_Update_SendsOnlySetFields(t *testing.T) {
 	h.Require.NotContains(body, "image")
 }
 
-func Test_Sandbox_StopAndStart(t *testing.T) {
+func Test_Sandbox_CreateIfNotExistsAndDescribeShowSecrets(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	sandboxTestTokenRoute(m)
-	m.SetRoute("PATCH", "/v1/sandboxes/instances/sbx-1", 200, sandboxRecord("sbx-1", "DEPLOYED", "https://sbx-1.invalid"))
+	m.SetRoute("POST", "/v1/sandboxes/instances", 201, sandboxRecord("sbx-1", "DEPLOYING", ""))
+	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, sandboxRecord("sbx-1", "DEPLOYED", "https://sbx-1.invalid"))
 
-	h.Require.NoError(h.Execute("sandbox", "stop", "sbx-1"))
-	body := sandboxCallsFor(m, "PATCH", "/v1/sandboxes/instances/sbx-1")[0].BodyJSON(t)
-	h.Require.Equal(false, body["enabled"])
+	h.Require.NoError(h.Execute("sandbox", "create", "sbx-1", "--if-not-exists", "--no-wait"))
+	calls := sandboxCallsFor(m, "POST", "/v1/sandboxes/instances")
+	h.Require.Len(calls, 1)
+	h.Require.Equal(true, calls[0].BodyJSON(t)["create_if_not_exists"])
 
-	h.Require.NoError(h.Execute("sandbox", "start", "sbx-1"))
-	body = sandboxCallsFor(m, "PATCH", "/v1/sandboxes/instances/sbx-1")[1].BodyJSON(t)
-	h.Require.Equal(true, body["enabled"])
+	// Unset stays off the wire.
+	h.Require.NoError(h.Execute("sandbox", "create", "sbx-1", "--no-wait"))
+	calls = sandboxCallsFor(m, "POST", "/v1/sandboxes/instances")
+	body := calls[len(calls)-1].BodyJSON(t)
+	if _, present := body["create_if_not_exists"]; present {
+		h.Require.Fail("unset create_if_not_exists must be omitted")
+	}
+
+	h.Require.NoError(h.Execute("sandbox", "describe", "sbx-1", "--show-secrets"))
+	describe := sandboxCallsFor(m, "GET", "/v1/sandboxes/instances/sbx-1")
+	h.Require.Equal("true", describe[len(describe)-1].Query().Get("show_secrets"))
 }
 
 func Test_Sandbox_Delete_NeedsConfirmationWithoutTty(t *testing.T) {

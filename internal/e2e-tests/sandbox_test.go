@@ -41,8 +41,7 @@ func newSandboxSuite(t *testing.T) *sandboxSuite {
 }
 
 // TestE2ESandboxLifecycle creates a sandbox and waits for it, runs a command
-// in it, checks the listing and the record, stops and starts it, and deletes
-// it.
+// in it, checks the listing and the record, and deletes it.
 func TestE2ESandboxLifecycle(t *testing.T) {
 	s := newSandboxSuite(t)
 	// Registered on the lifecycle test, not the Create subtest: a failure
@@ -63,7 +62,6 @@ func TestE2ESandboxLifecycle(t *testing.T) {
 	t.Run("List", s.List)
 	t.Run("Describe", s.Describe)
 	t.Run("Update", s.Update)
-	t.Run("StopStart", s.StopStart)
 	t.Run("Delete", s.Delete)
 }
 
@@ -121,14 +119,6 @@ func (s *sandboxSuite) Update(t *testing.T) {
 	out := mustCLI(t, "sandbox", "update", s.name,
 		"--display-name", "E2E Sandbox", "--label", "e2e=cli", "--label", "stage=two")
 	require.Contains(t, out, "Display:     E2E Sandbox")
-}
-
-func (s *sandboxSuite) StopStart(t *testing.T) {
-	out := mustCLI(t, "sandbox", "stop", s.name)
-	require.Contains(t, out, "Enabled:     false")
-
-	out = mustCLI(t, "sandbox", "start", s.name)
-	require.Contains(t, out, "Enabled:     true")
 }
 
 func (s *sandboxSuite) Delete(t *testing.T) {

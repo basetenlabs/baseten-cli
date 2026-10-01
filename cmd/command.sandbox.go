@@ -50,7 +50,7 @@ var commandSandbox = Command{
 			Description: sandboxPreRelease +
 				"Retrieves one sandbox's current record: status, execution URL, image, memory, " +
 				"region, and labels.",
-			Flags: SandboxTeamFlags{},
+			Flags: SandboxDescribeFlags{},
 			Output: &CommandOutput[sandbox.SandboxInfo]{
 				TextDescription: "One field per line describing the sandbox.",
 				Examples: []CommandExample{{
@@ -82,6 +82,10 @@ var commandSandbox = Command{
 					{
 						Description: "Create a sandbox with server defaults and wait for it.",
 						Command:     "baseten sandbox create my-sandbox",
+					},
+					{
+						Description: "Create only if no live sandbox has this name yet.",
+						Command:     "baseten sandbox create my-sandbox --if-not-exists",
 					},
 					{
 						Description: "Create one in a specific region with extra memory.",
@@ -124,48 +128,6 @@ var commandSandbox = Command{
 				JQExample: CommandExample{
 					Description: "Update labels and print them.",
 					Command:     "baseten sandbox update my-sandbox --label env=dev --jq '.labels'",
-				},
-			},
-		},
-		{
-			Name:      "start",
-			Summary:   "Start a stopped sandbox (PRE-RELEASE)",
-			ArgsUsage: "NAME",
-			ExactArgs: 1,
-			Description: sandboxPreRelease +
-				"Enables a disabled sandbox so it accepts connections again. The sandbox keeps its " +
-				"filesystem and processes.",
-			Flags: SandboxTeamFlags{},
-			Output: &CommandOutput[sandbox.SandboxInfo]{
-				TextDescription: "One field per line describing the sandbox.",
-				Examples: []CommandExample{{
-					Description: "Start a sandbox.",
-					Command:     "baseten sandbox start my-sandbox",
-				}},
-				JQExample: CommandExample{
-					Description: "Start a sandbox and print its status.",
-					Command:     "baseten sandbox start my-sandbox --jq '.status'",
-				},
-			},
-		},
-		{
-			Name:      "stop",
-			Summary:   "Stop a sandbox (PRE-RELEASE)",
-			ArgsUsage: "NAME",
-			ExactArgs: 1,
-			Description: sandboxPreRelease +
-				"Disables a sandbox so it accepts no connections, without deleting it. Start it " +
-				"again with 'baseten sandbox start'.",
-			Flags: SandboxTeamFlags{},
-			Output: &CommandOutput[sandbox.SandboxInfo]{
-				TextDescription: "One field per line describing the sandbox.",
-				Examples: []CommandExample{{
-					Description: "Stop a sandbox.",
-					Command:     "baseten sandbox stop my-sandbox",
-				}},
-				JQExample: CommandExample{
-					Description: "Stop a sandbox and print its enabled state.",
-					Command:     "baseten sandbox stop my-sandbox --jq '.enabled'",
 				},
 			},
 		},
@@ -216,6 +178,7 @@ type SandboxListFlags struct {
 // optional; unset fields fall back to the server's defaults.
 type SandboxCreateFlags struct {
 	SandboxTeamFlags
+	IfNotExists bool     `flag:"if-not-exists" desc:"Return the existing live sandbox with this name instead of conflicting, or recreate one that is failed, terminated, or being deleted. The name flag or argument is required."`
 	Region      string   `flag:"region" desc:"Region to run in. Defaults to the closest region."`
 	MemoryMB    int      `flag:"memory-mb" desc:"Memory in megabytes, which also sets the CPU allocation. Defaults to 4096."`
 	Image       string   `flag:"image" desc:"Image reference including its tag. Defaults to the built-in sandbox image."`
@@ -364,4 +327,10 @@ type SandboxImagePushFlags struct {
 	Dir    string `flag:"dir" desc:"Directory to zip and upload as the image source. It must hold a Dockerfile at its root."`
 	Image  string `flag:"image" desc:"Registry image reference including a registry hostname, imported instead of building from a directory."`
 	NoWait bool   `flag:"no-wait" desc:"Return as soon as the push is accepted, without waiting for the build."`
+}
+
+// SandboxDescribeFlags configures 'baseten sandbox describe'.
+type SandboxDescribeFlags struct {
+	SandboxTeamFlags
+	ShowSecrets bool `flag:"show-secrets" desc:"Reveal environment variable values. Requires the workspace administrator role; other callers still see masked values."`
 }
