@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/sandboxclient"
 	"github.com/basetenlabs/baseten-cli/internal/sandboxconnect"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
-	"github.com/basetenlabs/baseten-cli/internal/sandboxclient"
 )
 
 func init() {
@@ -163,9 +163,9 @@ func commandSandboxUpdate(ctx *CommandContext, flags *cmd.SandboxUpdateFlags) er
 		return err
 	}
 	info, err := client.Update(ctx, flags.Name, &sandboxclient.UpdateSandboxRequest{
-		Image:       flags.Image,
-		Envs:        envs,
-		Labels:      labels,
+		Image:  flags.Image,
+		Envs:   envs,
+		Labels: labels,
 	})
 	if err != nil {
 		return fmt.Errorf("updating sandbox %s: %w", flags.Name, err)

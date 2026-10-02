@@ -39,7 +39,6 @@ type ImageInfo struct {
 	// for a specific version.
 	Name string `json:"name"`
 
-
 	// Status is the processing status of the most recent version.
 	Status ImageStatus `json:"status"`
 

@@ -4,9 +4,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/basetenlabs/baseten-cli/internal/sandboxclient"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/basetenlabs/baseten-go/client/sandboxapi"
-	"github.com/basetenlabs/baseten-cli/internal/sandboxclient"
 )
 
 // The curated types are hand-maintained twins of the generated records, so a

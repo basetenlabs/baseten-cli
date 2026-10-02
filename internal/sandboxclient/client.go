@@ -275,11 +275,11 @@ func (c *SandboxesClient) SandboxFromInfo(info SandboxInfo) (*Sandbox, error) {
 // Update updates a sandbox and returns its new record.
 func (c *SandboxesClient) Update(ctx context.Context, name string, request *UpdateSandboxRequest) (*SandboxInfo, error) {
 	body := managementapi.UpdateSandboxRequest{
-		Enabled:     request.Enabled,
-		Envs:        envsToAPI(request.Envs),
-		Labels:      labelsToAPI(request.Labels),
-		Image:       optionalString(request.Image),
-		ExternalId:  optionalString(request.ExternalID),
+		Enabled:    request.Enabled,
+		Envs:       envsToAPI(request.Envs),
+		Labels:     labelsToAPI(request.Labels),
+		Image:      optionalString(request.Image),
+		ExternalId: optionalString(request.ExternalID),
 	}
 	updated, err := c.api.UpdateSandbox(ctx, name, managementapi.UpdateSandboxParams{TeamId: c.teamID()}, body)
 	if err != nil {

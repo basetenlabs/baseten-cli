@@ -588,8 +588,7 @@ func TestUpdateEnabledNilOmittedSetSent(t *testing.T) {
 	client := clientForTest(t, server.URL, nil)
 
 	// Nil leaves the field out entirely.
-	if _, err := client.Update(context.Background(), "sbx-1", &sandboxclient.UpdateSandboxRequest{
-	}); err != nil {
+	if _, err := client.Update(context.Background(), "sbx-1", &sandboxclient.UpdateSandboxRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	body := map[string]any{}

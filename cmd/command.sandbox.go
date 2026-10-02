@@ -197,9 +197,9 @@ type SandboxCreateFlags struct {
 // their fields unchanged.
 type SandboxUpdateFlags struct {
 	SandboxNameFlags
-	Image       string   `flag:"image" desc:"Image reference including its tag. Omitted leaves it unchanged."`
-	Env         []string `flag:"env" desc:"Environment variable as KEY=VALUE. May be repeated. A supplied set replaces all previous environment variables."`
-	Label       []string `flag:"label" desc:"Label as KEY=VALUE. May be repeated. A supplied set replaces all previous labels."`
+	Image string   `flag:"image" desc:"Image reference including its tag. Omitted leaves it unchanged."`
+	Env   []string `flag:"env" desc:"Environment variable as KEY=VALUE. May be repeated. A supplied set replaces all previous environment variables."`
+	Label []string `flag:"label" desc:"Label as KEY=VALUE. May be repeated. A supplied set replaces all previous labels."`
 }
 
 // SandboxDeleteFlags configures 'baseten sandbox delete' and 'baseten sandbox
