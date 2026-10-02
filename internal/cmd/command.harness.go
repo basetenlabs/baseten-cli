@@ -2,14 +2,17 @@ package cmd
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -37,7 +40,8 @@ var harnessVersionNumber = regexp.MustCompile(`\d+(\.\d+)+\S*`)
 type selectedHarness struct {
 	harness.Harness
 	detection harness.Detection
-	selection harness.Selection
+	// selection is set by setup.
+	selection harnessSelection
 }
 
 // selectHarnesses returns the harnesses a command applies to. Setup offers
@@ -174,6 +178,10 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 			return fmt.Errorf("team %s has routes with different invoke URLs", team.Name)
 		}
 	}
+	defaults, err := harnessDefaults(ctx, api, team.Id, f, selected)
+	if err != nil {
+		return err
+	}
 	var plans []*harness.Plan
 	for i := range selected {
 		choice := &selected[i]
@@ -181,13 +189,8 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		if len(callable) == 0 {
 			return fmt.Errorf("team %s has no routes that %s can call", team.Name, choice.Name())
 		}
-		choice.selection = harness.Selection{
-			Primary:    cmp.Or(f.Route, callable[0].Name),
-			Background: f.BackgroundRoute,
-			Subagent:   f.SubagentRoute,
-			Fallback:   f.FallbackRoute,
-		}
-		current, err := choice.Prepare(choice.detection.Path, callable, choice.selection, endpoint)
+		choice.selection = harnessRouteSelection(ctx, f, *choice, defaults, callable)
+		current, err := choice.Prepare(choice.detection.Path, callable, choice.selection.Selection, endpoint)
 		if err != nil {
 			return fmt.Errorf("%s: %w", choice.Name(), err)
 		}
@@ -313,6 +316,137 @@ func harnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) {
 		return
 	}
 	ctx.Logf("Restarted codex app-server daemon (pid %d) so the new model catalog takes effect.\n", pid)
+}
+
+// Where a harness's route came from, as setup's summary reports it.
+const (
+	harnessRouteFromFlag = "flag"
+	harnessRouteFromCLI  = "CLI default"
+	harnessRouteFromTeam = "team default"
+	// harnessRouteFromDefault labels a default whose source this CLI doesn't know.
+	harnessRouteFromDefault = "default"
+)
+
+// Harness default roles.
+const (
+	harnessRolePrimary    = "primary"
+	harnessRoleBackground = "background"
+)
+
+// harnessSelection is the routes setup writes for one harness and where they came from.
+type harnessSelection struct {
+	harness.Selection
+	primarySource    string
+	backgroundSource string
+}
+
+// harnessDefaultsTimeout bounds the harness defaults request, so a stalled
+// endpoint falls back to the CLI's defaults instead of blocking setup.
+const harnessDefaultsTimeout = 5 * time.Second
+
+// harnessDefaults returns the team's harness default models, or nil when flags
+// set every route a selected harness uses. Setup falls back to its own
+// defaults when there are none, when the backend lacks the endpoint, or when
+// they can't be read; only an interrupt is an error.
+func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID string, f *cmd.HarnessSetupFlags, selected []selectedHarness) (*managementapi.RouteHarnessDefaults, error) {
+	needed := slices.ContainsFunc(selected, func(choice selectedHarness) bool {
+		return f.Route == "" || (f.BackgroundRoute == "" && choice.BackgroundRoute(harness.Selection{}) != "")
+	})
+	if !needed {
+		return nil, nil
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, harnessDefaultsTimeout)
+	defer cancel()
+	settings, err := api.GetRoutesSettingsTeams(requestCtx, teamID)
+	var re *managementapi.ResponseError
+	switch {
+	case ctx.Err() != nil:
+		return nil, ctx.Err()
+	case errors.As(err, &re) && (re.StatusCode == http.StatusNotFound || re.StatusCode == http.StatusForbidden):
+		ctx.VerboseLogf("No harness defaults: HTTP %d\n", re.StatusCode)
+		return nil, nil
+	case err != nil:
+		ctx.Logf("warning: could not read harness defaults, using CLI defaults: %v\n", err)
+		return nil, nil
+	}
+	return &settings.HarnessDefaults, nil
+}
+
+// harnessDefaultModels returns a harness's default model for each role it has.
+// A role is nil when the team has no route to use for it.
+func harnessDefaultModels(defaults *managementapi.RouteHarnessDefaults, harnessName string) map[string]*managementapi.RouteHarnessModel {
+	if defaults == nil {
+		return nil
+	}
+	switch harnessName {
+	case harness.ClaudeCode:
+		return map[string]*managementapi.RouteHarnessModel{
+			harnessRolePrimary:    defaults.ClaudeCode.Primary,
+			harnessRoleBackground: defaults.ClaudeCode.Background,
+		}
+	case harness.OpenCode:
+		return map[string]*managementapi.RouteHarnessModel{
+			harnessRolePrimary:    defaults.Opencode.Primary,
+			harnessRoleBackground: defaults.Opencode.Background,
+		}
+	case harness.Codex:
+		return map[string]*managementapi.RouteHarnessModel{harnessRolePrimary: defaults.Codex.Primary}
+	default:
+		panic(fmt.Sprintf("no harness defaults for harness %q", harnessName))
+	}
+}
+
+// harnessRouteSelection picks the routes for one harness: flags first, then the
+// team's defaults, then the CLI's own defaults.
+func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice selectedHarness, defaults *managementapi.RouteHarnessDefaults, callable []harness.Route) harnessSelection {
+	s := harnessSelection{
+		Selection: harness.Selection{
+			Primary:    f.Route,
+			Background: f.BackgroundRoute,
+			Subagent:   f.SubagentRoute,
+			Fallback:   f.FallbackRoute,
+		},
+		primarySource:    harnessRouteFromFlag,
+		backgroundSource: harnessRouteFromFlag,
+	}
+	models := harnessDefaultModels(defaults, choice.Name())
+	if s.Primary == "" {
+		s.Primary, s.primarySource = callable[0].Name, harnessRouteFromCLI
+		if name, source, ok := harnessDefaultRoute(ctx, choice.Name(), harnessRolePrimary, models, callable); ok {
+			s.Primary, s.primarySource = name, source
+		}
+	}
+	// Codex has no background setting, so the API has no background role for it.
+	if s.Background == "" && choice.BackgroundRoute(harness.Selection{}) != "" {
+		s.backgroundSource = harnessRouteFromCLI
+		if name, source, ok := harnessDefaultRoute(ctx, choice.Name(), harnessRoleBackground, models, callable); ok {
+			s.Background, s.backgroundSource = name, source
+		}
+	}
+	return s
+}
+
+// harnessDefaultRoute returns the default route for a role if the harness can
+// call it. A role a team admin didn't set falls back to a route chosen from the
+// team's Model APIs without checking API formats, and the API reports both as
+// `team`, so a default the harness can't call is skipped with only a verbose
+// log rather than a warning on every run. A source added after this CLI was
+// built is still the server's chosen default, so it's used.
+func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models map[string]*managementapi.RouteHarnessModel, callable []harness.Route) (string, string, bool) {
+	model := models[role]
+	if model == nil {
+		return "", "", false
+	}
+	source := harnessRouteFromTeam
+	if model.Source != managementapi.RouteSettingSource_team {
+		ctx.VerboseLogf("Unknown source %q for the %s %s default\n", model.Source, harnessName, role)
+		source = harnessRouteFromDefault
+	}
+	if slices.ContainsFunc(callable, func(r harness.Route) bool { return r.Name == model.Route.Name }) {
+		return model.Route.Name, source, true
+	}
+	ctx.VerboseLogf("Ignoring the %s for the %s %s route: %s can't call route %s\n", source, harnessName, role, harnessName, model.Route.Name)
+	return "", "", false
 }
 
 func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error {
@@ -517,9 +651,9 @@ func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, s
 		s := choice.selection
 		ctx.Outputf("\n%s\n", heading.Render(choice.Name()))
 		ctx.Outputf("  Config            %s\n", harnessDisplayPath(choice.detection.Path))
-		ctx.Outputf("  Default route     %s\n", accent.Render(s.Primary))
-		if background := choice.BackgroundRoute(s); background != "" {
-			ctx.Outputf("  Background route  %s\n", accent.Render(background))
+		ctx.Outputf("  Default route     %s (%s)\n", accent.Render(s.Primary), s.primarySource)
+		if background := choice.BackgroundRoute(s.Selection); background != "" {
+			ctx.Outputf("  Background route  %s (%s)\n", accent.Render(background), s.backgroundSource)
 		}
 		if s.Subagent != "" {
 			ctx.Outputf("  Subagent route    %s\n", accent.Render(s.Subagent))

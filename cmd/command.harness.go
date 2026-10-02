@@ -21,7 +21,9 @@ var commandHarness = Command{
 				"Configure installed harnesses with your team's routes and a routes API key.\n\n" +
 				"Setup offers a picker of installed harnesses when --harness is omitted. Repeat --harness to select several. " +
 				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code lists the routes that serve " +
-				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the default unless --route is set.\n\n" +
+				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. " +
+				"Unless set with flags, each harness's routes come from the team's default models for it. Without one, " +
+				"the default route is the first listed route and the background route is deepseek-ai/DeepSeek-V4.1-Flash.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
 				"The routes API key is created on first setup and reused afterward. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it.",
@@ -230,8 +232,8 @@ type HarnessSetupFlags struct {
 	HarnessFlags
 	Team            string `flag:"team" desc:"Team name or ID whose routes to use. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
 	KeyName         string `flag:"key-name" desc:"Name of the routes API key created in Baseten. Defaults to baseten-harness-<hostname>, numbered (-2, -3, ...) if one of your keys has that name."`
-	Route           string `flag:"route" desc:"Default route. Defaults to the first route the harness lists."`
-	BackgroundRoute string `flag:"background-route" desc:"Route for lightweight background tasks (Claude Code and OpenCode). Defaults to deepseek-ai/DeepSeek-V4.1-Flash."`
+	Route           string `flag:"route" desc:"Default route. Defaults to the team's default for the harness, else the first route the harness lists."`
+	BackgroundRoute string `flag:"background-route" desc:"Route for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
 	SubagentRoute   string `flag:"subagent-route" desc:"Route for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
 	FallbackRoute   string `flag:"fallback-route" desc:"Route to fall back to when the default is unavailable (Claude Code). Defaults to the default route."`
 	DryRun          bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
