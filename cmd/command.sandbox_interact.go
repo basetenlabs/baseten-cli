@@ -11,6 +11,15 @@ const sandboxExecDescription = "Runs a command in a deployed sandbox, streaming 
 	"command string, passed to the sandbox's shell as-is; several arguments are " +
 	"re-quoted so their boundaries survive."
 
+// sandboxExecTextDescription and sandboxExecJSONDescription are shared by
+// 'sandbox exec' and 'sandbox process exec'; the alias renders the same
+// output contract as the command it forwards to.
+const sandboxExecTextDescription = "The command's output, streamed, with the exit code passed " +
+	"through as the CLI's exit code."
+
+const sandboxExecJSONDescription = "With --output json, the final process record once the command " +
+	"exits, and no streamed output."
+
 var sandboxInteractionCommands = []Command{
 	processSubcommands,
 	{
@@ -23,10 +32,8 @@ var sandboxInteractionCommands = []Command{
 			sandboxExecDescription,
 		Flags: SandboxExecFlags{},
 		Output: &CommandOutput[ProcessInfoOutput]{
-			TextDescription: "The command's output, streamed, with the exit code passed " +
-				"through as the CLI's exit code.",
-			JSONDescription: "With --output json, the final process record once the command " +
-				"exits, and no streamed output.",
+			TextDescription: sandboxExecTextDescription,
+			JSONDescription: sandboxExecJSONDescription,
 			Examples: []CommandExample{
 				{
 					Description: "Run a command in a sandbox.",
@@ -83,10 +90,8 @@ var processSubcommands = Command{
 			Description: sandboxPreRelease + sandboxExecDescription,
 			Flags:       SandboxExecFlags{},
 			Output: &CommandOutput[ProcessInfoOutput]{
-				TextDescription: "The command's output, streamed, with the exit code passed " +
-					"through as the CLI's exit code.",
-				JSONDescription: "With --output json, the final process record once the command " +
-					"exits, and no streamed output.",
+				TextDescription: sandboxExecTextDescription,
+				JSONDescription: sandboxExecJSONDescription,
 				Examples: []CommandExample{
 					{
 						Description: "Run a command in a sandbox.",
