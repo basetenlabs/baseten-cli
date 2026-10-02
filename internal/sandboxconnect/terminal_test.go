@@ -1,8 +1,10 @@
 package sandboxconnect
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -73,11 +75,12 @@ func TestTerminalInputRoundTripAndClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { stdoutRead.Close(); stdoutWrite.Close() })
+	var errorBuffer = &bytes.Buffer{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	terminal, err := Dial(ctx, wsURL, stdinRead, stdoutWrite)
+	terminal, err := Dial(ctx, wsURL, stdinRead, stdoutWrite, errorBuffer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +97,10 @@ func TestTerminalInputRoundTripAndClose(t *testing.T) {
 	}
 	echoed := make([]byte, 8)
 	// A bounded read rather than ReadAll: a missing echo must fail the test,
-	// not hang it.
+	// not hang it. The deadline bounds the blocking read itself.
+	if err := stdoutRead.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	readDeadline := time.After(5 * time.Second)
 	for read := 0; read < len(echoed); {
 		n, err := stdoutRead.Read(echoed[read:])
@@ -117,5 +123,59 @@ func TestTerminalInputRoundTripAndClose(t *testing.T) {
 	case <-outputDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("readLoop did not return after the server closed")
+	}
+}
+
+func TestInputSurvivesSplitMultiByteCharacter(t *testing.T) {
+	// Two inputs: the held-back rune completes on the second read, so the
+	// paste arrives as two messages.
+	server := terminalTestServer(t, 2)
+	stdinRead, stdinWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stdinRead.Close(); stdinWrite.Close() })
+	stdoutRead, stdoutWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stdoutRead.Close(); stdoutWrite.Close() })
+	if err := stdoutRead.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var errorBuffer = &bytes.Buffer{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	terminal, err := Dial(ctx, wsURL, stdinRead, stdoutWrite, errorBuffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go terminal.inputLoop(ctx)
+	outputDone := make(chan struct{})
+	go func() {
+		defer close(outputDone)
+		terminal.readLoop(ctx)
+	}()
+
+	// A paste can split a multi-byte character at the read boundary; the
+	// input loop must hold the fragment back, not corrupt it. The first
+	// chunk ends inside the two-byte ö.
+	input := "hällö\n"
+	if _, err := stdinWrite.Write([]byte(input[:6])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdinWrite.Write([]byte(input[6:])); err != nil {
+		t.Fatal(err)
+	}
+
+	echoed := make([]byte, len(input))
+	if _, err := io.ReadFull(stdoutRead, echoed); err != nil {
+		t.Fatalf("reading echoed output: %v", err)
+	}
+	if string(echoed) != input {
+		t.Errorf("echoed %q, want %q", echoed, input)
 	}
 }

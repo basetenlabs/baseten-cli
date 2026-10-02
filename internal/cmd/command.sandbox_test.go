@@ -402,11 +402,12 @@ func Test_Sandbox_Image_ListAndPush(t *testing.T) {
 func Test_Sandbox_Image_Push_NeedsExactlyOneSource(t *testing.T) {
 	h := NewCommandHarness(t)
 
+	// The oneof group rejects both no source and two sources at parse time.
 	err := h.Execute("sandbox", "image", "push", "--name", "img")
-	h.Require.ErrorContains(err, "exactly one")
+	h.Require.ErrorContains(err, "[dir image] is required")
 
 	err = h.Execute("sandbox", "image", "push", "--name", "img", "--dir", ".", "--image", "reg/img")
-	h.Require.ErrorContains(err, "exactly one")
+	h.Require.ErrorContains(err, "none of the others can be")
 }
 
 func Test_Sandbox_Connect_RequiresTerminal(t *testing.T) {

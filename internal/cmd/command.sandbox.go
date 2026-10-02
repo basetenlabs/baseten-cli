@@ -447,9 +447,23 @@ func outputSandboxInfo(ctx *CommandContext, info sandboxclient.SandboxInfo) {
 	if len(info.Labels) > 0 {
 		ctx.Outputf("Labels:      %s\n", formatSandboxLabels(info.Labels))
 	}
+	if len(info.Envs) > 0 {
+		ctx.Outputf("Envs:        %s\n", formatSandboxEnvs(info.Envs))
+	}
 	if info.ExpiresInSeconds > 0 {
 		ctx.Outputf("Expires in:  %ds\n", info.ExpiresInSeconds)
 	}
+}
+
+// formatSandboxEnvs renders env variables sorted by name, so the same set
+// always prints the same way.
+func formatSandboxEnvs(envs map[string]sandboxclient.SandboxEnvValue) string {
+	pairs := make([]string, 0, len(envs))
+	for name, env := range envs {
+		pairs = append(pairs, name+"="+env.Value)
+	}
+	slices.Sort(pairs)
+	return strings.Join(pairs, ", ")
 }
 
 func formatSandboxLabels(labels map[string]string) string {
@@ -537,12 +551,16 @@ func commandSandboxImageList(ctx *CommandContext, flags *cmd.SandboxTeamFlags) e
 	}
 	rows := make([][]string, 0, len(items))
 	for _, info := range items {
+		created := "-"
+		if !info.CreatedAt.IsZero() {
+			created = info.CreatedAt.UTC().Format(time.RFC3339)
+		}
 		rows = append(rows, []string{
 			info.Name,
 			info.Status,
 			strconv.FormatInt(info.TagCount, 10),
 			formatBytes(info.SizeBytes),
-			info.CreatedAt.UTC().Format(time.RFC3339),
+			created,
 		})
 	}
 	ctx.OutputTable(TableOutput{
@@ -655,7 +673,7 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxNameFlags) err
 	}
 
 	ctx.Logf("Connecting to sandbox %s. Press Ctrl+D to disconnect.\n\n", name)
-	terminal, err := sandboxconnect.Dial(ctx, wsURL, stdin, stdout)
+	terminal, err := sandboxconnect.Dial(ctx, wsURL, stdin, stdout, ctx.Stderr)
 	if err != nil {
 		return err
 	}

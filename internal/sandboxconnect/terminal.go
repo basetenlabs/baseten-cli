@@ -10,12 +10,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 	"golang.org/x/term"
@@ -41,7 +43,10 @@ type Terminal struct {
 	writeMu sync.Mutex
 	stdin   *os.File
 	stdout  *os.File
-	oldMode *term.State
+	// errorWriter receives the server's terminal errors, the command's
+	// stderr rather than the process global.
+	errorWriter io.Writer
+	oldMode     *term.State
 	// done is closed once the session has fully ended and the terminal
 	// restored.
 	done chan struct{}
@@ -72,7 +77,7 @@ func WebSocketURL(sandboxURL, token string) (string, error) {
 // default session is shared, so reusing it would rejoin a shell an earlier
 // connect may have left. The window size rides the URL, the same place the
 // reference client puts it.
-func Dial(ctx context.Context, wsURL string, stdin, stdout *os.File) (*Terminal, error) {
+func Dial(ctx context.Context, wsURL string, stdin, stdout *os.File, errorWriter io.Writer) (*Terminal, error) {
 	parsed, err := url.Parse(wsURL)
 	if err != nil {
 		return nil, err
@@ -99,7 +104,7 @@ func Dial(ctx context.Context, wsURL string, stdin, stdout *os.File) (*Terminal,
 			tokenInQuery.ReplaceAllString(err.Error(), "token=REDACTED"))
 	}
 	return &Terminal{
-		conn: conn, stdin: stdin, stdout: stdout,
+		conn: conn, stdin: stdin, stdout: stdout, errorWriter: errorWriter,
 		done: make(chan struct{}),
 	}, nil
 }
@@ -162,22 +167,47 @@ func (t *Terminal) readLoop(ctx context.Context) error {
 		case "output":
 			_, _ = t.stdout.WriteString(message.Data)
 		case "error":
-			_, _ = os.Stderr.WriteString(message.Data + "\n")
+			_, _ = io.WriteString(t.errorWriter, message.Data+"\n")
 		}
 	}
 }
 
 func (t *Terminal) inputLoop(ctx context.Context) {
 	buffer := make([]byte, 512)
+	// A read can split a multi-byte UTF-8 character at the buffer boundary;
+	// the incomplete tail stays pending until the next read completes it.
+	var pending []byte
 	for {
 		read, err := t.stdin.Read(buffer)
 		if err != nil {
 			return
 		}
-		if err := t.send(Message{Type: "input", Data: string(buffer[:read])}); err != nil {
-			return
+		pending = append(pending, buffer[:read]...)
+		complete := completeRunes(pending)
+		if complete > 0 {
+			if err := t.send(Message{Type: "input", Data: string(pending[:complete])}); err != nil {
+				return
+			}
+			pending = append(pending[:0], pending[complete:]...)
 		}
 	}
+}
+
+// completeRunes returns the length of the leading run of complete UTF-8
+// runes, holding back a partial sequence split at a read boundary.
+func completeRunes(data []byte) int {
+	for i := 0; i < len(data); {
+		if data[i] < utf8.RuneSelf {
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRune(data[i:])
+		if r == utf8.RuneError && size <= 1 {
+			return i
+		}
+		i += size
+	}
+	return len(data)
 }
 
 func (t *Terminal) restore() {

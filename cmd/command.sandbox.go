@@ -333,8 +333,8 @@ type SandboxImageNameFlags struct {
 // of Dir and Image is given.
 type SandboxImagePushFlags struct {
 	SandboxImageNameFlags
-	Dir   string `flag:"dir" desc:"Directory to zip and upload as the image source. It must hold a Dockerfile at its root."`
-	Image string `flag:"image" desc:"Registry image reference including a registry hostname, imported instead of building from a directory."`
+	Dir   string `flag:"dir" desc:"Directory to zip and upload as the image source. It must hold a Dockerfile at its root." oneof:"image-source"`
+	Image string `flag:"image" desc:"Registry image reference including a registry hostname, imported instead of building from a directory." oneof:"image-source"`
 	Wait  bool   `flag:"wait" desc:"Wait until the image is BUILT."`
 }
 
