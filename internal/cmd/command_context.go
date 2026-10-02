@@ -18,8 +18,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
-	"github.com/basetenlabs/baseten-go/sandbox"
 	"github.com/basetenlabs/baseten-go/client"
+	"github.com/basetenlabs/baseten-go/sandbox"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/itchyny/gojq"
@@ -472,9 +472,9 @@ func (c *CommandContext) NewSandboxClient(team string) (*sandbox.Client, error) 
 		}
 	}
 	return sandbox.NewClient(sandbox.ClientOptions{
-		APIKey:    credential,
-		TeamID:    teamID,
-		BaseURL:   remote.ManagementURL(),
+		APIKey:     credential,
+		TeamID:     teamID,
+		BaseURL:    remote.ManagementURL(),
 		HTTPClient: c.httpClient(),
 	})
 }
