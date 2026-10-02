@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.21
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
-	github.com/basetenlabs/baseten-go v0.3.1-0.20261001020948-3873a59b2fd8
+	github.com/basetenlabs/baseten-go v0.3.1-0.20261002191235-926a5bbc8ea4
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.7

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -318,15 +320,14 @@ func harnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) {
 
 // Where a harness's route came from, as setup's summary reports it.
 const (
-	harnessRouteFromFlag    = "flag"
-	harnessRouteFromCLI     = "CLI default"
-	harnessRouteFromTeam    = "team default"
-	harnessRouteFromBaseten = "Baseten default"
+	harnessRouteFromFlag = "flag"
+	harnessRouteFromCLI  = "CLI default"
+	harnessRouteFromTeam = "team default"
 	// harnessRouteFromDefault labels a default whose source this CLI doesn't know.
 	harnessRouteFromDefault = "default"
 )
 
-// Harness default roles, the keys of a harness config's models.
+// Harness default roles.
 const (
 	harnessRolePrimary    = "primary"
 	harnessRoleBackground = "background"
@@ -339,18 +340,24 @@ type harnessSelection struct {
 	backgroundSource string
 }
 
-// harnessDefaults returns the team's harness default models, keyed by harness
-// name, or nil when flags set every route a selected harness uses. Setup falls
-// back to its own defaults when there are none, when the backend lacks the
-// endpoint, or when they can't be read; only an interrupt is an error.
-func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID string, f *cmd.HarnessSetupFlags, selected []selectedHarness) (map[string]managementapi.RouteHarnessConfig, error) {
+// harnessDefaultsTimeout bounds the harness defaults request, so a stalled
+// endpoint falls back to the CLI's defaults instead of blocking setup.
+const harnessDefaultsTimeout = 5 * time.Second
+
+// harnessDefaults returns the team's harness default models, or nil when flags
+// set every route a selected harness uses. Setup falls back to its own
+// defaults when there are none, when the backend lacks the endpoint, or when
+// they can't be read; only an interrupt is an error.
+func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID string, f *cmd.HarnessSetupFlags, selected []selectedHarness) (*managementapi.RouteHarnessDefaults, error) {
 	needed := slices.ContainsFunc(selected, func(choice selectedHarness) bool {
 		return f.Route == "" || (f.BackgroundRoute == "" && choice.BackgroundRoute(harness.Selection{}) != "")
 	})
 	if !needed {
 		return nil, nil
 	}
-	configs, err := api.GetRoutesHarnessConfigs(ctx, managementapi.GetV1RoutesHarnessConfigsParams{TeamId: teamID})
+	requestCtx, cancel := context.WithTimeout(ctx, harnessDefaultsTimeout)
+	defer cancel()
+	settings, err := api.GetRoutesSettingsTeams(requestCtx, teamID)
 	var re *managementapi.ResponseError
 	switch {
 	case ctx.Err() != nil:
@@ -362,12 +369,36 @@ func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID stri
 		ctx.Logf("warning: could not read harness defaults, using CLI defaults: %v\n", err)
 		return nil, nil
 	}
-	return configs.HarnessConfigs, nil
+	return &settings.HarnessDefaults, nil
+}
+
+// harnessDefaultModels returns a harness's default model for each role it has.
+// A role is nil when the team has no route to use for it.
+func harnessDefaultModels(defaults *managementapi.RouteHarnessDefaults, harnessName string) map[string]*managementapi.RouteHarnessModel {
+	if defaults == nil {
+		return nil
+	}
+	switch harnessName {
+	case harness.ClaudeCode:
+		return map[string]*managementapi.RouteHarnessModel{
+			harnessRolePrimary:    defaults.ClaudeCode.Primary,
+			harnessRoleBackground: defaults.ClaudeCode.Background,
+		}
+	case harness.OpenCode:
+		return map[string]*managementapi.RouteHarnessModel{
+			harnessRolePrimary:    defaults.Opencode.Primary,
+			harnessRoleBackground: defaults.Opencode.Background,
+		}
+	case harness.Codex:
+		return map[string]*managementapi.RouteHarnessModel{harnessRolePrimary: defaults.Codex.Primary}
+	default:
+		panic(fmt.Sprintf("no harness defaults for harness %q", harnessName))
+	}
 }
 
 // harnessRouteSelection picks the routes for one harness: flags first, then the
-// team's or Baseten's defaults, then the CLI's own defaults.
-func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice selectedHarness, defaults map[string]managementapi.RouteHarnessConfig, callable []harness.Route) harnessSelection {
+// team's defaults, then the CLI's own defaults.
+func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice selectedHarness, defaults *managementapi.RouteHarnessDefaults, callable []harness.Route) harnessSelection {
 	s := harnessSelection{
 		Selection: harness.Selection{
 			Primary:    f.Route,
@@ -378,14 +409,14 @@ func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice
 		primarySource:    harnessRouteFromFlag,
 		backgroundSource: harnessRouteFromFlag,
 	}
-	models := defaults[choice.Name()].Models
+	models := harnessDefaultModels(defaults, choice.Name())
 	if s.Primary == "" {
 		s.Primary, s.primarySource = callable[0].Name, harnessRouteFromCLI
 		if name, source, ok := harnessDefaultRoute(ctx, choice.Name(), harnessRolePrimary, models, callable); ok {
 			s.Primary, s.primarySource = name, source
 		}
 	}
-	// Codex has no background setting, so the API returns no background role for it.
+	// Codex has no background setting, so the API has no background role for it.
 	if s.Background == "" && choice.BackgroundRoute(harness.Selection{}) != "" {
 		s.backgroundSource = harnessRouteFromCLI
 		if name, source, ok := harnessDefaultRoute(ctx, choice.Name(), harnessRoleBackground, models, callable); ok {
@@ -396,34 +427,25 @@ func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice
 }
 
 // harnessDefaultRoute returns the default route for a role if the harness can
-// call it. Baseten picks its defaults without checking API formats, so a
-// Baseten default the harness can't call is skipped quietly; a team default
-// warns, since a team admin can fix it. A source added after this CLI was
-// built is still the server's chosen default, so it's used rather than
-// warned about on every run.
-func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models map[string]managementapi.RouteHarnessModel, callable []harness.Route) (string, string, bool) {
-	model, ok := models[role]
-	if !ok {
+// call it. A role a team admin didn't set falls back to a route chosen from the
+// team's Model APIs without checking API formats, and the API reports both as
+// `team`, so a default the harness can't call is skipped with only a verbose
+// log rather than a warning on every run. A source added after this CLI was
+// built is still the server's chosen default, so it's used.
+func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models map[string]*managementapi.RouteHarnessModel, callable []harness.Route) (string, string, bool) {
+	model := models[role]
+	if model == nil {
 		return "", "", false
 	}
-	var source string
-	switch model.Source {
-	case managementapi.RouteHarnessModelSource_team:
-		source = harnessRouteFromTeam
-	case managementapi.RouteHarnessModelSource_baseten:
-		source = harnessRouteFromBaseten
-	default:
+	source := harnessRouteFromTeam
+	if model.Source != managementapi.RouteSettingSource_team {
 		ctx.VerboseLogf("Unknown source %q for the %s %s default\n", model.Source, harnessName, role)
 		source = harnessRouteFromDefault
 	}
 	if slices.ContainsFunc(callable, func(r harness.Route) bool { return r.Name == model.Route.Name }) {
 		return model.Route.Name, source, true
 	}
-	if model.Source != managementapi.RouteHarnessModelSource_team {
-		ctx.VerboseLogf("Ignoring the %s for the %s %s route: %s can't call route %s\n", source, harnessName, role, harnessName, model.Route.Name)
-	} else {
-		ctx.Logf("warning: ignoring the team default for the %s %s route: %s can't call route %s\n", harnessName, role, harnessName, model.Route.Name)
-	}
+	ctx.VerboseLogf("Ignoring the %s for the %s %s route: %s can't call route %s\n", source, harnessName, role, harnessName, model.Route.Name)
 	return "", "", false
 }
 

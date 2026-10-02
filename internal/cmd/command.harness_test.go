@@ -971,9 +971,17 @@ func harnessRoute(api *MockManagementAPI, name string) map[string]any {
 	}
 }
 
+// harnessDefaultsPath is team-a's route settings, which hold its harness defaults.
+const harnessDefaultsPath = "/v1/routes/settings/teams/team-a"
+
+// harnessDefaultsBody is a team settings response with the given harness defaults.
+func harnessDefaultsBody(defaults map[string]any) map[string]any {
+	return map[string]any{"team_id": "team-a", "harness_defaults": defaults}
+}
+
 // harnessDefaultsAPI is fakeHarnessAPI with four team-a routes and the given
 // harness defaults, and harness settings directories under a temporary root.
-func harnessDefaultsAPI(t *testing.T, configs map[string]any) (*CommandHarness, *MockManagementAPI, string) {
+func harnessDefaultsAPI(t *testing.T, defaults map[string]any) (*CommandHarness, *MockManagementAPI, string) {
 	t.Helper()
 	h, api := fakeHarnessAPI(t)
 	var routes []any
@@ -981,7 +989,7 @@ func harnessDefaultsAPI(t *testing.T, configs map[string]any) (*CommandHarness, 
 		routes = append(routes, harnessRoute(api, name))
 	}
 	api.SetRoute("GET", "/v1/routes", 200, map[string]any{"items": routes, "pagination": map[string]any{"has_more": false}})
-	api.SetRoute("GET", "/v1/routes/harness-configs", 200, map[string]any{"harness_configs": configs})
+	api.SetRoute("GET", harnessDefaultsPath, 200, harnessDefaultsBody(defaults))
 	root := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
@@ -1022,29 +1030,32 @@ func Test_Harness_Setup_Defaults(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api, root := harnessDefaultsAPI(t, nil)
 	route := func(name string) map[string]any { return harnessRoute(api, name) }
-	api.SetRoute("GET", "/v1/routes/harness-configs", 200, map[string]any{"harness_configs": map[string]any{
-		"claude-code": map[string]any{"models": map[string]any{
+	api.SetRoute("GET", harnessDefaultsPath, 200, harnessDefaultsBody(map[string]any{
+		"claude_code": map[string]any{
 			"primary":    harnessDefaultModel("team", route("claude")),
-			"background": harnessDefaultModel("baseten", route("fast")),
-		}},
-		"opencode": map[string]any{"models": map[string]any{
-			"primary":    harnessDefaultModel("baseten", route("gpt")),
+			"background": harnessDefaultModel("team", route("fast")),
+		},
+		"opencode": map[string]any{
+			"primary":    harnessDefaultModel("team", route("gpt")),
 			"background": harnessDefaultModel("team", route("claude")),
-		}},
-		"codex": map[string]any{"models": map[string]any{
+		},
+		"codex": map[string]any{
 			"primary": harnessDefaultModel("team", route("gpt")),
-		}},
-	}})
-	args := []string{"harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "codex"}
+		},
+	}))
+	// Every harness, so one setup can't read defaults for has to be added here.
+	args := []string{"harness", "setup"}
+	for _, choice := range harness.All() {
+		args = append(args, "--harness", choice.Name())
+	}
 
 	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
-	h.Require.Equal([]string{"team-a"}, api.FindCall("GET", "/v1/routes/harness-configs").Query()["team_id"])
+	h.Require.Equal(1, countCalls(api, "GET", harnessDefaultsPath), "setup reads the setup team's defaults once")
 	for _, want := range []string{
 		"Default route     acme/claude (team default)",
-		"Background route  acme/fast (Baseten default)",
-		"Default route     acme/gpt (Baseten default)",
-		"Background route  acme/claude (team default)",
+		"Background route  acme/fast (team default)",
 		"Default route     acme/gpt (team default)",
+		"Background route  acme/claude (team default)",
 	} {
 		h.Require.Contains(h.Stdout.String(), want)
 	}
@@ -1079,21 +1090,23 @@ func Test_Harness_Setup_DefaultsSetupCannotUse(t *testing.T) {
 	// The API doesn't check that the harness can call a route, and acme/gpt
 	// serves only the Responses API.
 	gpt := harnessRoute(api, "gpt")
-	api.SetRoute("GET", "/v1/routes/harness-configs", 200, map[string]any{"harness_configs": map[string]any{
-		"claude-code": map[string]any{"models": map[string]any{
+	api.SetRoute("GET", harnessDefaultsPath, 200, harnessDefaultsBody(map[string]any{
+		"claude_code": map[string]any{
 			"primary":    harnessDefaultModel("team", gpt),
-			"background": harnessDefaultModel("baseten", gpt),
-		}},
-	}})
+			"background": harnessDefaultModel("team", gpt),
+		},
+	}))
+	// `team` also covers the defaults chosen from the team's Model APIs, which
+	// no admin set, so a default setup can't use doesn't warn.
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--yes"))
-	stderr := h.Stderr.String()
-	h.Require.Contains(stderr, "warning: ignoring the team default for the claude-code primary route: claude-code can't call route acme/gpt\n")
-	h.Require.Equal(1, strings.Count(stderr, "warning:"), "a Baseten default setup can't use doesn't warn")
+	h.Require.NotContains(h.Stderr.String(), "warning")
 	// Skipped roles keep the CLI's defaults.
 	h.Require.Equal([2]string{"acme/primary", "deepseek-ai/DeepSeek-V4.1-Flash"}, harnessSetupRoutes(t, root)["claude-code"])
 
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--verbose", "--dry-run"))
-	h.Require.Contains(h.Stderr.String(), "Ignoring the Baseten default for the claude-code background route: claude-code can't call route acme/gpt\n")
+	for _, role := range []string{"primary", "background"} {
+		h.Require.Contains(h.Stderr.String(), "Ignoring the team default for the claude-code "+role+" route: claude-code can't call route acme/gpt\n")
+	}
 
 	// A flag replaces a default setup can't use, without a warning.
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/claude", "--background-route", "acme/fast", "--yes"))
@@ -1104,11 +1117,11 @@ func Test_Harness_Setup_DefaultsUnknownSource(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api, root := harnessDefaultsAPI(t, nil)
 	// Not a source the API returns today: it stands in for one added after this CLI was built.
-	api.SetRoute("GET", "/v1/routes/harness-configs", 200, map[string]any{"harness_configs": map[string]any{
-		"opencode": map[string]any{"models": map[string]any{
+	api.SetRoute("GET", harnessDefaultsPath, 200, harnessDefaultsBody(map[string]any{
+		"opencode": map[string]any{
 			"primary": harnessDefaultModel("organization", harnessRoute(api, "claude")),
-		}},
-	}})
+		},
+	}))
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--dry-run"))
 	h.Require.Contains(h.Stdout.String(), "Default route     acme/claude (default)")
 	h.Require.NotContains(h.Stderr.String(), "warning")
@@ -1127,9 +1140,9 @@ func Test_Harness_Setup_DefaultsSkippedWhenFlagsSetEveryRoute(t *testing.T) {
 	} {
 		h.Require.NoError(h.Execute(append([]string{"harness", "setup", "--dry-run"}, args...)...))
 	}
-	h.Require.Equal(0, countCalls(api, "GET", "/v1/routes/harness-configs"))
+	h.Require.Equal(0, countCalls(api, "GET", harnessDefaultsPath))
 	h.Require.NoError(h.Execute("harness", "setup", "--dry-run", "--harness", "claude-code", "--route", "acme/primary"))
-	h.Require.Equal(1, countCalls(api, "GET", "/v1/routes/harness-configs"), "the background route still comes from the defaults")
+	h.Require.Equal(1, countCalls(api, "GET", harnessDefaultsPath), "the background route still comes from the defaults")
 }
 
 func Test_Harness_Setup_DefaultsInterrupted(t *testing.T) {
@@ -1137,7 +1150,7 @@ func Test_Harness_Setup_DefaultsInterrupted(t *testing.T) {
 	h, api, _ := harnessDefaultsAPI(t, nil)
 	ctx, cancel := context.WithCancel(h.Context)
 	h.Context = ctx
-	api.SetRouteFunc("GET", "/v1/routes/harness-configs", func(w http.ResponseWriter, r *http.Request) {
+	api.SetRouteFunc("GET", harnessDefaultsPath, func(w http.ResponseWriter, r *http.Request) {
 		cancel()
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -1152,13 +1165,13 @@ func Test_Harness_Setup_NoDefaults(t *testing.T) {
 	for name, respond := range map[string]func(*MockManagementAPI){
 		"empty": func(api *MockManagementAPI) {},
 		"not found": func(api *MockManagementAPI) {
-			api.SetRoute("GET", "/v1/routes/harness-configs", 404, map[string]string{"error": "not found"})
+			api.SetRoute("GET", harnessDefaultsPath, 404, map[string]string{"error": "not found"})
 		},
 		"forbidden": func(api *MockManagementAPI) {
-			api.SetRoute("GET", "/v1/routes/harness-configs", 403, map[string]string{"error": "forbidden"})
+			api.SetRoute("GET", harnessDefaultsPath, 403, map[string]string{"error": "forbidden"})
 		},
 		"failing": func(api *MockManagementAPI) {
-			api.SetRoute("GET", "/v1/routes/harness-configs", 500, map[string]string{"error": "unavailable"})
+			api.SetRoute("GET", harnessDefaultsPath, 500, map[string]string{"error": "unavailable"})
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
