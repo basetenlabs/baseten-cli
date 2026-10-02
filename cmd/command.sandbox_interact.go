@@ -4,6 +4,13 @@ import "github.com/basetenlabs/baseten-cli/internal/sandboxclient"
 
 // sandboxInteractionCommands are the commands that work inside one sandbox,
 // kept apart from the management ones above them in the family.
+const sandboxExecDescription = "Runs a command in a deployed sandbox, streaming its output as it " +
+	"arrives. The command's exit code becomes the CLI's exit code.\n\n" +
+	"Put the command after a literal --, and every sandbox flag before it, so flags " +
+	"inside the command are passed through to it. One quoted argument is the whole " +
+	"command string, passed to the sandbox's shell as-is; several arguments are " +
+	"re-quoted so their boundaries survive."
+
 var sandboxInteractionCommands = []Command{
 	processSubcommands,
 	{
@@ -13,12 +20,7 @@ var sandboxInteractionCommands = []Command{
 		MaxArgs:   -1,
 		Description: sandboxPreRelease +
 			"Alias for 'sandbox process exec'.\n\n" +
-			"Runs a command in a deployed sandbox, streaming its output as it arrives. The " +
-			"command's exit code becomes the CLI's exit code.\n\n" +
-			"Put the command after a literal --, and every sandbox flag before it, so flags " +
-			"inside the command are passed through to it. One quoted argument is the whole " +
-			"command string, passed to the sandbox's shell as-is; several arguments are " +
-			"re-quoted so their boundaries survive.",
+			sandboxExecDescription,
 		Flags: SandboxExecFlags{},
 		Output: &CommandOutput[sandboxclient.ProcessInfo]{
 			TextDescription: "The command's output, streamed, with the exit code passed " +
@@ -74,18 +76,12 @@ var processSubcommands = Command{
 		"'process logs' inspect what ran.",
 	Children: []Command{
 		{
-			Name:      "exec",
-			Summary:   "Run a command in a sandbox (PRE-RELEASE)",
-			ArgsUsage: "-- COMMAND [ARGS...]",
-			MaxArgs:   -1,
-			Description: sandboxPreRelease +
-				"Runs a command in a deployed sandbox, streaming its output as it arrives. The " +
-				"command's exit code becomes the CLI's exit code.\n\n" +
-				"Put the command after a literal --, and every sandbox flag before it, so flags " +
-				"inside the command are passed through to it. One quoted argument is the whole " +
-				"command string, passed to the sandbox's shell as-is; several arguments are " +
-				"re-quoted so their boundaries survive.",
-			Flags: SandboxExecFlags{},
+			Name:        "exec",
+			Summary:     "Run a command in a sandbox (PRE-RELEASE)",
+			ArgsUsage:   "-- COMMAND [ARGS...]",
+			MaxArgs:     -1,
+			Description: sandboxPreRelease + sandboxExecDescription,
+			Flags:       SandboxExecFlags{},
 			Output: &CommandOutput[sandboxclient.ProcessInfo]{
 				TextDescription: "The command's output, streamed, with the exit code passed " +
 					"through as the CLI's exit code.",
