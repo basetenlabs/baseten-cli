@@ -437,15 +437,18 @@ func Test_Harness_Setup_RouteFlags(t *testing.T) {
 	h.Require.Equal("acme/primary", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
 }
 
-func harnessConfigsModel(name string) map[string]any {
+func harnessDefaultsModel(name string) map[string]any {
+	if name == "" {
+		return nil
+	}
 	return map[string]any{"route": map[string]any{"name": name}, "source": "team"}
 }
 
-func harnessConfigsBody(primary, background string) map[string]any {
-	return map[string]any{"harness_configs": map[string]any{
-		"claude-code": map[string]any{"models": map[string]any{
-			"primary": harnessConfigsModel(primary), "background": harnessConfigsModel(background),
-		}},
+func harnessDefaultsBody(primary, background string) map[string]any {
+	return map[string]any{"harness_defaults": map[string]any{
+		"claude_code": map[string]any{
+			"primary": harnessDefaultsModel(primary), "background": harnessDefaultsModel(background),
+		},
 	}}
 }
 
@@ -464,7 +467,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "server defaults seed primary and background",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, harnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/server",
@@ -475,7 +478,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			harnessName: "claude-code",
 			flags:       []string{"--route", "acme/first"},
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, harnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
@@ -486,7 +489,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			harnessName: "claude-code",
 			flags:       []string{"--background-route", "acme/first"},
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, harnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/server",
@@ -496,7 +499,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "server primary missing from routes falls back to positional",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/missing", "acme/background"))
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, harnessDefaultsBody("acme/missing", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
@@ -506,7 +509,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "server background missing from routes falls back to the default",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/missing"))
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, harnessDefaultsBody("acme/server", "acme/missing"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/server",
@@ -516,9 +519,9 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "server defaults without a primary are ignored",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/harness-configs", 200, map[string]any{
-					"harness_configs": map[string]any{
-						"claude-code": map[string]any{"models": map[string]any{"background": harnessConfigsModel("acme/background")}},
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, map[string]any{
+					"harness_defaults": map[string]any{
+						"claude_code": map[string]any{"background": harnessDefaultsModel("acme/background")},
 					},
 				})
 			},
@@ -527,12 +530,12 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
 		{
-			name:        "a response without a claude-code entry is ignored",
+			name:        "a response without a claude_code entry is ignored",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/harness-configs", 200, map[string]any{
-					"harness_configs": map[string]any{
-						"codex": map[string]any{"models": map[string]any{"primary": harnessConfigsModel("acme/server")}},
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, map[string]any{
+					"harness_defaults": map[string]any{
+						"codex": map[string]any{"primary": harnessDefaultsModel("acme/server")},
 					},
 				})
 			},
@@ -541,26 +544,28 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
 		{
-			name:           "an unrouted harness-configs endpoint falls back to positional",
+			name:           "an unrouted routes settings endpoint falls back to positional",
 			harnessName:    "claude-code",
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
 		{
-			name:        "a harness-configs error falls back to positional",
+			name:        "a routes settings error falls back to positional",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/harness-configs", 500, map[string]string{"message": "unavailable"})
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 500, map[string]string{"message": "unavailable"})
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
 		{
-			name:           "a malformed harness-configs response falls back to positional",
-			harnessName:    "claude-code",
-			endpoint:       func(api *MockManagementAPI) { api.SetRoute("GET", "/v1/routes/harness-configs", 200, "not an object") },
+			name:        "a malformed routes settings response falls back to positional",
+			harnessName: "claude-code",
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, "not an object")
+			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
@@ -570,7 +575,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			harnessName: "claude-code",
 			flags:       []string{"--route", "acme/first", "--background-route", "acme/background"},
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/missing"))
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, harnessDefaultsBody("acme/server", "acme/missing"))
 			},
 			wantPrimary:    "acme/first",
 			wantBackground: "acme/background",
@@ -579,7 +584,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "codex setup does not fetch or use server defaults",
 			harnessName: "codex",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/harness-configs", 200, harnessConfigsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, harnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantPrimary: "acme/first",
 		},
@@ -609,12 +614,11 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 				h.Require.Equal(tc.wantBackground, env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
 				h.Require.Equal(settings["model"], env["ANTHROPIC_MODEL"])
 			}
-			call := api.FindCall("GET", "/v1/routes/harness-configs")
+			call := api.FindCall("GET", "/v1/routes/settings/teams/team-a")
 			if tc.wantFetch {
-				h.Require.NotNil(call, "setup fetches harness configs")
-				h.Require.Equal([]string{"team-a"}, call.Query()["team_id"])
+				h.Require.NotNil(call, "setup fetches the routes settings endpoint")
 			} else {
-				h.Require.Nil(call, "setup does not fetch harness configs")
+				h.Require.Nil(call, "setup does not fetch the routes settings endpoint")
 			}
 		})
 	}

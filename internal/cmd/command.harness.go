@@ -286,8 +286,8 @@ func fetchServerDefaults(ctx context.Context, api *managementapi.Client, teamID 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var defaults harness.ServerDefaults
-	query := url.Values{"team_id": []string{teamID}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(api.BaseURL, "/")+"/v1/routes/harness-configs?"+query.Encode(), nil)
+	settingsPath := "/v1/routes/settings/teams/" + url.PathEscape(teamID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(api.BaseURL, "/")+settingsPath, nil)
 	if err != nil {
 		return defaults, err
 	}
@@ -298,30 +298,28 @@ func fetchServerDefaults(ctx context.Context, api *managementapi.Client, teamID 
 	}
 	resp, err := api.HTTPClient.Do(req)
 	if err != nil {
-		return defaults, fmt.Errorf("GET /v1/routes/harness-configs: %w", err)
+		return defaults, fmt.Errorf("GET %s: %w", settingsPath, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return defaults, fmt.Errorf("GET /v1/routes/harness-configs: HTTP %d", resp.StatusCode)
+		return defaults, fmt.Errorf("GET %s: HTTP %d", settingsPath, resp.StatusCode)
 	}
-	var body struct {
-		HarnessConfigs map[string]struct {
-			Models struct {
-				Primary    *serverHarnessModel `json:"primary"`
-				Background *serverHarnessModel `json:"background"`
-			} `json:"models"`
-		} `json:"harness_configs"`
+	var settings struct {
+		HarnessDefaults map[string]struct {
+			Primary    *serverHarnessModel `json:"primary"`
+			Background *serverHarnessModel `json:"background"`
+		} `json:"harness_defaults"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return defaults, fmt.Errorf("GET /v1/routes/harness-configs: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(&settings); err != nil {
+		return defaults, fmt.Errorf("GET %s: %w", settingsPath, err)
 	}
-	config := body.HarnessConfigs[harness.ClaudeCode]
-	if config.Models.Primary == nil || config.Models.Primary.Route == nil || config.Models.Primary.Route.Name == "" {
+	entry := settings.HarnessDefaults[strings.ReplaceAll(harness.ClaudeCode, "-", "_")]
+	if entry.Primary == nil || entry.Primary.Route == nil || entry.Primary.Route.Name == "" {
 		return defaults, nil
 	}
-	defaults.Primary = config.Models.Primary.Route.Name
-	if config.Models.Background != nil && config.Models.Background.Route != nil {
-		defaults.Background = config.Models.Background.Route.Name
+	defaults.Primary = entry.Primary.Route.Name
+	if entry.Background != nil && entry.Background.Route != nil {
+		defaults.Background = entry.Background.Route.Name
 	}
 	return defaults, nil
 }
