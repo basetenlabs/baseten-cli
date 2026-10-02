@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -10,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -174,6 +176,14 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 			return fmt.Errorf("team %s has routes with different invoke URLs", team.Name)
 		}
 	}
+	var serverDefaults harness.ServerDefaults
+	configuresClaudeCode := slices.ContainsFunc(selected, func(s selectedHarness) bool { return s.Name() == harness.ClaudeCode })
+	if configuresClaudeCode && (f.Route == "" || f.BackgroundRoute == "") {
+		serverDefaults, err = fetchServerDefaults(ctx, api, listed[0].TeamId)
+		if err != nil {
+			ctx.VerboseLogf("warning: could not load the team's harness defaults: %v\n", err)
+		}
+	}
 	var plans []*harness.Plan
 	for i := range selected {
 		choice := &selected[i]
@@ -181,9 +191,13 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		if len(callable) == 0 {
 			return fmt.Errorf("team %s has no routes that %s can call", team.Name, choice.Name())
 		}
+		var defaults harness.ServerDefaults
+		if choice.Name() == harness.ClaudeCode {
+			defaults = serverDefaults.Selectable(callable)
+		}
 		choice.selection = harness.Selection{
-			Primary:    cmp.Or(f.Route, callable[0].Name),
-			Background: f.BackgroundRoute,
+			Primary:    cmp.Or(f.Route, defaults.Primary, callable[0].Name),
+			Background: cmp.Or(f.BackgroundRoute, defaults.Background),
 			Subagent:   f.SubagentRoute,
 			Fallback:   f.FallbackRoute,
 		}
@@ -257,6 +271,24 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		ctx.Logf("Undo with: %s\n", harnessFollowupCommand("teardown", choice, f.ConfigDir))
 	}
 	return nil
+}
+
+func fetchServerDefaults(ctx context.Context, api *managementapi.Client, teamID string) (harness.ServerDefaults, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	settings, err := api.GetRoutesSettingsTeams(ctx, teamID)
+	if err != nil {
+		return harness.ServerDefaults{}, fmt.Errorf("GET /v1/routes/settings/teams/%s: %w", teamID, err)
+	}
+	var defaults harness.ServerDefaults
+	entry := settings.HarnessDefaults.ClaudeCode
+	if entry.Primary != nil {
+		defaults.Primary = entry.Primary.Route.Name
+	}
+	if entry.Background != nil {
+		defaults.Background = entry.Background.Route.Name
+	}
+	return defaults, nil
 }
 
 func harnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {

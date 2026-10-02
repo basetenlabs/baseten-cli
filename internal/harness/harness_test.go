@@ -365,6 +365,18 @@ func TestBackgroundRouteDefaultAndOverride(t *testing.T) {
 	}
 }
 
+func TestClaudeAnthropicModelEnvIsManaged(t *testing.T) {
+	path := settingsPath(t, claudeCodeHarness{})
+	setup(t, claudeCodeHarness{}, path, testRoutes(), Selection{Primary: "acme/primary"})
+	d := load(t, path)
+	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
+	status, err := claudeCodeHarness{}.Inspect(Detection{Name: ClaudeCode, Path: path})
+	require.NoError(t, err)
+	require.Contains(t, status.Managed, "env.ANTHROPIC_MODEL")
+	teardown(t, claudeCodeHarness{}, path)
+	require.False(t, get(load(t, path), []string{"env", "ANTHROPIC_MODEL"}).Exists)
+}
+
 func TestUnsupportedSelectionsAreRejected(t *testing.T) {
 	for _, tc := range []struct {
 		h Harness
