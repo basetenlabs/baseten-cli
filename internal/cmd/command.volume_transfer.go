@@ -107,6 +107,11 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 		tags = append(append([]string(nil), tags...), ref.Tag)
 		ref.Tag = ""
 	}
+	for _, tag := range tags {
+		if tag == "head" {
+			return cmd.NewErrUsagef("tag %q is reserved; omit --tag head or :head from the ref. A push already attempts to update the volume's default version", tag)
+		}
+	}
 	transfer, err := ctx.NewVolumeTransfer()
 	if err != nil {
 		return err
@@ -179,6 +184,9 @@ func commandVolumePull(ctx *CommandContext, flags *cmd.VolumePullFlags) error {
 		return err
 	}
 	dir := ctx.Args[1]
+	if flags.StripPrefix && (ref.Path == "" || ref.Path == "/") {
+		return cmd.NewErrUsagef("--strip-prefix requires a path in the volume ref; provide a directory path or omit --strip-prefix")
+	}
 	if ref.Level() == client.VolumeRefLevelNamespace {
 		return cmd.NewErrUsagef(
 			"ref %s names a namespace, and there is no tree to download; name a volume, "+
@@ -208,6 +216,13 @@ func commandVolumePull(ctx *CommandContext, flags *cmd.VolumePullFlags) error {
 	elapsed := ctx.Now().Sub(started)
 	stopProgress()
 	if err != nil {
+		// The SDK exposes no typed error for a non-empty destination. Match
+		// its specific diagnostic until it provides one, without rewriting
+		// arbitrary occurrences of option names in paths or other errors.
+		const overwriteHint = " is not empty; set Overwrite to write into it"
+		if strings.HasSuffix(err.Error(), overwriteHint) {
+			return cmd.NewErrGeneric(fmt.Errorf("downloading %s: %s is not empty; use --overwrite to write into it, or choose an empty directory", ref, strings.TrimSuffix(err.Error(), overwriteHint)))
+		}
 		return fmt.Errorf("downloading %s: %w", ref, err)
 	}
 
