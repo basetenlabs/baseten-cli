@@ -1,6 +1,6 @@
 package cmd
 
-import "github.com/basetenlabs/baseten-go/sandbox"
+import "github.com/basetenlabs/baseten-cli/internal/sandboxclient"
 
 // sandboxPreRelease leads every sandbox command's description, paired with
 // the " (PRE-RELEASE)" summary suffix, following volumePreRelease.
@@ -50,7 +50,7 @@ var commandSandbox = Command{
 				"Retrieves one sandbox's current record: status, execution URL, image, memory, " +
 				"region, and labels.",
 			Flags: SandboxDescribeFlags{},
-			Output: &CommandOutput[sandbox.SandboxInfo]{
+			Output: &CommandOutput[sandboxclient.SandboxInfo]{
 				TextDescription: "One field per line describing the sandbox.",
 				Examples: []CommandExample{{
 					Description: "Describe a sandbox.",
@@ -71,7 +71,7 @@ var commandSandbox = Command{
 				"By default the command returns as soon as the server accepts the create; " +
 				"--wait blocks until the sandbox is DEPLOYED and then prints its execution URL.",
 			Flags: SandboxCreateFlags{},
-			Output: &CommandOutput[sandbox.SandboxInfo]{
+			Output: &CommandOutput[sandboxclient.SandboxInfo]{
 				TextDescription: "One field per line describing the sandbox. Without --wait, the " +
 					"record as of creation, usually still DEPLOYING and without its URL.",
 				Examples: []CommandExample{
@@ -112,19 +112,16 @@ var commandSandbox = Command{
 			Name:    "update",
 			Summary: "Update a sandbox (PRE-RELEASE)",
 			Description: sandboxPreRelease +
-				"Updates a sandbox's display name, labels, environment variables, or image. " +
+				"Updates a sandbox's labels, environment variables, or image. " +
 				"Omitted flags leave their fields unchanged; a supplied --label or --env set " +
 				"replaces all previous labels or environment variables. Name, memory, and network " +
 				"cannot change after creation.",
 			Flags: SandboxUpdateFlags{},
-			Output: &CommandOutput[sandbox.SandboxInfo]{
+			Output: &CommandOutput[sandboxclient.SandboxInfo]{
 				TextDescription: "One field per line describing the updated sandbox.",
 				Examples: []CommandExample{{
-					Description: "Rename a sandbox's display name.",
-					CommandLines: []string{
-						"baseten sandbox update --name my-sandbox",
-						"--display-name \"My sandbox\"",
-					},
+					Description: "Replace a sandbox's labels.",
+					Command:     "baseten sandbox update --name my-sandbox --label env=dev",
 				}},
 				JQExample: CommandExample{
 					Description: "Update labels and print them.",
@@ -142,7 +139,7 @@ var commandSandbox = Command{
 				"Deletes a sandbox and everything in it. This cannot be undone. Deletion continues " +
 				"after this command returns.",
 			Flags: SandboxDeleteFlags{},
-			Output: &CommandOutput[sandbox.SandboxInfo]{
+			Output: &CommandOutput[sandboxclient.SandboxInfo]{
 				TextDescription: "One field per line describing the sandbox as deletion starts.",
 				Examples: []CommandExample{{
 					Description: "Delete a sandbox without the confirmation prompt.",
@@ -160,7 +157,7 @@ var commandSandbox = Command{
 
 // SandboxList is the JSON shape of 'baseten sandbox list'.
 type SandboxList struct {
-	Items []sandbox.SandboxInfo `json:"items"`
+	Items []sandboxclient.SandboxInfo `json:"items"`
 }
 
 // SandboxTeamFlags carries the sandbox commands' shared team selection.
@@ -191,7 +188,6 @@ type SandboxCreateFlags struct {
 	Region      string   `flag:"region" desc:"Region to run in. Defaults to the closest region."`
 	MemoryMB    int      `flag:"memory-mb" desc:"Memory in megabytes, which also sets the CPU allocation. Defaults to 4096."`
 	Image       string   `flag:"image" desc:"Image reference including its tag. Defaults to the built-in sandbox image."`
-	DisplayName string   `flag:"display-name" desc:"Human-readable name for display in the UI."`
 	Env         []string `flag:"env" desc:"Environment variable as KEY=VALUE. May be repeated."`
 	Label       []string `flag:"label" desc:"Label as KEY=VALUE. May be repeated."`
 	Wait        bool     `flag:"wait" desc:"Wait until the sandbox is DEPLOYED, then print its execution URL."`
@@ -201,7 +197,6 @@ type SandboxCreateFlags struct {
 // their fields unchanged.
 type SandboxUpdateFlags struct {
 	SandboxNameFlags
-	DisplayName string   `flag:"display-name" desc:"Human-readable name for display in the UI. Omitted leaves it unchanged."`
 	Image       string   `flag:"image" desc:"Image reference including its tag. Omitted leaves it unchanged."`
 	Env         []string `flag:"env" desc:"Environment variable as KEY=VALUE. May be repeated. A supplied set replaces all previous environment variables."`
 	Label       []string `flag:"label" desc:"Label as KEY=VALUE. May be repeated. A supplied set replaces all previous labels."`
@@ -258,7 +253,7 @@ var imageSubcommands = Command{
 			Description: sandboxPreRelease +
 				"Retrieves one image repository's current record: status, version count, size.",
 			Flags: SandboxImageNameFlags{},
-			Output: &CommandOutput[sandbox.ImageInfo]{
+			Output: &CommandOutput[sandboxclient.ImageInfo]{
 				TextDescription: "One field per line describing the image.",
 				Examples: []CommandExample{{
 					Description: "Describe an image.",
@@ -280,7 +275,7 @@ var imageSubcommands = Command{
 				"By default the command returns as soon as the push is accepted; --wait blocks " +
 				"until the image is BUILT.",
 			Flags: SandboxImagePushFlags{},
-			Output: &CommandOutput[sandbox.ImageInfo]{
+			Output: &CommandOutput[sandboxclient.ImageInfo]{
 				TextDescription: "One field per line describing the image. Without --wait, the " +
 					"record as of the push, usually still UPLOADING.",
 				Examples: []CommandExample{
@@ -308,7 +303,7 @@ var imageSubcommands = Command{
 			Description: sandboxPreRelease +
 				"Deletes an image repository and every version in it. This cannot be undone.",
 			Flags: SandboxDeleteFlags{},
-			Output: &CommandOutput[sandbox.ImageInfo]{
+			Output: &CommandOutput[sandboxclient.ImageInfo]{
 				TextDescription: "One field per line describing the image as deletion starts.",
 				Examples: []CommandExample{{
 					Description: "Delete an image without the confirmation prompt.",
@@ -325,7 +320,7 @@ var imageSubcommands = Command{
 
 // SandboxImageList is the JSON shape of 'baseten sandbox image list'.
 type SandboxImageList struct {
-	Items []sandbox.ImageInfo `json:"items"`
+	Items []sandboxclient.ImageInfo `json:"items"`
 }
 
 // SandboxImageNameFlags selects one sandbox image by name.

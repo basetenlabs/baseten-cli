@@ -1,6 +1,6 @@
 package cmd
 
-import "github.com/basetenlabs/baseten-go/sandbox"
+import "github.com/basetenlabs/baseten-cli/internal/sandboxclient"
 
 // sandboxInteractionCommands are the commands that work inside one sandbox,
 // kept apart from the management ones above them in the family.
@@ -20,7 +20,7 @@ var sandboxInteractionCommands = []Command{
 			"command string, passed to the sandbox's shell as-is; several arguments are " +
 			"re-quoted so their boundaries survive.",
 		Flags: SandboxExecFlags{},
-		Output: &CommandOutput[sandbox.ProcessInfo]{
+		Output: &CommandOutput[sandboxclient.ProcessInfo]{
 			TextDescription: "The command's output, streamed, with the exit code passed " +
 				"through as the CLI's exit code.",
 			JSONDescription: "With --output json, the final process record once the command " +
@@ -86,7 +86,7 @@ var processSubcommands = Command{
 				"command string, passed to the sandbox's shell as-is; several arguments are " +
 				"re-quoted so their boundaries survive.",
 			Flags: SandboxExecFlags{},
-			Output: &CommandOutput[sandbox.ProcessInfo]{
+			Output: &CommandOutput[sandboxclient.ProcessInfo]{
 				TextDescription: "The command's output, streamed, with the exit code passed " +
 					"through as the CLI's exit code.",
 				JSONDescription: "With --output json, the final process record once the command " +
@@ -117,7 +117,7 @@ var processSubcommands = Command{
 				"rules of 'process exec' apply.\n\n" +
 				"Inspect it with 'sandbox process list' and 'sandbox process logs'.",
 			Flags: SandboxExecFlags{},
-			Output: &CommandOutput[sandbox.ProcessInfo]{
+			Output: &CommandOutput[sandboxclient.ProcessInfo]{
 				TextDescription: "The started process's pid and how to follow its output.",
 				JSONDescription: "With --output json, the process record as of the start.",
 				Examples: []CommandExample{{
@@ -159,7 +159,7 @@ var processSubcommands = Command{
 				"Prints one process's captured output: standard output and standard error, " +
 				"interleaved.",
 			Flags: SandboxProcessLogsFlags{},
-			Output: &CommandOutput[sandbox.ProcessLogs]{
+			Output: &CommandOutput[sandboxclient.ProcessLogs]{
 				TextDescription: "The process's interleaved output.",
 				JSONDescription: "With --output json, stdout, stderr, and the interleaved logs " +
 					"as separate fields.",
@@ -181,7 +181,7 @@ var processSubcommands = Command{
 
 // SandboxProcessList is the JSON shape of 'baseten sandbox process list'.
 type SandboxProcessList struct {
-	Items []sandbox.ProcessInfo `json:"items"`
+	Items []sandboxclient.ProcessInfo `json:"items"`
 }
 
 // SandboxProcessLogsFlags configures 'baseten sandbox process logs'.

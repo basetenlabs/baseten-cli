@@ -140,8 +140,8 @@ func (s *sandboxSuite) Describe(t *testing.T) {
 
 func (s *sandboxSuite) Update(t *testing.T) {
 	out := mustCLI(t, "sandbox", "update", "--name", s.name,
-		"--display-name", "E2E Sandbox", "--label", "e2e=cli", "--label", "stage=two")
-	require.Contains(t, out, "Display:     E2E Sandbox")
+		"--label", "e2e=cli", "--label", "stage=two")
+	require.Contains(t, out, "stage=two")
 }
 
 func (s *sandboxSuite) Delete(t *testing.T) {

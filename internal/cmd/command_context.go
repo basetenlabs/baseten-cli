@@ -19,7 +19,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client"
-	"github.com/basetenlabs/baseten-go/sandbox"
+	"github.com/basetenlabs/baseten-cli/internal/sandboxclient"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/itchyny/gojq"
@@ -454,7 +454,7 @@ func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error)
 // routes it elsewhere, which development does while the domain moves. The
 // team argument is a team name or ID, resolved like every other command's
 // --team.
-func (c *CommandContext) NewSandboxesClient(team string) (*sandbox.SandboxesClient, error) {
+func (c *CommandContext) NewSandboxesClient(team string) (*sandboxclient.SandboxesClient, error) {
 	transport, remote, err := c.AuthTransport()
 	if err != nil {
 		return nil, err
@@ -474,7 +474,7 @@ func (c *CommandContext) NewSandboxesClient(team string) (*sandbox.SandboxesClie
 			return nil, err
 		}
 	}
-	return sandbox.NewSandboxesClient(sandbox.SandboxesClientOptions{
+	return sandboxclient.NewSandboxesClient(sandboxclient.SandboxesClientOptions{
 		APIKey:            credential,
 		TeamID:            teamID,
 		ManagementBaseURL: remote.ManagementURL(),

@@ -11,7 +11,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/sandboxconnect"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
-	"github.com/basetenlabs/baseten-go/sandbox"
+	"github.com/basetenlabs/baseten-cli/internal/sandboxclient"
 )
 
 func init() {
@@ -41,8 +41,8 @@ func commandSandboxList(ctx *CommandContext, flags *cmd.SandboxListFlags) error 
 	if err != nil {
 		return err
 	}
-	var items []sandbox.SandboxInfo
-	for info, err := range client.List(ctx, &sandbox.ListSandboxesRequest{
+	var items []sandboxclient.SandboxInfo
+	for info, err := range client.List(ctx, &sandboxclient.ListSandboxesRequest{
 		Query:    flags.Query,
 		Statuses: flags.Status,
 	}) {
@@ -86,7 +86,7 @@ func commandSandboxDescribe(ctx *CommandContext, flags *cmd.SandboxDescribeFlags
 	if err != nil {
 		return err
 	}
-	info, err := client.GetInfo(ctx, flags.Name, &sandbox.GetInfoOptions{ShowSecrets: flags.ShowSecrets})
+	info, err := client.GetInfo(ctx, flags.Name, &sandboxclient.GetInfoOptions{ShowSecrets: flags.ShowSecrets})
 	if err != nil {
 		return fmt.Errorf("describing sandbox %s: %w", flags.Name, err)
 	}
@@ -107,11 +107,10 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 	if err != nil {
 		return err
 	}
-	request := &sandbox.CreateSandboxRequest{
+	request := &sandboxclient.CreateSandboxRequest{
 		Name:             flags.Name,
 		Image:            flags.Image,
 		Region:           flags.Region,
-		DisplayName:      flags.DisplayName,
 		Envs:             envs,
 		Labels:           labels,
 		CreateIfNotExist: flags.IfNotExists,
@@ -163,8 +162,7 @@ func commandSandboxUpdate(ctx *CommandContext, flags *cmd.SandboxUpdateFlags) er
 	if err != nil {
 		return err
 	}
-	info, err := client.Update(ctx, flags.Name, &sandbox.UpdateSandboxRequest{
-		DisplayName: flags.DisplayName,
+	info, err := client.Update(ctx, flags.Name, &sandboxclient.UpdateSandboxRequest{
 		Image:       flags.Image,
 		Envs:        envs,
 		Labels:      labels,
@@ -218,12 +216,12 @@ func execCommandLine(args []string) (string, error) {
 
 // deployedSandbox resolves a sandbox by name and rejects it unless DEPLOYED.
 // action names what the caller wanted to do, for the error message.
-func deployedSandbox(ctx *CommandContext, client *sandbox.SandboxesClient, name, action string) (*sandbox.Sandbox, error) {
+func deployedSandbox(ctx *CommandContext, client *sandboxclient.SandboxesClient, name, action string) (*sandboxclient.Sandbox, error) {
 	info, err := client.GetInfo(ctx, name, nil)
 	if err != nil {
 		return nil, fmt.Errorf("describing sandbox %s: %w", name, err)
 	}
-	if info.Status != sandbox.SandboxStatusDeployed {
+	if info.Status != sandboxclient.SandboxStatusDeployed {
 		return nil, cmd.NewErrUsagef(
 			"sandbox %s is %s, not DEPLOYED; only deployed sandboxes %s", name, info.Status, action)
 	}
@@ -252,7 +250,7 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 	if err != nil {
 		return err
 	}
-	execOptions := &sandbox.ExecOptions{Command: commandLine, Env: envs}
+	execOptions := &sandboxclient.ExecOptions{Command: commandLine, Env: envs}
 
 	if ctx.JSON {
 		// JSON mode prints the final record, so it waits; the streamed
@@ -269,17 +267,17 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 		return nil
 	}
 
-	var finalResult *sandbox.ProcessInfo
+	var finalResult *sandboxclient.ProcessInfo
 	for event, err := range instance.Process().ExecStream(ctx, execOptions) {
 		if err != nil {
 			return fmt.Errorf("executing in sandbox %s: %w", name, err)
 		}
 		switch event.Type {
-		case sandbox.ExecEventStdout:
+		case sandboxclient.ExecEventStdout:
 			ctx.Output(event.Text + "\n")
-		case sandbox.ExecEventStderr:
+		case sandboxclient.ExecEventStderr:
 			ctx.Logf("%s\n", event.Text)
-		case sandbox.ExecEventResult:
+		case sandboxclient.ExecEventResult:
 			finalResult = event.Result
 		}
 	}
@@ -310,7 +308,7 @@ func commandSandboxProcessStart(ctx *CommandContext, flags *cmd.SandboxExecFlags
 	if err != nil {
 		return err
 	}
-	started, err := instance.Process().Exec(ctx, &sandbox.ExecOptions{
+	started, err := instance.Process().Exec(ctx, &sandboxclient.ExecOptions{
 		Command:           commandLine,
 		Env:               envs,
 		WaitForCompletion: false,
@@ -399,7 +397,7 @@ func commandSandboxProcessLogs(ctx *CommandContext, flags *cmd.SandboxProcessLog
 
 // waitSandboxDeployed polls until the sandbox is DEPLOYED, fails fast on
 // FAILED, and errors on timeout.
-func waitSandboxDeployed(ctx *CommandContext, client *sandbox.SandboxesClient, name string) (*sandbox.SandboxInfo, error) {
+func waitSandboxDeployed(ctx *CommandContext, client *sandboxclient.SandboxesClient, name string) (*sandboxclient.SandboxInfo, error) {
 	deadline := time.Now().Add(sandboxDeployTimeout)
 	for {
 		info, err := client.GetInfo(ctx, name, nil)
@@ -407,9 +405,9 @@ func waitSandboxDeployed(ctx *CommandContext, client *sandbox.SandboxesClient, n
 			return nil, fmt.Errorf("checking sandbox %s: %w", name, err)
 		}
 		switch {
-		case info.Status == sandbox.SandboxStatusDeployed:
+		case info.Status == sandboxclient.SandboxStatusDeployed:
 			return info, nil
-		case info.Status == sandbox.SandboxStatusFailed:
+		case info.Status == sandboxclient.SandboxStatusFailed:
 			return nil, fmt.Errorf("sandbox %s failed to deploy", name)
 		case time.Now().After(deadline):
 			return nil, fmt.Errorf(
@@ -424,7 +422,7 @@ func waitSandboxDeployed(ctx *CommandContext, client *sandbox.SandboxesClient, n
 	}
 }
 
-func outputSandboxInfo(ctx *CommandContext, info sandbox.SandboxInfo) {
+func outputSandboxInfo(ctx *CommandContext, info sandboxclient.SandboxInfo) {
 	if ctx.JSON {
 		ctx.OutputJSON(info)
 		return
@@ -436,9 +434,6 @@ func outputSandboxInfo(ctx *CommandContext, info sandbox.SandboxInfo) {
 	}
 	if info.URL != "" {
 		ctx.Outputf("URL:         %s\n", info.URL)
-	}
-	if info.DisplayName != "" {
-		ctx.Outputf("Display:     %s\n", info.DisplayName)
 	}
 	if info.Image != "" {
 		ctx.Outputf("Image:       %s\n", info.Image)
@@ -491,7 +486,7 @@ func parseKeyValues(flagName string, values []string) (map[string]string, error)
 // parseSandboxEnvs wraps parsed KEY=VALUE entries as sandbox envs. Nil stays
 // nil: the API reads nil as "leave unchanged" and an allocated empty map as
 // "replace with none".
-func parseSandboxEnvs(flagName string, values []string) (map[string]sandbox.SandboxEnvValue, error) {
+func parseSandboxEnvs(flagName string, values []string) (map[string]sandboxclient.SandboxEnvValue, error) {
 	parsed, err := parseKeyValues(flagName, values)
 	if err != nil {
 		return nil, err
@@ -499,9 +494,9 @@ func parseSandboxEnvs(flagName string, values []string) (map[string]sandbox.Sand
 	if parsed == nil {
 		return nil, nil
 	}
-	envs := make(map[string]sandbox.SandboxEnvValue, len(parsed))
+	envs := make(map[string]sandboxclient.SandboxEnvValue, len(parsed))
 	for key, value := range parsed {
-		envs[key] = sandbox.SandboxEnvValue{Value: value}
+		envs[key] = sandboxclient.SandboxEnvValue{Value: value}
 	}
 	return envs, nil
 }
@@ -528,8 +523,8 @@ func commandSandboxImageList(ctx *CommandContext, flags *cmd.SandboxTeamFlags) e
 	if err != nil {
 		return err
 	}
-	var items []sandbox.ImageInfo
-	for info, err := range client.Images().List(ctx, &sandbox.ImageListOptions{}) {
+	var items []sandboxclient.ImageInfo
+	for info, err := range client.Images().List(ctx, &sandboxclient.ImageListOptions{}) {
 		if err != nil {
 			return fmt.Errorf("listing sandbox images: %w", err)
 		}
@@ -584,7 +579,7 @@ func commandSandboxImagePush(ctx *CommandContext, flags *cmd.SandboxImagePushFla
 	if flags.Wait {
 		ctx.Logf("Waiting for image %s to build. Press Ctrl+C to stop waiting; the build continues.\n\n", name)
 	}
-	info, err := client.Images().Push(ctx, &sandbox.ImagePushOptions{
+	info, err := client.Images().Push(ctx, &sandboxclient.ImagePushOptions{
 		Name:          name,
 		Directory:     flags.Dir,
 		RegistryImage: flags.Image,
@@ -675,16 +670,13 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxNameFlags) err
 	return nil
 }
 
-func outputSandboxImageInfo(ctx *CommandContext, info sandbox.ImageInfo) {
+func outputSandboxImageInfo(ctx *CommandContext, info sandboxclient.ImageInfo) {
 	if ctx.JSON {
 		ctx.OutputJSON(info)
 		return
 	}
 	ctx.Outputf("Name:        %s\n", info.Name)
 	ctx.Outputf("Status:      %s\n", info.Status)
-	if info.DisplayName != "" {
-		ctx.Outputf("Display:     %s\n", info.DisplayName)
-	}
 	if info.TagCount > 0 {
 		ctx.Outputf("Tags:        %d\n", info.TagCount)
 	}

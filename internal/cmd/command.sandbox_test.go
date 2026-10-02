@@ -186,12 +186,11 @@ func Test_Sandbox_Update_SendsOnlySetFields(t *testing.T) {
 	sandboxTestTokenRoute(m)
 	m.SetRoute("PATCH", "/v1/sandboxes/instances/sbx-1", 200, sandboxRecord("sbx-1", "DEPLOYED", "https://sbx-1.invalid"))
 
-	h.Require.NoError(h.Execute("sandbox", "update", "--name", "sbx-1", "--display-name", "New", "--label", "a=b"))
+	h.Require.NoError(h.Execute("sandbox", "update", "--name", "sbx-1", "--label", "a=b"))
 
 	calls := sandboxCallsFor(m, "PATCH", "/v1/sandboxes/instances/sbx-1")
 	h.Require.Len(calls, 1)
 	body := calls[0].BodyJSON(t)
-	h.Require.Equal("New", body["display_name"])
 	h.Require.Equal(map[string]any{"a": "b"}, body["labels"])
 	h.Require.NotContains(body, "envs")
 	h.Require.NotContains(body, "enabled")
