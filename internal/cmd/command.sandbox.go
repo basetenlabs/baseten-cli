@@ -689,8 +689,8 @@ func outputSandboxImageInfo(ctx *CommandContext, info sandboxclient.ImageInfo) {
 
 // commandSandboxImageLibraryList lists the platform's starter images from
 // the starter-image library, hidden and coming-soon entries left out by the SDK.
-func commandSandboxImageLibraryList(ctx *CommandContext, _ *cmd.SandboxLibraryListFlags) error {
-	client, err := ctx.NewSandboxesClient("")
+func commandSandboxImageLibraryList(ctx *CommandContext, flags *cmd.SandboxLibraryListFlags) error {
+	client, err := ctx.NewSandboxesClient(flags.Team)
 	if err != nil {
 		return err
 	}

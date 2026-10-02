@@ -25,7 +25,7 @@ var commandSandbox = Command{
 				"--query or repeatable --status.",
 			Flags: SandboxListFlags{},
 			Output: &CommandOutput[SandboxList]{
-				TextDescription: "Table with columns: NAME, STATUS, STATE, REGION, CREATED. " +
+				TextDescription: "Table with columns: NAME, STATUS, REGION, CREATED. " +
 					"Prints \"No sandboxes found.\" to stderr when the list is empty.",
 				Examples: []CommandExample{
 					{
@@ -345,7 +345,7 @@ type SandboxDescribeFlags struct {
 }
 
 // imageLibrarySubcommands is the starter-image library under baseten sandbox
-// image-library. The library is workspace-global, so no team selection applies.
+// image-library.
 var imageLibrarySubcommands = Command{
 	Name:    "image-library",
 	Summary: "Browse starter sandbox images (PRE-RELEASE)",
@@ -393,8 +393,7 @@ type SandboxLibraryImage struct {
 	Categories  []string `json:"categories"`
 }
 
-// SandboxLibraryListFlags are the standard flags only; the starter-image
-// library is workspace-global, so no team selection applies.
+// SandboxLibraryListFlags carry the image-library commands' team selection.
 type SandboxLibraryListFlags struct {
-	CommandFlags
+	SandboxTeamFlags
 }
