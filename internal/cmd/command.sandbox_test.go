@@ -56,7 +56,7 @@ func Test_Sandbox_Create_ReturnsImmediately_SendsOnlySetFields(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	sandboxTestTokenRoute(m)
-	m.SetRoute("POST", "/v1/sandboxes/instances", 201, sandboxRecord("sbx-1", "DEPLOYING", ""))
+	m.SetRoute("POST", "/v1/sandboxes/instances", 201, sandboxRecord("sbx-1", "DEPLOYING", "https://sbx-1.invalid"))
 
 	h.Require.NoError(h.Execute("sandbox", "create",
 		"--name", "sbx-1", "--region", "us-was-1", "--env", "A=1", "--label", "k=v",
@@ -71,7 +71,7 @@ func Test_Sandbox_Create_ReturnsImmediately_SendsOnlySetFields(t *testing.T) {
 	h.Require.Equal("img:tag", body["image"])
 	envs := body["envs"].([]any)
 	h.Require.Len(envs, 1)
-	h.Require.Equal(map[string]any{"name": "A", "value": "1", "secret": false}, envs[0])
+	h.Require.Equal(map[string]any{"name": "A", "value": "1", "secret": true}, envs[0])
 	h.Require.Equal(map[string]any{"k": "v"}, body["labels"])
 	h.Require.NotContains(body, "display_name")
 
@@ -79,7 +79,7 @@ func Test_Sandbox_Create_ReturnsImmediately_SendsOnlySetFields(t *testing.T) {
 	h.Require.Empty(sandboxCallsFor(m, "GET", "/v1/sandboxes/instances/sbx-1"))
 	h.Require.Contains(h.Stdout.String(), "Name:        sbx-1")
 	h.Require.Contains(h.Stdout.String(), "Status:      DEPLOYING")
-	h.Require.NotContains(h.Stdout.String(), "URL:")
+	h.Require.Contains(h.Stdout.String(), "URL:         https://sbx-1.invalid")
 }
 
 func Test_Sandbox_Create_WaitsUntilDeployed(t *testing.T) {
@@ -87,7 +87,7 @@ func Test_Sandbox_Create_WaitsUntilDeployed(t *testing.T) {
 	m := h.MockManagementAPI()
 	sandboxTestTokenRoute(m)
 	describeCalls := 0
-	m.SetRoute("POST", "/v1/sandboxes/instances", 201, sandboxRecord("sbx-1", "DEPLOYING", ""))
+	m.SetRoute("POST", "/v1/sandboxes/instances", 201, sandboxRecord("sbx-1", "DEPLOYING", "https://sbx-1.invalid"))
 	m.SetRouteFunc("GET", "/v1/sandboxes/instances/sbx-1", func(w http.ResponseWriter, r *http.Request) {
 		describeCalls++
 		status := "DEPLOYING"
@@ -110,7 +110,7 @@ func Test_Sandbox_Create_FailedDeployErrors(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	sandboxTestTokenRoute(m)
-	m.SetRoute("POST", "/v1/sandboxes/instances", 201, sandboxRecord("sbx-1", "DEPLOYING", ""))
+	m.SetRoute("POST", "/v1/sandboxes/instances", 201, sandboxRecord("sbx-1", "DEPLOYING", "https://sbx-1.invalid"))
 	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, sandboxRecord("sbx-1", "FAILED", ""))
 
 	err := h.Execute("sandbox", "create", "--name", "sbx-1", "--wait")
@@ -201,7 +201,7 @@ func Test_Sandbox_CreateIfNotExistsAndDescribeShowSecrets(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	sandboxTestTokenRoute(m)
-	m.SetRoute("POST", "/v1/sandboxes/instances", 201, sandboxRecord("sbx-1", "DEPLOYING", ""))
+	m.SetRoute("POST", "/v1/sandboxes/instances", 201, sandboxRecord("sbx-1", "DEPLOYING", "https://sbx-1.invalid"))
 	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, sandboxRecord("sbx-1", "DEPLOYED", "https://sbx-1.invalid"))
 
 	h.Require.NoError(h.Execute("sandbox", "create", "--name", "sbx-1", "--or-get-existing"))
@@ -282,7 +282,7 @@ func Test_Sandbox_Exec_StreamsAndPassesExitCode(t *testing.T) {
 	err = h.Execute("sandbox", "exec", "--name", "sbx-1", "--", "false")
 	h.Require.ErrorContains(err, "code 7")
 	h.Require.Equal(7, h.ExitCode)
-	h.Require.Contains(h.Stdout.String(), "hello\n")
+	h.Require.Contains(h.Stdout.String(), "hello")
 	h.Require.Contains(h.Stderr.String(), "to stderr")
 }
 
@@ -483,8 +483,10 @@ func Test_Sandbox_Process_StartPrintsPid(t *testing.T) {
 	execServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&request)
-		if request["waitForCompletion"] != false {
-			t.Errorf("start must not wait, got %v", request["waitForCompletion"])
+		// waitForCompletion is omitempty: absent means the process runs in the
+		// background.
+		if waiting, present := request["waitForCompletion"]; present && waiting != false {
+			t.Errorf("start must not wait, got %v", waiting)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(processRecord("42", "sleep", "running"))

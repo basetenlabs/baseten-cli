@@ -1,6 +1,10 @@
 package cmd
 
-import "github.com/basetenlabs/baseten-cli/internal/sandboxclient"
+import (
+	"time"
+
+	"github.com/basetenlabs/baseten-go/sandbox"
+)
 
 // sandboxPreRelease leads every sandbox command's description, paired with
 // the " (PRE-RELEASE)" summary suffix, following volumePreRelease.
@@ -12,9 +16,7 @@ var commandSandbox = Command{
 	Summary: "Manage sandboxes (PRE-RELEASE)",
 	Description: sandboxPreRelease +
 		"Sandboxes run arbitrary commands in isolated environments. Create one, wait for it to " +
-		"deploy, run commands in it with 'sandbox process exec', and delete it when done.\n\n" +
-		"During development, the sandbox control plane may live on a different domain than the " +
-		"management API; set BASETEN_SANDBOXES_API_URL_OVERRIDE to route it there.",
+		"deploy, run commands in it with 'sandbox process exec', and delete it when done.",
 	Children: append([]Command{
 		imageLibrarySubcommands,
 		{
@@ -50,7 +52,7 @@ var commandSandbox = Command{
 				"Retrieves one sandbox's current record: status, execution URL, image, memory, " +
 				"region, and labels.",
 			Flags: SandboxDescribeFlags{},
-			Output: &CommandOutput[sandboxclient.SandboxInfo]{
+			Output: &CommandOutput[sandbox.Info]{
 				TextDescription: "One field per line describing the sandbox.",
 				Examples: []CommandExample{{
 					Description: "Describe a sandbox.",
@@ -71,9 +73,9 @@ var commandSandbox = Command{
 				"By default the command returns as soon as the server accepts the create; " +
 				"--wait blocks until the sandbox is DEPLOYED and then prints its execution URL.",
 			Flags: SandboxCreateFlags{},
-			Output: &CommandOutput[sandboxclient.SandboxInfo]{
+			Output: &CommandOutput[sandbox.Info]{
 				TextDescription: "One field per line describing the sandbox. Without --wait, the " +
-					"record as of creation, usually still DEPLOYING and without its URL.",
+					"record as of creation, usually still DEPLOYING.",
 				Examples: []CommandExample{
 					{
 						Description: "Create a sandbox with server defaults.",
@@ -117,7 +119,7 @@ var commandSandbox = Command{
 				"replaces all previous labels or environment variables. Name, memory, and network " +
 				"cannot change after creation.",
 			Flags: SandboxUpdateFlags{},
-			Output: &CommandOutput[sandboxclient.SandboxInfo]{
+			Output: &CommandOutput[sandbox.Info]{
 				TextDescription: "One field per line describing the updated sandbox.",
 				Examples: []CommandExample{{
 					Description: "Replace a sandbox's labels.",
@@ -139,7 +141,7 @@ var commandSandbox = Command{
 				"Deletes a sandbox and everything in it. This cannot be undone. Deletion continues " +
 				"after this command returns.",
 			Flags: SandboxDeleteFlags{},
-			Output: &CommandOutput[sandboxclient.SandboxInfo]{
+			Output: &CommandOutput[sandbox.Info]{
 				TextDescription: "One field per line describing the sandbox as deletion starts.",
 				Examples: []CommandExample{{
 					Description: "Delete a sandbox without the confirmation prompt.",
@@ -157,7 +159,7 @@ var commandSandbox = Command{
 
 // SandboxList is the JSON shape of 'baseten sandbox list'.
 type SandboxList struct {
-	Items []sandboxclient.SandboxInfo `json:"items"`
+	Items []SandboxInfoOutput `json:"items"`
 }
 
 // SandboxTeamFlags carries the sandbox commands' shared team selection.
@@ -253,7 +255,7 @@ var imageSubcommands = Command{
 			Description: sandboxPreRelease +
 				"Retrieves one image repository's current record: status, version count, size.",
 			Flags: SandboxImageNameFlags{},
-			Output: &CommandOutput[sandboxclient.ImageInfo]{
+			Output: &CommandOutput[sandbox.ImageInfo]{
 				TextDescription: "One field per line describing the image.",
 				Examples: []CommandExample{{
 					Description: "Describe an image.",
@@ -275,7 +277,7 @@ var imageSubcommands = Command{
 				"By default the command returns as soon as the push is accepted; --wait blocks " +
 				"until the image is BUILT.",
 			Flags: SandboxImagePushFlags{},
-			Output: &CommandOutput[sandboxclient.ImageInfo]{
+			Output: &CommandOutput[sandbox.ImageInfo]{
 				TextDescription: "One field per line describing the image. Without --wait, the " +
 					"record as of the push, usually still UPLOADING.",
 				Examples: []CommandExample{
@@ -303,7 +305,7 @@ var imageSubcommands = Command{
 			Description: sandboxPreRelease +
 				"Deletes an image repository and every version in it. This cannot be undone.",
 			Flags: SandboxDeleteFlags{},
-			Output: &CommandOutput[sandboxclient.ImageInfo]{
+			Output: &CommandOutput[sandbox.ImageInfo]{
 				TextDescription: "One field per line describing the image as deletion starts.",
 				Examples: []CommandExample{{
 					Description: "Delete an image without the confirmation prompt.",
@@ -320,7 +322,7 @@ var imageSubcommands = Command{
 
 // SandboxImageList is the JSON shape of 'baseten sandbox image list'.
 type SandboxImageList struct {
-	Items []sandboxclient.ImageInfo `json:"items"`
+	Items []ImageInfoOutput `json:"items"`
 }
 
 // SandboxImageNameFlags selects one sandbox image by name.
@@ -398,4 +400,123 @@ type SandboxLibraryImage struct {
 // library is available to every team, so no team selection applies.
 type SandboxLibraryListFlags struct {
 	CommandFlags
+}
+
+// SandboxInfoOutput is the JSON shape of a sandbox record. The SDK types carry
+// no JSON tags, so the CLI names the fields itself, snake_case per the output
+// conventions.
+type SandboxInfoOutput struct {
+	Name       string               `json:"name"`
+	URL        string               `json:"url"`
+	Status     string               `json:"status"`
+	Image      string               `json:"image,omitempty"`
+	Memory     int                  `json:"memory,omitempty"`
+	Region     string               `json:"region,omitempty"`
+	Enabled    bool                 `json:"enabled"`
+	Envs       map[string]envOutput `json:"envs,omitempty"`
+	Labels     map[string]string    `json:"labels,omitempty"`
+	ExternalID string               `json:"external_id,omitempty"`
+	CreatedAt  string               `json:"created_at,omitempty"`
+	UpdatedAt  string               `json:"updated_at,omitempty"`
+	CreatedBy  string               `json:"created_by,omitempty"`
+	UpdatedBy  string               `json:"updated_by,omitempty"`
+	LastUsedAt string               `json:"last_used_at,omitempty"`
+	ExpiresIn  int                  `json:"expires_in_seconds,omitempty"`
+}
+
+// envOutput is one environment variable's JSON shape.
+type envOutput struct {
+	Value  string `json:"value"`
+	Secret bool   `json:"secret"`
+}
+
+func SandboxInfoOutputFrom(info sandbox.Info) SandboxInfoOutput {
+	envs := make(map[string]envOutput, len(info.Envs))
+	for name, value := range info.Envs {
+		envs[name] = envOutput{Value: value.Value, Secret: !value.NonSecret}
+	}
+	output := SandboxInfoOutput{
+		Name: info.Name, URL: info.URL, Status: string(info.Status),
+		Image: info.Image, Memory: info.Memory, Region: info.Region,
+		Enabled: info.Enabled, Envs: envs, Labels: info.Labels,
+		ExternalID: info.ExternalID, CreatedBy: info.CreatedBy, UpdatedBy: info.UpdatedBy,
+	}
+	if !info.CreatedAt.IsZero() {
+		output.CreatedAt = info.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	if !info.UpdatedAt.IsZero() {
+		output.UpdatedAt = info.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	if !info.LastUsedAt.IsZero() {
+		output.LastUsedAt = info.LastUsedAt.UTC().Format(time.RFC3339)
+	}
+	if info.ExpiresIn > 0 {
+		output.ExpiresIn = int(info.ExpiresIn.Seconds())
+	}
+	return output
+}
+
+// ProcessInfoOutput is the JSON shape of a process record.
+type ProcessInfoOutput struct {
+	PID         string `json:"pid"`
+	Name        string `json:"name"`
+	Command     string `json:"command"`
+	Status      string `json:"status"`
+	ExitCode    int    `json:"exit_code"`
+	Stdout      string `json:"stdout"`
+	Stderr      string `json:"stderr"`
+	Logs        string `json:"logs"`
+	WorkingDir  string `json:"working_dir"`
+	StartedAt   string `json:"started_at"`
+	CompletedAt string `json:"completed_at,omitempty"`
+}
+
+func ProcessInfoOutputFrom(info sandbox.ProcessInfo) ProcessInfoOutput {
+	output := ProcessInfoOutput{
+		PID: info.PID, Name: info.Name, Command: info.Command,
+		Status: string(info.Status), ExitCode: info.ExitCode,
+		Stdout: info.Stdout, Stderr: info.Stderr, Logs: info.Logs,
+		WorkingDir: info.WorkingDir,
+		StartedAt:  info.StartedAt.UTC().Format(time.RFC3339),
+	}
+	if !info.CompletedAt.IsZero() {
+		output.CompletedAt = info.CompletedAt.UTC().Format(time.RFC3339)
+	}
+	return output
+}
+
+// processLogsOutput is the JSON shape of a process's captured output.
+type ProcessLogsOutput struct {
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
+	Logs   string `json:"logs"`
+}
+
+// ImageInfoOutput is the JSON shape of an image record.
+type ImageInfoOutput struct {
+	Name           string `json:"name"`
+	Status         string `json:"status"`
+	CreatedAt      string `json:"created_at,omitempty"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
+	LastDeployedAt string `json:"last_deployed_at,omitempty"`
+	SizeBytes      int64  `json:"size_bytes,omitempty"`
+	TagCount       int    `json:"tag_count,omitempty"`
+}
+
+// ImageInfoOutputFrom converts the SDK's image record.
+func ImageInfoOutputFrom(info sandbox.ImageInfo) ImageInfoOutput {
+	output := ImageInfoOutput{
+		Name: info.Name, Status: string(info.Status),
+		SizeBytes: info.SizeBytes, TagCount: info.TagCount,
+	}
+	if !info.CreatedAt.IsZero() {
+		output.CreatedAt = info.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	if !info.UpdatedAt.IsZero() {
+		output.UpdatedAt = info.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	if !info.LastDeployedAt.IsZero() {
+		output.LastDeployedAt = info.LastDeployedAt.UTC().Format(time.RFC3339)
+	}
+	return output
 }

@@ -14,10 +14,8 @@ import (
 )
 
 // sandboxSuite drives the sandbox commands against a real backend. Skips
-// unless the e2e env vars are set, plus BASETEN_E2E_TEST_SANDBOXES_URL: while
-// the sandbox control plane lives on a different domain than the management
-// API during development, the CLI routes it there through
-// BASETEN_SANDBOXES_API_URL_OVERRIDE.
+// unless the e2e env vars are set: the sandbox control plane serves on the
+// management domain.
 type sandboxSuite struct {
 	name string
 }
@@ -29,13 +27,8 @@ func newSandboxSuite(t *testing.T) *sandboxSuite {
 	}
 	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
 	require.NotEmpty(t, remoteURL, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
-	sandboxesURL := os.Getenv("BASETEN_E2E_TEST_SANDBOXES_URL")
-	if sandboxesURL == "" {
-		t.Skip("BASETEN_E2E_TEST_SANDBOXES_URL not set")
-	}
 	t.Setenv("BASETEN_API_KEY", apiKey)
 	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
-	t.Setenv("BASETEN_SANDBOXES_API_URL_OVERRIDE", sandboxesURL)
 	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
 	return &sandboxSuite{name: "cli-e2e-sandbox-" + time.Now().Format("20060102-150405")}
 }
@@ -92,23 +85,20 @@ func (s *sandboxSuite) Exec(t *testing.T) {
 }
 
 func (s *sandboxSuite) Process(t *testing.T) {
-	startOut := mustCLI(t, "sandbox", "process", "start", "--name", s.name,
-		"--", "echo e2e-process")
-	require.Contains(t, startOut, "Started process")
+	startJSON := mustCLI(t, "sandbox", "process", "start", "--name", s.name,
+		"--output", "json", "--", "echo e2e-process")
+	var started struct {
+		PID string `json:"pid"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(startJSON), &started))
+	require.NotEmpty(t, started.PID)
 
 	listOut := mustCLI(t, "sandbox", "process", "list", "--name", s.name)
 	require.Contains(t, listOut, "e2e-process")
 
 	// The process may need a moment to flush its output.
-	var pid string
-	for line := range strings.Lines(startOut) {
-		if rest, found := strings.CutPrefix(line, "Started process "); found {
-			pid = strings.Fields(rest)[0]
-		}
-	}
-	require.NotEmpty(t, pid)
 	require.Eventually(t, func() bool {
-		logsOut, _, err := cli(t, "sandbox", "process", "logs", "--name", s.name, "--pid", pid)
+		logsOut, _, err := cli(t, "sandbox", "process", "logs", "--name", s.name, "--pid", started.PID)
 		return err == nil && strings.Contains(logsOut, "e2e-process")
 	}, 30*time.Second, 2*time.Second)
 }

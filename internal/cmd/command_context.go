@@ -18,7 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
-	"github.com/basetenlabs/baseten-cli/internal/sandboxclient"
+	"github.com/basetenlabs/baseten-go/sandbox"
 	"github.com/basetenlabs/baseten-go/client"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
@@ -447,14 +447,11 @@ func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error)
 	})
 }
 
-// NewSandboxesClient creates the high-level sandbox client, minting sandbox
+// NewSandboxClient creates the high-level sandbox client, minting sandbox
 // tokens through the session's management credential (an API key, or an OAuth
-// access token the backend accepts the same way). The sandbox control plane
-// follows the management remote unless BASETEN_SANDBOXES_API_URL_OVERRIDE
-// routes it elsewhere, which development does while the domain moves. The
-// team argument is a team name or ID, resolved like every other command's
-// --team.
-func (c *CommandContext) NewSandboxesClient(team string) (*sandboxclient.SandboxesClient, error) {
+// access token the backend accepts the same way). The team argument is a team
+// name or ID, resolved like every other command's --team.
+func (c *CommandContext) NewSandboxClient(team string) (*sandbox.Client, error) {
 	transport, remote, err := c.AuthTransport()
 	if err != nil {
 		return nil, err
@@ -474,12 +471,11 @@ func (c *CommandContext) NewSandboxesClient(team string) (*sandboxclient.Sandbox
 			return nil, err
 		}
 	}
-	return sandboxclient.NewSandboxesClient(sandboxclient.SandboxesClientOptions{
-		APIKey:            credential,
-		TeamID:            teamID,
-		ManagementBaseURL: remote.ManagementURL(),
-		SandboxesBaseURL:  os.Getenv("BASETEN_SANDBOXES_API_URL_OVERRIDE"),
-		HTTPClient:        c.httpClient(),
+	return sandbox.NewClient(sandbox.ClientOptions{
+		APIKey:    credential,
+		TeamID:    teamID,
+		BaseURL:   remote.ManagementURL(),
+		HTTPClient: c.httpClient(),
 	})
 }
 

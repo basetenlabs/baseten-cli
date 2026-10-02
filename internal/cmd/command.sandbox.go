@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
-	"github.com/basetenlabs/baseten-cli/internal/sandboxclient"
 	"github.com/basetenlabs/baseten-cli/internal/sandboxconnect"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
+	"github.com/basetenlabs/baseten-go/sandbox"
 )
 
 func init() {
@@ -37,14 +37,14 @@ const sandboxPollInterval = 2 * time.Second
 const sandboxDeployTimeout = 5 * time.Minute
 
 func commandSandboxList(ctx *CommandContext, flags *cmd.SandboxListFlags) error {
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
-	var items []sandboxclient.SandboxInfo
-	for info, err := range client.List(ctx, &sandboxclient.ListSandboxesRequest{
+	var items []sandbox.Info
+	for info, err := range client.List(ctx, sandbox.ListOptions{
 		Query:    flags.Query,
-		Statuses: flags.Status,
+		Statuses: statusesFromFlags(flags.Status),
 	}) {
 		if err != nil {
 			return fmt.Errorf("listing sandboxes: %w", err)
@@ -53,7 +53,11 @@ func commandSandboxList(ctx *CommandContext, flags *cmd.SandboxListFlags) error 
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.SandboxList{Items: items})
+		outputItems := make([]cmd.SandboxInfoOutput, 0, len(items))
+		for _, info := range items {
+			outputItems = append(outputItems, cmd.SandboxInfoOutputFrom(info))
+		}
+		ctx.OutputJSON(cmd.SandboxList{Items: outputItems})
 		return nil
 	}
 	if len(items) == 0 {
@@ -68,7 +72,7 @@ func commandSandboxList(ctx *CommandContext, flags *cmd.SandboxListFlags) error 
 		}
 		rows = append(rows, []string{
 			info.Name,
-			info.Status,
+			string(info.Status),
 			info.Region,
 			created,
 		})
@@ -81,11 +85,14 @@ func commandSandboxList(ctx *CommandContext, flags *cmd.SandboxListFlags) error 
 }
 
 func commandSandboxDescribe(ctx *CommandContext, flags *cmd.SandboxDescribeFlags) error {
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
-	info, err := client.GetInfo(ctx, flags.Name, &sandboxclient.GetInfoOptions{ShowSecrets: flags.ShowSecrets})
+	info, err := client.GetInfo(ctx, sandbox.GetInfoOptions{
+		Name:        flags.Name,
+		ShowSecrets: flags.ShowSecrets,
+	})
 	if err != nil {
 		return fmt.Errorf("describing sandbox %s: %w", flags.Name, err)
 	}
@@ -102,33 +109,30 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 	if err != nil {
 		return err
 	}
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
-	}
-	request := &sandboxclient.CreateSandboxRequest{
-		Name:             flags.Name,
-		Image:            flags.Image,
-		Region:           flags.Region,
-		Envs:             envs,
-		Labels:           labels,
-		CreateIfNotExist: flags.IfNotExists,
 	}
 	if flags.MemoryMB < 0 {
 		return cmd.NewErrUsagef("--memory-mb cannot be negative, got %d", flags.MemoryMB)
 	}
-	if flags.IfNotExists && request.Name == "" {
+	if flags.IfNotExists && flags.Name == "" {
 		return cmd.NewErrUsagef("--or-get-existing needs --name")
 	}
-	if flags.MemoryMB > 0 {
-		request.Memory = flags.MemoryMB
-	}
-	created, err := client.Create(ctx, request)
+	created, err := client.Create(ctx, sandbox.CreateOptions{
+		Name:              flags.Name,
+		Image:             flags.Image,
+		Memory:            flags.MemoryMB,
+		Region:            flags.Region,
+		Envs:              envs,
+		Labels:            labels,
+		CreateIfNotExists: flags.IfNotExists,
+	})
 	if err != nil {
 		return fmt.Errorf("creating sandbox: %w", err)
 	}
 	if !flags.Wait {
-		outputSandboxInfo(ctx, created.Info())
+		outputSandboxInfo(ctx, created.Info)
 		return nil
 	}
 
@@ -157,11 +161,12 @@ func commandSandboxUpdate(ctx *CommandContext, flags *cmd.SandboxUpdateFlags) er
 	if err != nil {
 		return err
 	}
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
-	info, err := client.Update(ctx, flags.Name, &sandboxclient.UpdateSandboxRequest{
+	info, err := client.Update(ctx, sandbox.UpdateOptions{
+		Name:   flags.Name,
 		Image:  flags.Image,
 		Envs:   envs,
 		Labels: labels,
@@ -180,16 +185,16 @@ func commandSandboxDelete(ctx *CommandContext, flags *cmd.SandboxDeleteFlags) er
 			return err
 		}
 	}
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
-	info, err := client.Delete(ctx, name)
+	info, err := client.Delete(ctx, sandbox.DeleteOptions{Name: name})
 	if err != nil {
 		return fmt.Errorf("deleting sandbox %s: %w", name, err)
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(*info)
+		ctx.OutputJSON(cmd.SandboxInfoOutputFrom(*info))
 		return nil
 	}
 	ctx.Logf("Deleting sandbox %s. Deletion continues after this command returns.\n", name)
@@ -215,16 +220,16 @@ func execCommandLine(args []string) (string, error) {
 
 // deployedSandbox resolves a sandbox by name and rejects it unless DEPLOYED.
 // action names what the caller wanted to do, for the error message.
-func deployedSandbox(ctx *CommandContext, client *sandboxclient.SandboxesClient, name, action string) (*sandboxclient.Sandbox, error) {
-	info, err := client.GetInfo(ctx, name, nil)
+func deployedSandbox(ctx *CommandContext, client *sandbox.Client, name, action string) (*sandbox.Sandbox, error) {
+	info, err := client.GetInfo(ctx, sandbox.GetInfoOptions{Name: name})
 	if err != nil {
 		return nil, fmt.Errorf("describing sandbox %s: %w", name, err)
 	}
-	if info.Status != sandboxclient.SandboxStatusDeployed {
+	if info.Status != sandbox.StatusDeployed {
 		return nil, cmd.NewErrUsagef(
 			"sandbox %s is %s, not DEPLOYED; only deployed sandboxes %s", name, info.Status, action)
 	}
-	instance, err := client.SandboxFromInfo(*info)
+	instance, err := client.SandboxFromURL(sandbox.SandboxFromURLOptions{URL: info.URL})
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +246,7 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 		return err
 	}
 	name := flags.Name
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
@@ -249,35 +254,40 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 	if err != nil {
 		return err
 	}
-	execOptions := &sandboxclient.ExecOptions{Command: commandLine, Env: envs}
 
 	if ctx.JSON {
 		// JSON mode prints the final record, so it waits; the streamed
 		// path below waits by construction.
-		execOptions.WaitForCompletion = true
-		finalInfo, err := instance.Process().Exec(ctx, execOptions)
+		finalInfo, err := instance.Process().Exec(ctx, sandbox.ProcessExecOptions{
+			Command:           commandLine,
+			Env:               envs,
+			WaitForCompletion: true,
+		})
 		if err != nil {
 			return fmt.Errorf("executing in sandbox %s: %w", name, err)
 		}
-		ctx.OutputJSON(*finalInfo)
+		ctx.OutputJSON(cmd.ProcessInfoOutputFrom(*finalInfo))
 		if finalInfo.ExitCode != 0 {
 			ctx.ExitWithCode(finalInfo.ExitCode)
 		}
 		return nil
 	}
 
-	var finalResult *sandboxclient.ProcessInfo
-	for event, err := range instance.Process().ExecStream(ctx, execOptions) {
+	var finalResult *sandbox.ProcessInfo
+	for event, err := range instance.Process().ExecStream(ctx, sandbox.ProcessExecStreamOptions{
+		Command: commandLine,
+		Env:     envs,
+	}) {
 		if err != nil {
 			return fmt.Errorf("executing in sandbox %s: %w", name, err)
 		}
-		switch event.Type {
-		case sandboxclient.ExecEventStdout:
-			ctx.Output(event.Text + "\n")
-		case sandboxclient.ExecEventStderr:
-			ctx.Logf("%s\n", event.Text)
-		case sandboxclient.ExecEventResult:
-			finalResult = event.Result
+		switch {
+		case event.Exit != nil:
+			finalResult = event.Exit
+		case event.TextStream == sandbox.ProcessStreamStdout:
+			ctx.Output(event.Text)
+		case event.TextStream == sandbox.ProcessStreamStderr:
+			ctx.Logf("%s", event.Text)
 		}
 	}
 	if finalResult == nil {
@@ -299,7 +309,7 @@ func commandSandboxProcessStart(ctx *CommandContext, flags *cmd.SandboxExecFlags
 		return err
 	}
 	name := flags.Name
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
@@ -307,16 +317,15 @@ func commandSandboxProcessStart(ctx *CommandContext, flags *cmd.SandboxExecFlags
 	if err != nil {
 		return err
 	}
-	started, err := instance.Process().Exec(ctx, &sandboxclient.ExecOptions{
-		Command:           commandLine,
-		Env:               envs,
-		WaitForCompletion: false,
+	started, err := instance.Process().Exec(ctx, sandbox.ProcessExecOptions{
+		Command: commandLine,
+		Env:     envs,
 	})
 	if err != nil {
 		return fmt.Errorf("starting a process in sandbox %s: %w", name, err)
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(*started)
+		ctx.OutputJSON(cmd.ProcessInfoOutputFrom(*started))
 		return nil
 	}
 	ctx.Outputf("Started process %s (%s) in sandbox %s.\n", started.PID, started.Name, name)
@@ -325,7 +334,7 @@ func commandSandboxProcessStart(ctx *CommandContext, flags *cmd.SandboxExecFlags
 }
 
 func commandSandboxProcessList(ctx *CommandContext, flags *cmd.SandboxNameFlags) error {
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
@@ -333,13 +342,17 @@ func commandSandboxProcessList(ctx *CommandContext, flags *cmd.SandboxNameFlags)
 	if err != nil {
 		return err
 	}
-	infos, err := instance.Process().List(ctx)
+	infos, err := instance.Process().List(ctx, sandbox.ProcessListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing processes in sandbox %s: %w", flags.Name, err)
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.SandboxProcessList{Items: infos})
+		outputItems := make([]cmd.ProcessInfoOutput, 0, len(infos))
+		for _, info := range infos {
+			outputItems = append(outputItems, cmd.ProcessInfoOutputFrom(info))
+		}
+		ctx.OutputJSON(cmd.SandboxProcessList{Items: outputItems})
 		return nil
 	}
 	if len(infos) == 0 {
@@ -356,7 +369,7 @@ func commandSandboxProcessList(ctx *CommandContext, flags *cmd.SandboxNameFlags)
 		if info.Status != "running" {
 			exit = strconv.Itoa(info.ExitCode)
 		}
-		rows = append(rows, []string{info.PID, info.Name, info.Status, exit, started})
+		rows = append(rows, []string{info.PID, info.Name, string(info.Status), exit, started})
 	}
 	ctx.OutputTable(TableOutput{
 		Headers:             []string{"PID", "NAME", "STATUS", "EXIT", "STARTED"},
@@ -367,7 +380,7 @@ func commandSandboxProcessList(ctx *CommandContext, flags *cmd.SandboxNameFlags)
 }
 
 func commandSandboxProcessLogs(ctx *CommandContext, flags *cmd.SandboxProcessLogsFlags) error {
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
@@ -375,12 +388,12 @@ func commandSandboxProcessLogs(ctx *CommandContext, flags *cmd.SandboxProcessLog
 	if err != nil {
 		return err
 	}
-	logs, err := instance.Process().Logs(ctx, flags.PID)
+	logs, err := instance.Process().Logs(ctx, sandbox.ProcessLogsOptions{Identifier: flags.PID})
 	if err != nil {
 		return fmt.Errorf("getting logs of process %s in sandbox %s: %w", flags.PID, flags.Name, err)
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(*logs)
+		ctx.OutputJSON(cmd.ProcessLogsOutput{Stdout: logs.Stdout, Stderr: logs.Stderr, Logs: logs.Logs})
 		return nil
 	}
 	if logs.Logs == "" {
@@ -396,17 +409,17 @@ func commandSandboxProcessLogs(ctx *CommandContext, flags *cmd.SandboxProcessLog
 
 // waitSandboxDeployed polls until the sandbox is DEPLOYED, fails fast on
 // FAILED, and errors on timeout.
-func waitSandboxDeployed(ctx *CommandContext, client *sandboxclient.SandboxesClient, name string) (*sandboxclient.SandboxInfo, error) {
+func waitSandboxDeployed(ctx *CommandContext, client *sandbox.Client, name string) (*sandbox.Info, error) {
 	deadline := time.Now().Add(sandboxDeployTimeout)
 	for {
-		info, err := client.GetInfo(ctx, name, nil)
+		info, err := client.GetInfo(ctx, sandbox.GetInfoOptions{Name: name})
 		if err != nil {
 			return nil, fmt.Errorf("checking sandbox %s: %w", name, err)
 		}
 		switch {
-		case info.Status == sandboxclient.SandboxStatusDeployed:
+		case info.Status == sandbox.StatusDeployed:
 			return info, nil
-		case info.Status == sandboxclient.SandboxStatusFailed:
+		case info.Status == sandbox.StatusFailed:
 			return nil, fmt.Errorf("sandbox %s failed to deploy", name)
 		case time.Now().After(deadline):
 			return nil, fmt.Errorf(
@@ -421,9 +434,9 @@ func waitSandboxDeployed(ctx *CommandContext, client *sandboxclient.SandboxesCli
 	}
 }
 
-func outputSandboxInfo(ctx *CommandContext, info sandboxclient.SandboxInfo) {
+func outputSandboxInfo(ctx *CommandContext, info sandbox.Info) {
 	if ctx.JSON {
-		ctx.OutputJSON(info)
+		ctx.OutputJSON(cmd.SandboxInfoOutputFrom(info))
 		return
 	}
 	ctx.Outputf("Name:        %s\n", info.Name)
@@ -450,14 +463,14 @@ func outputSandboxInfo(ctx *CommandContext, info sandboxclient.SandboxInfo) {
 	if len(info.Envs) > 0 {
 		ctx.Outputf("Envs:        %s\n", formatSandboxEnvs(info.Envs))
 	}
-	if info.ExpiresInSeconds > 0 {
-		ctx.Outputf("Expires in:  %ds\n", info.ExpiresInSeconds)
+	if info.ExpiresIn > 0 {
+		ctx.Outputf("Expires in:  %s\n", info.ExpiresIn.Round(time.Second))
 	}
 }
 
 // formatSandboxEnvs renders env variables sorted by name, so the same set
 // always prints the same way.
-func formatSandboxEnvs(envs map[string]sandboxclient.SandboxEnvValue) string {
+func formatSandboxEnvs(envs map[string]sandbox.EnvValue) string {
 	pairs := make([]string, 0, len(envs))
 	for name, env := range envs {
 		pairs = append(pairs, name+"="+env.Value)
@@ -474,6 +487,18 @@ func formatSandboxLabels(labels map[string]string) string {
 	// Sorted, so the same labels always print the same way.
 	slices.Sort(pairs)
 	return strings.Join(pairs, ", ")
+}
+
+// statusesFromFlags converts the --status flag repeats into sandbox statuses.
+func statusesFromFlags(values []string) []sandbox.Status {
+	if len(values) == 0 {
+		return nil
+	}
+	statuses := make([]sandbox.Status, 0, len(values))
+	for _, value := range values {
+		statuses = append(statuses, sandbox.Status(value))
+	}
+	return statuses
 }
 
 // parseKeyValues turns KEY=VALUE flag repeats into a map, rejecting malformed
@@ -496,7 +521,7 @@ func parseKeyValues(flagName string, values []string) (map[string]string, error)
 // parseSandboxEnvs wraps parsed KEY=VALUE entries as sandbox envs. Nil stays
 // nil: the API reads nil as "leave unchanged" and an allocated empty map as
 // "replace with none".
-func parseSandboxEnvs(flagName string, values []string) (map[string]sandboxclient.SandboxEnvValue, error) {
+func parseSandboxEnvs(flagName string, values []string) (map[string]sandbox.EnvValue, error) {
 	parsed, err := parseKeyValues(flagName, values)
 	if err != nil {
 		return nil, err
@@ -504,9 +529,9 @@ func parseSandboxEnvs(flagName string, values []string) (map[string]sandboxclien
 	if parsed == nil {
 		return nil, nil
 	}
-	envs := make(map[string]sandboxclient.SandboxEnvValue, len(parsed))
+	envs := make(map[string]sandbox.EnvValue, len(parsed))
 	for key, value := range parsed {
-		envs[key] = sandboxclient.SandboxEnvValue{Value: value}
+		envs[key] = sandbox.EnvValue{Value: value}
 	}
 	return envs, nil
 }
@@ -529,12 +554,12 @@ func shellQuote(arg string) string {
 }
 
 func commandSandboxImageList(ctx *CommandContext, flags *cmd.SandboxTeamFlags) error {
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
-	var items []sandboxclient.ImageInfo
-	for info, err := range client.Images().List(ctx, &sandboxclient.ImageListOptions{}) {
+	var items []sandbox.ImageInfo
+	for info, err := range client.Images().List(ctx, sandbox.ImageListOptions{}) {
 		if err != nil {
 			return fmt.Errorf("listing sandbox images: %w", err)
 		}
@@ -542,7 +567,11 @@ func commandSandboxImageList(ctx *CommandContext, flags *cmd.SandboxTeamFlags) e
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.SandboxImageList{Items: items})
+		outputItems := make([]cmd.ImageInfoOutput, 0, len(items))
+		for _, info := range items {
+			outputItems = append(outputItems, cmd.ImageInfoOutputFrom(info))
+		}
+		ctx.OutputJSON(cmd.SandboxImageList{Items: outputItems})
 		return nil
 	}
 	if len(items) == 0 {
@@ -557,8 +586,8 @@ func commandSandboxImageList(ctx *CommandContext, flags *cmd.SandboxTeamFlags) e
 		}
 		rows = append(rows, []string{
 			info.Name,
-			info.Status,
-			strconv.FormatInt(info.TagCount, 10),
+			string(info.Status),
+			strconv.Itoa(info.TagCount),
 			formatBytes(info.SizeBytes),
 			created,
 		})
@@ -572,11 +601,11 @@ func commandSandboxImageList(ctx *CommandContext, flags *cmd.SandboxTeamFlags) e
 }
 
 func commandSandboxImageDescribe(ctx *CommandContext, flags *cmd.SandboxImageNameFlags) error {
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
-	info, err := client.Images().GetInfo(ctx, flags.Name)
+	info, err := client.Images().GetInfo(ctx, sandbox.ImageGetInfoOptions{Name: flags.Name})
 	if err != nil {
 		return fmt.Errorf("describing sandbox image %s: %w", flags.Name, err)
 	}
@@ -585,7 +614,7 @@ func commandSandboxImageDescribe(ctx *CommandContext, flags *cmd.SandboxImageNam
 }
 
 func commandSandboxImagePush(ctx *CommandContext, flags *cmd.SandboxImagePushFlags) error {
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
@@ -593,12 +622,14 @@ func commandSandboxImagePush(ctx *CommandContext, flags *cmd.SandboxImagePushFla
 	if flags.Wait {
 		ctx.Logf("Waiting for image %s to build. Press Ctrl+C to stop waiting; the build continues.\n\n", name)
 	}
-	info, err := client.Images().Push(ctx, &sandboxclient.ImagePushOptions{
-		Name:          name,
-		Directory:     flags.Dir,
-		RegistryImage: flags.Image,
-		WaitForBuilt:  flags.Wait,
-	})
+	pushOptions := sandbox.ImagePushOptions{Name: name, NoWait: !flags.Wait}
+	if flags.Dir != "" {
+		pushOptions.SourceDirectory = flags.Dir
+	}
+	if flags.Image != "" {
+		pushOptions.SourceRegistry = &sandbox.ImageRegistrySource{Image: flags.Image}
+	}
+	info, err := client.Images().Push(ctx, pushOptions)
 	if err != nil {
 		if ctx.Err() != nil {
 			return cmd.NewErrInterrupted(fmt.Errorf(
@@ -619,16 +650,16 @@ func commandSandboxImageDelete(ctx *CommandContext, flags *cmd.SandboxDeleteFlag
 			return err
 		}
 	}
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
-	info, err := client.Images().Delete(ctx, name)
+	info, err := client.Images().Delete(ctx, sandbox.ImageDeleteOptions{Name: name})
 	if err != nil {
 		return fmt.Errorf("deleting sandbox image %s: %w", name, err)
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(*info)
+		ctx.OutputJSON(cmd.ImageInfoOutputFrom(*info))
 		return nil
 	}
 	ctx.Logf("Deleting sandbox image %s.\n", name)
@@ -641,7 +672,7 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxNameFlags) err
 		return cmd.NewErrUsagef("connect requires an interactive terminal")
 	}
 	name := flags.Name
-	client, err := ctx.NewSandboxesClient(flags.Team)
+	client, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
@@ -684,9 +715,9 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxNameFlags) err
 	return nil
 }
 
-func outputSandboxImageInfo(ctx *CommandContext, info sandboxclient.ImageInfo) {
+func outputSandboxImageInfo(ctx *CommandContext, info sandbox.ImageInfo) {
 	if ctx.JSON {
-		ctx.OutputJSON(info)
+		ctx.OutputJSON(cmd.ImageInfoOutputFrom(info))
 		return
 	}
 	ctx.Outputf("Name:        %s\n", info.Name)
@@ -708,18 +739,18 @@ func outputSandboxImageInfo(ctx *CommandContext, info sandboxclient.ImageInfo) {
 // commandSandboxImageLibraryList lists the platform's starter images from
 // the starter-image library, hidden and coming-soon entries left out by the SDK.
 func commandSandboxImageLibraryList(ctx *CommandContext, _ *cmd.SandboxLibraryListFlags) error {
-	client, err := ctx.NewSandboxesClient("")
+	client, err := ctx.NewSandboxClient("")
 	if err != nil {
 		return err
 	}
-	images, err := client.LibraryImages(ctx)
+	images, err := client.Images().ListLibrary(ctx, sandbox.ImageListLibraryOptions{})
 	if err != nil {
 		return fmt.Errorf("listing starter images: %w", err)
 	}
 
 	items := make([]cmd.SandboxLibraryImage, 0, len(images))
 	for _, image := range images {
-		memory := image.MemoryMB
+		memory := image.Memory
 		items = append(items, cmd.SandboxLibraryImage{
 			Name:        image.Name,
 			DisplayName: image.DisplayName,
