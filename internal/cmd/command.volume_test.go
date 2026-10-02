@@ -1115,3 +1115,69 @@ func Test_Volume_Push_OtherErrorsPreserved(t *testing.T) {
 		})
 	}
 }
+
+func Test_Volume_FlagGuidance(t *testing.T) {
+	for _, format := range []string{"text", "json", "jsonl"} {
+		for _, tc := range []struct {
+			name     string
+			args     []string
+			want     string
+			internal string
+		}{
+			{"head flag", []string{"push", ".", "bdn:weights/llama", "--tag", "head"}, "omit --tag head or :head", "RequireHeadMove"},
+			{"head ref", []string{"push", ".", "bdn:weights/llama:head"}, "omit --tag head or :head", "RequireHeadMove"},
+			{"strip without path", []string{"pull", "bdn:weights/llama", ".", "--strip-prefix"}, "--strip-prefix requires a path", "StripRefPath"},
+			{"strip root", []string{"pull", "bdn:weights/llama/", ".", "--strip-prefix"}, "--strip-prefix requires a path", "StripRefPath"},
+		} {
+			t.Run(format+"/"+tc.name, func(t *testing.T) {
+				h := NewCommandHarness(t)
+				fake := withVolumeTransfer(t, h)
+				fake.OnProgress = func(_ func(client.VolumeProgress)) error {
+					t.Fatal("invalid flags must be rejected before transfer")
+					return nil
+				}
+				args := append([]string{"volume"}, tc.args...)
+				err := h.Execute(append(args, "--output", format)...)
+				h.Require.ErrorContains(err, tc.want)
+				h.Require.NotContains(err.Error(), tc.internal)
+				if format != "text" {
+					out := decodeJSONErrorEnvelope(h)
+					h.Require.Equal("ErrUsage", out.Type)
+					h.Require.Contains(out.Message, tc.want)
+					h.Require.NotContains(out.Message, tc.internal)
+				}
+			})
+		}
+	}
+}
+
+func Test_Volume_Pull_OverwriteGuidance(t *testing.T) {
+	for _, format := range []string{"text", "json", "jsonl"} {
+		t.Run(format, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			fake := withVolumeTransfer(t, h)
+			fake.OnProgress = func(_ func(client.VolumeProgress)) error {
+				return errors.New("destination is not empty; set Overwrite to write into it")
+			}
+			err := h.Execute("volume", "pull", "bdn:weights/llama", "destination", "--output", format)
+			h.Require.ErrorContains(err, "destination is not empty; use --overwrite")
+			h.Require.Contains(h.Stderr.String(), "choose an empty directory")
+			h.Require.NotContains(h.Stderr.String(), "set Overwrite")
+			if format != "text" {
+				out := decodeJSONErrorEnvelope(h)
+				h.Require.Contains(out.Message, "use --overwrite")
+				h.Require.NotContains(out.Message, "set Overwrite")
+			}
+		})
+	}
+}
+
+func Test_Volume_Pull_UnrelatedErrorPreserved(t *testing.T) {
+	h := NewCommandHarness(t)
+	fake := withVolumeTransfer(t, h)
+	original := errors.New("cannot open Overwrite: permission denied")
+	fake.OnProgress = func(_ func(client.VolumeProgress)) error { return original }
+	err := h.Execute("volume", "pull", "bdn:weights/llama", "destination")
+	h.Require.ErrorContains(err, original.Error())
+	h.Require.Contains(h.Stderr.String(), original.Error())
+}
