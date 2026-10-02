@@ -615,18 +615,19 @@ func TestUpdateEnabledNilOmittedSetSent(t *testing.T) {
 	}
 }
 
-func TestLibraryImagesFiltersHiddenAndComingSoon(t *testing.T) {
+func TestLibraryImagesConvertsTheServedCatalog(t *testing.T) {
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/token":
 			fmt.Fprintf(w, `{"token": "tok-1", "expires_at": %q}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
-		case "/v0/sandbox/hub":
-			_, _ = io.WriteString(w, `[
-				{"name": "visible", "image": "blaxel/visible:latest", "memory": 2048, "hidden": false, "coming_soon": false},
-				{"name": "gone", "image": "blaxel/gone:latest", "hidden": true},
-				{"name": "soon", "image": "blaxel/soon:latest", "coming_soon": true}
-			]`)
+		case "/v1/sandboxes/library_images":
+			// The server drops hidden and coming-soon entries before listing.
+			_, _ = io.WriteString(w, `{"items": [
+				{"name": "visible", "image": "baseten/visible:latest", "memory": 2048,
+				 "display_name": "Visible", "description": "one", "categories": ["web"],
+				 "ports": [{"name": "http", "target": 3000, "protocol": "HTTP"}]}
+			]}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -639,9 +640,12 @@ func TestLibraryImagesFiltersHiddenAndComingSoon(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(images) != 1 || images[0].Name != "visible" {
-		t.Fatalf("only the visible entry survives: %+v", images)
+		t.Fatalf("catalog not converted: %+v", images)
 	}
-	if images[0].MemoryMB != 2048 || images[0].Image != "blaxel/visible:latest" {
+	if images[0].MemoryMB != 2048 || images[0].Image != "baseten/visible:latest" {
+		t.Errorf("record not converted: %+v", images[0])
+	}
+	if images[0].DisplayName != "Visible" || len(images[0].Ports) != 1 || images[0].Ports[0].Target != 3000 {
 		t.Errorf("record not converted: %+v", images[0])
 	}
 }

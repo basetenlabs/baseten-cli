@@ -30,16 +30,6 @@ const (
 	SandboxStatusUploading    SandboxStatus = "UPLOADING"
 )
 
-// SandboxState is whether a deployed sandbox is running or idle in standby.
-// Other values may be added, so do not treat the constants as exhaustive.
-type SandboxState = string
-
-// Values for SandboxState.
-const (
-	SandboxStateRunning SandboxState = "RUNNING"
-	SandboxStateStandby SandboxState = "STANDBY"
-)
-
 // SandboxEnvValue is the value of an environment variable in a sandbox.
 type SandboxEnvValue struct {
 	// Value of the variable.
@@ -60,9 +50,6 @@ type SandboxInfo struct {
 
 	// Status is the deployment status.
 	Status SandboxStatus `json:"status"`
-
-	// State is the execution state when the status is DEPLOYED.
-	State SandboxState `json:"state"`
 
 	// Image is the image reference, including its tag.
 	Image string `json:"image"`
@@ -179,7 +166,6 @@ func sandboxInfoFromAPI(api *managementapi.Sandbox) (SandboxInfo, error) {
 		Name:      *api.Name,
 		URL:       stringOrEmpty(api.Url),
 		Status:    string(api.Status),
-		State:     stateOrEmpty(api.State),
 		Image:     stringOrEmpty(api.Image),
 		Envs:      envsFromAPI(api.Envs),
 		Labels:    labelsFromAPI(api.Labels),
@@ -254,13 +240,6 @@ func stringOrEmpty(value *string) string {
 		return ""
 	}
 	return *value
-}
-
-func stateOrEmpty(state *managementapi.SandboxState) SandboxState {
-	if state == nil {
-		return ""
-	}
-	return SandboxState(*state)
 }
 
 func envsFromAPI(envs *[]managementapi.SandboxEnv) map[string]SandboxEnvValue {

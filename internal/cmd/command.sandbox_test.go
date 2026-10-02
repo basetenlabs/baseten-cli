@@ -445,30 +445,26 @@ func Test_Sandbox_Exec_SingleArgumentPassesVerbatim(t *testing.T) {
 	h.Require.Equal(`echo "Welcom to $PWD"`, receivedCommand)
 }
 
-func Test_Sandbox_ImageLibrary_ListFiltersAndRenders(t *testing.T) {
+func Test_Sandbox_ImageLibrary_ListRenders(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	sandboxTestTokenRoute(m)
-	m.SetRouteFunc("GET", "/v0/sandbox/hub", func(w http.ResponseWriter, r *http.Request) {
+	m.SetRouteFunc("GET", "/v1/sandboxes/library_images", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[
-			{"name": "py-app", "displayName": "Python App", "image": "blaxel/py-app:latest", "memory": 4096, "categories": ["python"]},
-			{"name": "hidden", "image": "blaxel/hidden:latest", "hidden": true},
-			{"name": "soon", "image": "blaxel/soon:latest", "coming_soon": true}
-		]`)
+		_, _ = io.WriteString(w, `{"items": [
+			{"name": "py-app", "display_name": "Python App", "image": "baseten/py-app:latest", "memory": 4096, "categories": ["python"]}
+		]}`)
 	})
 
 	h.Require.NoError(h.Execute("sandbox", "image-library", "list"))
 	h.Require.Contains(h.Stdout.String(), "Python App")
-	h.Require.Contains(h.Stdout.String(), "blaxel/py-app:latest")
-	h.Require.NotContains(h.Stdout.String(), "hidden")
-	h.Require.NotContains(h.Stdout.String(), "soon")
+	h.Require.Contains(h.Stdout.String(), "baseten/py-app:latest")
 
 	h.Require.NoError(h.Execute("sandbox", "image-library", "list", "--output", "json"))
 	var listed cmd.SandboxLibraryImageList
 	h.Require.NoError(json.Unmarshal([]byte(h.Stdout.String()), &listed))
 	h.Require.Len(listed.Items, 1)
-	h.Require.Equal("blaxel/py-app:latest", listed.Items[0].Image)
+	h.Require.Equal("baseten/py-app:latest", listed.Items[0].Image)
 	h.Require.NotNil(listed.Items[0].MemoryMB)
 	h.Require.Equal(4096, *listed.Items[0].MemoryMB)
 }

@@ -69,13 +69,12 @@ func commandSandboxList(ctx *CommandContext, flags *cmd.SandboxListFlags) error 
 		rows = append(rows, []string{
 			info.Name,
 			info.Status,
-			info.State,
 			info.Region,
 			created,
 		})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers: []string{"NAME", "STATUS", "STATE", "REGION", "CREATED"},
+		Headers: []string{"NAME", "STATUS", "REGION", "CREATED"},
 		Rows:    rows,
 	})
 	return nil
@@ -429,9 +428,6 @@ func outputSandboxInfo(ctx *CommandContext, info sandboxclient.SandboxInfo) {
 	}
 	ctx.Outputf("Name:        %s\n", info.Name)
 	ctx.Outputf("Status:      %s\n", info.Status)
-	if info.State != "" {
-		ctx.Outputf("State:       %s\n", info.State)
-	}
 	if info.URL != "" {
 		ctx.Outputf("URL:         %s\n", info.URL)
 	}

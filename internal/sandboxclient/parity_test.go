@@ -207,10 +207,11 @@ func TestImageInfoCoversGeneratedRecord(t *testing.T) {
 // hubRecordUntranslated names generated SandboxLibraryImage fields the curated
 // LibraryImage deliberately does not carry, with the reason.
 var hubRecordUntranslated = map[string]string{
-	"IconDark":   "display variant the CLI does not render",
-	"IconLight":  "display variant the CLI does not render",
-	"Hidden":     "filtered out before the curated record exists",
-	"ComingSoon": "filtered out before the curated record exists",
+	"IconDark":        "display variant the CLI does not render",
+	"IconLight":       "display variant the CLI does not render",
+	"Hidden":          "always false in listings",
+	"ComingSoon":      "always false in listings",
+	"CreationOptions": "create-time settings the CLI does not prompt for",
 }
 
 // hubRecordRenames maps generated SandboxLibraryImage fields to their curated

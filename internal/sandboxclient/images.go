@@ -662,28 +662,23 @@ type LibraryImagePort struct {
 	Protocol string `json:"protocol"`
 }
 
-// LibraryImages lists the platform's starter images from the starter-image library.
-// Hidden and coming-soon entries are dropped, matching what the console's
-// create form shows.
+// LibraryImages lists the platform's starter images from the starter-image
+// library. The server drops hidden and coming-soon entries.
 func (c *SandboxesClient) LibraryImages(ctx context.Context) ([]LibraryImage, error) {
-	catalog, err := c.api.ListSandboxLibraryImages(ctx)
+	catalog, err := c.api.ListSandboxLibraryImages(ctx, managementapi.ListSandboxLibraryImagesParams{
+		TeamId: c.teamID(),
+	})
 	if err != nil {
 		return nil, toSandboxAPIError(err, "control")
 	}
-	images := make([]LibraryImage, 0, len(*catalog))
-	for _, entry := range *catalog {
-		if entry.Hidden != nil && *entry.Hidden {
-			continue
-		}
-		if entry.ComingSoon != nil && *entry.ComingSoon {
-			continue
-		}
-		images = append(images, hubImageFromAPI(&entry))
+	images := make([]LibraryImage, 0, len(catalog.Items))
+	for i := range catalog.Items {
+		images = append(images, libraryImageFromAPI(&catalog.Items[i]))
 	}
 	return images, nil
 }
 
-func hubImageFromAPI(entry *managementapi.SandboxLibraryImage) LibraryImage {
+func libraryImageFromAPI(entry *managementapi.SandboxLibraryImage) LibraryImage {
 	image := LibraryImage{
 		Name:        entry.Name,
 		Image:       entry.Image,
@@ -711,14 +706,23 @@ func hubImageFromAPI(entry *managementapi.SandboxLibraryImage) LibraryImage {
 	if entry.Tags != nil {
 		image.Tags = *entry.Tags
 	}
-	if entry.Ports != nil {
-		for _, port := range *entry.Ports {
-			image.Ports = append(image.Ports, LibraryImagePort{
-				Name:     stringOrEmpty(port.Name),
-				Target:   intOrZero(port.Target),
-				Protocol: stringOrEmpty(port.Protocol),
-			})
+	for _, port := range derefOrEmpty(entry.Ports) {
+		protocol := ""
+		if port.Protocol != nil {
+			protocol = string(*port.Protocol)
 		}
+		image.Ports = append(image.Ports, LibraryImagePort{
+			Name:     stringOrEmpty(port.Name),
+			Target:   port.Target,
+			Protocol: protocol,
+		})
 	}
 	return image
+}
+
+func derefOrEmpty(ports *managementapi.SandboxPorts) managementapi.SandboxPorts {
+	if ports == nil {
+		return nil
+	}
+	return *ports
 }
