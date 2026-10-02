@@ -3,12 +3,9 @@ package cmd
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -276,49 +273,19 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	return nil
 }
 
-type serverHarnessModel struct {
-	Route *struct {
-		Name string `json:"name"`
-	} `json:"route"`
-}
-
 func fetchServerDefaults(ctx context.Context, api *managementapi.Client, teamID string) (harness.ServerDefaults, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	settings, err := api.GetRoutesSettingsTeams(ctx, teamID)
+	if err != nil {
+		return harness.ServerDefaults{}, fmt.Errorf("GET /v1/routes/settings/teams/%s: %w", teamID, err)
+	}
 	var defaults harness.ServerDefaults
-	settingsPath := "/v1/routes/settings/teams/" + url.PathEscape(teamID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(api.BaseURL, "/")+settingsPath, nil)
-	if err != nil {
-		return defaults, err
+	entry := settings.HarnessDefaults.ClaudeCode
+	if entry.Primary != nil {
+		defaults.Primary = entry.Primary.Route.Name
 	}
-	for key, vals := range api.Headers {
-		for _, val := range vals {
-			req.Header.Add(key, val)
-		}
-	}
-	resp, err := api.HTTPClient.Do(req)
-	if err != nil {
-		return defaults, fmt.Errorf("GET %s: %w", settingsPath, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return defaults, fmt.Errorf("GET %s: HTTP %d", settingsPath, resp.StatusCode)
-	}
-	var settings struct {
-		HarnessDefaults map[string]struct {
-			Primary    *serverHarnessModel `json:"primary"`
-			Background *serverHarnessModel `json:"background"`
-		} `json:"harness_defaults"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&settings); err != nil {
-		return defaults, fmt.Errorf("GET %s: %w", settingsPath, err)
-	}
-	entry := settings.HarnessDefaults[strings.ReplaceAll(harness.ClaudeCode, "-", "_")]
-	if entry.Primary == nil || entry.Primary.Route == nil || entry.Primary.Route.Name == "" {
-		return defaults, nil
-	}
-	defaults.Primary = entry.Primary.Route.Name
-	if entry.Background != nil && entry.Background.Route != nil {
+	if entry.Background != nil {
 		defaults.Background = entry.Background.Route.Name
 	}
 	return defaults, nil

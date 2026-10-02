@@ -540,7 +540,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
 		},
 		{
-			name:        "server defaults without a primary are ignored",
+			name:        "server defaults without a primary still seed the background",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
 				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, map[string]any{
@@ -551,7 +551,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
-			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
+			wantBackground: "acme/background",
 		},
 		{
 			name:        "a response without a claude_code entry is ignored",
