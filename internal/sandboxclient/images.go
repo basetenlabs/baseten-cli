@@ -665,9 +665,9 @@ type LibraryImagePort struct {
 // LibraryImages lists the platform's starter images from the starter-image
 // library. The server drops hidden and coming-soon entries.
 func (c *SandboxesClient) LibraryImages(ctx context.Context) ([]LibraryImage, error) {
-	catalog, err := c.api.ListSandboxLibraryImages(ctx, managementapi.ListSandboxLibraryImagesParams{
-		TeamId: c.teamID(),
-	})
+	// The catalog is available to every team; the spec's team parameter is
+	// uniform plumbing and no selector is needed.
+	catalog, err := c.api.ListSandboxLibraryImages(ctx, managementapi.ListSandboxLibraryImagesParams{})
 	if err != nil {
 		return nil, toSandboxAPIError(err, "control")
 	}

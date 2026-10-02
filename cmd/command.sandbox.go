@@ -345,7 +345,8 @@ type SandboxDescribeFlags struct {
 }
 
 // imageLibrarySubcommands is the starter-image library under baseten sandbox
-// image-library.
+// image-library. The library is available to every team, so no team
+// selection applies.
 var imageLibrarySubcommands = Command{
 	Name:    "image-library",
 	Summary: "Browse starter sandbox images (PRE-RELEASE)",
@@ -393,7 +394,8 @@ type SandboxLibraryImage struct {
 	Categories  []string `json:"categories"`
 }
 
-// SandboxLibraryListFlags carry the image-library commands' team selection.
+// SandboxLibraryListFlags are the standard flags only: the starter-image
+// library is available to every team, so no team selection applies.
 type SandboxLibraryListFlags struct {
-	SandboxTeamFlags
+	CommandFlags
 }
