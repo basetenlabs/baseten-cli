@@ -1,0 +1,219 @@
+// Package sandboxconnect opens an interactive terminal to a sandbox over the
+// WebSocket its execution API serves. The protocol is the one the sandbox's
+// built-in image established: JSON messages of type input, output, resize,
+// and error, with the terminal locally in raw mode.
+package sandboxconnect
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"unicode/utf8"
+
+	"github.com/coder/websocket"
+	"golang.org/x/term"
+)
+
+// tokenInQuery matches a token query value wherever a dial failure echoes the
+// URL, so the sandbox token never reaches an error message.
+var tokenInQuery = regexp.MustCompile(`token=[^&\s]+`)
+
+// Message is one frame of the terminal protocol.
+type Message struct {
+	Type string `json:"type"` // "input", "output", "resize", "error"
+	Data string `json:"data,omitempty"`
+	Cols int    `json:"cols,omitempty"`
+	Rows int    `json:"rows,omitempty"`
+}
+
+// Terminal is one connected terminal session. Run blocks until the session
+// ends: the server closes the connection, the user presses Ctrl+D, or the
+// context is canceled.
+type Terminal struct {
+	conn    *websocket.Conn
+	writeMu sync.Mutex
+	stdin   *os.File
+	stdout  *os.File
+	// errorWriter receives the server's terminal errors, the command's
+	// stderr rather than the process global.
+	errorWriter io.Writer
+	oldMode     *term.State
+	// done is closed once the session has fully ended and the terminal
+	// restored.
+	done chan struct{}
+}
+
+// WebSocketURL turns a sandbox's execution URL into the terminal WebSocket
+// URL, with the sandbox token as the query parameter the terminal endpoint
+// reads.
+func WebSocketURL(sandboxURL, token string) (string, error) {
+	parsed, err := url.Parse(sandboxURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid sandbox URL: %w", err)
+	}
+	switch parsed.Scheme {
+	case "https":
+		parsed.Scheme = "wss"
+	case "http":
+		parsed.Scheme = "ws"
+	}
+	parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/terminal/ws"
+	query := parsed.Query()
+	query.Set("token", token)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+// Dial connects the terminal. Each dial is its own session: the server's
+// default session is shared, so reusing it would rejoin a shell an earlier
+// connect may have left. The window size rides the URL, the same place the
+// reference client puts it.
+func Dial(ctx context.Context, wsURL string, stdin, stdout *os.File, errorWriter io.Writer) (*Terminal, error) {
+	parsed, err := url.Parse(wsURL)
+	if err != nil {
+		return nil, err
+	}
+	cols, rows, sizeErr := term.GetSize(int(stdout.Fd()))
+	if sizeErr != nil {
+		cols, rows = 80, 24
+	}
+	session := make([]byte, 8)
+	if _, err := rand.Read(session); err != nil {
+		return nil, err
+	}
+	query := parsed.Query()
+	query.Set("cols", strconv.Itoa(cols))
+	query.Set("rows", strconv.Itoa(rows))
+	query.Set("sessionId", hex.EncodeToString(session))
+	parsed.RawQuery = query.Encode()
+
+	conn, _, err := websocket.Dial(ctx, parsed.String(), nil)
+	if err != nil {
+		// The URL carries the sandbox token, and dial failures echo it;
+		// redact so the token never reaches stderr or logs.
+		return nil, fmt.Errorf("connecting terminal: %s",
+			tokenInQuery.ReplaceAllString(err.Error(), "token=REDACTED"))
+	}
+	return &Terminal{
+		conn: conn, stdin: stdin, stdout: stdout, errorWriter: errorWriter,
+		done: make(chan struct{}),
+	}, nil
+}
+
+// Run puts the terminal in raw mode and ferries bytes until the session
+// ends. Ctrl+D reaches the sandbox's shell through raw mode and ends it.
+func (t *Terminal) Run(ctx context.Context) error {
+	oldMode, err := term.MakeRaw(int(t.stdin.Fd()))
+	if err != nil {
+		t.conn.Close(websocket.StatusInternalError, "")
+		return fmt.Errorf("setting terminal raw mode: %w", err)
+	}
+	t.oldMode = oldMode
+	defer t.restore()
+
+	// Canceling the context ends both loops and the connection.
+	context.AfterFunc(ctx, func() {
+		t.conn.Close(websocket.StatusNormalClosure, "canceled")
+	})
+	t.watchResize(ctx)
+
+	readDone := make(chan error, 1)
+	go func() {
+		readDone <- t.readLoop(ctx)
+	}()
+	go t.inputLoop(ctx)
+	readErr := <-readDone
+	t.restore()
+	close(t.done)
+	return readErr
+}
+
+func (t *Terminal) send(message Message) error {
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	return t.conn.Write(context.Background(), websocket.MessageText, payload)
+}
+
+func (t *Terminal) readLoop(ctx context.Context) error {
+	for {
+		_, payload, err := t.conn.Read(ctx)
+		if err != nil {
+			// Normal closure and cancellation end the session; anything
+			// else is a failure the caller should see.
+			if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
+				ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		var message Message
+		if err := json.Unmarshal(payload, &message); err != nil {
+			continue
+		}
+		switch message.Type {
+		case "output":
+			_, _ = t.stdout.WriteString(message.Data)
+		case "error":
+			_, _ = io.WriteString(t.errorWriter, message.Data+"\n")
+		}
+	}
+}
+
+func (t *Terminal) inputLoop(ctx context.Context) {
+	buffer := make([]byte, 512)
+	// A read can split a multi-byte UTF-8 character at the buffer boundary;
+	// the incomplete tail stays pending until the next read completes it.
+	var pending []byte
+	for {
+		read, err := t.stdin.Read(buffer)
+		if err != nil {
+			return
+		}
+		pending = append(pending, buffer[:read]...)
+		complete := completeRunes(pending)
+		if complete > 0 {
+			if err := t.send(Message{Type: "input", Data: string(pending[:complete])}); err != nil {
+				return
+			}
+			pending = append(pending[:0], pending[complete:]...)
+		}
+	}
+}
+
+// completeRunes returns the length of the leading run of complete UTF-8
+// runes, holding back a partial sequence split at a read boundary.
+func completeRunes(data []byte) int {
+	for i := 0; i < len(data); {
+		if data[i] < utf8.RuneSelf {
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRune(data[i:])
+		if r == utf8.RuneError && size <= 1 {
+			return i
+		}
+		i += size
+	}
+	return len(data)
+}
+
+func (t *Terminal) restore() {
+	if t.oldMode == nil {
+		return
+	}
+	_ = term.Restore(int(t.stdin.Fd()), t.oldMode)
+	t.oldMode = nil
+}

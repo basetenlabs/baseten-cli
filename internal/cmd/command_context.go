@@ -19,6 +19,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client"
+	"github.com/basetenlabs/baseten-go/sandbox"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/itchyny/gojq"
@@ -443,6 +444,38 @@ func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error)
 		BaseURL:    remote.ManagementURL(),
 		DeferAuth:  true,
 		HTTPClient: transport,
+	})
+}
+
+// NewSandboxClient creates the high-level sandbox client, minting sandbox
+// tokens through the session's management credential (an API key, or an OAuth
+// access token the backend accepts the same way). The team argument is a team
+// name or ID, resolved like every other command's --team.
+func (c *CommandContext) NewSandboxClient(team string) (*sandbox.Client, error) {
+	transport, remote, err := c.AuthTransport()
+	if err != nil {
+		return nil, err
+	}
+	credential, err := transport.Credential(c.Context)
+	if err != nil {
+		return nil, err
+	}
+	teamID := ""
+	if team != "" {
+		managementClient, err := c.NewManagementClient()
+		if err != nil {
+			return nil, err
+		}
+		teamID, err = ResolveTeam(c.Context, managementClient.API(), team)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return sandbox.NewClient(sandbox.ClientOptions{
+		APIKey:     credential,
+		TeamID:     teamID,
+		BaseURL:    remote.ManagementURL(),
+		HTTPClient: c.httpClient(),
 	})
 }
 
