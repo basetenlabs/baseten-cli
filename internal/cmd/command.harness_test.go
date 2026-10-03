@@ -125,6 +125,27 @@ func readHarnessSettings(t *testing.T, name, path string) map[string]any {
 	return data
 }
 
+func catalogSlugs(t *testing.T, path string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []struct {
+			Slug string `json:"slug"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	slugs := make([]string, 0, len(catalog.Models))
+	for _, m := range catalog.Models {
+		slugs = append(slugs, m.Slug)
+	}
+	return slugs
+}
+
 func countCalls(api *MockManagementAPI, method, path string) int {
 	count := 0
 	for _, call := range api.Calls() {
@@ -538,9 +559,10 @@ func Test_Harness_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 // harnessGateway records the model and client each inference request names and
 // refuses it.
 type harnessGateway struct {
-	mu      sync.Mutex
-	models  []string
-	clients []string
+	mu        sync.Mutex
+	models    []string
+	clients   []string
+	harnesses []string
 }
 
 func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -552,6 +574,7 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		g.models = append(g.models, body.Model)
 		g.clients = append(g.clients, r.Header.Get("X-Baseten-Client"))
+		g.harnesses = append(g.harnesses, r.Header.Get("X-Baseten-Harness"))
 		g.mu.Unlock()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -571,6 +594,12 @@ func (g *harnessGateway) sentClients() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return slices.Clone(g.clients)
+}
+
+func (g *harnessGateway) sentHarnesses() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.harnesses)
 }
 
 // Test_Harness_Setup_RealHarness configures each installed harness in an
@@ -652,8 +681,45 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.requested(), output.String())
 			}
 			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Client")
+			h.Require.Contains(gateway.sentHarnesses(), tc.name, "X-Baseten-Harness")
 		})
 	}
+}
+
+func Test_Harness_Setup_RouterRouteInPickers(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeHarnessAPI(t)
+	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+		"items": []any{
+			map[string]any{"id": "route-a", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
+			map[string]any{"id": "route-b", "name": "acme/auto", "display_name": "Auto", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "ROUTER"}},
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	t.Setenv("XDG_CONFIG_HOME", root)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--route", "acme/auto", "--background-route", "acme/auto", "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--route", "acme/auto", "--yes"))
+	h.Require.NotContains(h.Stderr.String(), "skipping routes")
+
+	claude := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))
+	h.Require.Equal("acme/auto", claude["model"])
+	h.Require.Contains(claude["modelPicker"].(map[string]any)["options"], map[string]any{"model": "acme/auto", "label": "Auto"})
+	h.Require.Equal("acme/auto", claude["env"].(map[string]any)["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+
+	opencode := readHarnessSettings(t, "opencode", filepath.Join(root, "opencode", "opencode.json"))
+	h.Require.Equal("baseten-harness/acme/auto", opencode["model"])
+	h.Require.Equal("baseten-harness/acme/auto", opencode["small_model"])
+	models := opencode["provider"].(map[string]any)["baseten-harness"].(map[string]any)["models"].(map[string]any)
+	h.Require.Contains(models, "acme/auto")
+	h.Require.NotContains(models["acme/auto"], "provider")
+
+	h.Require.Equal("acme/auto", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
+	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 }
 
 func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
@@ -751,11 +817,7 @@ func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
 	h.Require.Equal("acme/claude", claude["model"])
 	h.Require.Equal([]any{"acme/claude", "acme/open", "acme/new", "deepseek-ai/DeepSeek-V4.1-Flash"}, claude["availableModels"])
 	h.Require.Equal("acme/gpt", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
-	var slugs []any
-	for _, m := range readHarnessSettings(t, "catalog", filepath.Join(root, "codex", "baseten-models.json"))["models"].([]any) {
-		slugs = append(slugs, m.(map[string]any)["slug"])
-	}
-	h.Require.Equal([]any{"acme/gpt", "acme/open", "acme/new"}, slugs)
+	h.Require.Equal([]string{"acme/gpt", "acme/open", "acme/new"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 
 	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/gpt", "--yes"))
 	h.Require.Contains(h.Stderr.String(), `route "acme/gpt" is not one of the team's routes this harness can call`)

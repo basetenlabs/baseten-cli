@@ -95,7 +95,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 		}
 		models[r.Name] = model
 	}
-	headers := map[string]any{"Authorization": "", clientHeader: OpenCode}
+	headers := map[string]any{"Authorization": "", clientHeader: OpenCode, harnessHeader: OpenCode}
 	values := []setting{
 		desired([]string{"model"}, providerID+"/"+s.Primary),
 		desired([]string{"small_model"}, providerID+"/"+s.Background),
