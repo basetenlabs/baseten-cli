@@ -198,7 +198,12 @@ func TestSetupRefreshAndTeardownKeepUnrelatedSettings(t *testing.T) {
 			require.Len(t, status.Routes, 4)
 
 			teardown(t, h, path)
-			require.Equal(t, map[string]any{"theme": "light", "user-added": "keep"}, load(t, path))
+			want := map[string]any{"theme": "light", "user-added": "keep"}
+			if h.Name() == Pi {
+				// Pi's default model is in settings.json, so setup leaves models.json's alone.
+				want["model"] = "original-model"
+			}
+			require.Equal(t, want, load(t, path))
 			for _, p := range teardown(t, h, path) {
 				require.False(t, p.Changed, "repeating teardown changes nothing")
 			}
@@ -374,6 +379,9 @@ func TestUnsupportedSelectionsAreRejected(t *testing.T) {
 		{codexHarness{}, Selection{Subagent: "acme/subagent"}},
 		{codexHarness{}, Selection{Fallback: "acme/fallback"}},
 		{openCodeHarness{}, Selection{Fallback: "acme/fallback"}},
+		{piHarness{}, Selection{Background: "acme/background"}},
+		{piHarness{}, Selection{Subagent: "acme/subagent"}},
+		{piHarness{}, Selection{Fallback: "acme/fallback"}},
 	} {
 		t.Run(fmt.Sprintf("%s/%+v", tc.h.Name(), tc.s), func(t *testing.T) {
 			_, err := tc.h.Prepare(settingsPath(t, tc.h), testRoutes(), tc.s, testEndpoint)
@@ -448,11 +456,88 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.NotContains(t, models["acme/subagent"], "provider")
 }
 
+func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
+	path := settingsPath(t, piHarness{})
+	routes := testRoutes()
+	routes[0].Target = TargetAnthropic
+	routes[1].Target = TargetOpenAI
+	routes[2].Target = "XAI"
+	setup(t, piHarness{}, path, routes, Selection{})
+	provider := get(load(t, path), piProviderPath).Data.(map[string]any)
+	require.Equal(t, "openai-completions", provider["api"])
+	require.Equal(t, testEndpoint+"/v1", provider["baseUrl"])
+	require.Equal(t, true, provider["authHeader"], "Pi sends apiKey to Anthropic routes only as x-api-key")
+	require.NotContains(t, provider, "compat", "a provider's compat would reach every API")
+	models := map[string]map[string]any{}
+	for _, m := range provider["models"].([]any) {
+		models[m.(map[string]any)["id"].(string)] = m.(map[string]any)
+	}
+	require.Equal(t, "anthropic-messages", models["acme/primary"]["api"])
+	require.Equal(t, testEndpoint, models["acme/primary"]["baseUrl"], "Pi's Anthropic client appends /v1")
+	require.NotContains(t, models["acme/primary"], "compat")
+	require.Equal(t, "openai-responses", models["acme/background"]["api"])
+	require.NotContains(t, models["acme/background"], "baseUrl")
+	require.NotContains(t, models["acme/background"], "compat")
+	require.NotContains(t, models["acme/subagent"], "api")
+	require.Equal(t, "max_tokens", get(models["acme/subagent"], []string{"compat", "maxTokensField"}).Data)
+}
+
+func TestPiDefaultModel(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	settings := piSettingsPath(path)
+	save(t, settings, map[string]any{"defaultProvider": "anthropic", "defaultModel": "claude-opus-5-5", "theme": "dark"})
+	plans := setup(t, h, path, testRoutes(), Selection{Primary: "acme/background"})
+	require.Equal(t, []string{"defaultProvider", "defaultModel"}, plans[1].Replaced)
+	require.Equal(t, map[string]any{"defaultProvider": providerID, "defaultModel": "acme/background", "theme": "dark"}, load(t, settings))
+	teardown(t, h, path)
+	require.Equal(t, map[string]any{"theme": "dark"}, load(t, settings), "previous values are not restored")
+	require.Equal(t, map[string]any{}, load(t, path))
+}
+
+func TestPiTeardownPreservesAnotherProviderSelection(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	setup(t, h, path, testRoutes(), Selection{})
+	settings := map[string]any{"defaultProvider": "other", "defaultModel": "user-model"}
+	save(t, piSettingsPath(path), settings)
+	models := load(t, path)
+	require.NoError(t, put(models, []string{"providers", "other"}, value{Exists: true, Data: map[string]any{"baseUrl": "https://other.example"}}))
+	save(t, path, models)
+	status, err := h.Inspect(Detection{Name: Pi, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateInactive, status.State)
+	teardown(t, h, path)
+	require.NoError(t, put(models, piProviderPath, value{}))
+	require.Equal(t, models, load(t, path))
+	require.Equal(t, settings, load(t, piSettingsPath(path)))
+}
+
+func TestPiIncomplete(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	plans, err := h.Prepare(path, testRoutes(), Selection{}, testEndpoint)
+	require.NoError(t, err)
+	// Only the default model is written, as when models.json is removed by hand.
+	require.NoError(t, ApplyPlans(plans[1:], testToken))
+	status, err := h.Inspect(Detection{Name: Pi, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateIncomplete, status.State)
+	teardown(t, h, path)
+	require.Equal(t, map[string]any{}, load(t, piSettingsPath(path)))
+
+	// A malformed settings.json is the user's to repair.
+	require.NoError(t, os.WriteFile(piSettingsPath(path), []byte("{{ not valid"), 0o600))
+	_, err = h.Inspect(Detection{Name: Pi, Path: path})
+	require.ErrorContains(t, err, "invalid settings JSON")
+}
+
 func TestClientHeaderNamesHarness(t *testing.T) {
 	paths := map[string][]string{
 		ClaudeCode: {"env", "ANTHROPIC_CUSTOM_HEADERS"},
 		Codex:      {"model_providers", providerID, "http_headers", clientHeader},
 		OpenCode:   {"provider", providerID, "options", "headers", clientHeader},
+		Pi:         {"providers", providerID, "headers", clientHeader},
 	}
 	for _, h := range All() {
 		t.Run(h.Name(), func(t *testing.T) {
@@ -491,7 +576,7 @@ func TestDetect(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	for _, env := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME"} {
+	for _, env := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME", "PI_CODING_AGENT_DIR"} {
 		t.Setenv(env, "")
 	}
 	custom := t.TempDir()
@@ -503,6 +588,7 @@ func TestDetect(t *testing.T) {
 		{claudeCodeHarness{}, "CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude", "settings.json"), filepath.Join(custom, "settings.json")},
 		{codexHarness{}, "CODEX_HOME", filepath.Join(home, ".codex", "config.toml"), filepath.Join(custom, "config.toml")},
 		{openCodeHarness{}, "XDG_CONFIG_HOME", filepath.Join(home, ".config", "opencode", "opencode.json"), filepath.Join(custom, "opencode", "opencode.json")},
+		{piHarness{}, "PI_CODING_AGENT_DIR", filepath.Join(home, ".pi", "agent", "models.json"), filepath.Join(custom, "models.json")},
 	} {
 		t.Run(tc.h.Name(), func(t *testing.T) {
 			d, err := tc.h.Detect(t.Context(), fakeExecer{}, "")

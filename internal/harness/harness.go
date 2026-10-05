@@ -1,5 +1,5 @@
-// Package harness configures coding harnesses (Claude Code, Codex, and
-// OpenCode) to use Baseten routes, and removes that configuration again.
+// Package harness configures coding harnesses (Claude Code, Codex, OpenCode,
+// and Pi) to use Baseten routes, and removes that configuration again.
 //
 // Setup overwrites a fixed set of integration settings in each harness's native
 // settings file. There are no backups: repeating setup refreshes the same
@@ -35,6 +35,7 @@ const (
 	ClaudeCode = "claude-code"
 	Codex      = "codex"
 	OpenCode   = "opencode"
+	Pi         = "pi"
 )
 
 // Integration states reported by [Harness.Inspect].
@@ -89,7 +90,7 @@ func Supported() bool {
 
 // All returns every supported harness.
 func All() []Harness {
-	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}}
+	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}, piHarness{}}
 }
 
 // Route is a Baseten route as shown in a harness's model picker, with the model
