@@ -6,7 +6,7 @@ const harnessPreRelease = "PRE-RELEASE: Harness commands are not GA yet and supp
 var commandHarness = Command{
 	Name:        "harness",
 	Summary:     "Configure Baseten harness integrations (PRE-RELEASE)",
-	Description: harnessPreRelease + "Configure Claude Code, Codex (CLI or ChatGPT desktop app), and OpenCode CLI to use Baseten routes.",
+	Description: harnessPreRelease + "Configure Claude Code, Codex (CLI or ChatGPT desktop app), OpenCode CLI, and Pi to use Baseten routes.",
 	Children: []Command{
 		{
 			Name:    "setup",
@@ -140,7 +140,7 @@ type HarnessStatusList struct {
 
 // HarnessFlags selects the harnesses a command applies to.
 type HarnessFlags struct {
-	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude-code,codex,opencode"`
+	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude-code,codex,opencode,pi"`
 	ConfigDir string   `flag:"config-dir" desc:"Harness configuration directory. Requires exactly one --harness. Defaults to the harness's own location."`
 }
 

@@ -102,6 +102,8 @@ func harnessSettingsFile(name, dir string) string {
 		return filepath.Join(dir, "config.toml")
 	case "opencode":
 		return filepath.Join(dir, "opencode.json")
+	case "pi":
+		return filepath.Join(dir, "models.json")
 	default:
 		return filepath.Join(dir, "settings.json")
 	}
@@ -156,7 +158,7 @@ func Test_HarnessCommands_RejectOtherPlatforms(t *testing.T) {
 
 func Test_Harness_Setup_Lifecycle(t *testing.T) {
 	skipUnlessSupported(t)
-	for _, name := range []string{"claude-code", "codex", "opencode"} {
+	for _, name := range []string{"claude-code", "codex", "opencode", "pi"} {
 		t.Run(name, func(t *testing.T) {
 			h, api := fakeHarnessAPI(t)
 			dir := t.TempDir()
@@ -396,6 +398,7 @@ func Test_Harness_Setup_RouteFlags(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, tc := range []struct{ name, flag string }{
 		{"codex", "--background-route"}, {"codex", "--subagent-route"}, {"codex", "--fallback-route"}, {"opencode", "--fallback-route"},
+		{"pi", "--background-route"}, {"pi", "--subagent-route"}, {"pi", "--fallback-route"},
 	} {
 		t.Run(tc.name+tc.flag, func(t *testing.T) {
 			h, api := fakeHarnessAPI(t)
@@ -443,6 +446,7 @@ func Test_Harness_DefaultDiscovery(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "codex", "--yes", "--output", "json"))
 	var setup public.HarnessPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &setup))
@@ -493,6 +497,7 @@ func Test_Harness_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--yes"))
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "opencode", "--yes"))
 	h.Require.Equal(0, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"), "Claude Code still uses the key")
@@ -561,6 +566,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 		{"claude-code", "claude", []string{"-p", "Reply with OK."}},
 		{"codex", "codex", []string{"exec", "--skip-git-repo-check", "Reply with OK."}},
 		{"opencode", "opencode", []string{"run", "Reply with OK."}},
+		{"pi", "pi", []string{"--print", "Reply with OK."}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			binary, err := exec.LookPath(tc.binary)
@@ -576,6 +582,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 				"claude-code": filepath.Join(root, ".claude"),
 				"codex":       filepath.Join(root, ".codex"),
 				"opencode":    filepath.Join(root, ".config", "opencode"),
+				"pi":          filepath.Join(root, ".pi", "agent"),
 			}[tc.name]
 			h.Require.NoError(h.Execute("harness", "setup", "--harness", tc.name, "--config-dir", configDir, "--yes"))
 
@@ -587,7 +594,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 			// a real provider and make the test pass for the wrong reason.
 			run.Env = []string{
 				"HOME=" + root, "USERPROFILE=" + root,
-				"CLAUDE_CONFIG_DIR=" + configDir, "CODEX_HOME=" + configDir,
+				"CLAUDE_CONFIG_DIR=" + configDir, "CODEX_HOME=" + configDir, "PI_CODING_AGENT_DIR=" + configDir,
 				"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"),
 				"XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
 				"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"),
@@ -654,6 +661,32 @@ func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/claude"].(map[string]any)["provider"])
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/openai"}, models["acme/gpt"].(map[string]any)["provider"])
 	h.Require.NotContains(models["acme/open"], "provider")
+}
+
+func Test_Harness_Setup_PiFirstPartyRoutes(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeHarnessAPI(t)
+	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+		"items": []any{
+			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "ANTHROPIC", "model": "claude-opus-5-5", "secret_name": "anthropic-key"}},
+			map[string]any{"id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "OPENAI", "model": "gpt-5.5", "secret_name": "openai-key"}},
+			map[string]any{"id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "pi", "--config-dir", dir, "--yes"))
+	provider := readHarnessSettings(t, "pi", harnessSettingsFile("pi", dir))["providers"].(map[string]any)["baseten-harness"].(map[string]any)
+	apis := map[string]any{}
+	for _, m := range provider["models"].([]any) {
+		apis[m.(map[string]any)["id"].(string)] = m.(map[string]any)["api"]
+	}
+	h.Require.Equal(map[string]any{"acme/claude": "anthropic-messages", "acme/gpt": "openai-responses", "acme/open": nil}, apis)
+	settings := readHarnessSettings(t, "pi", filepath.Join(dir, "settings.json"))
+	h.Require.Equal(map[string]any{"defaultProvider": "baseten-harness", "defaultModel": "acme/claude"}, settings)
 }
 
 func Test_Harness_Setup_RouteMetadata(t *testing.T) {
