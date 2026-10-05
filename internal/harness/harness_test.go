@@ -548,6 +548,11 @@ func TestClientHeaderNamesHarness(t *testing.T) {
 				want = clientHeader + ": " + ClaudeCode
 			}
 			require.Equal(t, want, get(load(t, path), paths[h.Name()]).Data)
+			if h.Name() == ClaudeCode {
+				require.Equal(t, "1", get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Data)
+				teardown(t, h, path)
+				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Exists, "teardown removes the gateway hint key")
+			}
 		})
 	}
 }

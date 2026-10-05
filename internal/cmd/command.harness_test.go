@@ -543,9 +543,10 @@ func Test_Harness_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 // harnessGateway records the model and client each inference request names and
 // refuses it.
 type harnessGateway struct {
-	mu      sync.Mutex
-	models  []string
-	clients []string
+	mu             sync.Mutex
+	models         []string
+	clients        []string
+	requestClasses []string
 }
 
 func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -557,6 +558,7 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		g.models = append(g.models, body.Model)
 		g.clients = append(g.clients, r.Header.Get("X-Baseten-Client"))
+		g.requestClasses = append(g.requestClasses, r.Header.Get("x-claude-code-request-class"))
 		g.mu.Unlock()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -576,6 +578,12 @@ func (g *harnessGateway) sentClients() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return slices.Clone(g.clients)
+}
+
+func (g *harnessGateway) sentRequestClasses() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.requestClasses)
 }
 
 // Test_Harness_Setup_RealHarness configures each installed harness in an
@@ -659,6 +667,9 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.requested(), output.String())
 			}
 			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Client")
+			if tc.name == "claude-code" {
+				h.Require.True(slices.ContainsFunc(gateway.sentRequestClasses(), func(v string) bool { return v != "" }), "x-claude-code-request-class")
+			}
 		})
 	}
 }
