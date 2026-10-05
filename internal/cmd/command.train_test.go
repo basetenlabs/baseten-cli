@@ -1161,6 +1161,7 @@ func Test_Train_WorkstationCreate_ForwardsFlags(t *testing.T) {
 		"--project", "my-workstation",
 		"--team", "research",
 		"--image", "myrepo/base:1",
+		"--spot",
 		"--enable-checkpointing",
 		"--checkpoint-path", "/checkpoints",
 		"--checkpoint-volume-size", "512",
@@ -1174,6 +1175,7 @@ func Test_Train_WorkstationCreate_ForwardsFlags(t *testing.T) {
 		"--accelerator", "H100",
 		"--node-count", "4",
 		"--image", "myrepo/base:1",
+		"--spot",
 		// The project is named, not identified, which is what truss's flag means.
 		"--project-id", "my-workstation",
 		"--team", "research",
