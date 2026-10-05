@@ -7,8 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,17 +17,29 @@ import (
 )
 
 // terminalTestServer answers the terminal protocol: it echoes each input
-// message back as output, and closes the connection once the given number of
-// inputs arrived.
-func terminalTestServer(t *testing.T, inputsBeforeClose int) *httptest.Server {
+// message back as output, and closes the session once the given number of
+// inputs arrived. It records the query of the first connection and every
+// message received.
+type terminalTestServer struct {
+	*httptest.Server
+	mu       sync.Mutex
+	query    url.Values
+	messages []Message
+}
+
+func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestServer {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := &terminalTestServer{}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		s.query = r.URL.Query()
+		s.mu.Unlock()
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
-		seen := 0
+		inputs := 0
 		for {
 			_, payload, err := conn.Read(r.Context())
 			if err != nil {
@@ -36,146 +49,127 @@ func terminalTestServer(t *testing.T, inputsBeforeClose int) *httptest.Server {
 			if err := json.Unmarshal(payload, &message); err != nil {
 				continue
 			}
+			s.mu.Lock()
+			s.messages = append(s.messages, message)
+			s.mu.Unlock()
 			if message.Type != "input" {
 				continue
 			}
-			seen++
 			echo, _ := json.Marshal(Message{Type: "output", Data: message.Data})
 			if err := conn.Write(r.Context(), websocket.MessageText, echo); err != nil {
 				return
 			}
-			if seen >= inputsBeforeClose {
-				return // the deferred Close ends the session
+			if inputs++; inputs >= inputsBeforeClose {
+				return
 			}
 		}
 	}))
-	t.Cleanup(server.Close)
-	return server
+	t.Cleanup(s.Close)
+	return s
 }
 
-func TestWebSocketURLCarriesTokenAndPath(t *testing.T) {
-	wsURL, err := WebSocketURL("https://sbx-1.invalid/", "tok")
+// runTerminal dials server and runs the session in the background, feeding
+// it input, returning what it wrote and a channel with Run's result.
+func runTerminal(t *testing.T, server *terminalTestServer, input io.Reader) (*bytes.Buffer, *Terminal, <-chan error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	t.Cleanup(cancel)
+	var output bytes.Buffer
+	terminal, err := Dial(ctx, DialOptions{SandboxURL: server.URL + "/", Token: "tok", Input: input, Output: &output, Errors: io.Discard})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wsURL != "wss://sbx-1.invalid/terminal/ws?token=tok" {
-		t.Errorf("url %q", wsURL)
-	}
+	done := make(chan error, 1)
+	go func() { done <- terminal.Run(ctx) }()
+	return &output, terminal, done
 }
 
-func TestTerminalInputRoundTripAndClose(t *testing.T) {
-	server := terminalTestServer(t, 1)
-	stdinRead, stdinWrite, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { stdinRead.Close(); stdinWrite.Close() })
-	stdoutRead, stdoutWrite, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { stdoutRead.Close(); stdoutWrite.Close() })
-	var errorBuffer = &bytes.Buffer{}
+func TestTerminal_RoundTripAndClose(t *testing.T) {
+	server := newTerminalTestServer(t, 1)
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	output, _, done := runTerminal(t, server, input)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	terminal, err := Dial(ctx, wsURL, stdinRead, stdoutWrite, errorBuffer)
-	if err != nil {
+	if _, err := inputWriter.Write([]byte("echo hi\n")); err != nil {
 		t.Fatal(err)
 	}
-
-	go terminal.inputLoop(ctx)
-	outputDone := make(chan struct{})
-	go func() {
-		defer close(outputDone)
-		terminal.readLoop(ctx)
-	}()
-
-	if _, err := stdinWrite.Write([]byte("echo hi\n")); err != nil {
-		t.Fatal(err)
-	}
-	echoed := make([]byte, 8)
-	// A bounded read rather than ReadAll: a missing echo must fail the test,
-	// not hang it. The deadline bounds the blocking read itself.
-	if err := stdoutRead.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	readDeadline := time.After(5 * time.Second)
-	for read := 0; read < len(echoed); {
-		n, err := stdoutRead.Read(echoed[read:])
-		if err != nil {
-			t.Fatalf("reading echoed output after %d bytes: %v", read, err)
-		}
-		read += n
-		select {
-		case <-readDeadline:
-			t.Fatalf("echo incomplete after %d bytes: %q", read, echoed[:read])
-		default:
-		}
-	}
-	if string(echoed) != "echo hi\n" {
-		t.Errorf("echoed %q", echoed)
-	}
-
-	// The server closed after one input; readLoop must end, not hang.
+	// The server closes the session after one input, which ends Run cleanly.
 	select {
-	case <-outputDone:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("readLoop did not return after the server closed")
+		t.Fatal("run did not return after the server closed the session")
+	}
+	if output.String() != "echo hi\n" {
+		t.Errorf("output %q", output.String())
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.query.Get("token") != "tok" || server.query.Get("cols") != "80" || server.query.Get("rows") != "24" || len(server.query.Get("sessionId")) != 16 {
+		t.Errorf("query %v", server.query)
 	}
 }
 
-func TestInputSurvivesSplitMultiByteCharacter(t *testing.T) {
-	// Two inputs: the held-back rune completes on the second read, so the
-	// paste arrives as two messages.
-	server := terminalTestServer(t, 2)
-	stdinRead, stdinWrite, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { stdinRead.Close(); stdinWrite.Close() })
-	stdoutRead, stdoutWrite, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { stdoutRead.Close(); stdoutWrite.Close() })
-	if err := stdoutRead.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	var errorBuffer = &bytes.Buffer{}
+func TestTerminal_SplitMultiByteCharacter(t *testing.T) {
+	// Two inputs: the held-back character completes on the second read.
+	server := newTerminalTestServer(t, 2)
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	output, _, done := runTerminal(t, server, input)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	terminal, err := Dial(ctx, wsURL, stdinRead, stdoutWrite, errorBuffer)
-	if err != nil {
+	// The first write ends inside the two-byte ö.
+	text := "hällö\n"
+	if _, err := inputWriter.Write([]byte(text[:6])); err != nil {
 		t.Fatal(err)
 	}
-
-	go terminal.inputLoop(ctx)
-	outputDone := make(chan struct{})
-	go func() {
-		defer close(outputDone)
-		terminal.readLoop(ctx)
-	}()
-
-	// A paste can split a multi-byte character at the read boundary; the
-	// input loop must hold the fragment back, not corrupt it. The first
-	// chunk ends inside the two-byte ö.
-	input := "hällö\n"
-	if _, err := stdinWrite.Write([]byte(input[:6])); err != nil {
+	if _, err := inputWriter.Write([]byte(text[6:])); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stdinWrite.Write([]byte(input[6:])); err != nil {
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not return")
+	}
+	if output.String() != text {
+		t.Errorf("output %q, want %q", output.String(), text)
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	for _, message := range server.messages {
+		if !strings.HasPrefix(text, message.Data) && !strings.HasSuffix(text, message.Data) {
+			t.Errorf("input split mid-character: %q", message.Data)
+		}
+	}
+}
+
+func TestTerminal_Resize(t *testing.T) {
+	server := newTerminalTestServer(t, 1)
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	_, terminal, done := runTerminal(t, server, input)
+
+	if err := terminal.Resize(120, 40); err != nil {
 		t.Fatal(err)
 	}
-
-	echoed := make([]byte, len(input))
-	if _, err := io.ReadFull(stdoutRead, echoed); err != nil {
-		t.Fatalf("reading echoed output: %v", err)
+	// Input after the resize, so the server has both once the session ends.
+	if _, err := inputWriter.Write([]byte("x")); err != nil {
+		t.Fatal(err)
 	}
-	if string(echoed) != input {
-		t.Errorf("echoed %q, want %q", echoed, input)
+	<-done
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if len(server.messages) < 1 || server.messages[0] != (Message{Type: "resize", Cols: 120, Rows: 40}) {
+		t.Errorf("messages %+v", server.messages)
+	}
+}
+
+func TestTerminal_DialFailureRedactsToken(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+	_, err := Dial(t.Context(), DialOptions{SandboxURL: server.URL, Token: "secret-token"})
+	if err == nil || strings.Contains(err.Error(), "secret-token") {
+		t.Fatalf("error %v", err)
 	}
 }

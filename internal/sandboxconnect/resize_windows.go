@@ -4,6 +4,6 @@ package sandboxconnect
 
 import "context"
 
-// watchResize is a no-op on Windows: SIGWINCH does not exist there, and the
-// window size was sent at dial time.
-func (t *Terminal) watchResize(context.Context) {}
+// NotifyResize never calls resized on Windows, which has no resize signal, so
+// the window keeps the size it had when the session started.
+func (t *osTerminal) NotifyResize(context.Context, func()) {}

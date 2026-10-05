@@ -1,7 +1,7 @@
 // Package sandboxconnect opens an interactive terminal to a sandbox over the
-// WebSocket its execution API serves. The protocol is the one the sandbox's
-// built-in image established: JSON messages of type input, output, resize,
-// and error, with the terminal locally in raw mode.
+// WebSocket its execution API serves at /terminal/ws. That endpoint is not in
+// the API spec: it takes JSON messages of type input, output, resize, and
+// error, with the token, window size, and session ID in the URL.
 package sandboxconnect
 
 import (
@@ -23,8 +23,8 @@ import (
 	"golang.org/x/term"
 )
 
-// tokenInQuery matches a token query value wherever a dial failure echoes the
-// URL, so the sandbox token never reaches an error message.
+// tokenInQuery matches the token query value wherever a dial failure echoes
+// the URL, so the sandbox token never reaches an error message.
 var tokenInQuery = regexp.MustCompile(`token=[^&\s]+`)
 
 // Message is one frame of the terminal protocol.
@@ -35,30 +35,83 @@ type Message struct {
 	Rows int    `json:"rows,omitempty"`
 }
 
-// Terminal is one connected terminal session. Run blocks until the session
-// ends: the server closes the connection, the user presses Ctrl+D, or the
-// context is canceled.
-type Terminal struct {
-	conn    *websocket.Conn
-	writeMu sync.Mutex
-	stdin   *os.File
-	stdout  *os.File
-	// errorWriter receives the server's terminal errors, the command's
-	// stderr rather than the process global.
-	errorWriter io.Writer
-	oldMode     *term.State
-	// done is closed once the session has fully ended and the terminal
-	// restored.
-	done chan struct{}
+// TerminalControl controls the local terminal a session runs in.
+type TerminalControl interface {
+	// Size reports the window size.
+	Size() (cols, rows int, err error)
+
+	// MakeRaw puts the terminal in raw mode, returning how to restore it.
+	MakeRaw() (restore func() error, err error)
+
+	// NotifyResize calls resized whenever the window size changes, until ctx
+	// is done.
+	NotifyResize(ctx context.Context, resized func())
 }
 
-// WebSocketURL turns a sandbox's execution URL into the terminal WebSocket
-// URL, with the sandbox token as the query parameter the terminal endpoint
-// reads.
-func WebSocketURL(sandboxURL, token string) (string, error) {
-	parsed, err := url.Parse(sandboxURL)
+// osTerminal is a [TerminalControl] over a process's terminal. Its
+// NotifyResize is per platform.
+type osTerminal struct {
+	input  *os.File
+	output *os.File
+}
+
+// NewOSTerminal returns a [TerminalControl] for a terminal read from input
+// and written to output, such as the process's stdin and stdout.
+func NewOSTerminal(input, output *os.File) TerminalControl {
+	return &osTerminal{input: input, output: output}
+}
+
+func (t *osTerminal) Size() (cols, rows int, err error) {
+	return term.GetSize(int(t.output.Fd()))
+}
+
+func (t *osTerminal) MakeRaw() (restore func() error, err error) {
+	state, err := term.MakeRaw(int(t.input.Fd()))
 	if err != nil {
-		return "", fmt.Errorf("invalid sandbox URL: %w", err)
+		return nil, err
+	}
+	return func() error { return term.Restore(int(t.input.Fd()), state) }, nil
+}
+
+// DialOptions are the options for [Dial].
+type DialOptions struct {
+	// SandboxURL is the sandbox's URL.
+	SandboxURL string
+
+	// Token is a sandbox token.
+	Token string
+
+	// Input is read and sent to the sandbox's shell.
+	Input io.Reader
+
+	// Output receives the shell's output.
+	Output io.Writer
+
+	// Errors receives the terminal errors the sandbox reports.
+	Errors io.Writer
+
+	// Terminal is the local terminal, or nil for none: an 80 by 24 window,
+	// with no raw mode and no resizing.
+	Terminal TerminalControl
+}
+
+// Terminal is one connected terminal session.
+type Terminal struct {
+	conn     *websocket.Conn
+	writeMu  sync.Mutex
+	input    io.Reader
+	output   io.Writer
+	errors   io.Writer
+	terminal TerminalControl
+}
+
+// Dial connects a new terminal session. Each session is a new shell: the
+// endpoint's default session is shared, so a random session ID keeps a
+// connect from rejoining a shell an earlier one left.
+func Dial(ctx context.Context, opts DialOptions) (*Terminal, error) {
+	parsed, err := url.Parse(opts.SandboxURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid sandbox URL: %w", err)
 	}
 	switch parsed.Scheme {
 	case "https":
@@ -67,30 +120,18 @@ func WebSocketURL(sandboxURL, token string) (string, error) {
 		parsed.Scheme = "ws"
 	}
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/terminal/ws"
-	query := parsed.Query()
-	query.Set("token", token)
-	parsed.RawQuery = query.Encode()
-	return parsed.String(), nil
-}
-
-// Dial connects the terminal. Each dial is its own session: the server's
-// default session is shared, so reusing it would rejoin a shell an earlier
-// connect may have left. The window size rides the URL, the same place the
-// reference client puts it.
-func Dial(ctx context.Context, wsURL string, stdin, stdout *os.File, errorWriter io.Writer) (*Terminal, error) {
-	parsed, err := url.Parse(wsURL)
-	if err != nil {
-		return nil, err
-	}
-	cols, rows, sizeErr := term.GetSize(int(stdout.Fd()))
-	if sizeErr != nil {
-		cols, rows = 80, 24
+	cols, rows := 80, 24
+	if opts.Terminal != nil {
+		if c, r, err := opts.Terminal.Size(); err == nil {
+			cols, rows = c, r
+		}
 	}
 	session := make([]byte, 8)
 	if _, err := rand.Read(session); err != nil {
 		return nil, err
 	}
 	query := parsed.Query()
+	query.Set("token", opts.Token)
 	query.Set("cols", strconv.Itoa(cols))
 	query.Set("rows", strconv.Itoa(rows))
 	query.Set("sessionId", hex.EncodeToString(session))
@@ -98,43 +139,44 @@ func Dial(ctx context.Context, wsURL string, stdin, stdout *os.File, errorWriter
 
 	conn, _, err := websocket.Dial(ctx, parsed.String(), nil)
 	if err != nil {
-		// The URL carries the sandbox token, and dial failures echo it;
-		// redact so the token never reaches stderr or logs.
-		return nil, fmt.Errorf("connecting terminal: %s",
-			tokenInQuery.ReplaceAllString(err.Error(), "token=REDACTED"))
+		// Dial failures echo the URL, which carries the token.
+		return nil, fmt.Errorf("connecting terminal: %s", tokenInQuery.ReplaceAllString(err.Error(), "token=REDACTED"))
 	}
-	return &Terminal{
-		conn: conn, stdin: stdin, stdout: stdout, errorWriter: errorWriter,
-		done: make(chan struct{}),
-	}, nil
+	return &Terminal{conn: conn, input: opts.Input, output: opts.Output, errors: opts.Errors, terminal: opts.Terminal}, nil
 }
 
-// Run puts the terminal in raw mode and ferries bytes until the session
-// ends. Ctrl+D reaches the sandbox's shell through raw mode and ends it.
+// Run relays the session until it ends: the shell exits, the sandbox closes
+// it, or ctx is done. With a local terminal, the terminal is in raw mode for
+// the session, so keys such as Ctrl+C and Ctrl+D reach the shell. It returns
+// an error only for a failure, not for the session ending.
 func (t *Terminal) Run(ctx context.Context) error {
-	oldMode, err := term.MakeRaw(int(t.stdin.Fd()))
-	if err != nil {
-		t.conn.Close(websocket.StatusInternalError, "")
-		return fmt.Errorf("setting terminal raw mode: %w", err)
+	if t.terminal != nil {
+		restore, err := t.terminal.MakeRaw()
+		if err != nil {
+			t.conn.Close(websocket.StatusInternalError, "")
+			return fmt.Errorf("setting terminal raw mode: %w", err)
+		}
+		defer restore()
 	}
-	t.oldMode = oldMode
-	defer t.restore()
-
-	// Canceling the context ends both loops and the connection.
-	context.AfterFunc(ctx, func() {
-		t.conn.Close(websocket.StatusNormalClosure, "canceled")
-	})
-	t.watchResize(ctx)
-
-	readDone := make(chan error, 1)
-	go func() {
-		readDone <- t.readLoop(ctx)
-	}()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// Ending the session for any reason closes the connection, which ends
+	// both loops.
+	context.AfterFunc(ctx, func() { t.conn.Close(websocket.StatusNormalClosure, "") })
+	if t.terminal != nil {
+		t.terminal.NotifyResize(ctx, func() {
+			if cols, rows, err := t.terminal.Size(); err == nil {
+				_ = t.Resize(cols, rows)
+			}
+		})
+	}
 	go t.inputLoop(ctx)
-	readErr := <-readDone
-	t.restore()
-	close(t.done)
-	return readErr
+	return t.readLoop(ctx)
+}
+
+// Resize tells the sandbox the window's new size.
+func (t *Terminal) Resize(cols, rows int) error {
+	return t.send(Message{Type: "resize", Cols: cols, Rows: rows})
 }
 
 func (t *Terminal) send(message Message) error {
@@ -151,13 +193,12 @@ func (t *Terminal) readLoop(ctx context.Context) error {
 	for {
 		_, payload, err := t.conn.Read(ctx)
 		if err != nil {
-			// Normal closure and cancellation end the session; anything
-			// else is a failure the caller should see.
-			if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
-				ctx.Err() != nil {
+			// A normal closure or our own cancellation ends the session;
+			// anything else is a failure.
+			if websocket.CloseStatus(err) == websocket.StatusNormalClosure || ctx.Err() != nil {
 				return nil
 			}
-			return err
+			return fmt.Errorf("terminal connection: %w", err)
 		}
 		var message Message
 		if err := json.Unmarshal(payload, &message); err != nil {
@@ -165,55 +206,40 @@ func (t *Terminal) readLoop(ctx context.Context) error {
 		}
 		switch message.Type {
 		case "output":
-			_, _ = t.stdout.WriteString(message.Data)
+			if _, err := io.WriteString(t.output, message.Data); err != nil {
+				return err
+			}
 		case "error":
-			_, _ = io.WriteString(t.errorWriter, message.Data+"\n")
+			_, _ = io.WriteString(t.errors, message.Data+"\n")
 		}
 	}
 }
 
 func (t *Terminal) inputLoop(ctx context.Context) {
-	buffer := make([]byte, 512)
-	// A read can split a multi-byte UTF-8 character at the buffer boundary;
-	// the incomplete tail stays pending until the next read completes it.
+	buf := make([]byte, 512)
+	// A read can end inside a multi-byte UTF-8 character; the partial
+	// character waits for the next read to complete it.
 	var pending []byte
-	for {
-		read, err := t.stdin.Read(buffer)
-		if err != nil {
-			return
+	for ctx.Err() == nil {
+		n, err := t.input.Read(buf)
+		pending = append(pending, buf[:n]...)
+		// The length of the leading complete characters.
+		complete := 0
+		for complete < len(pending) {
+			r, size := utf8.DecodeRune(pending[complete:])
+			if r == utf8.RuneError && size <= 1 && !utf8.FullRune(pending[complete:]) {
+				break
+			}
+			complete += size
 		}
-		pending = append(pending, buffer[:read]...)
-		complete := completeRunes(pending)
 		if complete > 0 {
-			if err := t.send(Message{Type: "input", Data: string(pending[:complete])}); err != nil {
+			if t.send(Message{Type: "input", Data: string(pending[:complete])}) != nil {
 				return
 			}
 			pending = append(pending[:0], pending[complete:]...)
 		}
-	}
-}
-
-// completeRunes returns the length of the leading run of complete UTF-8
-// runes, holding back a partial sequence split at a read boundary.
-func completeRunes(data []byte) int {
-	for i := 0; i < len(data); {
-		if data[i] < utf8.RuneSelf {
-			i++
-			continue
+		if err != nil {
+			return
 		}
-		r, size := utf8.DecodeRune(data[i:])
-		if r == utf8.RuneError && size <= 1 {
-			return i
-		}
-		i += size
 	}
-	return len(data)
-}
-
-func (t *Terminal) restore() {
-	if t.oldMode == nil {
-		return
-	}
-	_ = term.Restore(int(t.stdin.Fd()), t.oldMode)
-	t.oldMode = nil
 }

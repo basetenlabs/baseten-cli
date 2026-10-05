@@ -11,17 +11,19 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.21
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
-	github.com/basetenlabs/baseten-go v0.3.1-0.20261002204441-45fbef017923
+	github.com/basetenlabs/baseten-go v0.3.1-0.20261005202308-0332a99894a6
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/cli/browser v1.3.0
 	github.com/coder/websocket v1.8.14
+	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/invopop/jsonschema v0.14.0
 	github.com/itchyny/gojq v0.12.18
 	github.com/klauspost/compress v1.20.0
+	github.com/moby/patternmatcher v0.6.1
 	github.com/muesli/mango-cobra v1.2.0
 	github.com/muesli/roff v0.1.0
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06

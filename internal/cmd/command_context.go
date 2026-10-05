@@ -447,36 +447,39 @@ func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error)
 	})
 }
 
-// NewSandboxClient creates the high-level sandbox client, minting sandbox
-// tokens through the session's management credential (an API key, or an OAuth
-// access token the backend accepts the same way). The team argument is a team
-// name or ID, resolved like every other command's --team.
-func (c *CommandContext) NewSandboxClient(team string) (*sandbox.Client, error) {
-	transport, remote, err := c.AuthTransport()
+// NewSandboxClient creates the high-level sandbox client. Sandbox tokens are
+// minted through the auth store's management client, so API keys and OAuth
+// logins both work. The team argument is a team name or ID, resolved like
+// every other command's --team; the resolved ID is also returned, nil when no
+// team was given, for calls through the client's generated API.
+func (c *CommandContext) NewSandboxClient(team string) (client *sandbox.Client, teamID *string, err error) {
+	remote, err := c.authInfo.Remote()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	credential, err := transport.Credential(c.Context)
+	managementClient, err := c.NewManagementClient()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	teamID := ""
-	if team != "" {
-		managementClient, err := c.NewManagementClient()
-		if err != nil {
-			return nil, err
-		}
-		teamID, err = ResolveTeam(c.Context, managementClient.API(), team)
-		if err != nil {
-			return nil, err
-		}
+	resolvedTeam, err := ResolveTeam(c.Context, managementClient.API(), team)
+	if err != nil {
+		return nil, nil, err
 	}
-	return sandbox.NewClient(sandbox.ClientOptions{
-		APIKey:     credential,
-		TeamID:     teamID,
-		BaseURL:    remote.ManagementURL(),
-		HTTPClient: c.httpClient(),
+	// The sandbox planes get the plain HTTP client: the auth transport would
+	// overwrite the sandbox token with the management credential.
+	client, err = sandbox.NewClient(sandbox.ClientOptions{
+		ManagementClient: managementClient,
+		TeamID:           resolvedTeam,
+		BaseURL:          remote.ManagementURL(),
+		HTTPClient:       c.httpClient(),
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if resolvedTeam != "" {
+		teamID = &resolvedTeam
+	}
+	return client, teamID, nil
 }
 
 // NewManagementClientWithAuth creates a management API client against mgmtURL
