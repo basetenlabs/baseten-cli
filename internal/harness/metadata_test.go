@@ -66,7 +66,7 @@ func TestReasoningBoundsSkipNone(t *testing.T) {
 	require.Nil(t, high)
 }
 
-func TestMaxEffortOnlyForClaudeCode(t *testing.T) {
+func TestMaxEffortOnlyForClaudeCodeAndPi(t *testing.T) {
 	r := testRoute("acme/primary", "Primary")
 	r.ReasoningLevels = []string{"none", "low", "high", "xhigh", "max"}
 	claude := settingsPath(t, claudeCodeHarness{})
@@ -87,6 +87,34 @@ func TestMaxEffortOnlyForClaudeCode(t *testing.T) {
 	setup(t, openCodeHarness{}, opencode, []Route{r}, Selection{})
 	variants := get(load(t, opencode), []string{"provider", providerID, "models", "acme/primary", "variants"}).Data.(map[string]any)
 	require.ElementsMatch(t, []string{"none", "low", "high", "xhigh"}, slices.Collect(maps.Keys(variants)))
+
+	pi := settingsPath(t, piHarness{})
+	setup(t, piHarness{}, pi, []Route{r}, Selection{})
+	model = get(load(t, pi), piProviderPath).Data.(map[string]any)["models"].([]any)[0].(map[string]any)
+	require.Equal(t, map[string]any{
+		"off": "none", "minimal": nil, "low": "low", "medium": nil, "high": "high", "xhigh": "xhigh", "max": "max",
+	}, model["thinkingLevelMap"])
+}
+
+func TestPiThinkingLevels(t *testing.T) {
+	path := settingsPath(t, piHarness{})
+	effort := testRoute("acme/effort", "Effort")
+	effort.ReasoningLevels = []string{"low", "medium", "high"}
+	off := testRoute("acme/off", "Off")
+	off.ReasoningLevels = []string{"none"}
+	setup(t, piHarness{}, path, []Route{effort, off, testRoute("acme/plain", "Plain")}, Selection{})
+	models := get(load(t, path), piProviderPath).Data.(map[string]any)["models"].([]any)
+	effortModel := models[0].(map[string]any)
+	require.Equal(t, true, effortModel["reasoning"])
+	require.Equal(t, map[string]any{
+		"off": nil, "minimal": nil, "low": "low", "medium": "medium", "high": "high", "xhigh": nil, "max": nil,
+	}, effortModel["thinkingLevelMap"], "a route without none can't turn reasoning off")
+	require.Equal(t, true, get(effortModel, []string{"compat", "supportsReasoningEffort"}).Data)
+	for _, m := range models[1:] {
+		require.Equal(t, false, m.(map[string]any)["reasoning"], "none alone is not a reasoning level")
+		require.NotContains(t, m, "thinkingLevelMap")
+		require.Equal(t, false, get(m.(map[string]any), []string{"compat", "supportsReasoningEffort"}).Data)
+	}
 }
 
 func TestValidateRouteRejectsUnknownReasoningLevels(t *testing.T) {
@@ -118,6 +146,30 @@ func TestOpenCodeCarriesRouteCost(t *testing.T) {
 		"context_over_200k": map[string]any{"input": json.Number("6"), "output": json.Number("22.5")},
 	}, models["acme/primary"].(map[string]any)["cost"])
 	require.NotContains(t, models["acme/unpriced"], "cost")
+}
+
+func TestPiCarriesCompleteRouteCost(t *testing.T) {
+	cacheRead, cacheWrite := 0.3, 3.75
+	priced := testRoute("acme/primary", "Primary")
+	priced.Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, CacheWrite: &cacheWrite,
+		LongContext: &Cost{Input: 6, Output: 22.5, CacheRead: &cacheRead, CacheWrite: &cacheWrite}}
+	partial := testRoute("acme/partial", "Partial")
+	partial.Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, LongContext: priced.Cost.LongContext}
+	shortOnly := testRoute("acme/short", "Short")
+	shortOnly.Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, CacheWrite: &cacheWrite, LongContext: &Cost{Input: 6, Output: 22.5}}
+	path := settingsPath(t, piHarness{})
+	setup(t, piHarness{}, path, []Route{priced, partial, shortOnly, testRoute("acme/unpriced", "Unpriced")}, Selection{})
+	models := get(load(t, path), piProviderPath).Data.(map[string]any)["models"].([]any)
+	require.Equal(t, map[string]any{
+		"input": json.Number("3"), "output": json.Number("15"), "cacheRead": json.Number("0.3"), "cacheWrite": json.Number("3.75"),
+		"tiers": []any{map[string]any{
+			"inputTokensAbove": json.Number("200000"),
+			"input":            json.Number("6"), "output": json.Number("22.5"), "cacheRead": json.Number("0.3"), "cacheWrite": json.Number("3.75"),
+		}},
+	}, models[0].(map[string]any)["cost"])
+	require.NotContains(t, models[1], "cost", "Pi requires every price")
+	require.NotContains(t, models[2].(map[string]any)["cost"], "tiers", "an incomplete long-context price is dropped")
+	require.NotContains(t, models[3], "cost")
 }
 
 func TestNewRoute(t *testing.T) {
