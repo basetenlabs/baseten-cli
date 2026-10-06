@@ -1181,3 +1181,64 @@ func Test_Volume_Pull_UnrelatedErrorPreserved(t *testing.T) {
 	h.Require.ErrorContains(err, original.Error())
 	h.Require.Contains(h.Stderr.String(), original.Error())
 }
+
+func Test_Volume_Writes_RejectReservedNamespaces(t *testing.T) {
+	for _, namespace := range []string{"images", "caches", "snapshots", "b10", "b10-cache", "b10models", "IMAGES", "CaChEs", "SNAPSHOTS", "B10-Cache"} {
+		for _, format := range []string{"text", "json", "jsonl"} {
+			ref := "bdn:" + namespace + "/model"
+			for _, args := range [][]string{
+				{"push", ".", ref + ":prod"},
+				{"sync", "start", "--source", "hf://org/model", "--dest", ref + ":prod"},
+				{"rm", ref, "--recursive"},
+				{"rm", ref + "@aabbccddeeff"},
+				{"restore", ref + "@aabbccddeeff"},
+			} {
+				t.Run(namespace+"/"+format+"/"+strings.Join(args, " "), func(t *testing.T) {
+					h := NewCommandHarness(t)
+					m := h.MockManagementAPI()
+					fake := withVolumeTransfer(t, h)
+					err := h.Execute(append(append([]string{"volume"}, args...), "--output", format)...)
+					h.Require.ErrorContains(err, "reserved")
+					h.Require.ErrorContains(err, "choose another namespace for writes")
+					h.Require.Empty(m.Calls())
+					h.Require.Nil(fake.PushOptions)
+					if format != "text" {
+						h.Require.Equal("ErrUsage", decodeJSONErrorEnvelope(h).Type)
+					}
+				})
+			}
+		}
+	}
+}
+
+func Test_Volume_Reads_AllowReservedNamespaces(t *testing.T) {
+	for _, namespace := range []string{"images", "caches", "snapshots", "b10", "B10-Cache"} {
+		t.Run(namespace, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			fake := withVolumeTransfer(t, h)
+			ref := "bdn:" + namespace + "/model"
+			h.Require.NoError(h.Execute("volume", "pull", ref, t.TempDir()))
+			h.Require.Equal(strings.ToLower(namespace), fake.PullOptions.Ref.Namespace)
+			h.Require.NoError(h.Execute("volume", "ls", ref))
+			h.Require.Equal(strings.ToLower(namespace), fake.ManifestOptions.Ref.Namespace)
+
+			m := h.MockManagementAPI()
+			m.SetRoute("GET", "/v1/volumes/syncs", 200, map[string]any{
+				"items": []any{}, "pagination": map[string]any{"has_more": false},
+			})
+			h.Require.NoError(h.Execute("volume", "sync", "list", "--dest", ref))
+			h.Require.Equal("bdn:"+strings.ToLower(namespace)+"/model", m.Calls()[0].Query().Get("ref"))
+		})
+	}
+}
+
+func Test_Volume_Push_AllowUnreservedNamespaces(t *testing.T) {
+	for _, namespace := range []string{"weights", "images-custom", "caches-custom", "snapshots-custom", "ab10", "b11-cache"} {
+		t.Run(namespace, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			fake := withVolumeTransfer(t, h)
+			h.Require.NoError(h.Execute("volume", "push", ".", "bdn:"+namespace+"/model"))
+			h.Require.Equal(namespace, fake.PushOptions.Ref.Namespace)
+		})
+	}
+}

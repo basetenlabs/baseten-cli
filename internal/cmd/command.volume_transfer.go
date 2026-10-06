@@ -87,7 +87,7 @@ func commandVolumeCat(ctx *CommandContext, flags *cmd.VolumeCatFlags) error {
 
 func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 	dir := ctx.Args[0]
-	ref, err := volumeParseRef(ctx.Args[1])
+	ref, err := volumeParseWritableRef(ctx.Args[1])
 	if err != nil {
 		return err
 	}

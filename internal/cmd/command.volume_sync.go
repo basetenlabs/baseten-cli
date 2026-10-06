@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-go/client"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -28,6 +29,10 @@ func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags
 		return err
 	}
 
+	if err := volumeValidateWritableNamespace(destination.Namespace); err != nil {
+		return err
+	}
+
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -35,7 +40,7 @@ func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags
 	api := cl.API()
 	sync, err := api.PostVolumesSyncs(ctx, managementapi.CreateVolumeSyncRequest{
 		Source:      source,
-		Destination: managementapi.VolumeSyncDestination{Ref: destination},
+		Destination: managementapi.VolumeSyncDestination{Ref: destination.String()},
 	})
 	if err != nil {
 		return fmt.Errorf("starting volume sync: %w", err)
@@ -96,7 +101,8 @@ func commandVolumeSyncList(ctx *CommandContext, flags *cmd.VolumeSyncListFlags) 
 		if err != nil {
 			return err
 		}
-		params.Ref = &destination
+		ref := destination.String()
+		params.Ref = &ref
 	}
 
 	cl, err := ctx.NewManagementClient()
@@ -288,21 +294,21 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 	return source, nil
 }
 
-func volumeSyncDestination(raw string) (string, error) {
+func volumeSyncDestination(raw string) (client.VolumeRef, error) {
 	ref, err := volumeParseRef(raw)
 	if err != nil {
-		return "", err
+		return client.VolumeRef{}, err
 	}
 	if ref.Volume == "" {
-		return "", cmd.NewErrUsagef("destination %s names a namespace; want bdn:<namespace>/<volume>", ref)
+		return client.VolumeRef{}, cmd.NewErrUsagef("destination %s names a namespace; want bdn:<namespace>/<volume>", ref)
 	}
 	if ref.Path != "" {
-		return "", cmd.NewErrUsagef("destination %s carries a path; want a volume or tag ref", ref)
+		return client.VolumeRef{}, cmd.NewErrUsagef("destination %s carries a path; want a volume or tag ref", ref)
 	}
 	if ref.Digest != "" {
-		return "", cmd.NewErrUsagef("destination %s carries an immutable digest; want a volume or tag ref", ref)
+		return client.VolumeRef{}, cmd.NewErrUsagef("destination %s carries an immutable digest; want a volume or tag ref", ref)
 	}
-	return ref.String(), nil
+	return ref, nil
 }
 
 func getVolumeSync(

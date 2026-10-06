@@ -34,6 +34,29 @@ func volumeParseRef(arg string) (client.VolumeRef, error) {
 	return ref, nil
 }
 
+func volumeValidateWritableNamespace(namespace string) error {
+	name := strings.ToLower(namespace)
+	switch name {
+	case "images", "caches", "snapshots":
+		return cmd.NewErrUsagef("namespace %q is reserved for Baseten; choose another namespace for writes", namespace)
+	}
+	if strings.HasPrefix(name, "b10") {
+		return cmd.NewErrUsagef("namespace %q uses the reserved prefix b10; choose another namespace for writes", namespace)
+	}
+	return nil
+}
+
+func volumeParseWritableRef(arg string) (client.VolumeRef, error) {
+	ref, err := volumeParseRef(arg)
+	if err != nil {
+		return client.VolumeRef{}, err
+	}
+	if err := volumeValidateWritableNamespace(ref.Namespace); err != nil {
+		return client.VolumeRef{}, err
+	}
+	return ref, nil
+}
+
 func commandVolumeLs(ctx *CommandContext, flags *cmd.VolumeLsFlags) error {
 	arg := ""
 	if len(ctx.Args) > 0 {
@@ -561,7 +584,7 @@ func commandVolumeVersions(ctx *CommandContext, flags *cmd.VolumeVersionsFlags) 
 }
 
 func commandVolumeRm(ctx *CommandContext, flags *cmd.VolumeRmFlags) error {
-	ref, err := volumeParseRef(ctx.Args[0])
+	ref, err := volumeParseWritableRef(ctx.Args[0])
 	if err != nil {
 		return err
 	}
@@ -649,7 +672,7 @@ func volumeRmVolume(ctx *CommandContext, flags *cmd.VolumeRmFlags, ref client.Vo
 }
 
 func commandVolumeRestore(ctx *CommandContext, flags *cmd.VolumeRestoreFlags) error {
-	ref, err := volumeParseRef(ctx.Args[0])
+	ref, err := volumeParseWritableRef(ctx.Args[0])
 	if err != nil {
 		return err
 	}
