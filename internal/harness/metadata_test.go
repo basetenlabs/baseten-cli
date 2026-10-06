@@ -50,11 +50,13 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	}, d["modelSettings"])
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}).Data)
 	require.Equal(t, "4096", get(d, []string{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}).Data)
+	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
 
 	setup(t, claudeCodeHarness{}, path, []Route{mid, huge}, Selection{Background: "acme/huge"})
 	d = load(t, path)
 	require.Equal(t, []any{"acme/mid", "acme/huge[1m]"}, d["availableModels"])
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data)
+	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
 }
 
 func TestReasoningBoundsSkipNone(t *testing.T) {
