@@ -183,6 +183,13 @@ func TestE2ESandbox(t *testing.T) {
 		}
 	})
 
+	t.Run("API", func(t *testing.T) {
+		url := created["url"].(string)
+		record := cliJSON[map[string]any](t, "api", "sandbox", "process", "--sandbox-url", url,
+			"-f", "command=echo raw", "-F", "waitForCompletion=true")
+		require.Equal(t, "raw\n", record["stdout"])
+	})
+
 	t.Run("Connect", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("connect is tested through a Unix pseudo-terminal")

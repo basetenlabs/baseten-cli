@@ -214,6 +214,7 @@ func Test_API_Help(t *testing.T) {
 	h.Require.NoError(err)
 	h.Require.Contains(h.Stdout.String(), "management")
 	h.Require.Contains(h.Stdout.String(), "inference")
+	h.Require.Contains(h.Stdout.String(), "sandbox")
 }
 
 func Test_API_Management_ParentLevelFlag(t *testing.T) {
@@ -251,6 +252,24 @@ func Test_API_Inference_BaseURLOverride(t *testing.T) {
 	h.Require.Equal("GET", req.Method)
 	h.Require.Equal("/predict", req.Path)
 	h.Require.Equal("{\n  \"result\": \"ok\"\n}\n", h.Stdout.String())
+}
+
+func Test_API_Sandbox_UsesSandboxToken(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := newSandboxTestAPI(h)
+	var auth string
+	m.SetRouteFunc("GET", "/process", func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"pid":"9"}]`)
+	})
+
+	err := h.Execute("api", "sandbox", "--sandbox-url", m.URL+"/", "process", "--jq", ".[].pid")
+	h.Require.NoError(err)
+	h.Require.Equal("\"9\"\n", h.Stdout.String())
+	h.Require.Equal("Bearer tok-1", auth)
+	// Only the token exchange and the request itself, no sandbox lookup.
+	h.Require.Len(m.Calls(), 2)
 }
 
 func Test_API_Inference_FieldsPostToServer(t *testing.T) {
