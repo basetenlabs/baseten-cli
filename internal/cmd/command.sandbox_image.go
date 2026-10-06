@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -109,13 +110,18 @@ func commandSandboxImagePush(ctx *CommandContext, flags *cmd.SandboxImagePushFla
 			}
 			return func(_ context.Context, opts sandbox.ImageIgnoreFileOptions) (bool, error) {
 				ignored, err := matcher.MatchesOrParentMatches(opts.RelPath)
-				if err != nil || !ignored || !opts.Entry.IsDir() || !matcher.Exclusions() {
+				if err != nil || !ignored || !opts.Entry.IsDir() {
 					return ignored, err
 				}
-				// An exception pattern may bring back something under an
-				// ignored directory, so its contents are matched one by one,
-				// as Docker does.
-				return false, nil
+				// An exception pattern under an ignored directory may bring
+				// back some of its contents, so they are matched one by one.
+				// Docker decides this the same way, by the pattern's text.
+				for _, pattern := range matcher.Patterns() {
+					if pattern.Exclusion() && strings.HasPrefix(filepath.ToSlash(pattern.String())+"/", opts.RelPath+"/") {
+						return false, nil
+					}
+				}
+				return true, nil
 			}, nil
 		}
 	case flags.RegistryImage != "":

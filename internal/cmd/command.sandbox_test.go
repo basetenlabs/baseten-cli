@@ -313,3 +313,59 @@ func Test_Sandbox_Exec_StdinStartsWritesAndWaits(t *testing.T) {
 	h.Require.Len(sandboxTestCalls(m, "DELETE", "/process/9/stdin"), 1)
 	h.Require.Equal("2 lines\n", h.Stdout.String())
 }
+
+func Test_Sandbox_Exec_StdinFailureWhileRunningEndsFollowing(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := newSandboxTestAPI(h)
+	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, sandboxTestRecord(m, "sbx-1", "DEPLOYED"))
+	m.SetRoute("POST", "/process", 200, sandboxTestProcess("9", "running", 0))
+	m.SetRoute("POST", "/process/9/stdin", 500, map[string]any{"error": "write failed"})
+	// The process waits for the rest of its input, so its output never ends.
+	m.SetRouteFunc("GET", "/process/9/logs/stream", func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+	m.SetRoute("GET", "/process/9", 200, sandboxTestProcess("9", "running", 0))
+	h.Stdin.WriteString("a\n")
+
+	err := h.Execute("sandbox", "exec", "--name", "sbx-1", "--stdin", "--", "wc", "-l")
+	h.Require.ErrorContains(err, "writing stdin to sandbox sbx-1")
+	h.Require.ErrorContains(err, "write failed")
+	// Its stdin is left open, since the input is incomplete.
+	h.Require.Empty(sandboxTestCalls(m, "DELETE", "/process/9/stdin"))
+}
+
+func Test_Sandbox_Exec_StdinFailureWhileRunningEndsWaiting(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := newSandboxTestAPI(h)
+	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, sandboxTestRecord(m, "sbx-1", "DEPLOYED"))
+	m.SetRoute("POST", "/process", 200, sandboxTestProcess("9", "running", 0))
+	m.SetRoute("POST", "/process/9/stdin", 500, map[string]any{"error": "write failed"})
+	// The process waits for the rest of its input, so it never ends.
+	m.SetRoute("GET", "/process/9", 200, sandboxTestProcess("9", "running", 0))
+	h.Stdin.WriteString("a\n")
+
+	err := h.Execute("sandbox", "exec", "--name", "sbx-1", "--stdin", "--output", "json", "--", "wc", "-l")
+	h.Require.ErrorContains(err, "writing stdin to sandbox sbx-1")
+	h.Require.ErrorContains(err, "write failed")
+}
+
+func Test_Sandbox_Exec_StdinFailureAfterExitIsIgnored(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := newSandboxTestAPI(h)
+	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, sandboxTestRecord(m, "sbx-1", "DEPLOYED"))
+	m.SetRoute("POST", "/process", 200, sandboxTestProcess("9", "running", 0))
+	// Like head, the process exits without reading all of its input.
+	m.SetRoute("POST", "/process/9/stdin", 409, map[string]any{"error": "process is not running"})
+	m.SetRouteFunc("GET", "/process/9/logs/stream", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "stdout:first\n")
+	})
+	m.SetRoute("GET", "/process/9", 200, sandboxTestProcess("9", "completed", 2))
+	h.Stdin.WriteString("a\n")
+
+	err := h.Execute("sandbox", "exec", "--name", "sbx-1", "--stdin", "--", "head", "-c", "1")
+	// The process's own exit code, not the copy's failure.
+	h.Require.ErrorContains(err, "code 2")
+	h.Require.NotContains(err.Error(), "writing stdin")
+	h.Require.Equal(2, h.ExitCode)
+	h.Require.Equal("first\n", h.Stdout.String())
+}

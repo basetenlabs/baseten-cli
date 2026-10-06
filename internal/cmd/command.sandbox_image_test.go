@@ -66,11 +66,12 @@ func Test_Sandbox_Image_Push_DirHonorsDockerignore(t *testing.T) {
 	sandboxTestPushRoutes(m, "UPLOADING")
 	dir := sandboxTestDir(t, map[string]string{
 		"Dockerfile":         "FROM debian\n",
-		".dockerignore":      "# comment\nsecret.txt\nlogs\n!logs/keep.txt\n",
+		".dockerignore":      "# comment\nsecret.txt\nlogs\n!logs/keep.txt\ncache\n",
 		"secret.txt":         "x",
 		"app/secret.txt":     "nested",
 		"logs/a.txt":         "a",
 		"logs/keep.txt":      "kept",
+		"cache/x":            "x",
 		"app/main.py":        "print()",
 		".env":               "not ignored: the .dockerignore replaces the defaults",
 		"app/node_modules/x": "not ignored either",
@@ -79,8 +80,16 @@ func Test_Sandbox_Image_Push_DirHonorsDockerignore(t *testing.T) {
 	h.Require.NoError(h.Execute("sandbox", "image", "push", "--name", "img", "--dir", dir))
 	// Docker's semantics: patterns are anchored at the root, and an exception
 	// brings a file back from an ignored directory.
+	upload := sandboxTestCalls(m, "PUT", "/upload")[0].Body
 	h.Require.Equal([]string{".dockerignore", ".env", "Dockerfile", "app/main.py", "app/node_modules/x", "app/secret.txt", "logs/keep.txt"},
-		sandboxTestZipNames(t, sandboxTestCalls(m, "PUT", "/upload")[0].Body))
+		sandboxTestZipNames(t, upload))
+	// An exception elsewhere does not bring back an ignored directory, not
+	// even empty.
+	reader, err := zip.NewReader(bytes.NewReader([]byte(upload)), int64(len(upload)))
+	h.Require.NoError(err)
+	for _, file := range reader.File {
+		h.Require.NotEqual("cache/", file.Name)
+	}
 	h.Require.Contains(h.Stdout.String(), "Status:         UPLOADING")
 }
 

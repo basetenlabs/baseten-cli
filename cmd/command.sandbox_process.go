@@ -92,7 +92,7 @@ var commandSandboxProcess = Command{
 			Name:    "logs",
 			Summary: "Print a process's output (PRE-RELEASE)",
 			Description: sandboxPreRelease +
-				"Prints one process's output so far, standard output and standard error interleaved. " +
+				"Prints one process's output so far, both standard output and standard error. " +
 				"With --tail, prints its output from the start and then follows it until the process " +
 				"exits, with each line marked by its stream in JSON.\n\n" +
 				"For standard output and standard error as separate fields, use 'sandbox process " +

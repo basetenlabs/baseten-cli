@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -247,30 +248,52 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 			return fmt.Errorf("running command in sandbox %s: %w", flags.Name, err)
 		}
 		pid := started.PID
+		// Following and waiting end early, with the copy's error, if copying
+		// stdin fails while the process still runs, since it may be waiting for
+		// the rest of its input. A process that exited without reading all of
+		// it fails the copy without being the command's failure.
+		waitCtx, cancelWait := context.WithCancelCause(ctx)
+		defer cancelWait(nil)
+		// The copy's error ended following or waiting, rather than the command
+		// being interrupted.
+		copyFailed := func() error {
+			if waitCtx.Err() != nil && ctx.Err() == nil {
+				return context.Cause(waitCtx)
+			}
+			return nil
+		}
 		// Copies stdin in chunks, closing the process's stdin at end of input.
-		stdinDone := make(chan error, 1)
 		go func() {
-			buf := make([]byte, 64*1024)
-			for {
-				n, readErr := ctx.Stdin.Read(buf)
-				if n > 0 {
-					if err := process.WriteStdin(ctx, sandbox.ProcessWriteStdinOptions{Identifier: pid, Data: slices.Clone(buf[:n])}); err != nil {
-						stdinDone <- err
-						return
+			copyErr := func() error {
+				buf := make([]byte, 64*1024)
+				for {
+					n, readErr := ctx.Stdin.Read(buf)
+					if n > 0 {
+						if err := process.WriteStdin(ctx, sandbox.ProcessWriteStdinOptions{Identifier: pid, Data: slices.Clone(buf[:n])}); err != nil {
+							return err
+						}
+					}
+					if errors.Is(readErr, io.EOF) {
+						return process.CloseStdin(ctx, sandbox.ProcessCloseStdinOptions{Identifier: pid})
+					} else if readErr != nil {
+						return readErr
 					}
 				}
-				if errors.Is(readErr, io.EOF) {
-					stdinDone <- process.CloseStdin(ctx, sandbox.ProcessCloseStdinOptions{Identifier: pid})
-					return
-				} else if readErr != nil {
-					stdinDone <- readErr
-					return
-				}
+			}()
+			if copyErr == nil {
+				return
 			}
+			if info, err := process.Get(ctx, sandbox.ProcessGetOptions{Identifier: pid}); err == nil && info.Status != sandbox.ProcessStatusRunning {
+				return
+			}
+			cancelWait(fmt.Errorf("writing stdin to sandbox %s: %w", flags.Name, copyErr))
 		}()
 		if !ctx.JSON {
-			for line, err := range process.StreamLogs(ctx, sandbox.ProcessStreamLogsOptions{Identifier: pid}) {
+			for line, err := range process.StreamLogs(waitCtx, sandbox.ProcessStreamLogsOptions{Identifier: pid}) {
 				if err != nil {
+					if copyErr := copyFailed(); copyErr != nil {
+						return copyErr
+					}
 					return fmt.Errorf("running command in sandbox %s: %w", flags.Name, err)
 				}
 				if line.TextStream == sandbox.ProcessStreamStderr {
@@ -280,19 +303,12 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 				}
 			}
 		}
-		finished, err := process.Wait(ctx, sandbox.ProcessWaitOptions{Identifier: pid, Timeout: -1})
+		finished, err := process.Wait(waitCtx, sandbox.ProcessWaitOptions{Identifier: pid, Timeout: -1})
 		if err != nil {
-			return fmt.Errorf("running command in sandbox %s: %w", flags.Name, err)
-		}
-		// A process can exit without reading all of its input, which fails the
-		// copy without being the command's failure, so only a copy failure
-		// while the process still runs counts.
-		select {
-		case err := <-stdinDone:
-			if err != nil && finished.Status == sandbox.ProcessStatusRunning {
-				return fmt.Errorf("writing stdin to sandbox %s: %w", flags.Name, err)
+			if copyErr := copyFailed(); copyErr != nil {
+				return copyErr
 			}
-		default:
+			return fmt.Errorf("running command in sandbox %s: %w", flags.Name, err)
 		}
 		if ctx.JSON {
 			ctx.OutputJSON(sandboxProcessResponseFromInfo(*finished))
