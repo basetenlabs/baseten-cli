@@ -40,7 +40,7 @@ var commandSandboxImage = Command{
 			Description: sandboxPreRelease +
 				"Retrieves one image's record: status, tag count, and size.",
 			Flags: SandboxImageRefCommandFlags{},
-			Output: &CommandOutput[managementapi.Image]{
+			Output: &CommandOutput[managementapi.SandboxImage]{
 				TextDescription: "One field per line describing the image. Empty fields are left out.",
 				Examples: []CommandExample{{
 					Description: "Describe an image.",
@@ -77,7 +77,7 @@ var commandSandboxImage = Command{
 				"By default the command returns once the push is accepted and the build runs on; " +
 				"--wait waits until the image is built.",
 			Flags: SandboxImagePushFlags{},
-			Output: &CommandOutput[managementapi.Image]{
+			Output: &CommandOutput[managementapi.SandboxImage]{
 				TextDescription: "One field per line describing the image. Empty fields are left out.",
 				Examples: []CommandExample{
 					{
@@ -105,7 +105,7 @@ var commandSandboxImage = Command{
 			Description: sandboxPreRelease +
 				"Deletes an image and every version of it. This cannot be undone.",
 			Flags: SandboxImageDeleteFlags{},
-			Output: &CommandOutput[managementapi.Image]{
+			Output: &CommandOutput[managementapi.SandboxImage]{
 				TextDescription: "A confirmation line on stderr.",
 				JSONDescription: "The image's record as deletion starts.",
 				Examples: []CommandExample{{
@@ -126,7 +126,7 @@ var commandSandboxImage = Command{
 				"time range are printed. Lines may take a short time to appear after they are " +
 				"written.",
 			Flags: SandboxImageLogsFlags{},
-			Output: &CommandOutput[managementapi.ImageBuildLog]{
+			Output: &CommandOutput[managementapi.SandboxImageBuildLog]{
 				TextDescription:   "One line per log entry: timestamp and message.",
 				JSONArrayStreamed: true,
 				Examples: []CommandExample{{
@@ -184,12 +184,12 @@ var commandSandboxImage = Command{
 
 // SandboxImageList is the JSON shape of 'baseten sandbox image list'.
 type SandboxImageList struct {
-	Items []managementapi.Image `json:"items"`
+	Items []managementapi.SandboxImageSummary `json:"items"`
 }
 
 // SandboxImageTagList is the JSON shape of 'baseten sandbox image list-tags'.
 type SandboxImageTagList struct {
-	Items []managementapi.ImageTag `json:"items"`
+	Items []managementapi.SandboxImageTag `json:"items"`
 }
 
 // SandboxImageLibraryList is the JSON shape of 'baseten sandbox image

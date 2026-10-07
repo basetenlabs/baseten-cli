@@ -112,7 +112,7 @@ var commandSandbox = Command{
 			Name:    "update",
 			Summary: "Update a sandbox (PRE-RELEASE)",
 			Description: sandboxPreRelease +
-				"Updates a sandbox's image, environment variables, or labels. Omitted flags leave " +
+				"Updates a sandbox's environment variables or labels. Omitted flags leave " +
 				"their fields unchanged. Any --env or --plain-env replaces all of the sandbox's " +
 				"environment variables, and any --label replaces all of its labels.",
 			Flags: SandboxUpdateFlags{},
@@ -279,7 +279,6 @@ type SandboxUpdateFlags struct {
 	SandboxRefFlags
 	SandboxEnvFlags
 
-	Image string   `flag:"image" desc:"Image to use, including its tag, such as my-image:latest."`
 	Label []string `flag:"label" desc:"Label as KEY=VALUE, replacing all of the sandbox's labels. Repeatable."`
 }
 
@@ -306,7 +305,7 @@ type SandboxExecFlags struct {
 	SandboxRefFlags
 	SandboxProcessOptionFlags
 
-	Stdin bool `flag:"stdin" desc:"Send this command's standard input to the sandbox command, closing it at end of input."`
+	Stdin bool `flag:"stdin" desc:"Send this command's standard input to the sandbox command, closing it at end of input. Output then arrives a line at a time, so a prompt without a newline shows once its line ends."`
 }
 
 // SandboxConnectFlags configures 'baseten sandbox connect'.

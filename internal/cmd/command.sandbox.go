@@ -187,7 +187,7 @@ func commandSandboxUpdate(ctx *CommandContext, flags *cmd.SandboxUpdateFlags) er
 	if err != nil {
 		return err
 	}
-	request := managementapi.UpdateSandboxRequest{Image: sandboxOptionalString(flags.Image), Envs: envs}
+	request := managementapi.UpdateSandboxRequest{Envs: envs}
 	if labels != nil {
 		sandboxLabels := managementapi.SandboxMetadataLabels(labels)
 		request.Labels = &sandboxLabels

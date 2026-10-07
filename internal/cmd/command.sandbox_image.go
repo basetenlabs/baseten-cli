@@ -34,7 +34,7 @@ func commandSandboxImageList(ctx *CommandContext, flags *cmd.SandboxImageListFla
 		return err
 	}
 	params := managementapi.ListImagesParams{TeamId: teamID}
-	items, truncated, err := sandboxCollectPages(flags.Limit, func(cursor *string, pageLimit int) ([]managementapi.Image, managementapi.SandboxApiPagination, error) {
+	items, truncated, err := sandboxCollectPages(flags.Limit, func(cursor *string, pageLimit int) ([]managementapi.SandboxImageSummary, managementapi.SandboxApiPagination, error) {
 		params.Cursor, params.Limit = cursor, &pageLimit
 		page, err := client.API().ListImages(ctx, params)
 		if err != nil {
@@ -200,7 +200,7 @@ func commandSandboxImageLogs(ctx *CommandContext, flags *cmd.SandboxImageLogsFla
 		writer := ctx.NewJSONArrayWriter()
 		defer writer.Close()
 		for _, line := range lines {
-			writer.Write(managementapi.ImageBuildLog{Timestamp: line.Timestamp, Severity: line.Severity, Message: line.Text})
+			writer.Write(managementapi.SandboxImageBuildLog{Timestamp: line.Timestamp, Severity: line.Severity, Message: line.Text})
 		}
 		return nil
 	}
@@ -220,7 +220,7 @@ func commandSandboxImageListTags(ctx *CommandContext, flags *cmd.SandboxImageRef
 		return err
 	}
 	params := managementapi.ListImageTagsParams{TeamId: teamID}
-	items, _, err := sandboxCollectPages(0, func(cursor *string, pageLimit int) ([]managementapi.ImageTag, managementapi.SandboxApiPagination, error) {
+	items, _, err := sandboxCollectPages(0, func(cursor *string, pageLimit int) ([]managementapi.SandboxImageTag, managementapi.SandboxApiPagination, error) {
 		params.Cursor, params.Limit = cursor, &pageLimit
 		page, err := client.API().ListImageTags(ctx, flags.Name, params)
 		if err != nil {
@@ -260,7 +260,7 @@ func commandSandboxImageListLibrary(ctx *CommandContext, _ *cmd.SandboxImageList
 	if err != nil {
 		return err
 	}
-	response, err := client.API().ListSandboxLibraryImages(ctx, managementapi.ListSandboxLibraryImagesParams{})
+	response, err := client.API().ListSandboxLibraryImages(ctx)
 	if err != nil {
 		return fmt.Errorf("listing starter sandbox images: %w", err)
 	}
@@ -294,7 +294,7 @@ func commandSandboxImageListLibrary(ctx *CommandContext, _ *cmd.SandboxImageList
 	return nil
 }
 
-func sandboxOutputImage(ctx *CommandContext, image *managementapi.Image) {
+func sandboxOutputImage(ctx *CommandContext, image *managementapi.SandboxImage) {
 	if ctx.JSON {
 		ctx.OutputJSON(image)
 		return
