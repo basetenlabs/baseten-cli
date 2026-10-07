@@ -264,7 +264,7 @@ func harnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
 		return
 	}
 	hint := "Run `codex logout` and delete `" + harnessDisplayPath(harness.CodexCloudConfigPath(dir)) + "` to stop the workspace default model from overriding the Baseten route."
-	ctx.LogLine("Signing codex out of OpenAI/ChatGPT and disabling ChatGPT login while the Baseten harness is configured: codex only needs the Baseten route, and a ChatGPT login lets your workspace override the model for new threads.")
+	ctx.LogLine("Signing codex out of OpenAI/ChatGPT and disabling ChatGPT login while the Baseten harness is configured.")
 	if !yes && ctx.ConfirmYesNo("Sign codex out of OpenAI/ChatGPT now?") != nil {
 		ctx.LogLine(hint)
 		return
