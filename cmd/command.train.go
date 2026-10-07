@@ -667,6 +667,7 @@ type TrainWorkstationCreateFlags struct {
 	GPUCount    int    `flag:"gpu-count" desc:"Number of GPUs on a single node, 1 to 8. Mutually exclusive with --node-count."`
 	NodeCount   int    `flag:"node-count" desc:"Number of eight-GPU nodes, 1 to 16. Mutually exclusive with --gpu-count."`
 	Image       string `flag:"image" desc:"Docker base image the workstation runs."`
+	Spot        bool   `flag:"spot" desc:"Run on interruptible spot capacity."`
 
 	Project string `flag:"project" desc:"Training project that owns the workstation. Defaults to 'workstation-<accelerator>'."`
 	Team    string `flag:"team" desc:"Team name or ID that owns the training project. Run 'baseten org team list' to see teams."`
