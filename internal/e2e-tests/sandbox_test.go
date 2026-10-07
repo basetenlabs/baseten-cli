@@ -404,8 +404,17 @@ func TestE2ESandboxImage(t *testing.T) {
 	sandboxName := "cli-e2e-" + randomSuffix(t)[:8]
 	step(t, "create %s from %s", sandboxName, imageName)
 	createE2ESandbox(t, sandboxName, "--image", imageName+":latest")
-	require.Equal(t, "included "+suffix, mustCLI(t, "sandbox", "exec", "--name", sandboxName, "--", "cat /context/included.txt"))
-	mustCLI(t, "sandbox", "exec", "--name", sandboxName, "--", "test ! -e /context/excluded.txt")
+	// TODO: Drop --output json once ghcr.io/blaxel-ai/sandbox:latest, copied in
+	// by the Dockerfile, streams for Accept: application/x-ndjson. Until then
+	// only the non-streaming exec works in this sandbox.
+	type execResult struct {
+		Stdout   string `json:"stdout"`
+		ExitCode int    `json:"exitCode"`
+	}
+	included := cliJSON[execResult](t, "sandbox", "exec", "--name", sandboxName, "--", "cat /context/included.txt")
+	require.Equal(t, "included "+suffix, included.Stdout)
+	excluded := cliJSON[execResult](t, "sandbox", "exec", "--name", sandboxName, "--", "test ! -e /context/excluded.txt")
+	require.Equal(t, 0, excluded.ExitCode)
 	// The sandbox goes first, since an image in use cannot be deleted.
 	mustCLI(t, "sandbox", "delete", "--name", sandboxName, "--yes")
 }
