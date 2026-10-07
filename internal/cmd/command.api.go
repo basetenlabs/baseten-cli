@@ -10,11 +10,13 @@ import (
 	"strings"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-go/sandbox"
 )
 
 func init() {
 	Register("api management", commandAPIManagement)
 	Register("api inference", commandAPIInference)
+	Register("api sandbox", commandAPISandbox)
 }
 
 func commandAPIManagement(ctx *CommandContext, flags *cmd.APIManagementFlags) error {
@@ -34,6 +36,20 @@ func commandAPIInference(ctx *CommandContext, flags *cmd.APIInferenceFlags) erro
 		return cmd.NewErrUsage(err)
 	}
 	api := cl.API()
+	return callAPI(ctx, &flags.APIFlags, api.BaseURL, api.HTTPClient, api.Headers)
+}
+
+func commandAPISandbox(ctx *CommandContext, flags *cmd.APISandboxFlags) error {
+	// The sandbox API takes no team, so the client resolves none.
+	cl, _, err := ctx.NewSandboxClient("")
+	if err != nil {
+		return err
+	}
+	sb, err := cl.SandboxFromURL(sandbox.SandboxFromURLOptions{URL: flags.SandboxURL})
+	if err != nil {
+		return err
+	}
+	api := sb.API()
 	return callAPI(ctx, &flags.APIFlags, api.BaseURL, api.HTTPClient, api.Headers)
 }
 

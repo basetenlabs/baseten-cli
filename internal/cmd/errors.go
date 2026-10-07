@@ -7,6 +7,8 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/inferenceapi"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
+	"github.com/basetenlabs/baseten-go/client/sandboxapi"
+	"github.com/basetenlabs/baseten-go/sandbox"
 )
 
 // ErrSubprocess carries a raw process exit code. Used for subprocess
@@ -54,6 +56,16 @@ func knownHTTPStatus(err error) (int, bool) {
 	if errors.As(err, &irer) {
 		return irer.StatusCode, true
 	}
+	// A sandbox's own API, through the high-level client (whose gateway
+	// errors unwrap to this too) or the generated one.
+	var sae *sandbox.APIError
+	if errors.As(err, &sae) {
+		return sae.Status, true
+	}
+	var sre *sandboxapi.ResponseError
+	if errors.As(err, &sre) {
+		return sre.StatusCode, true
+	}
 	return 0, false
 }
 
@@ -92,15 +104,27 @@ func apiErrorFields(err error) cmd.JSONError {
 		}
 		return out
 	}
+	// The sandbox client's error is decoded already too.
+	var sae *sandbox.APIError
+	if errors.As(err, &sae) {
+		out.APIErrorCode = sae.Code
+		if details, ok := sae.Details.(map[string]any); ok {
+			out.APIDetails = details
+		}
+		return out
+	}
 
 	var rawBody string
 	var mre *managementapi.ResponseError
 	var ire *inferenceapi.ResponseError
+	var sre *sandboxapi.ResponseError
 	switch {
 	case errors.As(err, &mre):
 		rawBody = mre.Body
 	case errors.As(err, &ire):
 		rawBody = ire.Body
+	case errors.As(err, &sre):
+		rawBody = sre.Body
 	}
 	// The decode error is deliberately ignored. Unknown and absent fields are
 	// not errors, so the only failures are a body that isn't a JSON object at
