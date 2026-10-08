@@ -133,8 +133,11 @@ func (e *TransportLostError) Unwrap() error { return e.err }
 // wakeDialAttempts and wakeDialInterval bound a reconnect: the wake-on-demand
 // resume after hibernation usually takes a few seconds.
 const (
-	wakeDialAttempts = 30
+	wakeDialAttempts = 20
 	wakeDialInterval = 1 * time.Second
+	// dialTimeoutSeconds bounds one dial: while a hibernated sandbox resumes,
+	// the gateway can hold the upgrade open instead of refusing it.
+	dialTimeoutSeconds = 5
 )
 
 // Dial connects a new terminal session. Each invocation generates a random
@@ -192,7 +195,9 @@ func (t *Terminal) connect(ctx context.Context) error {
 	query.Set("sessionId", t.sessionID)
 	parsed.RawQuery = query.Encode()
 
-	conn, _, err := websocket.Dial(ctx, parsed.String(), nil)
+	dialCtx, cancel := context.WithTimeout(ctx, dialTimeoutSeconds*time.Second)
+	conn, _, err := websocket.Dial(dialCtx, parsed.String(), nil)
+	cancel()
 	if err != nil {
 		// Dial failures echo the URL, which carries the token.
 		return fmt.Errorf("connecting terminal: %s", tokenInQuery.ReplaceAllString(err.Error(), "token=REDACTED"))
@@ -283,8 +288,12 @@ func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 		}
 		if err := t.connect(ctx); err != nil {
 			lastErr = err
+			if attempt%5 == 4 {
+				fmt.Fprintf(t.errors, "Still waking the sandbox (attempt %d of %d)...\r\n", attempt+1, wakeDialAttempts)
+			}
 			continue
 		}
+		io.WriteString(t.errors, "Reconnected.\r\n")
 		return nil
 	}
 	return lastErr
