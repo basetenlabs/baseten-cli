@@ -263,14 +263,19 @@ func TestTerminal_ReconnectAfterTransportLoss(t *testing.T) {
 	}
 	waitForString(t, errors, "Connection lost")
 
+	// The keystroke wakes the sandbox; it is not shell input.
 	if _, err := inputWriter.Write([]byte("b")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Reconnected")
+	if _, err := inputWriter.Write([]byte("c")); err != nil {
 		t.Fatal(err)
 	}
 	if err := runResult(t, done); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if output.String() != "ab" {
-		t.Errorf("output %q, want %q", output.String(), "ab")
+	if output.String() != "ac" {
+		t.Errorf("output %q, want %q", output.String(), "ac")
 	}
 	if mints != 2 {
 		t.Errorf("token mints %d, want 2: the initial connect and the one wake", mints)
@@ -341,17 +346,20 @@ func TestTerminal_RetryAfterFailedReconnect(t *testing.T) {
 	waitForString(t, errors, "Reconnect failed")
 
 	// The keystroke after the failure reconnects; without restarting the
-	// input loop it is never read and the session hangs. The keystroke that
-	// asked for the failed wake is the trigger, not shell input, so only "c"
-	// reaches the shell.
+	// input loop it is never read and the session hangs. Wake keystrokes are
+	// triggers, not shell input.
 	if _, err := inputWriter.Write([]byte("c")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Reconnected")
+	if _, err := inputWriter.Write([]byte("d")); err != nil {
 		t.Fatal(err)
 	}
 	if err := runResult(t, done); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if output.String() != "ac" {
-		t.Errorf("output %q, want %q", output.String(), "ac")
+	if output.String() != "ad" {
+		t.Errorf("output %q, want %q", output.String(), "ad")
 	}
 	if mints != 3 {
 		t.Errorf("token mints %d, want 3", mints)

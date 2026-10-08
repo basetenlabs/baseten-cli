@@ -261,9 +261,9 @@ func (t *Terminal) Run(ctx context.Context) error {
 						"Reconnect failed: %v\r\nType any key to retry, or press Ctrl+C or Ctrl+D to quit.\r\n", err)
 					continue
 				}
-				// The keystroke that asked for the reconnection reaches the
-				// shell; the rest wait in the tty buffer.
-				_ = t.send(Message{Type: "input", Data: string(keystroke)})
+				// The keystroke that asked for the reconnection is the
+				// trigger, not shell input: forwarding it would run stray
+				// characters into the command line.
 			case <-ctx.Done():
 				return nil
 			}
