@@ -577,7 +577,9 @@ func commandVolumeRm(ctx *CommandContext, flags *cmd.VolumeRmFlags) error {
 	case ref.Tag != "":
 		return cmd.NewErrUsagef(
 			"ref %s names a tag, and deleting through one would delete the "+
-				"version it points at; name that version by digest", ref)
+				"version it points at; name that version by digest, or delete the "+
+				"tag itself with 'baseten volume tag delete --volume-ref bdn:%s/%s --tag-name %s'",
+			ref, ref.Namespace, ref.Volume, ref.Tag)
 	case ref.Digest != "":
 		return volumeRmVersion(ctx, flags, ref)
 	case !flags.Recursive:
@@ -742,6 +744,18 @@ func volumeExpiryText(expiresAt *time.Time) string {
 		return "-"
 	}
 	return expiresAt.UTC().Format(time.RFC3339)
+}
+
+// volumeExpiresAtArg parses an --expires-at value. The management API checks
+// the future and ten-year bounds, since it has the request time.
+func volumeExpiresAtArg(value string) (time.Time, error) {
+	expiresAt, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, cmd.NewErrUsagef(
+			"--expires-at %q must be an RFC 3339 date-time with a UTC offset, to the whole "+
+				"second, as in 2030-01-01T00:00:00Z", value)
+	}
+	return expiresAt, nil
 }
 
 func volumeJoin(values []string) string {

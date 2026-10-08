@@ -228,7 +228,8 @@ var commandVolume = Command{
 				"ref that meant to name one version cannot take the whole volume with it.\n\n" +
 				"A deleted version is recoverable with 'volume restore' for a limited window, which " +
 				"the output reports.\n\n" +
-				"A tag ref is an error while tags cannot be mutated, and a path is an error because " +
+				"A tag ref is an error, since deleting through one would delete the version it " +
+				"points at. Delete the tag itself with 'volume tag delete'. A path is an error because " +
 				"versions are immutable.\n\n" + volumeRefGrammar,
 			ArgsUsage: "REF",
 			ExactArgs: 1,
@@ -316,6 +317,7 @@ var commandVolume = Command{
 			},
 		},
 		commandVolumeSync,
+		commandVolumeTag,
 	},
 }
 
@@ -355,7 +357,7 @@ type VolumePushFlags struct {
 	VolumeRefFlags
 	VolumeTransferFlags
 
-	Tags []string `flag:"tag" desc:"Tag to apply to the new version at commit. May be repeated, and adds to a tag written on REF. Push is the only command where a tag is written rather than read."`
+	Tags []string `flag:"tag" desc:"Tag to apply to the new version at commit. May be repeated, and adds to a tag written on REF."`
 
 	SourceURI string `flag:"source-uri" desc:"Where the tree came from, for example 'hf://<repo>@<revision>'. Defaults to a file URI for DIR and is part of the version's digest, so a fixed value keeps the same tree at one version across directories."`
 

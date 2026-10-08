@@ -674,6 +674,7 @@ func Test_Volume_Rm_Tag(t *testing.T) {
 	h := NewCommandHarness(t)
 	err := h.Execute("volume", "rm", "--yes", "bdn:weights/llama:prod")
 	h.Require.ErrorContains(err, "name that version by digest")
+	h.Require.ErrorContains(err, "'baseten volume tag delete --volume-ref bdn:weights/llama --tag-name prod'")
 }
 
 func Test_Volume_Rm_Path(t *testing.T) {
