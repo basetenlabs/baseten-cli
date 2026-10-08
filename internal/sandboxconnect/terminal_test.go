@@ -16,15 +16,50 @@ import (
 	"github.com/coder/websocket"
 )
 
+// lockedBuffer is a bytes.Buffer safe to write from the session's goroutines
+// while a test reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// waitForString blocks until buf contains substr, failing the test otherwise.
+func waitForString(t *testing.T, buf *lockedBuffer, substr string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(buf.String(), substr) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("buffer never contained %q: %q", substr, buf.String())
+}
+
 // terminalTestServer answers the terminal protocol: it echoes each input
 // message back as output, and closes the session once the given number of
-// inputs arrived. It records the query of the first connection and every
-// message received.
+// inputs arrived. With abruptClosesRemaining above zero, that many first
+// closes drop the TCP connection without a close frame, as a hibernating
+// sandbox does. It records the query of every connection and every message
+// received.
 type terminalTestServer struct {
 	*httptest.Server
-	mu       sync.Mutex
-	query    url.Values
-	messages []Message
+	mu                    sync.Mutex
+	queries               []url.Values
+	messages              []Message
+	abruptClosesRemaining int
 }
 
 func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestServer {
@@ -32,7 +67,11 @@ func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestSer
 	s := &terminalTestServer{}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
-		s.query = r.URL.Query()
+		s.queries = append(s.queries, r.URL.Query())
+		abrupt := s.abruptClosesRemaining > 0
+		if abrupt {
+			s.abruptClosesRemaining--
+		}
 		s.mu.Unlock()
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -60,6 +99,9 @@ func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestSer
 				return
 			}
 			if inputs++; inputs >= inputsBeforeClose {
+				if abrupt {
+					conn.CloseNow()
+				}
 				return
 			}
 		}
@@ -68,14 +110,25 @@ func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestSer
 	return s
 }
 
+// staticTestToken is a NewToken that always returns the same token.
+func staticTestToken(token string) func(context.Context) (string, error) {
+	return func(context.Context) (string, error) { return token, nil }
+}
+
 // runTerminal dials server and runs the session in the background, feeding
 // it input, returning what it wrote and a channel with Run's result.
-func runTerminal(t *testing.T, server *terminalTestServer, input io.Reader) (*bytes.Buffer, *Terminal, <-chan error) {
+func runTerminal(t *testing.T, server *terminalTestServer, input io.Reader, errors *lockedBuffer) (*lockedBuffer, *Terminal, <-chan error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
-	var output bytes.Buffer
-	terminal, err := Dial(ctx, DialOptions{SandboxURL: server.URL + "/", Token: "tok", Input: input, Output: &output, Errors: io.Discard})
+	var output lockedBuffer
+	terminal, err := Dial(ctx, DialOptions{
+		SandboxURL: server.URL + "/",
+		NewToken:   staticTestToken("tok"),
+		Input:      input,
+		Output:     &output,
+		Errors:     errors,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,31 +137,38 @@ func runTerminal(t *testing.T, server *terminalTestServer, input io.Reader) (*by
 	return &output, terminal, done
 }
 
+// runResult returns Run's result, failing the test if it does not end.
+func runResult(t *testing.T, done <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not return")
+		return nil
+	}
+}
+
 func TestTerminal_RoundTripAndClose(t *testing.T) {
 	server := newTerminalTestServer(t, 1)
 	input, inputWriter := io.Pipe()
 	t.Cleanup(func() { inputWriter.Close() })
-	output, _, done := runTerminal(t, server, input)
+	output, _, done := runTerminal(t, server, input, &lockedBuffer{})
 
 	if _, err := inputWriter.Write([]byte("echo hi\n")); err != nil {
 		t.Fatal(err)
 	}
 	// The server closes the session after one input, which ends Run cleanly.
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("run: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("run did not return after the server closed the session")
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 	if output.String() != "echo hi\n" {
 		t.Errorf("output %q", output.String())
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if server.query.Get("token") != "tok" || server.query.Get("cols") != "80" || server.query.Get("rows") != "24" || len(server.query.Get("sessionId")) != 16 {
-		t.Errorf("query %v", server.query)
+	if server.queries[0].Get("token") != "tok" || server.queries[0].Get("cols") != "80" || server.queries[0].Get("rows") != "24" || len(server.queries[0].Get("sessionId")) != 16 {
+		t.Errorf("query %v", server.queries[0])
 	}
 }
 
@@ -117,7 +177,7 @@ func TestTerminal_SplitMultiByteCharacter(t *testing.T) {
 	server := newTerminalTestServer(t, 2)
 	input, inputWriter := io.Pipe()
 	t.Cleanup(func() { inputWriter.Close() })
-	output, _, done := runTerminal(t, server, input)
+	output, _, done := runTerminal(t, server, input, &lockedBuffer{})
 
 	// The first write ends inside the two-byte ö.
 	text := "hällö\n"
@@ -127,11 +187,7 @@ func TestTerminal_SplitMultiByteCharacter(t *testing.T) {
 	if _, err := inputWriter.Write([]byte(text[6:])); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("run did not return")
-	}
+	runResult(t, done)
 	if output.String() != text {
 		t.Errorf("output %q, want %q", output.String(), text)
 	}
@@ -148,7 +204,7 @@ func TestTerminal_Resize(t *testing.T) {
 	server := newTerminalTestServer(t, 1)
 	input, inputWriter := io.Pipe()
 	t.Cleanup(func() { inputWriter.Close() })
-	_, terminal, done := runTerminal(t, server, input)
+	_, terminal, done := runTerminal(t, server, input, &lockedBuffer{})
 
 	if err := terminal.Resize(120, 40); err != nil {
 		t.Fatal(err)
@@ -168,8 +224,67 @@ func TestTerminal_Resize(t *testing.T) {
 func TestTerminal_DialFailureRedactsToken(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	server.Close()
-	_, err := Dial(t.Context(), DialOptions{SandboxURL: server.URL, Token: "secret-token"})
+	_, err := Dial(t.Context(), DialOptions{SandboxURL: server.URL, NewToken: staticTestToken("secret-token")})
 	if err == nil || strings.Contains(err.Error(), "secret-token") {
 		t.Fatalf("error %v", err)
+	}
+}
+
+func TestTerminal_ReconnectAfterTransportLoss(t *testing.T) {
+	// The first connection dies without a close frame, as a hibernating
+	// sandbox kills it. The next keystroke reconnects, reattaching to the
+	// same session, and the second connection closes normally.
+	server := newTerminalTestServer(t, 1)
+	server.abruptClosesRemaining = 1
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	errors := &lockedBuffer{}
+	output, _, done := runTerminal(t, server, input, errors)
+
+	if _, err := inputWriter.Write([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Connection lost")
+
+	if _, err := inputWriter.Write([]byte("b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if output.String() != "ab" {
+		t.Errorf("output %q, want %q", output.String(), "ab")
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if len(server.queries) != 2 {
+		t.Fatalf("connections %d, want 2", len(server.queries))
+	}
+	if server.queries[0].Get("sessionId") != server.queries[1].Get("sessionId") {
+		t.Errorf("reconnect reused session: %q then %q",
+			server.queries[0].Get("sessionId"), server.queries[1].Get("sessionId"))
+	}
+}
+
+func TestTerminal_QuitKeystrokeAfterTransportLoss(t *testing.T) {
+	server := newTerminalTestServer(t, 1)
+	server.abruptClosesRemaining = 1
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	errors := &lockedBuffer{}
+	_, _, done := runTerminal(t, server, input, errors)
+
+	if _, err := inputWriter.Write([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Connection lost")
+
+	// In raw mode Ctrl+D arrives as a byte, and after the loss it quits
+	// instead of reaching the dead shell.
+	if _, err := inputWriter.Write([]byte{0x04}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 }
