@@ -158,19 +158,19 @@ func Dial(ctx context.Context, opts DialOptions) (*Terminal, error) {
 		terminal:           opts.Terminal,
 		reconnectKeystroke: make(chan []byte, 1),
 	}
-	if err := terminal.connect(ctx); err != nil {
+	token, err := opts.NewToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting a sandbox token: %w", err)
+	}
+	if err := terminal.connect(ctx, token); err != nil {
 		return nil, err
 	}
 	return terminal, nil
 }
 
-// connect dials the session's WebSocket, with a fresh token and the window
+// connect dials the session's WebSocket with the given token and the window
 // size as it is now.
-func (t *Terminal) connect(ctx context.Context) error {
-	token, err := t.opts.NewToken(ctx)
-	if err != nil {
-		return fmt.Errorf("getting a sandbox token: %w", err)
-	}
+func (t *Terminal) connect(ctx context.Context, token string) error {
 	parsed, err := url.Parse(t.opts.SandboxURL)
 	if err != nil {
 		return fmt.Errorf("invalid sandbox URL: %w", err)
@@ -239,13 +239,23 @@ func (t *Terminal) Run(ctx context.Context) error {
 		io.WriteString(t.errors,
 			"\r\nConnection lost. The sandbox hibernates after inactivity, which drops the connection.\r\n"+
 				"Type any key to reconnect and wake the sandbox, or press Ctrl+C or Ctrl+D to quit.\r\n")
+		// The input loop ends when it delivers a keystroke, so a failed
+		// reconnect must restart it: nothing else would ever read the retry.
+		disconnectedInput := make(chan struct{})
+		close(disconnectedInput)
+		inputLoopRunning := true // The relay's loop is parked reading input.
 		for {
+			if !inputLoopRunning {
+				go t.inputLoop(ctx, disconnectedInput)
+				inputLoopRunning = true
+			}
 			select {
 			case keystroke := <-t.reconnectKeystroke:
 				// Raw mode delivers Ctrl+C and Ctrl+D as bytes, not signals.
 				if keystroke == nil || (len(keystroke) > 0 && (keystroke[0] == 0x03 || keystroke[0] == 0x04)) {
 					return nil
 				}
+				inputLoopRunning = false
 				if err := t.wakeAndConnect(ctx); err != nil {
 					fmt.Fprintf(t.errors,
 						"Reconnect failed: %v\r\nType any key to retry, or press Ctrl+C or Ctrl+D to quit.\r\n", err)
@@ -277,7 +287,14 @@ func (t *Terminal) relay(ctx context.Context) error {
 // wakeAndConnect reconnects, retrying while the sandbox is still resuming.
 func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 	io.WriteString(t.errors, "Waking the sandbox...\r\n")
+	// One mint per wake: a token per dial attempt would trip Baseten's API
+	// rate limit long before the sandbox finishes resuming.
+	token, err := t.opts.NewToken(ctx)
+	if err != nil {
+		return fmt.Errorf("getting a sandbox token: %w", err)
+	}
 	var lastErr error
+	reMinted := false
 	for attempt := 0; attempt < wakeDialAttempts; attempt++ {
 		if attempt > 0 {
 			select {
@@ -286,15 +303,25 @@ func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 				return ctx.Err()
 			}
 		}
-		if err := t.connect(ctx); err != nil {
-			lastErr = err
-			if attempt%5 == 4 {
-				fmt.Fprintf(t.errors, "Still waking the sandbox (attempt %d of %d)...\r\n", attempt+1, wakeDialAttempts)
-			}
-			continue
+		err := t.connect(ctx, token)
+		if err == nil {
+			io.WriteString(t.errors, "Reconnected.\r\n")
+			return nil
 		}
-		io.WriteString(t.errors, "Reconnected.\r\n")
-		return nil
+		lastErr = err
+		var closeErr *websocket.CloseError
+		if errors.As(err, &closeErr) && (closeErr.Code == 401 || closeErr.Code == 403) && !reMinted {
+			// A token the sandbox API refused is stale; mint one fresh token
+			// and let the remaining attempts use it.
+			reMinted = true
+			token, err = t.opts.NewToken(ctx)
+			if err != nil {
+				return fmt.Errorf("getting a sandbox token: %w", err)
+			}
+		}
+		if attempt%5 == 4 {
+			fmt.Fprintf(t.errors, "Still waking the sandbox (attempt %d of %d)...\r\n", attempt+1, wakeDialAttempts)
+		}
 	}
 	return lastErr
 }

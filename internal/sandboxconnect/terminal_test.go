@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -115,16 +116,31 @@ func staticTestToken(token string) func(context.Context) (string, error) {
 	return func(context.Context) (string, error) { return token, nil }
 }
 
+// countingTestToken wraps a NewToken, counting the mints: the initial connect
+// and one per wake. A token per dial attempt would trip Baseten's rate limit.
+func countingTestToken(mints *int) func(context.Context) (string, error) {
+	return func(context.Context) (string, error) {
+		*mints++
+		return "tok", nil
+	}
+}
+
 // runTerminal dials server and runs the session in the background, feeding
 // it input, returning what it wrote and a channel with Run's result.
-func runTerminal(t *testing.T, server *terminalTestServer, input io.Reader, errors *lockedBuffer) (*lockedBuffer, *Terminal, <-chan error) {
+func runTerminal(
+	t *testing.T, server *terminalTestServer, input io.Reader, errors *lockedBuffer,
+	newToken func(context.Context) (string, error),
+) (*lockedBuffer, *Terminal, <-chan error) {
 	t.Helper()
+	if newToken == nil {
+		newToken = staticTestToken("tok")
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
 	var output lockedBuffer
 	terminal, err := Dial(ctx, DialOptions{
 		SandboxURL: server.URL + "/",
-		NewToken:   staticTestToken("tok"),
+		NewToken:   newToken,
 		Input:      input,
 		Output:     &output,
 		Errors:     errors,
@@ -153,7 +169,7 @@ func TestTerminal_RoundTripAndClose(t *testing.T) {
 	server := newTerminalTestServer(t, 1)
 	input, inputWriter := io.Pipe()
 	t.Cleanup(func() { inputWriter.Close() })
-	output, _, done := runTerminal(t, server, input, &lockedBuffer{})
+	output, _, done := runTerminal(t, server, input, &lockedBuffer{}, nil)
 
 	if _, err := inputWriter.Write([]byte("echo hi\n")); err != nil {
 		t.Fatal(err)
@@ -177,7 +193,7 @@ func TestTerminal_SplitMultiByteCharacter(t *testing.T) {
 	server := newTerminalTestServer(t, 2)
 	input, inputWriter := io.Pipe()
 	t.Cleanup(func() { inputWriter.Close() })
-	output, _, done := runTerminal(t, server, input, &lockedBuffer{})
+	output, _, done := runTerminal(t, server, input, &lockedBuffer{}, nil)
 
 	// The first write ends inside the two-byte ö.
 	text := "hällö\n"
@@ -204,7 +220,7 @@ func TestTerminal_Resize(t *testing.T) {
 	server := newTerminalTestServer(t, 1)
 	input, inputWriter := io.Pipe()
 	t.Cleanup(func() { inputWriter.Close() })
-	_, terminal, done := runTerminal(t, server, input, &lockedBuffer{})
+	_, terminal, done := runTerminal(t, server, input, &lockedBuffer{}, nil)
 
 	if err := terminal.Resize(120, 40); err != nil {
 		t.Fatal(err)
@@ -239,7 +255,8 @@ func TestTerminal_ReconnectAfterTransportLoss(t *testing.T) {
 	input, inputWriter := io.Pipe()
 	t.Cleanup(func() { inputWriter.Close() })
 	errors := &lockedBuffer{}
-	output, _, done := runTerminal(t, server, input, errors)
+	mints := 0
+	output, _, done := runTerminal(t, server, input, errors, countingTestToken(&mints))
 
 	if _, err := inputWriter.Write([]byte("a")); err != nil {
 		t.Fatal(err)
@@ -254,6 +271,9 @@ func TestTerminal_ReconnectAfterTransportLoss(t *testing.T) {
 	}
 	if output.String() != "ab" {
 		t.Errorf("output %q, want %q", output.String(), "ab")
+	}
+	if mints != 2 {
+		t.Errorf("token mints %d, want 2: the initial connect and the one wake", mints)
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -272,7 +292,7 @@ func TestTerminal_QuitKeystrokeAfterTransportLoss(t *testing.T) {
 	input, inputWriter := io.Pipe()
 	t.Cleanup(func() { inputWriter.Close() })
 	errors := &lockedBuffer{}
-	_, _, done := runTerminal(t, server, input, errors)
+	_, _, done := runTerminal(t, server, input, errors, nil)
 
 	if _, err := inputWriter.Write([]byte("a")); err != nil {
 		t.Fatal(err)
@@ -286,5 +306,54 @@ func TestTerminal_QuitKeystrokeAfterTransportLoss(t *testing.T) {
 	}
 	if err := runResult(t, done); err != nil {
 		t.Fatalf("run: %v", err)
+	}
+}
+
+// failingWakeTestToken mints, fails on the first wake, then mints again: the
+// retry keystroke after a failed reconnect must still be read.
+func failingWakeTestToken(mints *int) func(context.Context) (string, error) {
+	return func(context.Context) (string, error) {
+		*mints++
+		if *mints == 2 {
+			return "", fmt.Errorf("rate limited")
+		}
+		return "tok", nil
+	}
+}
+
+func TestTerminal_RetryAfterFailedReconnect(t *testing.T) {
+	server := newTerminalTestServer(t, 1)
+	server.abruptClosesRemaining = 1
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	errors := &lockedBuffer{}
+	mints := 0
+	output, _, done := runTerminal(t, server, input, errors, failingWakeTestToken(&mints))
+
+	if _, err := inputWriter.Write([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Connection lost")
+
+	if _, err := inputWriter.Write([]byte("b")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Reconnect failed")
+
+	// The keystroke after the failure reconnects; without restarting the
+	// input loop it is never read and the session hangs. The keystroke that
+	// asked for the failed wake is the trigger, not shell input, so only "c"
+	// reaches the shell.
+	if _, err := inputWriter.Write([]byte("c")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if output.String() != "ac" {
+		t.Errorf("output %q, want %q", output.String(), "ac")
+	}
+	if mints != 3 {
+		t.Errorf("token mints %d, want 3", mints)
 	}
 }
