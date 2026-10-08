@@ -112,7 +112,7 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		Value(&names).
 		Validate(func(names []string) error {
 			if len(names) == 0 {
-				return errors.New("choose at least one harness")
+				return errors.New("choose at least one harness (space to select, enter to confirm)")
 			}
 			return nil
 		}).
