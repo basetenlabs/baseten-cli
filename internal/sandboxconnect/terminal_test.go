@@ -36,31 +36,34 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-// waitForString blocks until buf contains substr, failing the test otherwise.
-func waitForString(t *testing.T, buf *lockedBuffer, substr string) {
+// waitForString blocks until buf contains substr occurrences of substr,
+// failing the test otherwise: waits for a repeated event must not match the
+// earlier one.
+func waitForString(t *testing.T, buf *lockedBuffer, substr string, occurrences int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(buf.String(), substr) {
+		if strings.Count(buf.String(), substr) >= occurrences {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("buffer never contained %q: %q", substr, buf.String())
+	t.Fatalf("buffer never contained %d of %q: %q", occurrences, substr, buf.String())
 }
 
 // terminalTestServer answers the terminal protocol: it echoes each input
 // message back as output, and closes the session once the given number of
 // inputs arrived. With abruptClosesRemaining above zero, that many first
 // closes drop the TCP connection without a close frame, as a hibernating
-// sandbox does. It records the query of every connection and every message
-// received.
+// sandbox does. A connection with the rejectToken is refused with 401. It
+// records the query of every connection and every message received.
 type terminalTestServer struct {
 	*httptest.Server
 	mu                    sync.Mutex
 	queries               []url.Values
-	messages              []Message
+	messages              []message
 	abruptClosesRemaining int
+	rejectToken           string
 }
 
 func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestServer {
@@ -73,7 +76,12 @@ func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestSer
 		if abrupt {
 			s.abruptClosesRemaining--
 		}
+		reject := s.rejectToken
 		s.mu.Unlock()
+		if reject != "" && r.URL.Query().Get("token") == reject {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
@@ -85,17 +93,17 @@ func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestSer
 			if err != nil {
 				return
 			}
-			var message Message
-			if err := json.Unmarshal(payload, &message); err != nil {
+			var frame message
+			if err := json.Unmarshal(payload, &frame); err != nil {
 				continue
 			}
 			s.mu.Lock()
-			s.messages = append(s.messages, message)
+			s.messages = append(s.messages, frame)
 			s.mu.Unlock()
-			if message.Type != "input" {
+			if frame.Type != "input" {
 				continue
 			}
-			echo, _ := json.Marshal(Message{Type: "output", Data: message.Data})
+			echo, _ := json.Marshal(message{Type: "output", Data: frame.Data})
 			if err := conn.Write(r.Context(), websocket.MessageText, echo); err != nil {
 				return
 			}
@@ -116,11 +124,14 @@ func staticTestToken(token string) func(context.Context) (string, error) {
 	return func(context.Context) (string, error) { return token, nil }
 }
 
-// countingTestToken wraps a NewToken, counting the mints: the initial connect
-// and one per wake. A token per dial attempt would trip Baseten's rate limit.
-func countingTestToken(mints *int) func(context.Context) (string, error) {
+// mintCountingTestToken counts mints, failing the failAt-th, so tests can
+// assert how many mints a session needs.
+func mintCountingTestToken(mints *int, failAt int) func(context.Context) (string, error) {
 	return func(context.Context) (string, error) {
 		*mints++
+		if *mints == failAt {
+			return "", fmt.Errorf("rate limited")
+		}
 		return "tok", nil
 	}
 }
@@ -209,9 +220,9 @@ func TestTerminal_SplitMultiByteCharacter(t *testing.T) {
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	for _, message := range server.messages {
-		if !strings.HasPrefix(text, message.Data) && !strings.HasSuffix(text, message.Data) {
-			t.Errorf("input split mid-character: %q", message.Data)
+	for _, frame := range server.messages {
+		if !strings.HasPrefix(text, frame.Data) && !strings.HasSuffix(text, frame.Data) {
+			t.Errorf("input split mid-character: %q", frame.Data)
 		}
 	}
 }
@@ -222,7 +233,7 @@ func TestTerminal_Resize(t *testing.T) {
 	t.Cleanup(func() { inputWriter.Close() })
 	_, terminal, done := runTerminal(t, server, input, &lockedBuffer{}, nil)
 
-	if err := terminal.Resize(120, 40); err != nil {
+	if err := terminal.resize(120, 40); err != nil {
 		t.Fatal(err)
 	}
 	// Input after the resize, so the server has both once the session ends.
@@ -232,7 +243,7 @@ func TestTerminal_Resize(t *testing.T) {
 	<-done
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if len(server.messages) < 1 || server.messages[0] != (Message{Type: "resize", Cols: 120, Rows: 40}) {
+	if len(server.messages) < 1 || server.messages[0] != (message{Type: "resize", Cols: 120, Rows: 40}) {
 		t.Errorf("messages %+v", server.messages)
 	}
 }
@@ -246,6 +257,30 @@ func TestTerminal_DialFailureRedactsToken(t *testing.T) {
 	}
 }
 
+// hungTestServer accepts the connection but never answers the upgrade: a
+// gateway holding the handshake while the sandbox resumes.
+func hungTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestTerminal_DialIsBoundedAgainstAHungUpgrade(t *testing.T) {
+	server := hungTestServer(t)
+	terminal := &Terminal{opts: DialOptions{SandboxURL: server.URL, NewToken: staticTestToken("tok")}}
+
+	started := time.Now()
+	if err := terminal.connect(t.Context(), "tok"); err == nil {
+		t.Fatal("connect against a hung upgrade succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > dialTimeout+2*time.Second {
+		t.Errorf("connect took %s, want bounded by %s", elapsed, dialTimeout)
+	}
+}
+
 func TestTerminal_ReconnectAfterTransportLoss(t *testing.T) {
 	// The first connection dies without a close frame, as a hibernating
 	// sandbox kills it. The next keystroke reconnects, reattaching to the
@@ -256,18 +291,18 @@ func TestTerminal_ReconnectAfterTransportLoss(t *testing.T) {
 	t.Cleanup(func() { inputWriter.Close() })
 	errors := &lockedBuffer{}
 	mints := 0
-	output, _, done := runTerminal(t, server, input, errors, countingTestToken(&mints))
+	output, _, done := runTerminal(t, server, input, errors, mintCountingTestToken(&mints, 0))
 
 	if _, err := inputWriter.Write([]byte("a")); err != nil {
 		t.Fatal(err)
 	}
-	waitForString(t, errors, "Connection lost")
+	waitForString(t, errors, "Connection lost", 1)
 
 	// The keystroke wakes the sandbox; it is not shell input.
 	if _, err := inputWriter.Write([]byte("b")); err != nil {
 		t.Fatal(err)
 	}
-	waitForString(t, errors, "Reconnected")
+	waitForString(t, errors, "Reconnected", 1)
 	if _, err := inputWriter.Write([]byte("c")); err != nil {
 		t.Fatal(err)
 	}
@@ -291,22 +326,110 @@ func TestTerminal_ReconnectAfterTransportLoss(t *testing.T) {
 	}
 }
 
-func TestTerminal_QuitKeystrokeAfterTransportLoss(t *testing.T) {
+func TestTerminal_SecondWakeInTheSameSession(t *testing.T) {
+	// Both connections drop abruptly; each wake reattaches with the same
+	// session ID.
+	server := newTerminalTestServer(t, 1)
+	server.abruptClosesRemaining = 2
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	errors := &lockedBuffer{}
+	mints := 0
+	output, _, done := runTerminal(t, server, input, errors, mintCountingTestToken(&mints, 0))
+
+	if _, err := inputWriter.Write([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Connection lost", 1)
+	if _, err := inputWriter.Write([]byte("b")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Reconnected", 1)
+	if _, err := inputWriter.Write([]byte("c")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Connection lost", 2)
+	if _, err := inputWriter.Write([]byte("d")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Reconnected", 2)
+	if _, err := inputWriter.Write([]byte("e")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if output.String() != "ace" {
+		t.Errorf("output %q, want %q", output.String(), "ace")
+	}
+	if mints != 3 {
+		t.Errorf("token mints %d, want 3: the initial connect and two wakes", mints)
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if len(server.queries) != 3 {
+		t.Fatalf("connections %d, want 3", len(server.queries))
+	}
+	for _, query := range server.queries[1:] {
+		if query.Get("sessionId") != server.queries[0].Get("sessionId") {
+			t.Errorf("wakes reused session: %q then %q",
+				server.queries[0].Get("sessionId"), query.Get("sessionId"))
+		}
+	}
+}
+
+func TestTerminal_RemintsARejectedToken(t *testing.T) {
+	// The wake mints a token the sandbox API rejects; the re-mint reconnects
+	// without a second keystroke.
+	server := newTerminalTestServer(t, 1)
+	server.abruptClosesRemaining = 1
+	server.rejectToken = "stale"
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	errors := &lockedBuffer{}
+	mints := 0
+	tokens := []string{"tok", "stale", "tok"}
+	newToken := func(context.Context) (string, error) {
+		token := tokens[min(mints, len(tokens)-1)]
+		mints++
+		return token, nil
+	}
+	_, _, done := runTerminal(t, server, input, errors, newToken)
+
+	if _, err := inputWriter.Write([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Connection lost", 1)
+
+	if _, err := inputWriter.Write([]byte("b")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Reconnected", 1)
+	if _, err := inputWriter.Write([]byte("c")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if mints != 3 {
+		t.Errorf("token mints %d, want 3: connect, the rejected wake token, the re-mint", mints)
+	}
+}
+
+func TestTerminal_EndedInputDuringTheWakeWait(t *testing.T) {
+	// Ended input quits the wait for a keystroke instead of hanging it.
 	server := newTerminalTestServer(t, 1)
 	server.abruptClosesRemaining = 1
 	input, inputWriter := io.Pipe()
-	t.Cleanup(func() { inputWriter.Close() })
 	errors := &lockedBuffer{}
 	_, _, done := runTerminal(t, server, input, errors, nil)
 
 	if _, err := inputWriter.Write([]byte("a")); err != nil {
 		t.Fatal(err)
 	}
-	waitForString(t, errors, "Connection lost")
+	waitForString(t, errors, "Connection lost", 1)
 
-	// In raw mode Ctrl+D arrives as a byte, and after the loss it quits
-	// instead of reaching the dead shell.
-	if _, err := inputWriter.Write([]byte{0x04}); err != nil {
+	if err := inputWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := runResult(t, done); err != nil {
@@ -314,15 +437,41 @@ func TestTerminal_QuitKeystrokeAfterTransportLoss(t *testing.T) {
 	}
 }
 
-// failingWakeTestToken mints, fails on the first wake, then mints again: the
-// retry keystroke after a failed reconnect must still be read.
-func failingWakeTestToken(mints *int) func(context.Context) (string, error) {
-	return func(context.Context) (string, error) {
-		*mints++
-		if *mints == 2 {
-			return "", fmt.Errorf("rate limited")
-		}
-		return "tok", nil
+func TestTerminal_QuitKeystrokeAfterTransportLoss(t *testing.T) {
+	// In raw mode both quit keys arrive as bytes, and after the loss they
+	// quit instead of reaching the dead shell.
+	for _, quitKey := range []struct {
+		name string
+		byte byte
+	}{
+		{"Ctrl+C", 0x03},
+		{"Ctrl+D", 0x04},
+	} {
+		t.Run(quitKey.name, func(t *testing.T) {
+			server := newTerminalTestServer(t, 1)
+			server.abruptClosesRemaining = 1
+			input, inputWriter := io.Pipe()
+			t.Cleanup(func() { inputWriter.Close() })
+			errors := &lockedBuffer{}
+			_, _, done := runTerminal(t, server, input, errors, nil)
+
+			if _, err := inputWriter.Write([]byte("a")); err != nil {
+				t.Fatal(err)
+			}
+			waitForString(t, errors, "Connection lost", 1)
+
+			if _, err := inputWriter.Write([]byte{quitKey.byte}); err != nil {
+				t.Fatal(err)
+			}
+			if err := runResult(t, done); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			server.mu.Lock()
+			defer server.mu.Unlock()
+			if len(server.queries) != 1 {
+				t.Errorf("connections %d, want 1: the quit key must not reconnect", len(server.queries))
+			}
+		})
 	}
 }
 
@@ -333,17 +482,17 @@ func TestTerminal_RetryAfterFailedReconnect(t *testing.T) {
 	t.Cleanup(func() { inputWriter.Close() })
 	errors := &lockedBuffer{}
 	mints := 0
-	output, _, done := runTerminal(t, server, input, errors, failingWakeTestToken(&mints))
+	output, _, done := runTerminal(t, server, input, errors, mintCountingTestToken(&mints, 2))
 
 	if _, err := inputWriter.Write([]byte("a")); err != nil {
 		t.Fatal(err)
 	}
-	waitForString(t, errors, "Connection lost")
+	waitForString(t, errors, "Connection lost", 1)
 
 	if _, err := inputWriter.Write([]byte("b")); err != nil {
 		t.Fatal(err)
 	}
-	waitForString(t, errors, "Reconnect failed")
+	waitForString(t, errors, "Reconnect failed", 1)
 
 	// The keystroke after the failure reconnects; without restarting the
 	// input loop it is never read and the session hangs. Wake keystrokes are
@@ -351,7 +500,7 @@ func TestTerminal_RetryAfterFailedReconnect(t *testing.T) {
 	if _, err := inputWriter.Write([]byte("c")); err != nil {
 		t.Fatal(err)
 	}
-	waitForString(t, errors, "Reconnected")
+	waitForString(t, errors, "Reconnected", 1)
 	if _, err := inputWriter.Write([]byte("d")); err != nil {
 		t.Fatal(err)
 	}

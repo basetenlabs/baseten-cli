@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -34,8 +35,12 @@ import (
 // the URL, so the sandbox token never reaches an error message.
 var tokenInQuery = regexp.MustCompile(`token=[^&\s]+`)
 
-// Message is one frame of the terminal protocol.
-type Message struct {
+// errSandboxTokenRejected reports the sandbox API refusing the token: the one
+// dial failure a fresh token fixes.
+var errSandboxTokenRejected = errors.New("sandbox API rejected the token")
+
+// message is one frame of the terminal protocol.
+type message struct {
 	Type string `json:"type"` // "input", "output", "resize", "error"
 	Data string `json:"data,omitempty"`
 	Cols int    `json:"cols,omitempty"`
@@ -85,8 +90,8 @@ type DialOptions struct {
 	// SandboxURL is the sandbox's URL.
 	SandboxURL string
 
-	// NewToken returns a sandbox token. Called once per connect, because a
-	// reconnection after a long hibernation may outlive the first token.
+	// NewToken returns a sandbox token. A reconnection after a long
+	// hibernation may outlive the first token.
 	NewToken func(context.Context) (string, error)
 
 	// Input is read and sent to the sandbox's shell.
@@ -109,10 +114,6 @@ type Terminal struct {
 	sessionID string
 	conn      *websocket.Conn
 	writeMu   sync.Mutex
-	input     io.Reader
-	output    io.Writer
-	errors    io.Writer
-	terminal  TerminalControl
 
 	// reconnectKeystroke delivers the keystroke that asked for a
 	// reconnection, or nil when input ended. Capacity one: the first
@@ -130,14 +131,12 @@ type TransportLostError struct {
 func (e *TransportLostError) Error() string { return e.err.Error() }
 func (e *TransportLostError) Unwrap() error { return e.err }
 
-// wakeDialAttempts and wakeDialInterval bound a reconnect: the wake-on-demand
-// resume after hibernation usually takes a few seconds.
 const (
 	wakeDialAttempts = 20
 	wakeDialInterval = 1 * time.Second
-	// dialTimeoutSeconds bounds one dial: while a hibernated sandbox resumes,
-	// the gateway can hold the upgrade open instead of refusing it.
-	dialTimeoutSeconds = 5
+	// dialTimeout bounds one dial: while a hibernated sandbox resumes, the
+	// gateway can hold the upgrade open instead of refusing it.
+	dialTimeout = 5 * time.Second
 )
 
 // Dial connects a new terminal session. Each invocation generates a random
@@ -152,15 +151,11 @@ func Dial(ctx context.Context, opts DialOptions) (*Terminal, error) {
 	terminal := &Terminal{
 		opts:               opts,
 		sessionID:          hex.EncodeToString(session),
-		input:              opts.Input,
-		output:             opts.Output,
-		errors:             opts.Errors,
-		terminal:           opts.Terminal,
 		reconnectKeystroke: make(chan []byte, 1),
 	}
-	token, err := opts.NewToken(ctx)
+	token, err := terminal.mintToken(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting a sandbox token: %w", err)
+		return nil, err
 	}
 	if err := terminal.connect(ctx, token); err != nil {
 		return nil, err
@@ -168,8 +163,14 @@ func Dial(ctx context.Context, opts DialOptions) (*Terminal, error) {
 	return terminal, nil
 }
 
-// connect dials the session's WebSocket with the given token and the window
-// size as it is now.
+func (t *Terminal) mintToken(ctx context.Context) (string, error) {
+	token, err := t.opts.NewToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("getting a sandbox token: %w", err)
+	}
+	return token, nil
+}
+
 func (t *Terminal) connect(ctx context.Context, token string) error {
 	parsed, err := url.Parse(t.opts.SandboxURL)
 	if err != nil {
@@ -183,8 +184,8 @@ func (t *Terminal) connect(ctx context.Context, token string) error {
 	}
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/terminal/ws"
 	cols, rows := 80, 24
-	if t.terminal != nil {
-		if c, r, err := t.terminal.Size(); err == nil {
+	if t.opts.Terminal != nil {
+		if c, r, err := t.opts.Terminal.Size(); err == nil {
 			cols, rows = c, r
 		}
 	}
@@ -195,26 +196,33 @@ func (t *Terminal) connect(ctx context.Context, token string) error {
 	query.Set("sessionId", t.sessionID)
 	parsed.RawQuery = query.Encode()
 
-	dialCtx, cancel := context.WithTimeout(ctx, dialTimeoutSeconds*time.Second)
-	conn, _, err := websocket.Dial(dialCtx, parsed.String(), nil)
+	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	conn, resp, err := websocket.Dial(dialCtx, parsed.String(), nil)
 	cancel()
 	if err != nil {
+		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			return errSandboxTokenRejected
+		}
 		// Dial failures echo the URL, which carries the token.
 		return fmt.Errorf("connecting terminal: %s", tokenInQuery.ReplaceAllString(err.Error(), "token=REDACTED"))
 	}
+	// The resize notifier reads conn from another goroutine: publish under
+	// the lock send uses.
+	t.writeMu.Lock()
 	t.conn = conn
+	t.writeMu.Unlock()
 	return nil
 }
 
 // Run relays the session until it ends: the shell exits, the sandbox closes
-// it, input ends, or ctx is done. With a local terminal, the terminal is in
-// raw mode for the session, so keys such as Ctrl+C and Ctrl+D reach the
-// shell. After a transport loss it waits for a keystroke, then reconnects and
-// resumes the same shell. It returns an error only for a failure, not for the
-// session ending.
+// it, or ctx is done. With a local terminal, the terminal is in raw mode for
+// the session, so keys such as Ctrl+C and Ctrl+D reach the shell. After a
+// transport loss it waits for a keystroke, then reconnects and resumes the
+// same shell; ended input quits that wait too. It returns an error only for
+// a failure, not for the session ending.
 func (t *Terminal) Run(ctx context.Context) error {
-	if t.terminal != nil {
-		restore, err := t.terminal.MakeRaw()
+	if t.opts.Terminal != nil {
+		restore, err := t.opts.Terminal.MakeRaw()
 		if err != nil {
 			t.conn.Close(websocket.StatusInternalError, "")
 			return fmt.Errorf("setting terminal raw mode: %w", err)
@@ -223,30 +231,30 @@ func (t *Terminal) Run(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	if t.terminal != nil {
-		t.terminal.NotifyResize(ctx, func() {
-			if cols, rows, err := t.terminal.Size(); err == nil {
-				_ = t.Resize(cols, rows)
+	if t.opts.Terminal != nil {
+		t.opts.Terminal.NotifyResize(ctx, func() {
+			if cols, rows, err := t.opts.Terminal.Size(); err == nil {
+				_ = t.resize(cols, rows)
 			}
 		})
 	}
 	for {
-		err := t.relay(ctx)
+		err := t.runConnection(ctx)
 		var lost *TransportLostError
 		if err == nil || !errors.As(err, &lost) {
 			return err
 		}
-		io.WriteString(t.errors,
+		io.WriteString(t.opts.Errors,
 			"\r\nConnection lost. The sandbox hibernates after inactivity, which drops the connection.\r\n"+
 				"Type any key to reconnect and wake the sandbox, or press Ctrl+C or Ctrl+D to quit.\r\n")
 		// The input loop ends when it delivers a keystroke, so a failed
 		// reconnect must restart it: nothing else would ever read the retry.
-		disconnectedInput := make(chan struct{})
-		close(disconnectedInput)
+		disconnect := make(chan struct{})
+		close(disconnect)
 		inputLoopRunning := true // The relay's loop is parked reading input.
 		for {
 			if !inputLoopRunning {
-				go t.inputLoop(ctx, disconnectedInput)
+				go t.inputLoop(ctx, disconnect)
 				inputLoopRunning = true
 			}
 			select {
@@ -257,7 +265,7 @@ func (t *Terminal) Run(ctx context.Context) error {
 				}
 				inputLoopRunning = false
 				if err := t.wakeAndConnect(ctx); err != nil {
-					fmt.Fprintf(t.errors,
+					fmt.Fprintf(t.opts.Errors,
 						"Reconnect failed: %v\r\nType any key to retry, or press Ctrl+C or Ctrl+D to quit.\r\n", err)
 					continue
 				}
@@ -272,9 +280,7 @@ func (t *Terminal) Run(ctx context.Context) error {
 	}
 }
 
-// relay runs both loops of one connection until the session ends or the
-// transport dies.
-func (t *Terminal) relay(ctx context.Context) error {
+func (t *Terminal) runConnection(ctx context.Context) error {
 	conn := t.conn
 	// Ending the session for any reason closes the connection, which ends
 	// both loops.
@@ -286,14 +292,14 @@ func (t *Terminal) relay(ctx context.Context) error {
 
 // wakeAndConnect reconnects, retrying while the sandbox is still resuming.
 func (t *Terminal) wakeAndConnect(ctx context.Context) error {
-	io.WriteString(t.errors, "Waking the sandbox...\r\n")
-	// One mint per wake: a token per dial attempt would trip Baseten's API
-	// rate limit long before the sandbox finishes resuming.
-	token, err := t.opts.NewToken(ctx)
+	io.WriteString(t.opts.Errors, "Waking the sandbox...\r\n")
+	// No mint per dial attempt: that trips Baseten's API rate limit. A token
+	// the sandbox API rejected is the only case that mints another.
+	token, err := t.mintToken(ctx)
 	if err != nil {
-		return fmt.Errorf("getting a sandbox token: %w", err)
+		return err
 	}
-	var lastErr error
+	var lastDialErr error
 	reMinted := false
 	for attempt := 0; attempt < wakeDialAttempts; attempt++ {
 		if attempt > 0 {
@@ -305,34 +311,30 @@ func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 		}
 		err := t.connect(ctx, token)
 		if err == nil {
-			io.WriteString(t.errors, "Reconnected.\r\n")
+			io.WriteString(t.opts.Errors, "Reconnected.\r\n")
 			return nil
 		}
-		lastErr = err
-		var closeErr *websocket.CloseError
-		if errors.As(err, &closeErr) && (closeErr.Code == 401 || closeErr.Code == 403) && !reMinted {
-			// A token the sandbox API refused is stale; mint one fresh token
-			// and let the remaining attempts use it.
+		lastDialErr = err
+		if errors.Is(err, errSandboxTokenRejected) && !reMinted {
 			reMinted = true
-			token, err = t.opts.NewToken(ctx)
+			token, err = t.mintToken(ctx)
 			if err != nil {
-				return fmt.Errorf("getting a sandbox token: %w", err)
+				return err
 			}
 		}
 		if attempt%5 == 4 {
-			fmt.Fprintf(t.errors, "Still waking the sandbox (attempt %d of %d)...\r\n", attempt+1, wakeDialAttempts)
+			fmt.Fprintf(t.opts.Errors, "Still waking the sandbox (attempt %d of %d)...\r\n", attempt+1, wakeDialAttempts)
 		}
 	}
-	return lastErr
+	return lastDialErr
 }
 
-// Resize tells the sandbox the window's new size.
-func (t *Terminal) Resize(cols, rows int) error {
-	return t.send(Message{Type: "resize", Cols: cols, Rows: rows})
+func (t *Terminal) resize(cols, rows int) error {
+	return t.send(message{Type: "resize", Cols: cols, Rows: rows})
 }
 
-func (t *Terminal) send(message Message) error {
-	payload, err := json.Marshal(message)
+func (t *Terminal) send(frame message) error {
+	payload, err := json.Marshal(frame)
 	if err != nil {
 		return err
 	}
@@ -356,17 +358,17 @@ func (t *Terminal) readLoop(ctx context.Context, disconnect chan struct{}) error
 			}
 			return fmt.Errorf("terminal connection: %w", err)
 		}
-		var message Message
-		if err := json.Unmarshal(payload, &message); err != nil {
+		var frame message
+		if err := json.Unmarshal(payload, &frame); err != nil {
 			continue
 		}
-		switch message.Type {
+		switch frame.Type {
 		case "output":
-			if _, err := io.WriteString(t.output, message.Data); err != nil {
+			if _, err := io.WriteString(t.opts.Output, frame.Data); err != nil {
 				return err
 			}
 		case "error":
-			_, _ = io.WriteString(t.errors, message.Data+"\n")
+			_, _ = io.WriteString(t.opts.Errors, frame.Data+"\n")
 		}
 	}
 }
@@ -380,12 +382,16 @@ func (t *Terminal) inputLoop(ctx context.Context, disconnect <-chan struct{}) {
 	// character waits for the next read to complete it.
 	var pending []byte
 	for ctx.Err() == nil {
-		n, err := t.input.Read(buf)
+		n, err := t.opts.Input.Read(buf)
 		if n > 0 {
 			select {
 			case <-disconnect:
-				t.deliverReconnectKeystroke(buf[:n])
-				return
+				pending = append(pending, buf[:n]...)
+				if utf8.FullRune(pending) {
+					t.deliverReconnectKeystroke(pending)
+					return
+				}
+				continue
 			default:
 			}
 			pending = append(pending, buf[:n]...)
@@ -399,7 +405,7 @@ func (t *Terminal) inputLoop(ctx context.Context, disconnect <-chan struct{}) {
 				complete += size
 			}
 			if complete > 0 {
-				if err := t.send(Message{Type: "input", Data: string(pending[:complete])}); err != nil {
+				if err := t.send(message{Type: "input", Data: string(pending[:complete])}); err != nil {
 					// The send failed on a dying connection: after a
 					// transport loss these bytes become the reconnection
 					// request; after a clean close, nobody reads them.
@@ -410,12 +416,8 @@ func (t *Terminal) inputLoop(ctx context.Context, disconnect <-chan struct{}) {
 			}
 		}
 		if err != nil {
-			// Ended input cannot ask for a reconnection.
-			select {
-			case <-disconnect:
-				t.deliverReconnectKeystroke(nil)
-			default:
-			}
+			// Ended input must also end a wait for a keystroke.
+			t.deliverReconnectKeystroke(nil)
 			return
 		}
 	}
