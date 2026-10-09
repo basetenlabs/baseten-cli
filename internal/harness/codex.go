@@ -272,6 +272,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 			"context_window":               r.ContextWindow,
 			"input_modalities":             r.InputModalities,
 			"supports_parallel_tool_calls": r.ParallelTools,
+			"supports_search_tool":         true,
 			"experimental_supported_tools": []any{},
 		})
 	}
