@@ -386,21 +386,24 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) 
 		return err
 	}
 	// The terminal endpoint reads the sandbox token from its URL, so connect
-	// mints its own.
+	// mints its own. A reconnection after a long hibernation mints a fresh one.
 	managementClient, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	minted, err := managementClient.API().PostToken(ctx, managementapi.CreateTokenRequest{
-		Scopes: []managementapi.TokenScope{managementapi.TokenScope_sandboxes},
-	})
-	if err != nil {
-		return fmt.Errorf("getting a sandbox token: %w", err)
+	newSandboxToken := func(ctx context.Context) (string, error) {
+		minted, err := managementClient.API().PostToken(ctx, managementapi.CreateTokenRequest{
+			Scopes: []managementapi.TokenScope{managementapi.TokenScope_sandboxes},
+		})
+		if err != nil {
+			return "", err
+		}
+		return minted.Token, nil
 	}
 	ctx.Logf("Connecting to sandbox %s. Exit the shell or press Ctrl+D to disconnect.\n\n", flags.Name)
 	terminal, err := sandboxconnect.Dial(ctx, sandboxconnect.DialOptions{
 		SandboxURL: instance.URL(),
-		Token:      minted.Token,
+		NewToken:   newSandboxToken,
 		Input:      stdin,
 		Output:     stdout,
 		Errors:     ctx.Stderr,
