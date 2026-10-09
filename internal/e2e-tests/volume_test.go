@@ -35,9 +35,10 @@ var e2eVolumeFiles = map[string]string{
 // through every volume command, pulls it whole and narrowed, re-pushes to
 // confirm the second push reuses what the first stored, and then deletes and
 // restores its way back to an empty volume. It sets, moves and deletes tags on
-// a volume of its own and changes their expiration times. It also syncs a
-// remote source and verifies the resulting immutable version through the
-// volume CLI. Skips when the required env vars are absent.
+// a volume of its own and changes their expiration times. It sets and clears
+// the volume's expiration time. It also syncs a remote source and verifies the
+// resulting immutable version through the volume CLI. Skips when the required
+// env vars are absent.
 //
 // The organization behind the e2e key needs volumes enabled. A missing
 // prerequisite fails rather than skips, so a misconfigured environment does
@@ -50,6 +51,7 @@ func TestE2EVolumeLifecycle(t *testing.T) {
 	t.Run("Pull", v.Pull)
 	t.Run("Repush", v.Repush)
 	t.Run("Tags", testE2EVolumeTags)
+	t.Run("Expiration", v.Expiration)
 	t.Run("Delete", v.Delete)
 	t.Run("Sync", testE2EVolumeSync)
 }
@@ -502,6 +504,11 @@ type volumeLifecycle struct {
 	digest     string
 	files      int64
 	bytes      int64
+}
+
+// volumeUpdateResult mirrors the JSON `baseten volume update` writes.
+type volumeUpdateResult struct {
+	ExpiresAt *string `json:"expires_at"`
 }
 
 // volumePushResult mirrors the JSON `baseten volume push` writes.
@@ -1000,6 +1007,50 @@ func (v *volumeLifecycle) Repush(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(list), &versions))
 	require.Len(t, versions.Versions, 1)
+}
+
+// Expiration sets and clears the volume's expiration time and reads each back
+// through stat. It runs before Delete, so the version counts Delete asserts
+// are untouched.
+func (v *volumeLifecycle) Expiration(t *testing.T) {
+	step(t, "setting the expiration time of %s", v.ref)
+	// The API requires a future time in whole seconds.
+	deadline := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	result := v.update(t, "--expires-at", deadline.Format(time.RFC3339))
+	require.NotNil(t, result.ExpiresAt)
+	expiresAt, err := time.Parse(time.RFC3339, *result.ExpiresAt)
+	require.NoError(t, err)
+	require.True(t, expiresAt.Equal(deadline), "update reported %s, sent %s", *result.ExpiresAt, deadline)
+
+	// The volume reports the same expiration time the update reported.
+	listed := v.statExpiresAt(t)
+	require.NotNil(t, listed)
+	listedAt, err := time.Parse(time.RFC3339, *listed)
+	require.NoError(t, err)
+	require.True(t, listedAt.Equal(expiresAt), "stat reports %s, update reported %s", *listed, *result.ExpiresAt)
+
+	step(t, "clearing the expiration time of %s", v.ref)
+	result = v.update(t, "--clear-expiration")
+	require.Nil(t, result.ExpiresAt)
+	require.Nil(t, v.statExpiresAt(t))
+}
+
+// update runs `volume update` on the lifecycle volume and decodes its JSON.
+func (v *volumeLifecycle) update(t *testing.T, args ...string) volumeUpdateResult {
+	out := mustCLI(t, append([]string{"volume", "update", "--volume-ref", v.ref, "--yes", "--output", "json"}, args...)...)
+	var result volumeUpdateResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	return result
+}
+
+// statExpiresAt reads the volume's own expires_at through `volume stat`.
+func (v *volumeLifecycle) statExpiresAt(t *testing.T) *string {
+	out := mustCLI(t, "volume", "stat", v.ref, "--output", "json")
+	var volume struct {
+		ExpiresAt *string `json:"expires_at"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &volume))
+	return volume.ExpiresAt
 }
 
 func (v *volumeLifecycle) Delete(t *testing.T) {
