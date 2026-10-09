@@ -25,6 +25,7 @@ func TestCodexCatalogCarriesRouteMetadata(t *testing.T) {
 	}, model["supported_reasoning_levels"])
 	require.Equal(t, "low", model["default_reasoning_level"])
 	require.Equal(t, true, model["supports_parallel_tool_calls"])
+	require.Equal(t, true, model["supports_search_tool"])
 	require.Equal(t, json.Number("128000"), model["context_window"])
 	require.Equal(t, []any{"text"}, model["input_modalities"])
 }
