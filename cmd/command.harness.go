@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"time"
-
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -107,55 +105,45 @@ var commandHarness = Command{
 		},
 		{
 			Name:    "usage",
-			Summary: "Show your routes spend and tokens, month to date by default (PRE-RELEASE)",
+			Summary: "Show your routes spend this month in each of your teams (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Show your routes spend and token usage for the month so far, the period monthly spend limits apply to.\n\n" +
-				"This is a shortcut for 'baseten route usage --user-id <your user ID> --start <first of this month, UTC>' " +
-				"and takes " +
-				"the same flags. The only other difference is the text table, which totals each --group-by combination " +
-				"over the window instead of listing each day; JSON output is identical. Organization admins can pass " +
-				"--user-id for other users; other members only ever see usage from keys they created.\n\n" +
-				"Usage comes in whole UTC days: --start is snapped down to its day and --end is rounded up to the end of " +
-				"its day. Every bucket in the window is fetched, paging as needed, until --limit buckets are collected.\n\n" +
+				"Show what you've spent on routes this UTC month so far, the period monthly spend limits apply to, in " +
+				"each team you're in: your spend there against your limit there, a chart of spend per day, and each " +
+				"model's spend. --team shows one team.\n\n" +
 				"This is the same spend that spend limits are checked against, and it can lag by up to 15 minutes. " +
 				"Model API costs use your prices and include tool calls. OpenAI, Anthropic, and xAI costs estimate what " +
-				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage isn't included. " +
-				"Usage is retained for 92 days.\n\n" +
-				"For machine-readable streaming, prefer --output jsonl over --output json.",
+				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage isn't included.\n\n" +
+				"For other windows, filters, token counts, or other users' usage, use 'baseten route usage'. For " +
+				"machine-readable streaming, prefer --output jsonl over --output json.",
 			// TODO: Revisit this description, and null-cost handling in
 			// internal/cmd/command.harness_usage.go, as server-side usage changes:
 			// which providers are included (Vertex and OpenAI-compatible aren't
-			// yet), whether costs are always present, the 15-minute lag, and the
-			// 92-day retention.
+			// yet), whether costs are always present, and the 15-minute lag.
 			Flags: HarnessUsageFlags{},
 			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
 				JSONArrayStreamed: true,
-				TextDescription: "Table with one column per --group-by dimension, then INPUT, CACHED, and OUTPUT token " +
-					"counts and COST, totaled over the window, most expensive first, followed by an ALL totals row. A cost " +
-					"of \"-\" means some of that usage couldn't be priced. The window goes to stderr. With no usage in the " +
-					"window, prints \"No usage in the selected window.\" to stderr instead of a table.",
-				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-dimension usage in " +
-					"results, including days with no usage. cost_usd values are exact decimal strings.",
+				TextDescription: "The month and when limits reset go to stderr. Then, for each of your teams, alphabetical: " +
+					"a line with the team, what you spent there this month and your limit there, with the team's default " +
+					"when yours differs from it, ending in \"limit reached\" or \"team limit reached\" when your requests " +
+					"there are rejected; on a terminal, a chart of spend per day per model from the first of the month; and " +
+					"a line per model with its spend and share, most expensive first. Usage metered before it was attributed " +
+					"to a team comes last as \"(no team)\". A cost of \"-\" means some of that usage couldn't be priced. With " +
+					"no teams and no usage, prints \"No usage this month.\" to stderr.",
+				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-team, per-model usage " +
+					"in results, including days with no usage. cost_usd values are exact decimal strings.",
 				Examples: []CommandExample{
 					{
-						Description: "Show your usage this month so far, by model.",
+						Description: "Show your spend this month in each of your teams.",
 						Command:     "baseten harness usage",
 					},
 					{
-						Description: "Show usage over the last 7 days by provider.",
-						Command:     "baseten harness usage --since 7d --group-by provider",
-					},
-					{
-						Description: "Break August's usage down by user and model for two users (admins).",
-						CommandLines: []string{
-							"baseten harness usage --start 2026-08-01T00:00:00Z --end 2026-09-01T00:00:00Z",
-							"--group-by user --group-by model --user-id <id> --user-id <id>",
-						},
+						Description: "Show your spend this month in one team.",
+						Command:     "baseten harness usage --team <team>",
 					},
 				},
 				JQExample: CommandExample{
-					Description: "Stream each day's cost per model as a JSONL stream.",
-					Command:     "baseten harness usage --output jsonl --jq '.results[] | {model, cost_usd}'",
+					Description: "Stream each day's cost per team and model as a JSONL stream.",
+					Command:     "baseten harness usage --output jsonl --jq '.results[] | {team_id, model, cost_usd}'",
 				},
 			},
 		},
@@ -246,13 +234,7 @@ type HarnessStatusList struct {
 type HarnessUsageFlags struct {
 	CommandFlags
 
-	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the start of the current UTC month."`
-	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
-	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
-
-	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. Defaults to your own user ID."`
-
-	RouteUsageQueryFlags
+	Team string `flag:"team" desc:"Team name or ID to show. Defaults to every team you're in."`
 }
 
 // HarnessFlags selects the harnesses a command applies to.
