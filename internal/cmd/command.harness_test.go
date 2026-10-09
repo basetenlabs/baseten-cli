@@ -24,6 +24,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/harness"
+	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 )
 
@@ -1251,4 +1252,211 @@ func Test_Harness_Setup_DryRunSkipsCodexSignOut(t *testing.T) {
 	h.Require.Equal(0, execer.logouts)
 	h.Require.Equal(0, execer.restarts)
 	h.Require.NotContains(h.Stderr.String(), "Signing codex out")
+}
+
+// harnessRecordFile reads the harness.json in the test's BASETEN_CONFIG_DIR.
+func harnessRecordFile(t *testing.T) harness.RecordFile {
+	t.Helper()
+	dir, err := auth.DefaultConfigDir()
+	require.NoError(t, err)
+	file, err := harness.LoadRecords(dir)
+	require.NoError(t, err)
+	return file
+}
+
+func saveHarnessRecordFile(t *testing.T, file harness.RecordFile) {
+	t.Helper()
+	dir, err := auth.DefaultConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, harness.SaveRecords(dir, file))
+}
+
+// setHarnessRoutes serves a route per name, each with usable metadata.
+func setHarnessRoutes(api *MockManagementAPI, names ...string) {
+	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		items := []any{}
+		for _, name := range names {
+			items = append(items, map[string]any{"id": name, "name": name, "team_id": r.URL.Query().Get("team_id"), "display_name": name, "invoke_url": api.URL, "metadata": harnessRouteMetadata})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
+	})
+}
+
+// recordDir returns the test's BASETEN_CONFIG_DIR.
+func recordDir(t *testing.T) string {
+	t.Helper()
+	dir, err := auth.DefaultConfigDir()
+	require.NoError(t, err)
+	return dir
+}
+
+func Test_Harness_Setup_RecordsSyncOptions(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary", "acme/second")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "No harnesses to sync")
+
+	// A dry run records nothing.
+	args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--team", "team-b", "--key-name", "laptop", "--route", "acme/primary", "--background-route", "acme/second"}
+	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
+	h.Require.Empty(harnessRecordFile(t).Harnesses)
+
+	h.Require.NoError(h.Execute(append(args, "--yes")...))
+	record, ok := harnessRecordFile(t).Harnesses["claude-code"]
+	h.Require.True(ok, "setup records the harness")
+	h.Require.Equal(filepath.Join(dir, "settings.json"), record.Config)
+	h.Require.Equal(api.URL, record.ManagementURL)
+	h.Require.Equal("team-b", record.TeamID)
+	h.Require.Equal("laptop", record.KeyName)
+	h.Require.Equal("acme/primary", record.Route)
+	h.Require.Equal("acme/second", record.BackgroundRoute)
+	h.Require.Empty(record.SubagentRoute, "unset flags stay empty so sync follows defaults")
+	h.Require.Empty(record.Profile, "an ephemeral session has no profile name")
+
+	// A record from another profile is not synced.
+	file := harnessRecordFile(t)
+	record.Profile = "someone-else@example.com"
+	file.Harnesses["claude-code"] = record
+	saveHarnessRecordFile(t, file)
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "No harnesses to sync")
+
+	// Teardown forgets the record.
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	h.Require.NotContains(harnessRecordFile(t).Harnesses, "claude-code")
+}
+
+func Test_Harness_Sync(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+
+	// A configured harness whose record is gone (setup by an older CLI) is skipped.
+	require.NoError(t, os.Remove(filepath.Join(recordDir(t), "harness.json")))
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "No harnesses to sync")
+	h.Require.Equal(0, h.ExitCode)
+
+	// With a record and nothing changed, sync applies nothing without prompting
+	// (stdin is not a terminal) and creates no key.
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	keys := countCalls(api, "POST", "/v1/teams/team-a/api_keys")
+	h.Require.NoError(h.Execute("harness", "sync"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+
+	// A changed catalog needs confirmation, then applies with the recorded key.
+	setHarnessRoutes(api, "acme/primary", "acme/second")
+	h.Require.Error(h.Execute("harness", "sync"))
+	h.Require.Contains(h.Stderr.String(), "pass --yes")
+	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "no key before confirmation")
+	h.Require.NoError(h.Execute("harness", "sync", "--yes", "--output", "json"))
+	var result public.HarnessPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	for _, item := range result.Items {
+		h.Require.True(item.Changed)
+	}
+	picker := readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["modelPicker"].(map[string]any)
+	h.Require.Len(picker["options"], 2)
+	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "sync reuses the recorded key")
+
+	// Nothing changed again: up to date.
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+}
+
+func Test_Harness_Sync_FallsBackWhenRouteVanishes(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary", "acme/bg")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--background-route", "acme/bg", "--yes"))
+	settings := readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))
+	h.Require.Equal("acme/bg", settings["env"].(map[string]any)["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+
+	// The team removes acme/bg; sync falls back to the default and records it.
+	setHarnessRoutes(api, "acme/primary")
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), `warning: claude-code: background route "acme/bg" no longer exists; using "deepseek-ai/DeepSeek-V4.1-Flash"`)
+	settings = readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))
+	h.Require.Equal("deepseek-ai/DeepSeek-V4.1-Flash", settings["env"].(map[string]any)["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	h.Require.Empty(harnessRecordFile(t).Harnesses["claude-code"].BackgroundRoute, "the fallback is recorded for the next sync")
+
+	// The next sync is up to date and does not warn again.
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.NotContains(h.Stderr.String(), "no longer exists")
+}
+
+func Test_Harness_Sync_DryRun(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--background-route", "acme/primary", "--yes"))
+	keys := countCalls(api, "POST", "/v1/teams/team-a/api_keys")
+
+	setHarnessRoutes(api, "acme/primary", "acme/second")
+	h.Require.NoError(h.Execute("harness", "sync", "--dry-run", "--output", "json"))
+	var preview public.HarnessPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &preview))
+	for _, item := range preview.Items {
+		h.Require.True(item.Changed)
+	}
+	h.Require.Len(readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["modelPicker"].(map[string]any)["options"], 1, "no files changed")
+	h.Require.Equal("acme/primary", harnessRecordFile(t).Harnesses["claude-code"].BackgroundRoute, "no record changes")
+	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "no key created")
+}
+
+func Test_Harness_Sync_RestartsCodexDaemon(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	quiet := &codexDaemonHarnessExecer{}
+	h.Context = internalcmd.WithExecer(h.Context, quiet)
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", dir, "--yes"))
+	h.Require.Equal(0, quiet.restarts)
+	h.Require.False(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+
+	// The catalog changes but the restart fails: it stays pending.
+	failing := &codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}
+	setHarnessRoutes(api, "acme/primary", "acme/second")
+	h.Context = internalcmd.WithExecer(h.Context, failing)
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Equal(1, failing.restarts)
+	h.Require.Contains(h.Stderr.String(), "could not restart the codex app-server daemon")
+	h.Require.True(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+
+	// The next sync retries even though nothing changed, and --yes restarts
+	// despite attached sessions, as setup does.
+	busy := &codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\n"}
+	h.Context = internalcmd.WithExecer(h.Context, busy)
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Equal(1, busy.restarts)
+	h.Require.Contains(h.Stderr.String(), "will disconnect 1 running codex session(s)")
+	h.Require.Contains(h.Stderr.String(), "Restarted codex app-server daemon (pid 4242)")
+	h.Require.False(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+
+	// An unchanged sync without a pending restart leaves the daemon alone.
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Equal(1, busy.restarts)
 }

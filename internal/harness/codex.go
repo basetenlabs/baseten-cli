@@ -221,7 +221,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 	case s.Fallback != "":
 		return nil, errors.New("--fallback-route is supported only for Claude Code")
 	}
-	s, err := s.resolve(routes)
+	s, err := s.Resolve(routes)
 	if err != nil {
 		return nil, err
 	}

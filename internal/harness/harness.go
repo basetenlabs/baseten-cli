@@ -251,9 +251,9 @@ type Selection struct {
 	Fallback   string
 }
 
-// resolve defaults the primary route to the first route and the subagent and
+// Resolve defaults the primary route to the first route and the subagent and
 // fallback routes to the primary, then checks that every selected route exists.
-func (s Selection) resolve(routes []Route) (Selection, error) {
+func (s Selection) Resolve(routes []Route) (Selection, error) {
 	if len(routes) == 0 {
 		return s, errors.New("no accessible routes")
 	}

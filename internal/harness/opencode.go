@@ -63,7 +63,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 		return nil, errors.New("--fallback-route is supported only for Claude Code")
 	}
 	explicitSubagent := s.Subagent != ""
-	s, err := s.resolve(routes)
+	s, err := s.Resolve(routes)
 	if err != nil {
 		return nil, err
 	}
