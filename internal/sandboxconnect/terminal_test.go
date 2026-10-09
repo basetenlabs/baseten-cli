@@ -514,3 +514,32 @@ func TestTerminal_RetryAfterFailedReconnect(t *testing.T) {
 		t.Errorf("token mints %d, want 3", mints)
 	}
 }
+
+func TestTerminal_PastedWakeKeystrokeReachesTheShell(t *testing.T) {
+	// One read can carry several keystrokes, as a paste does: the first
+	// rune triggers the wake, the rest reach the shell once it resumed.
+	server := newTerminalTestServer(t, 1)
+	server.abruptClosesRemaining = 1
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	errors := &lockedBuffer{}
+	mints := 0
+	output, _, done := runTerminal(t, server, input, errors, mintCountingTestToken(&mints, 0))
+
+	if _, err := inputWriter.Write([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Connection lost", 1)
+
+	if _, err := inputWriter.Write([]byte("bc")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Reconnected", 1)
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// "b" is the consumed trigger, "c" the shell input that ends the session.
+	if output.String() != "ac" {
+		t.Errorf("output %q, want %q", output.String(), "ac")
+	}
+}

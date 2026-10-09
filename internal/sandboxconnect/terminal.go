@@ -269,9 +269,14 @@ func (t *Terminal) Run(ctx context.Context) error {
 						"Reconnect failed: %v\r\nType any key to retry, or press Ctrl+C or Ctrl+D to quit.\r\n", err)
 					continue
 				}
-				// The keystroke that asked for the reconnection is the
-				// trigger, not shell input: forwarding it would run stray
-				// characters into the command line.
+				// The first rune of the keystroke is the trigger, not shell
+				// input: forwarding it would run a stray character into the
+				// command line. The rest of a pasted keystroke is shell
+				// input, and reaches the shell once the session resumed.
+				_, triggerRuneSize := utf8.DecodeRune(keystroke)
+				if remainder := keystroke[triggerRuneSize:]; len(remainder) > 0 {
+					_ = t.send(message{Type: "input", Data: string(remainder)})
+				}
 			case <-ctx.Done():
 				return nil
 			}
@@ -283,8 +288,10 @@ func (t *Terminal) Run(ctx context.Context) error {
 func (t *Terminal) runConnection(ctx context.Context) error {
 	conn := t.conn
 	// Ending the session for any reason closes the connection, which ends
-	// both loops.
-	context.AfterFunc(ctx, func() { conn.Close(websocket.StatusNormalClosure, "") })
+	// both loops. Unregistered at the end of this connection, so many
+	// reconnects do not pile callbacks onto the session context.
+	stopCloseOnCancel := context.AfterFunc(ctx, func() { conn.Close(websocket.StatusNormalClosure, "") })
+	defer stopCloseOnCancel()
 	disconnect := make(chan struct{})
 	go t.inputLoop(ctx, disconnect)
 	return t.readLoop(ctx, disconnect)
