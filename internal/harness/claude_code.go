@@ -67,7 +67,7 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, end
 }
 
 func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any) ([]setting, error) {
-	s, err := selection.resolve(routes)
+	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
 	}
