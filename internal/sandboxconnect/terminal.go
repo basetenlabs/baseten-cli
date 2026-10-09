@@ -269,18 +269,18 @@ func (t *Terminal) Run(ctx context.Context) error {
 					return nil
 				}
 				inputLoopRunning = false
+				// The first rune of the keystroke is the trigger, not shell
+				// input: forwarding it would run a stray character into the
+				// command line. The rest of a pasted keystroke is shell
+				// input; queue it before the wake, so a failed wake keeps it
+				// for the next connection instead of losing it.
+				_, triggerRuneSize := utf8.DecodeRune(keystroke)
+				t.pendingShellInput = append(t.pendingShellInput, keystroke[triggerRuneSize:]...)
 				if err := t.wakeAndConnect(ctx); err != nil {
 					fmt.Fprintf(t.opts.Errors,
 						"Reconnect failed: %v\r\nType any key to retry, or press Ctrl+C or Ctrl+D to quit.\r\n", err)
 					continue
 				}
-				// The first rune of the keystroke is the trigger, not shell
-				// input: forwarding it would run a stray character into the
-				// command line. The rest of a pasted keystroke is shell
-				// input; a send that fails leaves it queued for the next
-				// connection instead of dropping it.
-				_, triggerRuneSize := utf8.DecodeRune(keystroke)
-				t.pendingShellInput = append(t.pendingShellInput, keystroke[triggerRuneSize:]...)
 			case <-ctx.Done():
 				return nil
 			}
