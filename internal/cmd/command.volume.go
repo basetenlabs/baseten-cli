@@ -17,6 +17,7 @@ func init() {
 	Register("volume rm", commandVolumeRm)
 	Register("volume versions", commandVolumeVersions)
 	Register("volume restore", commandVolumeRestore)
+	Register("volume update", commandVolumeUpdate)
 }
 
 // volumeRefScheme is the whole of a ref that names nothing at all. Every
@@ -678,6 +679,65 @@ func commandVolumeRestore(ctx *CommandContext, flags *cmd.VolumeRestoreFlags) er
 	ctx.Outputf("Ref:       %s\n", volumeRefTextOf(resp.VersionRef, flags.VolumeRefFlags))
 	ctx.Outputf("Digest:    %s\n", resp.Digest)
 	ctx.Outputf("Lifecycle: %s\n", resp.Lifecycle)
+	ctx.Outputf("Volume sequence: %d\n", resp.VolumeSequence)
+	return nil
+}
+
+func commandVolumeUpdate(ctx *CommandContext, flags *cmd.VolumeUpdateFlags) error {
+	ref, err := volumeParseRef(flags.VolumeRef)
+	if err != nil {
+		return err
+	}
+	switch ref.Level() {
+	case client.VolumeRefLevelNamespace:
+		return cmd.NewErrUsagef(
+			"--volume-ref %s names a namespace, and an expiration time belongs to a volume; "+
+				"write 'bdn:%s/<volume>'", ref, ref.Namespace)
+	case client.VolumeRefLevelPoint:
+		return cmd.NewErrUsagef(
+			"--volume-ref %s names a version, and an expiration time belongs to the whole "+
+				"volume; write 'bdn:%s/%s'", ref, ref.Namespace, ref.Volume)
+	case client.VolumeRefLevelPath:
+		return cmd.NewErrUsagef(
+			"--volume-ref %s names a path, and an expiration time belongs to the whole volume; "+
+				"write 'bdn:%s/%s'", ref, ref.Namespace, ref.Volume)
+	}
+	// The request always carries expires_at, since the management API refuses
+	// a body without it. Null clears the expiration time.
+	expiresAt := managementapi.NewOptional[time.Time](nil)
+	question := fmt.Sprintf("Clear the expiration time of volume %s?", ref)
+	if !flags.ClearExpiration {
+		parsed, err := volumeExpiresAtArg(flags.ExpiresAt)
+		if err != nil {
+			return err
+		}
+		expiresAt = managementapi.NewOptional(&parsed)
+		question = fmt.Sprintf("Make volume %s expire at %s? Every live version and every tag "+
+			"is deleted when it does.", ref, flags.ExpiresAt)
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	if !flags.Yes {
+		if err := ctx.ConfirmYesNo(question); err != nil {
+			return err
+		}
+	}
+
+	resp, err := cl.API().PatchVolumes(ctx, ref.Namespace, ref.Volume,
+		managementapi.PatchVolumeRequest{ExpiresAt: expiresAt})
+	if err != nil {
+		return fmt.Errorf("updating %s: %w", ref, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(resp)
+		return nil
+	}
+	ctx.Outputf("Namespace:       %s\n", resp.Namespace)
+	ctx.Outputf("Volume:          %s\n", resp.Volume)
+	ctx.Outputf("Expires:         %s\n", volumeExpiryText(resp.ExpiresAt))
 	ctx.Outputf("Volume sequence: %d\n", resp.VolumeSequence)
 	return nil
 }
