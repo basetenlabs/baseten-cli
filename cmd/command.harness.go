@@ -23,7 +23,7 @@ var commandHarness = Command{
 				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code lists the routes that serve " +
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the default unless --route is set.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
-				"The routes API key is created on first setup and reused afterward. Restart the harness after setup. " +
+				"The routes API key is created on first setup and reused afterward. Setup records its team and options so 'harness sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it.",
 			Flags: HarnessSetupFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
@@ -70,6 +70,36 @@ var commandHarness = Command{
 				JQExample: CommandExample{
 					Description: "Print each harness's state.",
 					Command:     "baseten harness status --jq '.items[] | {harness, state}'",
+				},
+			},
+		},
+		{
+			Name:    "sync",
+			Summary: "Refresh configured harnesses with their recorded setup (PRE-RELEASE)",
+			Description: harnessPreRelease +
+				"Reapply the setup of every harness configured on this machine, using the team, location, and options recorded by its last 'harness setup'. " +
+				"Sync takes no harness selection: to change what is configured, run 'harness setup' or 'harness teardown'. " +
+				"Stored routes the team has removed fall back to their defaults with a warning. Only harnesses whose record matches the current profile are synced, " +
+				"and a machine with no record needs 'harness setup' first.\n\n" +
+				"When nothing changes, sync does nothing and exits 0, so it is safe to run from a schedule; pass --yes to skip the prompt when changes are found. " +
+				"For Codex, sync restarts the app-server daemon like setup does, asking first when sessions are attached unless --yes is passed; an in-progress turn is interrupted, " +
+				"and thread history is preserved. A declined or failed restart is retried on the next sync.",
+			Flags: HarnessSyncFlags{},
+			Output: &CommandOutput[HarnessPlanList]{
+				TextDescription: "The refreshed configuration of each harness, like setup. Use --dry-run to preview, and --verbose for per-harness details.",
+				Examples: []CommandExample{
+					{
+						Description: "Refresh every configured harness, as a scheduled run does.",
+						Command:     "baseten harness sync --yes",
+					},
+					{
+						Description: "Preview what a sync would change.",
+						Command:     "baseten harness sync --dry-run",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the configuration files a sync would change.",
+					Command:     "baseten harness sync --dry-run --jq '.items[] | select(.changed) | .config'",
 				},
 			},
 		},
@@ -133,7 +163,8 @@ var commandHarness = Command{
 			Description: harnessPreRelease +
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
 				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path.\n\n" +
-				"Teardown also deletes the routes API key the removed harnesses use, once no other harness on this machine uses it. " +
+				"Teardown also deletes the routes API key the removed harnesses use, once no other harness on this machine uses it, " +
+				"and forgets the recorded setup so 'harness sync' no longer refreshes the removed harnesses. " +
 				"It works after the harness is uninstalled. For Codex, teardown re-enables ChatGPT login and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. Run 'codex login' to sign back in.",
 			Flags: HarnessTeardownFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
@@ -236,6 +267,13 @@ type HarnessSetupFlags struct {
 	FallbackRoute   string `flag:"fallback-route" desc:"Route to fall back to when the default is unavailable (Claude Code). Defaults to the default route."`
 	DryRun          bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
 	Yes             bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+}
+
+// HarnessSyncFlags are the flags for `baseten harness sync`.
+type HarnessSyncFlags struct {
+	CommandFlags
+	DryRun bool `flag:"dry-run" desc:"Preview the refresh without changing files or creating an API key."`
+	Yes    bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
 // HarnessTeardownFlags are the flags for `baseten harness teardown`.
