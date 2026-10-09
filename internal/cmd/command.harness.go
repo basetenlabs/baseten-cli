@@ -68,6 +68,17 @@ type selectedHarness struct {
 	selection harness.Selection
 }
 
+// Constructs a unique key per sync target, which combines the Team + named credential.
+func constructSyncGroupKey(teamID, keyName string) string {
+	return teamID + ":" + keyName
+}
+
+type syncRun struct {
+	team    *managementapi.Team
+	targets []harnessTarget
+	plans   []*harness.Plan
+}
+
 // selectHarnesses returns the harnesses a command applies to. Setup offers
 // installed harnesses; status and teardown find configured ones, even when
 // the harness is no longer installed.
@@ -157,10 +168,10 @@ type harnessTarget struct {
 	record harness.Record
 }
 
-// planHarnessSetup builds the setup plans for targets that share one team. In
-// sync mode, a stored route the team no longer has is dropped with a warning
-// naming its replacement, and the target's record is updated so the fallback
-// persists; in setup mode the same situation is an error.
+// planHarnessSetup builds the setup plans for targets that share one team. The
+// behavior differs slightly on ineligible Route selection:
+//  1. If in `setup`, we emit a validation error.
+//  2. If in `sync`, we emit a warning, and clobber with the new server default.
 func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, targets []harnessTarget, sync bool) ([]*harness.Plan, error) {
 	listed, err := listRoutes(ctx, api, managementapi.GetV1RoutesParams{TeamId: &team.Id})
 	if err != nil {
@@ -395,9 +406,9 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 	if err != nil {
 		return err
 	}
-	// The records say what was set up and where; a record whose settings file
-	// no longer carries Baseten settings, or belongs to another profile, is
-	// left alone.
+
+	// Record exactly what was setup, preserving the flags. We skip any records that don't match
+	// the targets of this current `sync`.
 	var targets []harnessTarget
 	for _, h := range harness.All() {
 		record, ok := file.Harnesses[h.Name()]
@@ -429,38 +440,31 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 		}
 		return nil
 	}
-	// Plans and the routes API key are shared within a team and key name, so
-	// sync groups the targets accordingly.
-	slices.SortStableFunc(targets, func(a, b harnessTarget) int {
-		if c := strings.Compare(a.record.TeamID, b.record.TeamID); c != 0 {
-			return c
-		}
-		return strings.Compare(a.record.KeyName, b.record.KeyName)
-	})
-	type syncRun struct {
-		team    *managementapi.Team
-		targets []harnessTarget
-		plans   []*harness.Plan
+
+	// NB(nikhil): Group targets that share a team and routes API key, so each group is
+	// planned and applied together.
+	groups := map[string][]harnessTarget{}
+	for _, t := range targets {
+		key := constructSyncGroupKey(t.record.TeamID, t.record.KeyName)
+		groups[key] = append(groups[key], t)
 	}
+
 	var runs []syncRun
-	for start, end := 0, 0; start < len(targets); start = end {
-		group := targets[start].record
-		for end = start; end < len(targets) && targets[end].record.TeamID == group.TeamID && targets[end].record.KeyName == group.KeyName; end++ {
-		}
-		team, err := resolveTeamOrOnly(ctx, api, group.TeamID)
+	for _, group := range groups {
+		team, err := resolveTeamOrOnly(ctx, api, group[0].record.TeamID)
 		if err != nil {
-			return fmt.Errorf("%s: %w; rerun 'baseten harness setup --harness %s' to record a current team", targets[start].Name(), err, targets[start].Name())
+			return fmt.Errorf("%s: %w; rerun 'baseten harness setup --harness %s' to record a current team", group[0].Name(), err, group[0].Name())
 		}
-		run := syncRun{team: team, targets: targets[start:end]}
+		run := syncRun{team: team, targets: group}
 		if run.plans, err = planHarnessSetup(ctx, api, run.team, run.targets, true); err != nil {
 			return err
 		}
 		runs = append(runs, run)
 	}
-	var plans []*harness.Plan
-	for _, run := range runs {
-		plans = append(plans, run.plans...)
-	}
+
+	// NB(nihil): Re-extract targets / plans from the runs, because they might have changed due to
+	// route eligibility.
+	targets, plans := extractFromSyncRuns(runs)
 	switch {
 	case ctx.JSON:
 	case ctx.verbose || f.DryRun:
@@ -527,6 +531,15 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 		outputHarnessPlansJSON(ctx, plans, nil)
 	}
 	return nil
+}
+
+func extractFromSyncRuns(runs []syncRun) (targets []harnessTarget, plans []*harness.Plan) {
+	for _, run := range runs {
+		targets = append(targets, run.targets...)
+		plans = append(plans, run.plans...)
+	}
+
+	return targets, plans
 }
 
 // syncCodexDaemon restarts the codex app-server daemon for one target, like
@@ -791,6 +804,17 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 		plans = append(plans, current...)
 	}
 	if len(names) == 0 {
+		// A hand-reverted harness still has a record; forget it so a restored
+		// settings file doesn't bring it back under sync.
+		if !f.DryRun {
+			var all []string
+			for _, choice := range selected {
+				all = append(all, choice.Name())
+			}
+			if err := forgetHarnessRecords(all); err != nil {
+				return err
+			}
+		}
 		if ctx.JSON {
 			outputHarnessPlansJSON(ctx, plans, nil)
 		} else {
