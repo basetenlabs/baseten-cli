@@ -119,6 +119,10 @@ type Terminal struct {
 	// reconnection, or nil when input ended. Capacity one: the first
 	// keystroke reconnects, later ones wait in the tty buffer.
 	reconnectKeystroke chan []byte
+
+	// pendingShellInput is pasted shell input whose send failed on a dying
+	// connection; it reaches the shell on the next one.
+	pendingShellInput []byte
 }
 
 // TransportLostError reports the WebSocket dying without a close frame: the
@@ -239,6 +243,7 @@ func (t *Terminal) Run(ctx context.Context) error {
 		})
 	}
 	for {
+		t.flushPendingShellInput()
 		err := t.runConnection(ctx)
 		var lost *TransportLostError
 		if err == nil || !errors.As(err, &lost) {
@@ -272,16 +277,26 @@ func (t *Terminal) Run(ctx context.Context) error {
 				// The first rune of the keystroke is the trigger, not shell
 				// input: forwarding it would run a stray character into the
 				// command line. The rest of a pasted keystroke is shell
-				// input, and reaches the shell once the session resumed.
+				// input; a send that fails leaves it queued for the next
+				// connection instead of dropping it.
 				_, triggerRuneSize := utf8.DecodeRune(keystroke)
-				if remainder := keystroke[triggerRuneSize:]; len(remainder) > 0 {
-					_ = t.send(message{Type: "input", Data: string(remainder)})
-				}
+				t.pendingShellInput = append(t.pendingShellInput, keystroke[triggerRuneSize:]...)
 			case <-ctx.Done():
 				return nil
 			}
 			break
 		}
+	}
+}
+
+// flushPendingShellInput sends queued paste remainder on the current
+// connection, keeping it queued when the send fails.
+func (t *Terminal) flushPendingShellInput() {
+	if len(t.pendingShellInput) == 0 {
+		return
+	}
+	if t.send(message{Type: "input", Data: string(t.pendingShellInput)}) == nil {
+		t.pendingShellInput = nil
 	}
 }
 
