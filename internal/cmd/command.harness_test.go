@@ -1328,6 +1328,16 @@ func Test_Harness_Setup_RecordsSyncOptions(t *testing.T) {
 	// Teardown forgets the record.
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
 	h.Require.NotContains(harnessRecordFile(t).Harnesses, "claude-code")
+
+	// So does teardown of a hand-reverted harness, which has no settings left
+	// to remove; a dry run keeps the record.
+	h.Require.NoError(h.Execute(append(args, "--yes")...))
+	h.Require.NoError(os.Remove(filepath.Join(dir, "settings.json")))
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config-dir", dir, "--dry-run"))
+	h.Require.Contains(harnessRecordFile(t).Harnesses, "claude-code")
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config-dir", dir))
+	h.Require.Contains(h.Stderr.String(), "No Baseten settings to remove.")
+	h.Require.NotContains(harnessRecordFile(t).Harnesses, "claude-code")
 }
 
 func Test_Harness_Sync(t *testing.T) {

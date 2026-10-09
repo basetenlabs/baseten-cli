@@ -757,6 +757,17 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 		plans = append(plans, current...)
 	}
 	if len(names) == 0 {
+		// A hand-reverted harness still has a record; forget it so a restored
+		// settings file doesn't bring it back under sync.
+		if !f.DryRun {
+			var all []string
+			for _, choice := range selected {
+				all = append(all, choice.Name())
+			}
+			if err := forgetHarnessRecords(all); err != nil {
+				return err
+			}
+		}
 		if ctx.JSON {
 			outputHarnessPlansJSON(ctx, plans, nil)
 		} else {
