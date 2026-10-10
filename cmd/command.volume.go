@@ -316,6 +316,55 @@ var commandVolume = Command{
 				},
 			},
 		},
+		{
+			Name:    "update",
+			Summary: "Set or clear a volume's expiration time (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Updates the settings of the volume --volume-ref names. The expiration time is the " +
+				"only setting. Pass --expires-at with an RFC 3339 date-time to make the volume expire " +
+				"at that time, or --clear-expiration to clear an expiration time set earlier. " +
+				"Exactly one of the two is required.\n\n" +
+				"When a volume expires, every live version is deleted, every tag is removed, and the " +
+				"volume leaves listings. Clearing the expiration time afterward brings nothing back. " +
+				"Each deleted version can be restored with 'volume restore' until its recovery window " +
+				"closes.\n\n" +
+				"--volume-ref must name a volume, with no selector and no path. The expiration time " +
+				"belongs to the whole volume, not to one version.\n\n" + volumeRefGrammar,
+			Flags: VolumeUpdateFlags{},
+			Output: &CommandOutput[managementapi.PatchVolumeResponse]{
+				TextDescription: "One field per line: the namespace, the volume, when it expires, and " +
+					"the volume's sequence. Prompts for confirmation first unless --yes is passed.",
+				Examples: []CommandExample{
+					{
+						Description: "Make a volume expire at the start of 2030.",
+						Command:     "baseten volume update --volume-ref bdn:<namespace>/<volume> --expires-at 2030-01-01T00:00:00Z",
+					},
+					{
+						Description: "Clear a volume's expiration time.",
+						Command:     "baseten volume update --volume-ref bdn:<namespace>/<volume> --clear-expiration",
+					},
+					{
+						Description: "Make a volume expire at a time, without prompting.",
+						CommandLines: []string{
+							"baseten volume update",
+							"--volume-ref bdn:<namespace>/<volume>",
+							"--expires-at 2030-01-01T00:00:00Z",
+							"--yes",
+						},
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print when the volume now expires.",
+					CommandLines: []string{
+						"baseten volume update",
+						"--volume-ref bdn:<namespace>/<volume>",
+						"--expires-at 2030-01-01T00:00:00Z",
+						"--yes",
+						"--jq '.expires_at'",
+					},
+				},
+			},
+		},
 		commandVolumeSync,
 		commandVolumeTag,
 	},
@@ -394,6 +443,15 @@ type VolumeVersionsFlags struct {
 type VolumeRestoreFlags struct {
 	CommandFlags
 	VolumeRefFlags
+}
+
+type VolumeUpdateFlags struct {
+	CommandFlags
+
+	VolumeRef       string `flag:"volume-ref" desc:"Ref of the volume to update, as bdn:<namespace>/<volume>, with no selector and no path." required:"true"`
+	ExpiresAt       string `flag:"expires-at" desc:"Time at which the volume expires, as an RFC 3339 date-time with a UTC offset, to the whole second, as in 2030-01-01T00:00:00Z. It must be in the future and at most ten years ahead." oneof:"expiration"`
+	ClearExpiration bool   `flag:"clear-expiration" desc:"Clear the volume's expiration time." oneof:"expiration"`
+	Yes             bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
 // VolumeNamespaceList is the JSON output of `baseten volume ls` with no ref:
