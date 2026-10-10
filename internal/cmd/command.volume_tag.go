@@ -111,14 +111,14 @@ func commandVolumeTagDelete(ctx *CommandContext, flags *cmd.VolumeTagDeleteFlags
 }
 
 // volumeTagArg checks --tag-name against the SDK's tag grammar, the only copy
-// this client has. A refusal names the value the user typed. On delete the tag
-// is a URL path segment, so a slash in it would come back from the API as a 404.
+// this client has. On delete the tag is a URL path segment, so a slash in it
+// would come back from the API as a 404.
 func volumeTagArg(ref client.VolumeRef, tag string) error {
 	parsed, err := client.ParseVolumeRef(volumeRefScheme + ref.Namespace + "/" + ref.Volume + ":" + tag)
 	if err != nil || parsed.Tag != tag {
 		return cmd.NewErrUsagef(
-			"--tag-name %q must begin with a letter, digit, or underscore, hold only those plus "+
-				"dots and hyphens, and be at most 128 characters", tag)
+			"--tag-name %q must begin with a letter, digit, or underscore, contain only those "+
+				"characters plus dots and hyphens, and be at most 128 characters", tag)
 	}
 	return nil
 }

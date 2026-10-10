@@ -15,13 +15,13 @@ var commandVolumeTag = Command{
 			Name:    "set",
 			Summary: "Point a tag at a version (PRE-RELEASE)",
 			Description: volumePreRelease +
-				"Points --tag-name at the version --volume-ref names and creates the tag if it does " +
-				"not exist. A volume ref with no selector tags the version head points at. A ':<tag>' " +
-				"or '@<digest>' selector tags that version. A path is an error, since a tag names a " +
-				"whole version.\n\n" +
+				"Points the tag in --tag-name at the version --volume-ref selects. Creates the tag if " +
+				"it does not exist. A volume ref with no selector tags the version head points at. A " +
+				"':<tag>' or '@<digest>' selector tags that version. A path is an error, since a tag " +
+				"names a whole version.\n\n" +
 				"Setting a tag that already exists overwrites it. Pass --expires-at to make the tag " +
-				"expire at that time. Setting it again without --expires-at makes it permanent. A " +
-				"version's or the volume's own expiration still deletes the tag.\n\n" +
+				"expire at that time. Setting it again without --expires-at clears the tag's expiration " +
+				"time. The tag is still removed if its version or volume expires.\n\n" +
 				"--tag-name may be 'head'. Setting it changes which version a ref with no tag or " +
 				"digest resolves to. 'head' cannot take --expires-at and cannot point at an expiring " +
 				"version.\n\n" +
@@ -40,7 +40,7 @@ var commandVolumeTag = Command{
 						Command:     "baseten volume tag set --volume-ref bdn:<namespace>/<volume> --tag-name prod",
 					},
 					{
-						Description: "Point a tag at the version another tag names, expiring at the start of 2030.",
+						Description: "Point a tag at the version another tag selects, with the tag expiring at the start of 2030.",
 						CommandLines: []string{
 							"baseten volume tag set",
 							"--volume-ref bdn:<namespace>/<volume>:canary",
@@ -68,9 +68,9 @@ var commandVolumeTag = Command{
 			Name:    "delete",
 			Summary: "Delete a volume tag (PRE-RELEASE)",
 			Description: volumePreRelease +
-				"Deletes --tag-name from the volume --volume-ref names. The version it pointed at " +
-				"stays, reachable by digest and by any other tag. Deleting a tag the volume does not " +
-				"have succeeds and reports that nothing was deleted.\n\n" +
+				"Deletes the tag in --tag-name from the volume --volume-ref names. The version it " +
+				"pointed at stays reachable by digest and by any other tag. Deleting a tag the volume " +
+				"does not have succeeds and reports that nothing was deleted.\n\n" +
 				"--volume-ref must name a volume, with no selector and no path. A tag belongs to the " +
 				"volume, not to one version. Deleting 'head' makes refs without a tag or digest stop " +
 				"resolving until head is set again.\n\n" + volumeRefGrammar,
