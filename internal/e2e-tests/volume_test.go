@@ -1022,7 +1022,6 @@ func (v *volumeLifecycle) Expiration(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, expiresAt.Equal(deadline), "update reported %s, sent %s", *result.ExpiresAt, deadline)
 
-	// The volume reports the same expiration time the update reported.
 	listed := v.statExpiresAt(t)
 	require.NotNil(t, listed)
 	listedAt, err := time.Parse(time.RFC3339, *listed)
