@@ -304,8 +304,10 @@ type ModelEnvironmentUpdatePromotionFlags struct {
 	RedeployOnPromotion      OptionalFlag[bool]   `flag:"redeploy-on-promotion" desc:"Whether to deploy on all promotions. Enabling this allows model code to safely handle environment-specific logic: when a deployment is promoted, a new deployment is created with a copy of the image."`
 	RollingDeploy            OptionalFlag[bool]   `flag:"rolling-deploy" desc:"Whether the environment should rely on rolling deploy orchestration."`
 	PromotionCleanupStrategy OptionalFlag[string] `flag:"promotion-cleanup-strategy" desc:"The cleanup strategy to use after a promotion completes." enum:"keep,scale-to-zero,deactivate"`
-	RampUpWhilePromoting     OptionalFlag[bool]   `flag:"ramp-up-while-promoting" desc:"Whether to ramp up traffic while promoting."`
-	RampUpDurationSeconds    OptionalFlag[int]    `flag:"ramp-up-duration-seconds" desc:"Duration of the ramp up, in seconds."`
+	// Deprecated: models no longer support canary promotions. Hidden but still
+	// parsed so existing scripts keep running until the flags are removed.
+	RampUpWhilePromoting  OptionalFlag[bool] `flag:"ramp-up-while-promoting" hidden:"true" desc:"Deprecated: models no longer support canary promotions, and the API rejects true. Use --rolling-deploy true."`
+	RampUpDurationSeconds OptionalFlag[int]  `flag:"ramp-up-duration-seconds" hidden:"true" desc:"Deprecated: models no longer support canary promotions."`
 
 	RollingDeployStrategy    OptionalFlag[string] `flag:"rolling-deploy-strategy" desc:"The rolling deploy strategy to use for promotions." enum:"replica"`
 	MaxSurgePercent          OptionalFlag[int]    `flag:"max-surge-percent" desc:"The maximum surge percentage for rolling deploys."`
