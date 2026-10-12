@@ -23,7 +23,8 @@ var usageChartColors = []ansi.BasicColor{ansi.Blue, ansi.Green, ansi.Magenta, an
 // renderUsageChart renders series, each with one dollar amount per day from
 // first, as an asciichart-style step chart with a y-axis in whole dollars and
 // date labels below, fitting width columns, or "" when two columns per day
-// don't fit. paint colors a series' characters by its index. It is
+// don't fit. Each day is a run of equal width with its date centered under
+// it, like Claude Code's, so the last day's run ends with its date. paint colors a series' characters by its index. It is
 // hand-rolled rather than asciigraph's, which interpolates between points
 // instead of stepping, spaces its date ticks evenly rather than at day
 // starts, and paints with its own escapes rather than the terminal palette;
@@ -45,12 +46,13 @@ func renderUsageChart(first time.Time, series [][]float64, width int, paint func
 	}
 	// Each day spans step columns, its first one stepping from the day before.
 	step := max(2, min(width-labelWidth-2, usageChartWidth)/days)
-	if width < labelWidth+2+days*step {
+	cols := days * step
+	if width < labelWidth+2+cols {
 		return ""
 	}
 	grid := make([][]string, height+1) // grid[0] is the zero row.
 	for r := range grid {
-		grid[r] = slices.Repeat([]string{" "}, days*step)
+		grid[r] = slices.Repeat([]string{" "}, cols)
 	}
 	// Paint the last series first so the first, the largest, ends up on top.
 	for i, s := range slices.Backward(series) {
@@ -86,11 +88,13 @@ func renderUsageChart(first time.Time, series [][]float64, width int, paint func
 		b.WriteString(strings.Repeat(" ", labelWidth-len(labels[r])) + labels[r] + tick)
 		b.WriteString(strings.TrimRight(strings.Join(grid[r], ""), " ") + "\n")
 	}
-	// Space the date labels, at most 6 wide, at least 2 apart.
-	axis := []byte(strings.Repeat(" ", labelWidth+2+days*step+6))
+	// Center the date labels, at most 6 wide, under days at least 8 columns
+	// apart, counting back from the last day so it always has one.
+	axis := []byte(strings.Repeat(" ", labelWidth+2+cols+6))
 	every := (8 + step - 1) / step
-	for d := 0; d < days; d += every {
-		copy(axis[labelWidth+2+d*step:], first.AddDate(0, 0, d).Format("Jan 2"))
+	for d := (days - 1) % every; d < days; d += every {
+		label := first.AddDate(0, 0, d).Format("Jan 2")
+		copy(axis[labelWidth+2+max(0, d*step+(step-len(label))/2):], label)
 	}
 	b.WriteString(strings.TrimRight(string(axis), " ") + "\n")
 	return b.String()
