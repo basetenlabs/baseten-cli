@@ -12,7 +12,7 @@ const harnessPreRelease = "PRE-RELEASE: Harness commands are not GA yet and supp
 var commandHarness = Command{
 	Name:        "harness",
 	Summary:     "Configure Baseten harness integrations (PRE-RELEASE)",
-	Description: harnessPreRelease + "Configure Claude Code, Codex (CLI or ChatGPT desktop app), OpenCode CLI, and Pi to use Baseten routes.",
+	Description: harnessPreRelease + "Configure Claude Code, Codex (CLI or ChatGPT desktop app), OpenCode (CLI or desktop app), and Pi to use Baseten routes.",
 	Children: []Command{
 		{
 			Name:    "setup",
@@ -24,7 +24,8 @@ var commandHarness = Command{
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the default unless --route is set.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
 				"The routes API key is created on first setup and reused afterward. Restart the harness after setup. " +
-				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it.",
+				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
+				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.",
 			Flags: HarnessSetupFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",

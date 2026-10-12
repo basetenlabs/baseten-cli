@@ -68,8 +68,9 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		switch {
 		case setup && !d.Installed && explicit:
 			searched := "not on PATH"
-			if locations := harness.CodexDesktopLocations(); h.Name() == harness.Codex && locations != "" {
-				searched += " or in " + locations
+			locations := map[string]string{harness.Codex: harness.CodexDesktopLocations(), harness.OpenCode: harness.OpenCodeDesktopLocations()}
+			if l := locations[h.Name()]; l != "" {
+				searched += " or in " + l
 			}
 			return nil, fmt.Errorf("%s is not installed or %s", h.Name(), searched)
 		case setup && !d.Installed:

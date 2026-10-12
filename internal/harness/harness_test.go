@@ -2,12 +2,14 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -320,7 +322,7 @@ func TestOptionalSubagentCleanup(t *testing.T) {
 				path := settingsPath(t, h)
 				key := claudeSubagentPath
 				if h.Name() == OpenCode {
-					key = openCodeSubagentPaths[0]
+					key = openCodeV1SubagentPaths[0]
 				}
 				d := map[string]any{}
 				require.NoError(t, put(d, key, value{Exists: true, Data: "user-subagent"}))
@@ -461,11 +463,286 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	setup(t, openCodeHarness{}, path, routes, Selection{})
 	data := load(t, path)
 	require.Equal(t, "@ai-sdk/openai-compatible", get(data, []string{"provider", providerID, "npm"}).Data)
-	require.Equal(t, "Bearer "+testToken, get(data, openCodeBearerPath).Data, "@ai-sdk/anthropic sends apiKey only as x-api-key")
+	require.Equal(t, "Bearer "+testToken, get(data, openCodeV1BearerPath).Data, "@ai-sdk/anthropic sends apiKey only as x-api-key")
 	models := get(data, []string{"provider", providerID, "models"}).Data.(map[string]any)
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/primary"].(map[string]any)["provider"])
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/openai"}, models["acme/background"].(map[string]any)["provider"])
 	require.NotContains(t, models["acme/subagent"], "provider")
+}
+
+// openCodeV2File is a settings file the user has migrated to OpenCode 2's
+// native format, with nothing of Baseten's in it.
+func openCodeV2File() map[string]any {
+	return map[string]any{
+		"theme":     "dark",
+		"model":     "anthropic/claude-sonnet-4-5",
+		"providers": map[string]any{"anthropic": map[string]any{"settings": map[string]any{"baseURL": "https://proxy.example"}}},
+		"agents":    map[string]any{"reviewer": map[string]any{"mode": "subagent"}},
+	}
+}
+
+func TestOpenCodeFormatFollowsTheFile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file map[string]any
+		want openCodeFormat
+	}{
+		{"no file", nil, openCodeV1},
+		{"empty", map[string]any{}, openCodeV1},
+		{"shared keys only", map[string]any{"model": "x/y", "theme": "dark", "mcp": map[string]any{}}, openCodeV1},
+		{"v1 keys", map[string]any{"provider": map[string]any{}, "agent": map[string]any{}, "small_model": "x/y", "permission": map[string]any{}}, openCodeV1},
+		{"providers", map[string]any{"providers": map[string]any{}}, openCodeV2},
+		{"agents", map[string]any{"agents": map[string]any{}}, openCodeV2},
+		{"permissions", map[string]any{"permissions": []any{}}, openCodeV2},
+		{"plugins", map[string]any{"plugins": []any{}}, openCodeV2},
+		{"commands", map[string]any{"commands": map[string]any{}}, openCodeV2},
+		{"mixed", map[string]any{"provider": map[string]any{}, "providers": map[string]any{}}, openCodeV2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := settingsPath(t, openCodeHarness{})
+			if tc.file != nil {
+				save(t, path, tc.file)
+			}
+			setup(t, openCodeHarness{}, path, testRoutes(), Selection{})
+			d := load(t, path)
+			require.Equal(t, tc.want == openCodeV2, get(d, openCodeV2ProviderPath).Exists)
+			require.Equal(t, tc.want == openCodeV1, get(d, openCodeV1ProviderPath).Exists)
+			require.Equal(t, providerID+"/acme/primary", d["model"])
+			token, err := openCodeHarness{}.Credential(path)
+			require.NoError(t, err)
+			require.Equal(t, testToken, token)
+		})
+	}
+}
+
+func TestOpenCodeV2Settings(t *testing.T) {
+	path := settingsPath(t, openCodeHarness{})
+	save(t, path, openCodeV2File())
+	cacheRead := 0.3
+	routes := testRoutes()
+	routes[0].Provider = ProviderAnthropic
+	routes[0].ReasoningLevels = []string{"low", "max"}
+	routes[0].Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, LongContext: &Cost{Input: 6, Output: 22.5}}
+	routes[1].Provider = ProviderOpenAI
+	plans := setup(t, openCodeHarness{}, path, routes, Selection{Subagent: "acme/subagent"})
+	require.Equal(t, []string{"model"}, plans[0].Replaced)
+	d := load(t, path)
+
+	require.Equal(t, providerID+"/acme/primary", d["model"])
+	require.Equal(t, providerID+"/"+defaultBackgroundRoute, get(d, openCodeV2BackgroundPath).Data)
+	for _, key := range openCodeV2SubagentPaths {
+		require.Equal(t, providerID+"/acme/subagent", get(d, key).Data)
+	}
+	require.Equal(t, "subagent", get(d, []string{"agents", "reviewer", "mode"}).Data, "the user's agents stay")
+	for _, key := range []string{"provider", "small_model", "agent"} {
+		require.NotContains(t, d, key, "no V1 keys in a V2 file")
+	}
+
+	provider := get(d, openCodeV2ProviderPath).Data.(map[string]any)
+	require.Equal(t, "Baseten", provider["name"])
+	require.Equal(t, "@opencode/ai/providers/openai-compatible", provider["package"])
+	require.Equal(t, map[string]any{"baseURL": testEndpoint + "/v1", "apiKey": testToken}, provider["settings"])
+	require.Equal(t, map[string]any{"Authorization": "Bearer " + testToken, clientHeader: OpenCode}, provider["headers"])
+	require.NotContains(t, provider, "npm")
+	require.NotContains(t, provider, "options")
+
+	models := provider["models"].(map[string]any)
+	require.Len(t, models, 5)
+	primary := models["acme/primary"].(map[string]any)
+	require.Equal(t, map[string]any{
+		"name":         "Primary",
+		"package":      "@opencode/ai/providers/anthropic",
+		"limit":        map[string]any{"context": json.Number("128000"), "output": json.Number("4096")},
+		"capabilities": map[string]any{"tools": true, "input": []any{"text"}, "output": []any{"text"}},
+		"variants": []any{
+			map[string]any{"id": "low", "settings": map[string]any{"reasoningEffort": "low"}},
+			map[string]any{"id": "xhigh", "settings": map[string]any{"reasoningEffort": "xhigh"}},
+		},
+		"cost": []any{
+			map[string]any{"input": json.Number("3"), "output": json.Number("15"), "cache": map[string]any{"read": json.Number("0.3")}},
+			map[string]any{"tier": map[string]any{"type": "context", "size": json.Number("200000")}, "input": json.Number("6"), "output": json.Number("22.5")},
+		},
+	}, primary)
+	require.Equal(t, "@opencode/ai/providers/openai", models["acme/background"].(map[string]any)["package"])
+	subagent := models["acme/subagent"].(map[string]any)
+	require.NotContains(t, subagent, "package")
+	require.NotContains(t, subagent, "cost")
+	require.Equal(t, []any{}, subagent["variants"])
+	for _, key := range []string{"tool_call", "modalities", "reasoning", "provider"} {
+		require.NotContains(t, primary, key, "no V1 model fields in a V2 file")
+	}
+
+	status, err := openCodeHarness{}.Inspect(Detection{Name: OpenCode, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateConfigured, status.State)
+	require.Equal(t, "acme/primary", status.DefaultRoute)
+	require.Equal(t, defaultBackgroundRoute, status.BackgroundRoute)
+	require.Len(t, status.Routes, 4)
+	require.Contains(t, status.Managed, "providers."+providerID)
+	require.Contains(t, status.Managed, "agents.title.model")
+
+	// A refresh is a no-op, and stays V2.
+	for _, p := range setup(t, openCodeHarness{}, path, routes, Selection{Subagent: "acme/subagent"}) {
+		require.False(t, p.Changed)
+	}
+	teardown(t, openCodeHarness{}, path)
+	want := openCodeV2File()
+	delete(want, "model")
+	require.Equal(t, want, load(t, path))
+}
+
+func TestOpenCodeSetupAfterMigrationRetiresV1Settings(t *testing.T) {
+	path := settingsPath(t, openCodeHarness{})
+	setup(t, openCodeHarness{}, path, testRoutes(), Selection{Subagent: "acme/subagent", Background: "acme/background"})
+	// The user migrates their own settings but leaves Baseten's block alone.
+	d := load(t, path)
+	d["agents"] = map[string]any{"reviewer": map[string]any{"mode": "subagent"}}
+	require.NoError(t, put(d, []string{"agent", "mine", "model"}, value{Exists: true, Data: "other/model"}))
+	save(t, path, d)
+
+	plans := setup(t, openCodeHarness{}, path, testRoutes(), Selection{Background: "acme/background"})
+	require.ElementsMatch(t, []string{"provider." + providerID, "small_model", "agent.general.model", "agent.explore.model"}, plans[0].Replaced)
+	d = load(t, path)
+	require.True(t, get(d, openCodeV2ProviderPath).Exists)
+	require.False(t, get(d, openCodeV1ProviderPath).Exists)
+	require.NotContains(t, d, "small_model")
+	require.Equal(t, providerID+"/acme/background", get(d, openCodeV2BackgroundPath).Data)
+	for _, key := range openCodeV1SubagentPaths {
+		require.False(t, get(d, key).Exists, "retired V1 subagent settings")
+	}
+	for _, key := range openCodeV2SubagentPaths {
+		require.False(t, get(d, key).Exists, "no --subagent-route on this run")
+	}
+	require.Equal(t, "other/model", get(d, []string{"agent", "mine", "model"}).Data, "the user's V1 agent stays")
+	token, err := openCodeHarness{}.Credential(path)
+	require.NoError(t, err)
+	require.Equal(t, testToken, token)
+}
+
+func TestOpenCodeTeardownSweepsBothFormats(t *testing.T) {
+	path := settingsPath(t, openCodeHarness{})
+	d := map[string]any{
+		"theme":       "dark",
+		"model":       providerID + "/acme/primary",
+		"small_model": providerID + "/acme/background",
+		"provider":    map[string]any{providerID: map[string]any{"npm": "x"}, "other": map[string]any{"npm": "y"}},
+		"providers":   map[string]any{providerID: map[string]any{"package": "x"}, "other": map[string]any{"package": "y"}},
+		"agent": map[string]any{
+			"general": map[string]any{"model": providerID + "/acme/subagent"},
+			"explore": map[string]any{"model": "other/model"},
+		},
+		"agents": map[string]any{
+			"title":   map[string]any{"model": providerID + "/acme/background"},
+			"general": map[string]any{"model": providerID + "/acme/subagent", "mode": "subagent"},
+			"explore": map[string]any{"model": "other/model"},
+		},
+	}
+	save(t, path, d)
+	status, err := openCodeHarness{}.Inspect(Detection{Name: OpenCode, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateConfigured, status.State)
+	require.Equal(t, "acme/background", status.BackgroundRoute, "the native format is preferred")
+	teardown(t, openCodeHarness{}, path)
+	require.Equal(t, map[string]any{
+		"theme":     "dark",
+		"provider":  map[string]any{"other": map[string]any{"npm": "y"}},
+		"providers": map[string]any{"other": map[string]any{"package": "y"}},
+		"agent":     map[string]any{"explore": map[string]any{"model": "other/model"}},
+		"agents": map[string]any{
+			"general": map[string]any{"mode": "subagent"},
+			"explore": map[string]any{"model": "other/model"},
+		},
+	}, load(t, path))
+}
+
+func TestOpenCodeV2TeardownPreservesAnotherProviderSelection(t *testing.T) {
+	path := settingsPath(t, openCodeHarness{})
+	save(t, path, openCodeV2File())
+	setup(t, openCodeHarness{}, path, testRoutes(), Selection{Subagent: "acme/subagent"})
+	d := load(t, path)
+	d["model"] = "other/user-model"
+	require.NoError(t, put(d, openCodeV2BackgroundPath, value{Exists: true, Data: "other/small"}))
+	require.NoError(t, put(d, openCodeV2SubagentPaths[0], value{Exists: true, Data: "other/subagent"}))
+	save(t, path, d)
+	status, err := openCodeHarness{}.Inspect(Detection{Name: OpenCode, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateInactive, status.State)
+	teardown(t, openCodeHarness{}, path)
+	require.NoError(t, put(d, openCodeV2ProviderPath, value{}))
+	require.NoError(t, put(d, openCodeV2SubagentPaths[1], value{}))
+	require.Equal(t, d, load(t, path))
+}
+
+func TestOpenCodeV2OptionalSubagentCleanup(t *testing.T) {
+	path := settingsPath(t, openCodeHarness{})
+	save(t, path, map[string]any{"agents": map[string]any{"general": map[string]any{"model": "user-subagent"}}})
+	setup(t, openCodeHarness{}, path, testRoutes(), Selection{Subagent: "acme/subagent"})
+	// A refresh without the flag drops the subagent's route.
+	setup(t, openCodeHarness{}, path, testRoutes()[:2], Selection{})
+	require.False(t, get(load(t, path), openCodeV2SubagentPaths[0]).Exists, "a retired subagent route is cleared on refresh")
+}
+
+type openCodeDetectionExecer struct {
+	fakeExecer
+	binaries map[string]bool
+	executed string
+}
+
+func (e *openCodeDetectionExecer) LookPath(name string) (string, error) {
+	if !e.binaries[name] {
+		return "", exec.ErrNotFound
+	}
+	if name == "opencode" {
+		return "/cli/opencode", nil
+	}
+	return name, nil
+}
+
+func (e *openCodeDetectionExecer) Exec(command *exec.Cmd) error {
+	e.executed = command.Path
+	return e.fakeExecer.Exec(command)
+}
+
+func TestOpenCodeDesktopDetection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	bundled := func(root, app string) string {
+		return filepath.Join(root, app, "Contents", "Resources", "opencode-cli")
+	}
+	installed := filepath.Join(home, ".opencode", "bin", "opencode")
+	desktop := bundled("/Applications", "OpenCode.app")
+	for _, tc := range []struct {
+		name     string
+		binaries map[string]bool
+		want     string
+		// goos lists the platforms where want applies; elsewhere nothing is
+		// found. Empty means every platform.
+		goos []string
+	}{
+		{"desktop", map[string]bool{desktop: true}, desktop, []string{"darwin"}},
+		{"beta", map[string]bool{bundled("/Applications", "OpenCode Beta.app"): true}, bundled("/Applications", "OpenCode Beta.app"), []string{"darwin"}},
+		{"user desktop", map[string]bool{bundled(filepath.Join(home, "Applications"), "OpenCode.app"): true}, bundled(filepath.Join(home, "Applications"), "OpenCode.app"), []string{"darwin"}},
+		{"linux desktop", map[string]bool{linuxDesktopOpenCode: true}, linuxDesktopOpenCode, []string{"linux"}},
+		{"installed by desktop", map[string]bool{installed: true}, installed, []string{"darwin", "linux"}},
+		{"CLI takes precedence", map[string]bool{"opencode": true, desktop: true, linuxDesktopOpenCode: true, installed: true}, "/cli/opencode", nil},
+		{"config alone is not an installation", nil, "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			execer := &openCodeDetectionExecer{binaries: tc.binaries}
+			want := tc.want
+			if len(tc.goos) > 0 && !slices.Contains(tc.goos, runtime.GOOS) {
+				want = ""
+			}
+			d, err := openCodeHarness{}.Detect(t.Context(), execer, "")
+			require.NoError(t, err)
+			require.Equal(t, path, d.Path)
+			require.Equal(t, want != "", d.Installed)
+			require.Equal(t, want, execer.executed)
+		})
+	}
 }
 
 func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
