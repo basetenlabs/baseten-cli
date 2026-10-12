@@ -66,10 +66,7 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 		invokeURL = api.URL
 	}
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
-	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []map[string]any{
-		{"id": "team-a", "name": "Engineering", "default": true},
-		{"id": "team-b", "name": "Research", "default": false},
-	}})
+	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []map[string]any{{"id": "team-a", "name": "Engineering", "default": true}}})
 	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -89,6 +86,13 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 }
 
 // fakeHarnessAPI is harnessAPI with every harness reported as installed.
+// harnessTwoTeams is a GET /v1/teams body for an organization with two teams,
+// where setup needs --team.
+var harnessTwoTeams = map[string]any{"teams": []map[string]any{
+	{"id": "team-a", "name": "Engineering", "default": true},
+	{"id": "team-b", "name": "Research", "default": false},
+}}
+
 func fakeHarnessAPI(t *testing.T) (*CommandHarness, *MockManagementAPI) {
 	t.Helper()
 	h, api := harnessAPI(t, "")
@@ -350,6 +354,7 @@ func Test_Harness_Setup_Teams(t *testing.T) {
 			h, api := fakeHarnessAPI(t)
 			args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"}
 			if tc.team != "" {
+				api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
 				args = append(args, "--team", tc.team)
 			}
 			h.Require.NoError(h.Execute(args...))
@@ -357,15 +362,18 @@ func Test_Harness_Setup_Teams(t *testing.T) {
 			h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/"+tc.want+"/api_keys"))
 		})
 	}
+	// With several teams the CLI never picks one, not even the default.
 	h, api := fakeHarnessAPI(t)
-	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []map[string]any{{"id": "team-b", "name": "Research"}}})
+	api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
 	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"))
-	h.Require.Contains(h.Stderr.String(), "no default team; pass --team")
+	h.Require.Contains(h.Stderr.String(), `pass --team with one of "Engineering", "Research"`)
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
 func Test_Harness_Setup_KeyPerTeamAndProfile(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
+	api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude-code", dir)
 	for _, team := range []string{"team-a", "team-b", "team-a"} {
@@ -383,7 +391,7 @@ func Test_Harness_Setup_KeyPerTeamAndProfile(t *testing.T) {
 
 	// Another user of the same profile gets their own key.
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-b"})
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--key-name", "laptop", "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--team", "team-a", "--key-name", "laptop", "--yes"))
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 

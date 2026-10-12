@@ -133,7 +133,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		return err
 	}
 	api := cl.API()
-	team, err := resolveTeamOrDefault(ctx, api, f.Team)
+	team, err := resolveTeamOrOnly(ctx, api, f.Team)
 	if err != nil {
 		return err
 	}
