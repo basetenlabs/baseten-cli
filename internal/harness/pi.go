@@ -110,11 +110,11 @@ func piModel(r Route, baseURL string) map[string]any {
 	if cost := piCost(r.Cost); cost != nil {
 		model["cost"] = cost
 	}
-	switch r.Target {
-	case TargetAnthropic:
+	switch r.Provider {
+	case ProviderAnthropic:
 		// Pi's Anthropic client appends /v1/messages itself.
 		model["api"], model["baseUrl"] = "anthropic-messages", baseURL
-	case TargetOpenAI:
+	case ProviderOpenAI:
 		model["api"] = "openai-responses"
 	default:
 		// The provider's compat would apply to every API, so only Chat
