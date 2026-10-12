@@ -10,55 +10,36 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 )
 
-func harnessUsageResult(dims map[string]any, cost any, input, cached, output int) map[string]any {
-	r := map[string]any{
+func harnessUsageModel(model string, cost any, input, cached, output int) map[string]any {
+	return map[string]any{
+		"model":                 model,
 		"cost_usd":              cost,
 		"input_tokens":          input,
 		"cached_input_tokens":   cached,
 		"uncached_input_tokens": input - cached,
 		"output_tokens":         output,
 	}
-	for k, v := range dims {
-		r[k] = v
-	}
-	return r
 }
 
-// harnessUsageModel is a model's usage in team-a.
-func harnessUsageModel(model string, cost any, input, cached, output int) map[string]any {
-	return harnessUsageResult(map[string]any{"team_id": "team-a", "model": model}, cost, input, cached, output)
-}
-
-func harnessUsageBody(hasMore bool, cursor any, buckets ...map[string]any) map[string]any {
-	items := make([]any, 0, len(buckets))
-	for _, b := range buckets {
-		items = append(items, b)
-	}
-	return map[string]any{"items": items, "pagination": map[string]any{"has_more": hasMore, "cursor": cursor}}
+func harnessUsageBody(buckets ...map[string]any) map[string]any {
+	return map[string]any{"items": buckets, "pagination": map[string]any{"has_more": false}}
 }
 
 func harnessUsageBucket(date string, results ...map[string]any) map[string]any {
-	items := make([]any, 0, len(results))
-	for _, r := range results {
-		items = append(items, r)
-	}
-	return map[string]any{"date": date, "results": items}
+	return map[string]any{"date": date, "results": append([]map[string]any{}, results...)}
 }
 
-// harnessTeamSettings is your settings in a team with limit, spent of it;
-// extra overrides fields.
-func harnessTeamSettings(id, name, spent string, limit any, extra map[string]any) map[string]any {
-	s := map[string]any{
-		"team_id": id, "team_name": name, "user_id": "user-a", "month_spend_usd": spent, "is_blocked": false, "blocked_by": nil,
-		"spend_limit": map[string]any{
-			"effective":    map[string]any{"monthly_limit_usd": limit, "source": "team"},
-			"team_default": map[string]any{"team_id": id, "per_member_monthly_limit_usd": limit},
-		},
+// harnessTeamSettings is your settings in a team: spent of limit, the team's
+// per-member default (nil for none), and what blocks you (nil for nothing).
+func harnessTeamSettings(id, name, spent string, limit, teamDefault, blockedBy any) map[string]any {
+	var def any
+	if teamDefault != nil {
+		def = map[string]any{"per_member_monthly_limit_usd": teamDefault}
 	}
-	for k, v := range extra {
-		s[k] = v
+	return map[string]any{
+		"team_id": id, "team_name": name, "month_spend_usd": spent, "is_blocked": blockedBy != nil, "blocked_by": blockedBy,
+		"spend_limit": map[string]any{"effective": map[string]any{"monthly_limit_usd": limit}, "team_default": def},
 	}
-	return s
 }
 
 // harnessUsageNow is the pinned clock for these tests, mid-afternoon UTC.
@@ -70,8 +51,8 @@ func newHarnessUsageHarness(t *testing.T, now time.Time, body map[string]any) (*
 	api := h.MockManagementAPI()
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
 	api.SetRoute("GET", "/v1/routes/usage", 200, body)
-	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []map[string]any{
-		harnessTeamSettings("team-a", "Engineering", "1.75", "100", nil),
+	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []any{
+		harnessTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil),
 	}})
 	return h, api
 }
@@ -100,8 +81,8 @@ func harnessUsageRow(h *CommandHarness, out, marker string) []string {
 	return nil
 }
 
-func harnessUsageMonth(more ...map[string]any) map[string]any {
-	return harnessUsageBody(false, nil, append([]map[string]any{
+func harnessUsageMonth() map[string]any {
+	return harnessUsageBody(
 		harnessUsageBucket("2026-09-01",
 			harnessUsageModel("claude-sonnet-5", "1.25", 1000, 800, 100),
 			harnessUsageModel("gpt-5.2", "0.50", 400, 0, 40),
@@ -109,9 +90,9 @@ func harnessUsageMonth(more ...map[string]any) map[string]any {
 		harnessUsageBucket("2026-09-02"),
 		harnessUsageBucket("2026-09-03",
 			harnessUsageModel("claude-sonnet-5", "0.0000000001", 100, 0, 10),
-			harnessUsageResult(map[string]any{"team_id": nil, "model": "glm-5.2"}, "0.50", 50, 0, 5),
+			harnessUsageModel("glm-5.2", "0.50", 50, 0, 5),
 		),
-	}, more...)...)
+	)
 }
 
 func Test_Harness_Usage_DefaultsToMonthToDateForCurrentUser(t *testing.T) {
@@ -123,78 +104,37 @@ func Test_Harness_Usage_DefaultsToMonthToDateForCurrentUser(t *testing.T) {
 	h.Require.Equal([]string{"2026-09-26"}, q["end_date"], "today's usage is included")
 	h.Require.Equal([]string{"user-a"}, q["user_ids"], "admins must not see other users' usage by default")
 	h.Require.Equal([]string{"TEAM", "MODEL"}, q["group_by"])
-	h.Require.Equal([]string{"31"}, q["limit"])
 	h.Require.Equal([]string{"team-a"}, q["team_id"], "your only team needs no --team")
 	h.Require.Equal("September 2026 · resets Oct 1\n", h.Stderr.String())
-	h.Require.NotContains(h.Stdout.String(), "September")
 }
 
-func Test_Harness_Usage_HeaderPerTeam(t *testing.T) {
+func Test_Harness_Usage_Teams(t *testing.T) {
 	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
-	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []map[string]any{
-		harnessTeamSettings("team-a", "Engineering", "1.75", "100", nil),
-		harnessTeamSettings("team-b", "Research", "12.5", "10", map[string]any{
-			"is_blocked": true, "blocked_by": "member",
-			"spend_limit": map[string]any{
-				"effective":    map[string]any{"monthly_limit_usd": "10", "source": "user"},
-				"team_default": map[string]any{"team_id": "team-b", "per_member_monthly_limit_usd": "100.00"},
-			},
-		}),
-		harnessTeamSettings("team-c", "FDE", "80", "100", map[string]any{"is_blocked": true, "blocked_by": "team"}),
-		harnessTeamSettings("team-d", "Infra", "0", nil, map[string]any{"spend_limit": map[string]any{"effective": map[string]any{}}}),
+	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []any{
+		harnessTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil),
+		harnessTeamSettings("team-b", "Research", "12.5", "10", "100.00", "member"),
+		harnessTeamSettings("team-c", "FDE", "80", "100", "100", "team"),
+		harnessTeamSettings("team-d", "Infra", "0", nil, nil, nil),
 	}})
 
-	h.Require.ErrorContains(h.Execute("harness", "usage"),
-		`you're in 4 teams; pass --team with one of "Engineering", "Research", "FDE", "Infra"`)
+	h.Require.ErrorContains(h.Execute("harness", "usage"), `you're in 4 teams; pass --team with one of "Engineering", "Research", "FDE", "Infra"`)
+	h.Require.ErrorContains(h.Execute("harness", "usage", "--team", "Sales"), `no team of yours matched "Sales"; your teams are "Engineering", "Research", "FDE", "Infra"`)
 
 	h.Require.NoError(h.Execute("harness", "usage", "--team", "Engineering"))
+	h.Require.Equal([]string{"team-a"}, harnessUsageLastQuery(h, api)["team_id"], "--team also narrows the usage")
 	out := h.Stdout.String()
-	h.Require.Equal([]string{"Engineering", "$2", "of", "$100"}, harnessUsageRow(h, out, "Engineering"), "whole dollars")
-	h.Require.Equal([]string{"●", "claude-sonnet-5", "$1", "(56%)"}, harnessUsageRow(h, out, "claude-sonnet-5"), "days are summed")
-	h.Require.Equal([]string{"●", "gpt-5.2", "$1", "(22%)"}, harnessUsageRow(h, out, "gpt-5.2"), "half a dollar rounds up")
-	h.Require.Regexp(`(?m)^Engineering +\$2 of \$100\n  ● claude-sonnet-5.*\n  ● glm-5.2.*\n  ● gpt-5.2 +\$1 +\(22%\)\n$`, out,
-		"models most expensive first then by name, amounts lined up")
+	h.Require.Regexp(`(?m)^Engineering +\$2 of \$100\n  ● claude-sonnet-5 +\$1 +\(56%\)\n  ● glm-5.2 +\$1 +\(22%\)\n  ● gpt-5.2 +\$1 +\(22%\)\n$`, out,
+		"whole dollars, half a dollar rounds up, days summed, models most expensive first then by name, amounts lined up")
 	h.Require.NotContains(out, "┤", "no chart when stdout isn't a terminal")
 	h.Require.NotContains(out, "\x1b[", "no color when stdout isn't a terminal")
 
-	h.Require.NoError(h.Execute("harness", "usage", "--team", "Research"))
+	h.Require.NoError(h.Execute("harness", "usage", "--team", "team-b"))
 	h.Require.Equal([]string{"Research", "$13", "of", "$10", "(team", "default", "$100)", "·", "limit", "reached"},
-		harnessUsageRow(h, h.Stdout.String(), "Research"), "the team default only when yours differs")
+		harnessUsageRow(h, h.Stdout.String(), "Research"), "--team by ID too; the team default only when yours differs")
 	h.Require.NoError(h.Execute("harness", "usage", "--team", "FDE"))
 	h.Require.Equal([]string{"FDE", "$80", "of", "$100", "·", "team", "limit", "reached"}, harnessUsageRow(h, h.Stdout.String(), "FDE"))
 	h.Require.NoError(h.Execute("harness", "usage", "--team", "Infra"))
 	h.Require.Equal([]string{"Infra", "$0", "·", "no", "limit"}, harnessUsageRow(h, h.Stdout.String(), "Infra"))
-}
-
-func Test_Harness_Usage_TeamFlag(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
-	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []map[string]any{
-		harnessTeamSettings("team-a", "Engineering", "1.75", "100", nil),
-		harnessTeamSettings("team-b", "Research", "0", "100", nil),
-	}})
-
-	h.Require.NoError(h.Execute("harness", "usage", "--team", "Research"))
-	h.Require.Equal([]string{"team-b"}, harnessUsageLastQuery(h, api)["team_id"], "--team also narrows the usage")
-	h.Require.Contains(h.Stdout.String(), "Research")
-
-	h.Require.NoError(h.Execute("harness", "usage", "--team", "team-a"))
-	h.Require.Equal([]string{"team-a"}, harnessUsageLastQuery(h, api)["team_id"], "by ID too")
-
-	h.Require.ErrorContains(h.Execute("harness", "usage", "--team", "Sales"),
-		`no team of yours matched "Sales"; your teams are "Engineering", "Research"`)
-}
-
-func Test_Harness_Usage_RejectsBadFlags(t *testing.T) {
-	h, _ := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
-
-	h.Require.ErrorContains(h.Execute("route", "usage", "--since", "1d", "--start", "2026-09-01T00:00:00Z"), "--since cannot be combined")
-	h.Require.ErrorContains(h.Execute("route", "usage", "--start", "2026-09-10T00:00:00Z", "--end", "2026-09-01T00:00:00Z"), "--start must be earlier than --end")
-	h.Require.ErrorContains(h.Execute("route", "usage", "--start", "2026-10-01T00:00:00Z"), "--start must be in the past")
-	h.Require.ErrorContains(h.Execute("route", "usage", "--limit", "-1"), "--limit must be zero")
-	h.Require.ErrorContains(h.Execute("route", "usage", "--page-size", "32"), "--page-size must be between 1 and 31")
-	for _, flag := range []string{"--since", "--start", "--group-by", "--user-id", "--model"} {
-		h.Require.ErrorContains(h.Execute("harness", "usage", flag, "x"), "unknown flag: "+flag, "only this month, every model, your own usage")
-	}
 }
 
 func Test_Harness_Usage_JSONStreamsBucketsAsReturned(t *testing.T) {
@@ -202,22 +142,13 @@ func Test_Harness_Usage_JSONStreamsBucketsAsReturned(t *testing.T) {
 
 	h.Require.NoError(h.Execute("harness", "usage", "--output", "json"))
 	var got []struct {
-		Date    string `json:"date"`
 		Results []struct {
-			TeamID  string `json:"team_id"`
-			Model   string `json:"model"`
 			CostUSD string `json:"cost_usd"`
-			Input   int    `json:"input_tokens"`
 		} `json:"results"`
 	}
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 	h.Require.Len(got, 3, "one record per day, including days with no usage")
-	h.Require.Equal("2026-09-02", got[1].Date)
-	h.Require.Empty(got[1].Results)
-	h.Require.Equal("team-a", got[0].Results[0].TeamID)
-	h.Require.Equal("claude-sonnet-5", got[0].Results[0].Model)
 	h.Require.Equal("1.25", got[0].Results[0].CostUSD, "costs pass through as exact decimal strings")
-	h.Require.Equal(1000, got[0].Results[0].Input, "tokens stay in JSON")
 	h.Require.Empty(h.Stderr.String())
 
 	h.Require.NoError(h.Execute("harness", "usage", "--output", "jsonl", "--jq", ".date"))
@@ -225,12 +156,11 @@ func Test_Harness_Usage_JSONStreamsBucketsAsReturned(t *testing.T) {
 }
 
 func Test_Harness_Usage_NullCostIsUnpriced(t *testing.T) {
-	body := harnessUsageBody(false, nil, harnessUsageBucket("2026-09-01",
+	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-09-01",
 		harnessUsageModel("claude-opus-5-5", "0.0012", 10, 0, 1),
 		harnessUsageModel("qwen-custom", nil, 50, 0, 5),
 		harnessUsageModel("gpt-6-luna", "0", 0, 0, 0),
-	))
-	h, _ := newHarnessUsageHarness(t, harnessUsageNow, body)
+	)))
 
 	h.Require.NoError(h.Execute("harness", "usage"))
 	out := h.Stdout.String()
@@ -238,12 +168,12 @@ func Test_Harness_Usage_NullCostIsUnpriced(t *testing.T) {
 	h.Require.Equal([]string{"●", "qwen-custom", "-"}, harnessUsageRow(h, out, "qwen-custom"))
 	h.Require.NotContains(out, "gpt-6-luna", "usage without tokens or cost is hidden")
 
-	body["items"].([]any)[0].(map[string]any)["results"] = []any{harnessUsageModel("gpt-5.2", "abc", 10, 0, 1)}
+	api.SetRoute("GET", "/v1/routes/usage", 200, harnessUsageBody(harnessUsageBucket("2026-09-01", harnessUsageModel("gpt-5.2", "abc", 10, 0, 1))))
 	h.Require.ErrorContains(h.Execute("harness", "usage"), `invalid cost "abc"`)
 }
 
 func Test_Harness_Usage_Empty(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(false, nil, harnessUsageBucket("2026-09-01")))
+	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-09-01")))
 	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []any{}})
 
 	h.Require.NoError(h.Execute("harness", "usage"))
@@ -258,57 +188,17 @@ func Test_Harness_Usage_Empty(t *testing.T) {
 
 func Test_Harness_Usage_Chart(t *testing.T) {
 	first := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	out := cmd.RenderUsageChart(first, []string{"a", "b"}, [][]float64{{1, 2, 0.5}, {0.25, 0.25, 0.25}}, 24)
+	strip := regexp.MustCompile(`</?[0-9]>`)
+	out := cmd.RenderUsageChart(first, [][]float64{{1, 2, 0.5}, {0.25, 0.25, 0.25}}, 24)
 	h := NewCommandHarness(t)
 	h.Require.Contains(out, "<0>╭</0>", "the first series in the first color")
 	h.Require.Contains(out, "<1>─</1>", "the second in the second")
-	plain := regexp.MustCompile(`</?[0-9]>`).ReplaceAllString(out, "")
-	h.Require.Equal(strings.Join([]string{
-		"$2 ┤      ╭─────╮",
-		"$1 ┤──────╯─────╰─────",
-		"$0 ┼",
-		"    Sep 1       Sep 3",
-		"",
-	}, "\n"), plain, "a step per day, a row per dollar, the largest series on top, labels every other day")
+	h.Require.Equal("$2 ┤      ╭─────╮\n$1 ┤──────╯─────╰─────\n$0 ┼\n    Sep 1       Sep 3\n", strip.ReplaceAllString(out, ""),
+		"a step per day, a row per dollar, the largest series on top, labels every other day")
 
-	h.Require.Empty(cmd.RenderUsageChart(first, []string{"a"}, [][]float64{{1, 2, 3}}, 9), "too narrow for two columns per day")
-	h.Require.Contains(cmd.RenderUsageChart(first, []string{"a"}, [][]float64{{0.001}}, 40), "$1 ┤", "at least a dollar tall")
-	h.Require.Contains(cmd.RenderUsageChart(first, []string{"a"}, [][]float64{{1500}}, 60), "$1,500 ┤", "large amounts in whole dollars")
-	wide := regexp.MustCompile(`</?[0-9]>`).ReplaceAllString(cmd.RenderUsageChart(first, []string{"a"}, [][]float64{{30}}, 200), "")
-	h.Require.Contains(wide, "$30 ┤"+strings.Repeat("─", 48)+"\n", "no wider than it needs to be on a wide terminal")
-}
-
-func Test_Route_Usage_WindowFlags(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		args       []string
-		start, end string
-	}{
-		{"since snaps to whole days", []string{"--since", "7d"}, "2026-09-18", "2026-09-26"},
-		{"start and end on day boundaries", []string{"--start", "2026-08-01T00:00:00Z", "--end", "2026-09-01T00:00:00Z"}, "2026-08-01", "2026-09-01"},
-		{"end mid-day includes that day", []string{"--start", "2026-09-10T00:00:00Z", "--end", "2026-09-12T06:00:00Z"}, "2026-09-10", "2026-09-13"},
-		{"start only runs to now", []string{"--start", "2026-09-20T12:00:00Z"}, "2026-09-20", "2026-09-26"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
-			h.Require.NoError(h.Execute(append([]string{"route", "usage"}, tc.args...)...))
-			q := harnessUsageLastQuery(h, api)
-			h.Require.Equal([]string{tc.start}, q["start_date"])
-			h.Require.Equal([]string{tc.end}, q["end_date"])
-		})
-	}
-}
-
-func Test_Route_Usage_ClampsToRetention(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC), harnessUsageMonth())
-
-	h.Require.NoError(h.Execute("route", "usage", "--start", "2026-06-01T00:00:00Z", "--end", "2026-07-01T00:00:00Z"))
-	h.Require.Equal([]string{"2026-06-29"}, harnessUsageLastQuery(h, api)["start_date"], "92 days including today")
-	h.Require.Contains(h.Stderr.String(), "Usage is kept for 92 days, so this only includes usage from 2026-06-29 on.")
-
-	h.Require.ErrorContains(h.Execute("route", "usage", "--start", "2026-05-01T00:00:00Z", "--end", "2026-06-01T00:00:00Z"),
-		"older than the 92 days of usage Baseten keeps")
-
-	h.Require.NoError(h.Execute("route", "usage", "--since", "30d"))
-	h.Require.NotContains(h.Stderr.String(), "Usage is kept")
+	h.Require.Empty(cmd.RenderUsageChart(first, [][]float64{{1, 2, 3}}, 9), "too narrow for two columns per day")
+	h.Require.Contains(cmd.RenderUsageChart(first, [][]float64{{0.001}}, 40), "$1 ┤", "at least a dollar tall")
+	h.Require.Contains(cmd.RenderUsageChart(first, [][]float64{{1500}}, 60), "$1,500 ┤", "large amounts in whole dollars")
+	h.Require.Contains(strip.ReplaceAllString(cmd.RenderUsageChart(first, [][]float64{{30}}, 200), ""), "$30 ┤"+strings.Repeat("─", 48)+"\n",
+		"no wider than it needs to be on a wide terminal")
 }

@@ -105,11 +105,11 @@ var commandHarness = Command{
 		},
 		{
 			Name:    "usage",
-			Summary: "Show your routes spend this month in each of your teams (PRE-RELEASE)",
+			Summary: "Show your routes spend this month in one of your teams (PRE-RELEASE)",
 			Description: harnessPreRelease +
 				"Show what you've spent on routes this UTC month so far, the period monthly spend limits apply to, in " +
-				"each team you're in: your spend there against your limit there, a chart of spend per day, and each " +
-				"model's spend. --team shows one team.\n\n" +
+				"one of your teams: your spend there against your limit there, a chart of spend per day, and each " +
+				"model's spend. --team picks the team, and is needed unless you're in only one.\n\n" +
 				"This is the same spend that spend limits are checked against, and it can lag by up to 15 minutes. " +
 				"Model API costs use your prices and include tool calls. OpenAI, Anthropic, and xAI costs estimate what " +
 				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage isn't included.\n\n" +
@@ -122,22 +122,21 @@ var commandHarness = Command{
 			Flags: HarnessUsageFlags{},
 			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
 				JSONArrayStreamed: true,
-				TextDescription: "The month and when limits reset go to stderr. Then, for each of your teams, alphabetical: " +
-					"a line with the team, what you spent there this month and your limit there, with the team's default " +
-					"when yours differs from it, ending in \"limit reached\" or \"team limit reached\" when your requests " +
-					"there are rejected; on a terminal, a chart of spend per day per model from the first of the month; and " +
-					"a line per model with its spend and share, most expensive first. Usage metered before it was attributed " +
-					"to a team comes last as \"(no team)\". A cost of \"-\" means some of that usage couldn't be priced. With " +
-					"no teams and no usage, prints \"No usage this month.\" to stderr.",
+				TextDescription: "The month and when limits reset go to stderr. Then a line with the team, what you spent " +
+					"there this month and your limit there, with the team's default when yours differs from it, ending in " +
+					"\"limit reached\" or \"team limit reached\" when your requests there are rejected; on a terminal, a " +
+					"chart of spend per day per model from the first of the month; and a line per model with its spend and " +
+					"share, most expensive first. A cost of \"-\" means some of that usage couldn't be priced. With no " +
+					"teams, prints \"No usage this month.\" to stderr.",
 				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-team, per-model usage " +
 					"in results, including days with no usage. cost_usd values are exact decimal strings.",
 				Examples: []CommandExample{
 					{
-						Description: "Show your spend this month in each of your teams.",
+						Description: "Show your spend this month in your team.",
 						Command:     "baseten harness usage",
 					},
 					{
-						Description: "Show your spend this month in one team.",
+						Description: "Show your spend this month in one of your teams.",
 						Command:     "baseten harness usage --team <team>",
 					},
 				},
@@ -234,7 +233,7 @@ type HarnessStatusList struct {
 type HarnessUsageFlags struct {
 	CommandFlags
 
-	Team string `flag:"team" desc:"Team name or ID to show. Defaults to every team you're in."`
+	Team string `flag:"team" desc:"Team name or ID to show. Needed unless you're in only one team."`
 }
 
 // HarnessFlags selects the harnesses a command applies to.

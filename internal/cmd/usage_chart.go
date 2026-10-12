@@ -3,17 +3,11 @@ package cmd
 import (
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
-
-// usageChartSeries is one line of a usage chart: one value per day.
-type usageChartSeries struct {
-	values []float64
-}
 
 // usageChartHeight is the most rows above the chart's zero row. There is at
 // most one per dollar, so the whole-dollar labels never repeat.
@@ -34,11 +28,11 @@ var usageChartColors = []ansi.BasicColor{ansi.Blue, ansi.Green, ansi.Magenta, an
 // instead of stepping, spaces its date ticks evenly rather than at day
 // starts, and paints with its own escapes rather than the terminal palette;
 // the glue to work around that is most of this code anyway.
-func renderUsageChart(first time.Time, series []usageChartSeries, width int, paint func(s string, i int) string) string {
-	days := len(series[0].values)
+func renderUsageChart(first time.Time, series [][]float64, width int, paint func(s string, i int) string) string {
+	days := len(series[0])
 	top := 1.0 // At least a dollar, so the top label isn't $0.
 	for _, s := range series {
-		for _, v := range s.values {
+		for _, v := range s {
 			top = max(top, v)
 		}
 	}
@@ -46,7 +40,7 @@ func renderUsageChart(first time.Time, series []usageChartSeries, width int, pai
 	labels := make([]string, height+1)
 	labelWidth := 0
 	for r := range labels {
-		labels[r] = usageChartLabel(top * float64(r) / float64(height))
+		labels[r] = harnessDollars(top * float64(r) / float64(height))
 		labelWidth = max(labelWidth, len(labels[r]))
 	}
 	// Each day spans step columns, its first one stepping from the day before.
@@ -61,7 +55,7 @@ func renderUsageChart(first time.Time, series []usageChartSeries, width int, pai
 	// Paint the last series first so the first, the largest, ends up on top.
 	for i, s := range slices.Backward(series) {
 		prev := -1
-		for d, v := range s.values {
+		for d, v := range s {
 			y := int(math.Round(v / top * float64(height)))
 			if v > 0 {
 				y = max(y, 1) // Keep any spend off the zero line.
@@ -100,9 +94,4 @@ func renderUsageChart(first time.Time, series []usageChartSeries, width int, pai
 	}
 	b.WriteString(strings.TrimRight(string(axis), " ") + "\n")
 	return b.String()
-}
-
-// usageChartLabel renders a y-axis amount to the nearest dollar, like $1,500.
-func usageChartLabel(v float64) string {
-	return "$" + billingGroupDigits(strconv.FormatFloat(math.Round(v), 'f', 0, 64))
 }
