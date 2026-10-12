@@ -144,18 +144,31 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if len(listed) == 0 {
 		return fmt.Errorf("team %s has no routes; create one with 'baseten route create'", team.Name)
 	}
+	// Routes reach external providers through team connections, and the
+	// provider decides which API a harness calls the route with.
+	connections, err := listConnections(ctx, api, managementapi.GetV1RoutesConnectionsParams{TeamId: &team.Id})
+	if err != nil {
+		return err
+	}
+	providers := harness.NewProviders(connections)
 	var routes []harness.Route
-	var skipped []string
+	var skipped, unresolved []string
 	for _, l := range listed {
-		r, err := harness.NewRoute(l)
+		r, err := harness.NewRoute(l, providers)
 		switch {
 		case err == nil:
 			routes = append(routes, r)
+			if kind, _ := l.Target.Discriminator(); kind == "CONNECTION" && r.Provider == "" {
+				unresolved = append(unresolved, l.Name)
+			}
 		case l.Name == f.Route:
 			return cmd.NewErrValidation(err)
 		default:
 			skipped = append(skipped, l.Name)
 		}
+	}
+	if len(unresolved) > 0 {
+		ctx.Logf("warning: routes whose connection is not in the team's connections are called with the Chat Completions API: %s\n", strings.Join(unresolved, ", "))
 	}
 	if len(routes) == 0 {
 		return cmd.NewErrValidation(errors.New("none of the team's routes have usable model metadata"))

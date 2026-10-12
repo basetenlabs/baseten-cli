@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -44,19 +45,10 @@ func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
 	}
 	rows := make([][]string, 0, len(items))
 	for _, r := range items {
-		target := "<unrecognized type>"
-		if value, err := r.Target.ValueByDiscriminator(); err == nil {
-			if kind, model, _, err := routeTargetFields(value); err == nil {
-				target = model
-				if kind != "BASETEN_MODEL_API" {
-					target = enumFromAPIValue(kind) + ":" + model
-				}
-			}
-		}
-		rows = append(rows, []string{r.Id, r.Name, r.DisplayName, r.TeamName, target, r.CreatedAt.UTC().Format(time.RFC3339)})
+		rows = append(rows, []string{r.Id, r.DisplayName, r.Name, r.CreatedAt.UTC().Format(time.RFC3339)})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers: []string{"ID", "NAME", "DISPLAY NAME", "TEAM", "TARGET", "CREATED"},
+		Headers: []string{"ID", "DISPLAY NAME", "NAME", "CREATED"},
 		Rows:    rows,
 	})
 	return nil
@@ -111,17 +103,24 @@ func commandRouteDescribe(ctx *CommandContext, flags *cmd.RouteDescribeFlags) er
 	ctx.Outputf("Team ID:          %s\n", route.TeamId)
 	ctx.Outputf("Team Name:        %s\n", route.TeamName)
 	value, err := route.Target.ValueByDiscriminator()
-	var kind, model, secret string
+	var t routeTargetInfo
 	if err == nil {
-		kind, model, secret, err = routeTargetFields(value)
+		t, err = routeTargetFields(value)
 	}
 	if err != nil {
 		ctx.Outputf("Target Type:      <unrecognized type>\n")
 	} else {
-		ctx.Outputf("Target Type:      %s\n", enumFromAPIValue(kind))
-		ctx.Outputf("Target Model:     %s\n", model)
-		if kind != "BASETEN_MODEL_API" {
-			ctx.Outputf("Target Secret:    %s\n", secret)
+		ctx.Outputf("Target Type:      %s\n", enumFromAPIValue(t.kind))
+		if t.model != "" {
+			ctx.Outputf("Target Model:     %s\n", t.model)
+		}
+		if t.connection != "" {
+			ctx.Outputf("Target Connection: %s\n", t.connection)
+		}
+		if t.classifier != "" {
+			ctx.Outputf("Classifier Model: %s\n", t.classifier)
+			ctx.Outputf("Default Route:    %s\n", t.defaultRoute)
+			ctx.Outputf("Allowed Routes:   %s\n", strings.Join(t.allowedRoutes, ", "))
 		}
 	}
 	ctx.Outputf("Invoke URL:       %s\n", hyperlink(ctx.Stdout, route.InvokeUrl))
@@ -134,43 +133,29 @@ func routeTarget(flags cmd.RouteTargetFlags) (*managementapi.CreateRouteRequest_
 		return nil, cmd.NewErrUsagef("--target-type and --target-model are required")
 	}
 	target := &managementapi.CreateRouteRequest_Target{}
-	if flags.TargetType == "baseten-model-api" {
-		if flags.TargetSecret != "" {
-			return nil, cmd.NewErrUsagef("--target-secret is not valid with --target-type baseten-model-api")
+	switch flags.TargetType {
+	case "baseten-model-api":
+		if flags.TargetConnection != "" {
+			return nil, cmd.NewErrUsagef("--target-connection is not valid with --target-type baseten-model-api")
 		}
-		err := target.FromRouteTargetConfigBasetenModelAPI(managementapi.RouteTargetConfigBasetenModelAPI{
+		err := target.FromUpsertRouteTargetBasetenModelAPI(managementapi.UpsertRouteTargetBasetenModelAPI{
 			Type:  "BASETEN_MODEL_API",
 			Model: flags.TargetModel,
 		})
 		return target, err
-	}
-	if flags.TargetSecret == "" {
-		return nil, cmd.NewErrUsagef("--target-secret is required with --target-type %s", flags.TargetType)
-	}
-	var err error
-	switch flags.TargetType {
-	case "anthropic":
-		err = target.FromRouteTargetConfigAnthropic(managementapi.RouteTargetConfigAnthropic{
-			Type:       "ANTHROPIC",
-			Model:      flags.TargetModel,
-			SecretName: flags.TargetSecret,
+	case "connection":
+		if flags.TargetConnection == "" {
+			return nil, cmd.NewErrUsagef("--target-connection is required with --target-type connection")
+		}
+		err := target.FromUpsertRouteTargetConnection(managementapi.UpsertRouteTargetConnection{
+			Type:         "CONNECTION",
+			Model:        flags.TargetModel,
+			ConnectionId: flags.TargetConnection,
 		})
-	case "openai":
-		err = target.FromRouteTargetConfigOpenAI(managementapi.RouteTargetConfigOpenAI{
-			Type:       "OPENAI",
-			Model:      flags.TargetModel,
-			SecretName: flags.TargetSecret,
-		})
-	case "xai":
-		err = target.FromRouteTargetConfigXAI(managementapi.RouteTargetConfigXAI{
-			Type:       "XAI",
-			Model:      flags.TargetModel,
-			SecretName: flags.TargetSecret,
-		})
+		return target, err
 	default:
 		return nil, cmd.NewErrUsagef("unsupported target type %q", flags.TargetType)
 	}
-	return target, err
 }
 
 func commandRouteCreate(ctx *CommandContext, flags *cmd.RouteCreateFlags) error {
@@ -260,20 +245,46 @@ func commandRouteDelete(ctx *CommandContext, flags *cmd.RouteDeleteFlags) error 
 	return nil
 }
 
+// routeTargetInfo is the displayable shape of any route target variant.
+type routeTargetInfo struct {
+	kind, model, connection string
+	// Classifier routes pick one of their allowed routes per request.
+	classifier, defaultRoute string
+	allowedRoutes            []string
+}
+
 // routeTargetFields extracts the shared fields from generated target variants,
 // like autoscalingScheduleFields does for schedule variants.
-func routeTargetFields(value any) (kind, model, secret string, err error) {
+func routeTargetFields(value any) (routeTargetInfo, error) {
 	switch t := value.(type) {
 	case managementapi.RouteTargetBasetenModelAPI:
-		return t.Type, t.Model, "", nil
-	case managementapi.RouteTargetAnthropic:
-		return t.Type, t.Model, t.SecretName, nil
-	case managementapi.RouteTargetOpenAI:
-		return t.Type, t.Model, t.SecretName, nil
-	case managementapi.RouteTargetXAI:
-		return t.Type, t.Model, t.SecretName, nil
+		return routeTargetInfo{kind: t.Type, model: t.Model}, nil
+	case managementapi.RouteTargetConnection:
+		return routeTargetInfo{kind: t.Type, model: t.Model, connection: t.ConnectionId}, nil
+	case managementapi.RouteTargetClassifierModelBased:
+		info := routeTargetInfo{kind: t.Type, classifier: t.ClassifierModelId, defaultRoute: t.DefaultRoute.Slug}
+		for _, r := range t.AllowedRoutes {
+			info.allowedRoutes = append(info.allowedRoutes, r.Slug)
+		}
+		return info, nil
 	default:
-		return "", "", "", fmt.Errorf("unsupported route target %T", value)
+		return routeTargetInfo{}, fmt.Errorf("unsupported route target %T", value)
+	}
+}
+
+// listConnections returns a team's route connections across all pages.
+func listConnections(ctx context.Context, api *managementapi.Client, params managementapi.GetV1RoutesConnectionsParams) ([]managementapi.RouteConnection, error) {
+	var connections []managementapi.RouteConnection
+	for {
+		resp, err := api.GetRoutesConnections(ctx, params)
+		if err != nil {
+			return nil, fmt.Errorf("list route connections: %w", err)
+		}
+		connections = append(connections, resp.Items...)
+		if !resp.Pagination.HasMore || resp.Pagination.Cursor == nil {
+			return connections, nil
+		}
+		params.Cursor = resp.Pagination.Cursor
 	}
 }
 

@@ -24,18 +24,18 @@ var commandRoute = Command{
 			Summary: "List routes (PRE-RELEASE)",
 			Flags:   RouteListFlags{},
 			Description: routePrereleaseNotice +
-				"List all routes you can invoke, newest first.",
+				"List a team's routes, newest first.",
 			Output: &CommandOutput[RouteList]{
 				JSONDescription: "All matching routes in items. " + routeTargetJSONDescription,
-				TextDescription: "Table with columns: ID, NAME, DISPLAY NAME, TEAM, TARGET, CREATED. " +
-					"When no routes match, prints \"No routes found.\" to stderr.",
+				TextDescription: "Table with columns: ID, DISPLAY NAME, NAME, CREATED. " +
+					"Use 'route describe' for a route's target and team. When no routes match, prints \"No routes found.\" to stderr.",
 				Examples: []CommandExample{
 					{
-						Description: "List all visible routes.",
+						Description: "List your only team's routes.",
 						Command:     "baseten route list",
 					},
 					{
-						Description: "Filter by team.",
+						Description: "List one team's routes.",
 						Command:     "baseten route list --team Engineering",
 					},
 				},
@@ -74,10 +74,9 @@ var commandRoute = Command{
 			Description: routePrereleaseNotice +
 				"Create a route with --target-type and --target-model. Baseten derives the route's name " +
 				"from its target. Find Model API names with 'baseten model-api list'.\n\n" +
-				"Omit --team to use the organization's default team. External targets require " +
-				"--target-secret, the name of an existing secret in the route's team. Store credentials " +
-				"in a secret with 'baseten org secret set --name <secret>'; pass the same --team value " +
-				"if the route uses a specific team.\n\n" +
+				"Omit --team to use the organization's default team. External providers are reached through " +
+				"a connection owned by the route's team, which holds the provider's API key; pass its ID with " +
+				"--target-connection. Pass the same --team value if the route uses a specific team.\n\n" +
 				"Set optional metadata with --display-name and --description.",
 			Output: &CommandOutput[managementapi.Route]{
 				JSONDescription: routeTargetJSONDescription,
@@ -91,11 +90,11 @@ var commandRoute = Command{
 						},
 					},
 					{
-						Description: "Create an external provider route.",
+						Description: "Create an external provider route through a team connection.",
 						CommandLines: []string{
 							"baseten route create",
-							"--target-type anthropic --target-model <model>",
-							"--target-secret anthropic-key",
+							"--target-type connection --target-model <model>",
+							"--target-connection <connection-id>",
 						},
 					},
 				},
@@ -258,9 +257,9 @@ type RouteRefFlags struct {
 }
 
 type RouteTargetFlags struct {
-	TargetType   string `flag:"target-type" desc:"Target type." enum:"baseten-model-api,anthropic,openai,xai" required:"true"`
-	TargetModel  string `flag:"target-model" desc:"Model API name or external provider model name." required:"true"`
-	TargetSecret string `flag:"target-secret" desc:"Name of an existing secret in the route's team. Required for external targets."`
+	TargetType       string `flag:"target-type" desc:"Target type." enum:"baseten-model-api,connection" required:"true"`
+	TargetModel      string `flag:"target-model" desc:"Model API name or external provider model name." required:"true"`
+	TargetConnection string `flag:"target-connection" desc:"ID of a connection in the route's team, whose provider serves the route. Required with --target-type connection."`
 }
 
 // RouteList contains the routes aggregated across all pages.
@@ -270,7 +269,7 @@ type RouteList struct {
 
 type RouteListFlags struct {
 	CommandFlags
-	Team string `flag:"team" desc:"Team name or ID to scope the listing to. Defaults to all routes you can invoke."`
+	Team string `flag:"team" desc:"Team name or ID to list routes of. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
 }
 
 type RouteDescribeFlags struct {

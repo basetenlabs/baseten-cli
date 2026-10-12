@@ -14,11 +14,11 @@ type openCodeHarness struct{}
 
 var openCodeSubagentPaths = [][]string{{"agent", "general", "model"}, {"agent", "explore", "model"}}
 
-// openCodeTargetPackages maps route targets to the AI SDK package for their
-// native API. Other targets use the provider's Chat Completions package.
-var openCodeTargetPackages = map[string]string{
-	TargetAnthropic: "@ai-sdk/anthropic",
-	TargetOpenAI:    "@ai-sdk/openai",
+// openCodeProviderPackages maps route providers to the AI SDK package for
+// their native API. Other providers use the Chat Completions package.
+var openCodeProviderPackages = map[string]string{
+	ProviderAnthropic: "@ai-sdk/anthropic",
+	ProviderOpenAI:    "@ai-sdk/openai",
 }
 
 var openCodeCredentialPath = []string{"provider", providerID, "options", "apiKey"}
@@ -90,7 +90,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 		}
 		// A model's npm overrides the provider's, so first-party routes use their
 		// native API at the same base URL: Messages for Anthropic, Responses for OpenAI.
-		if npm, ok := openCodeTargetPackages[r.Target]; ok {
+		if npm, ok := openCodeProviderPackages[r.Provider]; ok {
 			model["provider"] = map[string]any{"npm": npm}
 		}
 		models[r.Name] = model

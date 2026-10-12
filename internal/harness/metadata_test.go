@@ -177,7 +177,7 @@ func TestPiCarriesCompleteRouteCost(t *testing.T) {
 }
 
 func TestNewRoute(t *testing.T) {
-	_, err := NewRoute(managementapi.Route{Name: "acme/bare"})
+	_, err := NewRoute(managementapi.Route{Name: "acme/bare"}, nil)
 	require.ErrorContains(t, err, `route "acme/bare" has no model metadata`)
 
 	ptr := func(v float32) *float32 { return &v }
@@ -185,8 +185,41 @@ func TestNewRoute(t *testing.T) {
 	r, err := NewRoute(managementapi.Route{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.ExploreMetadata{
 		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools,
 		Cost: &managementapi.ExploreCost{Input: ptr(0.3), Output: ptr(1.2), LongContext: &managementapi.ExploreCostValues{Input: ptr(0.6)}},
-	}})
+	}}, nil)
 	require.NoError(t, err)
 	require.True(t, r.Messages && r.Responses, "a route without API formats is listed in every harness")
 	require.Equal(t, &Cost{Input: 0.3, Output: 1.2}, r.Cost, "a long-context price without output is dropped")
+}
+
+func TestRouteProviderComesFromConnections(t *testing.T) {
+	connection := func(id, provider string) managementapi.RouteConnection {
+		c := managementapi.RouteConnection{Id: id}
+		require.NoError(t, json.Unmarshal([]byte(`{"provider": "`+provider+`", "secret_id": "s", "secret_name": "key"}`), &c.Config))
+		return c
+	}
+	providers := NewProviders([]managementapi.RouteConnection{connection("conn-a", "ANTHROPIC"), connection("conn-o", "OPENAI"), connection("conn-x", "XAI")})
+	require.Equal(t, Providers{"conn-a": ProviderAnthropic, "conn-o": ProviderOpenAI, "conn-x": "XAI"}, providers)
+
+	tools, ctx, out := true, 128000, 4096
+	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools}
+	for _, tc := range []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{"anthropic connection", `{"type": "CONNECTION", "connection_id": "conn-a", "model": "claude"}`, ProviderAnthropic},
+		{"openai connection", `{"type": "CONNECTION", "connection_id": "conn-o", "model": "gpt"}`, ProviderOpenAI},
+		{"xai connection", `{"type": "CONNECTION", "connection_id": "conn-x", "model": "grok"}`, "XAI"},
+		{"unknown connection", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, ""},
+		{"baseten model api", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, ProviderBaseten},
+		{"classifier", `{"type": "CLASSIFIER_MODEL_BASED", "classifier_model_id": "m", "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := managementapi.Route{Name: "acme/route", DisplayName: "Route", Metadata: metadata}
+			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
+			r, err := NewRoute(api, providers)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, r.Provider)
+		})
+	}
 }

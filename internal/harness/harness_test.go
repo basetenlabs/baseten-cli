@@ -455,9 +455,9 @@ func TestOpenCodeJSONC(t *testing.T) {
 func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, openCodeHarness{})
 	routes := testRoutes()
-	routes[0].Target = TargetAnthropic
-	routes[1].Target = TargetOpenAI
-	routes[2].Target = "XAI"
+	routes[0].Provider = ProviderAnthropic
+	routes[1].Provider = ProviderOpenAI
+	routes[2].Provider = "XAI"
 	setup(t, openCodeHarness{}, path, routes, Selection{})
 	data := load(t, path)
 	require.Equal(t, "@ai-sdk/openai-compatible", get(data, []string{"provider", providerID, "npm"}).Data)
@@ -471,9 +471,9 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, piHarness{})
 	routes := testRoutes()
-	routes[0].Target = TargetAnthropic
-	routes[1].Target = TargetOpenAI
-	routes[2].Target = "XAI"
+	routes[0].Provider = ProviderAnthropic
+	routes[1].Provider = ProviderOpenAI
+	routes[2].Provider = "XAI"
 	setup(t, piHarness{}, path, routes, Selection{})
 	provider := get(load(t, path), piProviderPath).Data.(map[string]any)
 	require.Equal(t, "openai-completions", provider["api"])

@@ -77,6 +77,7 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
+	api.SetRoute("GET", "/v1/routes/connections", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}})
 	for _, team := range []string{"team-a", "team-b"} {
 		api.SetRoute("POST", "/v1/teams/"+team+"/api_keys", 200, map[string]string{"api_key": "secret-" + team})
 		api.SetRoute("DELETE", "/v1/api_keys/secret-"+team, 200, map[string]string{"prefix": "secret-" + team})
@@ -918,20 +919,46 @@ func Test_Harness_Setup_RouterRouteInPickers(t *testing.T) {
 	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 }
 
-func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
-	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+// serveFirstPartyRoutes serves an Anthropic route and an OpenAI route, each
+// through a team connection, a Baseten-hosted route, and a route whose
+// connection no longer exists.
+func serveFirstPartyRoutes(api *MockManagementAPI) {
 	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
 		"items": []any{
 			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "ANTHROPIC", "model": "claude-opus-5-5", "secret_name": "anthropic-key"}},
+				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}},
 			map[string]any{"id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "OPENAI", "model": "gpt-5.5", "secret_name": "openai-key"}},
+				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-openai"}},
 			map[string]any{"id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
+			map[string]any{"id": "route-d", "name": "acme/orphan", "display_name": "Orphan", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-deleted"}},
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
+	// Connections page, so the join reads every page.
+	api.SetRouteFunc("GET", "/v1/routes/connections", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("cursor") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []any{map[string]any{"id": "conn-anthropic", "team_id": r.URL.Query().Get("team_id"), "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z",
+					"config": map[string]any{"provider": "ANTHROPIC", "secret_id": "s1", "secret_name": "anthropic-key"}}},
+				"pagination": map[string]any{"has_more": true, "cursor": "page-two"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []any{map[string]any{"id": "conn-openai", "team_id": r.URL.Query().Get("team_id"), "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z",
+				"config": map[string]any{"provider": "OPENAI", "secret_id": "s2", "secret_name": "openai-key"}}},
+			"pagination": map[string]any{"has_more": false},
+		})
+	})
+}
+
+func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeHarnessAPI(t)
+	serveFirstPartyRoutes(api)
 	dir := t.TempDir()
 	path := harnessSettingsFile("opencode", dir)
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"))
@@ -940,22 +967,17 @@ func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/claude"].(map[string]any)["provider"])
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/openai"}, models["acme/gpt"].(map[string]any)["provider"])
 	h.Require.NotContains(models["acme/open"], "provider")
+	h.Require.NotContains(models["acme/orphan"], "provider", "a route whose connection is unknown is called with Chat Completions")
+	h.Require.Contains(h.Stderr.String(), "warning: routes whose connection is not in the team's connections are called with the Chat Completions API: acme/orphan")
+	connections := api.FindCall("GET", "/v1/routes/connections")
+	h.Require.NotNil(connections)
+	h.Require.Contains(connections.RawQuery, "team_id=team-a")
 }
 
 func Test_Harness_Setup_PiFirstPartyRoutes(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
-	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
-		"items": []any{
-			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "ANTHROPIC", "model": "claude-opus-5-5", "secret_name": "anthropic-key"}},
-			map[string]any{"id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "OPENAI", "model": "gpt-5.5", "secret_name": "openai-key"}},
-			map[string]any{"id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
-		},
-		"pagination": map[string]any{"has_more": false},
-	})
+	serveFirstPartyRoutes(api)
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "pi", "--config-dir", dir, "--yes"))
 	provider := readHarnessSettings(t, "pi", harnessSettingsFile("pi", dir))["providers"].(map[string]any)["baseten-harness"].(map[string]any)
@@ -963,7 +985,7 @@ func Test_Harness_Setup_PiFirstPartyRoutes(t *testing.T) {
 	for _, m := range provider["models"].([]any) {
 		apis[m.(map[string]any)["id"].(string)] = m.(map[string]any)["api"]
 	}
-	h.Require.Equal(map[string]any{"acme/claude": "anthropic-messages", "acme/gpt": "openai-responses", "acme/open": nil}, apis)
+	h.Require.Equal(map[string]any{"acme/claude": "anthropic-messages", "acme/gpt": "openai-responses", "acme/open": nil, "acme/orphan": nil}, apis)
 	settings := readHarnessSettings(t, "pi", filepath.Join(dir, "settings.json"))
 	h.Require.Equal(map[string]any{"defaultProvider": "baseten-harness", "defaultModel": "acme/claude"}, settings)
 }

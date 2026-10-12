@@ -98,9 +98,11 @@ func All() []Harness {
 type Route struct {
 	Name        string
 	DisplayName string
-	// Target is the route's upstream provider, such as TargetAnthropic, which
-	// decides the API a harness calls the route with.
-	Target          string
+	// Provider is the route's upstream provider, such as ProviderAnthropic,
+	// which decides the API a harness calls the route with. It is "" when
+	// unknown, as for a router that picks a route per request, and such a
+	// route is called with the Chat Completions API.
+	Provider        string
 	ContextWindow   int
 	OutputLimit     int
 	InputModalities []string
@@ -123,11 +125,26 @@ type Cost struct {
 	LongContext *Cost
 }
 
-// NewRoute converts a route from the routes API. It fails if the route's model
-// metadata is missing or is not enough to configure a harness.
-func NewRoute(api managementapi.Route) (Route, error) {
-	target, _ := api.Target.Discriminator()
-	r := Route{Name: api.Name, DisplayName: api.DisplayName, Target: target}
+// Providers lists a team's route connections by ID, as the provider each
+// one authenticates with.
+type Providers map[string]string
+
+// NewProviders indexes a team's connections by ID.
+func NewProviders(connections []managementapi.RouteConnection) Providers {
+	providers := Providers{}
+	for _, c := range connections {
+		if provider, err := c.Config.Discriminator(); err == nil {
+			providers[c.Id] = provider
+		}
+	}
+	return providers
+}
+
+// NewRoute converts a route from the routes API, resolving the provider of a
+// route that reaches one through a team connection. It fails if the route's
+// model metadata is missing or is not enough to configure a harness.
+func NewRoute(api managementapi.Route, providers Providers) (Route, error) {
+	r := Route{Name: api.Name, DisplayName: api.DisplayName, Provider: routeProvider(api, providers)}
 	m := api.Metadata
 	if m == nil {
 		return r, fmt.Errorf("route %q has no model metadata", r.Name)
@@ -237,11 +254,25 @@ func reasoningBounds(levels []string) (low, high any) {
 	return slices.MinFunc(ranked, byRank), slices.MaxFunc(ranked, byRank)
 }
 
-// Route target types, as the routes API reports them.
+// Route providers, as the routes API names them on connections and targets.
 const (
-	TargetAnthropic = "ANTHROPIC"
-	TargetOpenAI    = "OPENAI"
+	ProviderAnthropic = "ANTHROPIC"
+	ProviderOpenAI    = "OPENAI"
+	ProviderBaseten   = "BASETEN_MODEL_API"
 )
+
+// routeProvider is the provider behind a route's target, or "" if unknown.
+func routeProvider(api managementapi.Route, providers Providers) string {
+	switch kind, _ := api.Target.Discriminator(); kind {
+	case ProviderBaseten:
+		return ProviderBaseten
+	case "CONNECTION":
+		if t, err := api.Target.AsRouteTargetConnection(); err == nil {
+			return providers[t.ConnectionId]
+		}
+	}
+	return ""
+}
 
 // Selection holds the requested routes. Empty fields use each harness's default.
 type Selection struct {
