@@ -111,16 +111,18 @@ func (h openCodeHarness) Detect(ctx context.Context, execer Execer, dir string) 
 	} else if err != nil {
 		return Detection{}, err
 	}
-	return detect(ctx, execer, h.Name(), openCodeBinary(execer), path)
+	return detect(ctx, execer, h.Name(), openCodeCandidates(), path)
 }
 
-func openCodeBinary(execer Execer) string {
-	for _, binary := range append([]string{"opencode"}, desktopOpenCodeBinaries()...) {
-		if _, err := execer.LookPath(binary); err == nil {
-			return binary
-		}
+// openCodeCandidates lists the CLI on PATH, then desktop app bundles, then
+// the CLI copy the desktop app's installer leaves in ~/.opencode/bin, which
+// is a CLI whether or not it is on PATH.
+func openCodeCandidates() []candidate {
+	candidates := append([]candidate{cliCandidate("opencode")}, desktopCandidates(desktopOpenCodeBinaries()...)...)
+	if home, err := os.UserHomeDir(); err == nil && runtime.GOOS != "windows" {
+		candidates = append(candidates, cliCandidate(filepath.Join(home, ".opencode", "bin", "opencode")))
 	}
-	return "opencode"
+	return candidates
 }
 
 // linuxDesktopOpenCode is where OpenCode Desktop's Linux packages install the
@@ -139,33 +141,27 @@ func OpenCodeDesktopLocations() string {
 	return ""
 }
 
-// desktopOpenCodeBinaries lists where OpenCode Desktop bundles the CLI without
-// adding it to PATH, and where its optional CLI installer puts a copy. The
-// bundled CLI shares the CLI's settings file. Nothing is listed on Windows,
-// where harness setup is not supported.
+// desktopOpenCodeBinaries lists where OpenCode Desktop bundles the CLI
+// without adding it to PATH. The bundled CLI shares the CLI's settings file.
+// Nothing is listed on Windows, where harness setup is not supported.
 func desktopOpenCodeBinaries() []string {
-	var binaries []string
-	home, err := os.UserHomeDir()
 	switch runtime.GOOS {
 	case "darwin":
 		roots := []string{"/Applications"}
-		if err == nil {
+		if home, err := os.UserHomeDir(); err == nil {
 			roots = append(roots, filepath.Join(home, "Applications"))
 		}
+		var binaries []string
 		for _, root := range roots {
 			for _, app := range []string{"OpenCode.app", "OpenCode Beta.app"} {
 				binaries = append(binaries, filepath.Join(root, app, "Contents", "Resources", "opencode-cli"))
 			}
 		}
+		return binaries
 	case "linux":
-		binaries = append(binaries, linuxDesktopOpenCode)
-	default:
-		return nil
+		return []string{linuxDesktopOpenCode}
 	}
-	if err == nil {
-		binaries = append(binaries, filepath.Join(home, ".opencode", "bin", "opencode"))
-	}
-	return binaries
+	return nil
 }
 
 func (openCodeHarness) BackgroundRoute(s Selection) string {

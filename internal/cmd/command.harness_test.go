@@ -50,6 +50,30 @@ func (fakeHarnessExecer) Exec(command *exec.Cmd) error {
 	return err
 }
 
+// versionedHarnessExecer finds only the listed binaries, each printing its
+// own --version output. Bare names resolve under /fake, as on PATH.
+type versionedHarnessExecer map[string]string
+
+func (e versionedHarnessExecer) LookPath(name string) (string, error) {
+	if _, ok := e[name]; !ok {
+		return "", exec.ErrNotFound
+	}
+	if filepath.IsAbs(name) {
+		return name, nil
+	}
+	return "/fake/" + name, nil
+}
+
+func (e versionedHarnessExecer) Exec(command *exec.Cmd) error {
+	for name, version := range e {
+		if command.Path == name || command.Path == "/fake/"+name {
+			_, err := fmt.Fprintln(command.Stdout, version)
+			return err
+		}
+	}
+	return errors.New("unknown harness executed")
+}
+
 type missingHarnessExecer struct{}
 
 func (missingHarnessExecer) LookPath(string) (string, error) { return "", exec.ErrNotFound }
@@ -378,6 +402,31 @@ func Test_Harness_Setup_OpenCodeDesktopWithoutCLI(t *testing.T) {
 	h.Require.Len(statuses.Items, 1)
 	h.Require.True(statuses.Items[0].Installed)
 	h.Require.Equal("configured", statuses.Items[0].State)
+	h.Require.Equal([]public.HarnessInstall{{Kind: "Desktop", Binary: binary, Version: "1.2.3"}}, statuses.Items[0].Installs)
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "opencode"))
+	h.Require.Contains(h.Stdout.String(), "Version           1.2.3\n")
+}
+
+func Test_Harness_Status_ListsEveryInstall(t *testing.T) {
+	skipUnlessSupported(t)
+	desktop := "/Applications/OpenCode.app/Contents/Resources/opencode-cli"
+	if runtime.GOOS == "linux" {
+		desktop = "/opt/OpenCode/resources/opencode-cli"
+	}
+	h, _ := fakeHarnessAPI(t)
+	h.Context = internalcmd.WithExecer(h.Context, versionedHarnessExecer{"opencode": "1.18.34", desktop: "opencode v2.0.27"})
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--yes"))
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "opencode"))
+	h.Require.Contains(h.Stdout.String(), "Version           1.18.34 (CLI), 2.0.27 (Desktop)\n")
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "opencode", "--output", "json"))
+	var statuses public.HarnessStatusList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
+	h.Require.Equal([]public.HarnessInstall{
+		{Kind: "CLI", Binary: "/fake/opencode", Version: "1.18.34"},
+		{Kind: "Desktop", Binary: desktop, Version: "opencode v2.0.27"},
+	}, statuses.Items[0].Installs)
 }
 
 func Test_Harness_Setup_OpenCodeFormatFollowsTheFile(t *testing.T) {

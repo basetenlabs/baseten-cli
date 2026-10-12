@@ -31,6 +31,31 @@ func init() {
 // harnessPickerLabelWidth caps picker labels so they don't wrap.
 const harnessPickerLabelWidth = 80
 
+func harnessInstalls(d harness.Detection) []cmd.HarnessInstall {
+	installs := make([]cmd.HarnessInstall, 0, len(d.Installs))
+	for _, install := range d.Installs {
+		installs = append(installs, cmd.HarnessInstall{Kind: install.Kind, Binary: install.Binary, Version: install.Version})
+	}
+	return installs
+}
+
+// harnessInstallsLabel summarizes a harness's installs as "1.2.3" for one
+// CLI, or "1.2.3 (CLI), 2.0.1 (Desktop)" when several were found.
+func harnessInstallsLabel(installs []cmd.HarnessInstall) string {
+	if len(installs) == 0 {
+		return "not found"
+	}
+	parts := make([]string, 0, len(installs))
+	for _, install := range installs {
+		version := cmp.Or(harnessVersionNumber.FindString(install.Version), "version unavailable")
+		if len(installs) > 1 {
+			version += " (" + install.Kind + ")"
+		}
+		parts = append(parts, version)
+	}
+	return strings.Join(parts, ", ")
+}
+
 // harnessVersionNumber finds the version number in a harness's --version
 // output, such as "2.1.272" in "2.1.272 (Claude Code)" or "0.134.0" in
 // "codex-cli 0.134.0".
@@ -99,8 +124,7 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 	// path, which can be arbitrarily long, and the rest of the version output.
 	options := make([]huh.Option[string], 0, len(selected))
 	for _, s := range selected {
-		version := cmp.Or(harnessVersionNumber.FindString(s.detection.Version), "version unavailable")
-		label := ansi.Truncate(s.Name()+"  "+version, harnessPickerLabelWidth, "…")
+		label := ansi.Truncate(s.Name()+"  "+harnessInstallsLabel(harnessInstalls(s.detection)), harnessPickerLabelWidth, "…")
 		options = append(options, huh.NewOption(label, s.Name()))
 	}
 	var names []string
@@ -380,7 +404,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 			Harness:         r.Name,
 			Config:          r.Path,
 			Installed:       r.Installed,
-			Version:         r.Version,
+			Installs:        harnessInstalls(r.Detection),
 			State:           r.State,
 			DefaultRoute:    r.DefaultRoute,
 			BackgroundRoute: r.BackgroundRoute,
@@ -399,11 +423,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 	for _, r := range results {
 		ctx.Outputf("%s: %s\n", r.Harness, r.State)
 		ctx.Outputf("  Config            %s\n", harnessDisplayPath(r.Config))
-		if !r.Installed {
-			ctx.OutputLine("  Version           not found")
-		} else {
-			ctx.Outputf("  Version           %s\n", cmp.Or(r.Version, "unavailable"))
-		}
+		ctx.Outputf("  Version           %s\n", harnessInstallsLabel(r.Installs))
 		if r.DefaultRoute != "" {
 			ctx.Outputf("  Default route     %s\n", r.DefaultRoute)
 		}

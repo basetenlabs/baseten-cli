@@ -50,25 +50,86 @@ func (fakeExecer) Exec(command *exec.Cmd) error {
 	return err
 }
 
-type codexDetectionExecer struct {
+// onPATH is where detectionExecer finds a bare binary name, as on PATH.
+func onPATH(name string) string { return filepath.Join(string(filepath.Separator), "cli", name) }
+
+// detectionExecer finds only the listed binaries. A bare name, as looked up
+// on PATH, resolves with onPATH; a path resolves to itself. Each binary
+// reports the version it maps to, or 1.2.3 if true.
+type detectionExecer struct {
 	fakeExecer
-	binaries map[string]bool
-	executed string
+	binaries map[string]any
+	executed []string
 }
 
-func (e *codexDetectionExecer) LookPath(name string) (string, error) {
-	if !e.binaries[name] {
+func (e *detectionExecer) LookPath(name string) (string, error) {
+	if _, ok := e.binaries[name]; !ok {
 		return "", exec.ErrNotFound
 	}
-	if name == "codex" {
-		return "/cli/codex", nil
+	if !strings.ContainsRune(name, filepath.Separator) {
+		return onPATH(name), nil
 	}
 	return name, nil
 }
 
-func (e *codexDetectionExecer) Exec(command *exec.Cmd) error {
-	e.executed = command.Path
+func (e *detectionExecer) Exec(command *exec.Cmd) error {
+	e.executed = append(e.executed, command.Path)
+	for name, version := range e.binaries {
+		if version, ok := version.(string); ok && (name == command.Path || onPATH(name) == command.Path) {
+			_, err := fmt.Fprintln(command.Stdout, version)
+			return err
+		}
+	}
 	return e.fakeExecer.Exec(command)
+}
+
+// desktopDetectionCase is one layout of harness installs on this machine.
+type desktopDetectionCase struct {
+	name     string
+	binaries map[string]any
+	want     []Install
+	// goos lists the platforms where want applies. On other platforms the
+	// desktop installs are not looked for, so only the installs in elsewhere
+	// are found, and on Windows only the one on PATH. Empty means every
+	// platform.
+	goos      []string
+	elsewhere []Install
+}
+
+func testDesktopDetection(t *testing.T, h Harness, path string, cases []desktopDetectionCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			execer := &detectionExecer{binaries: tc.binaries}
+			want := tc.want
+			if len(tc.goos) > 0 && !slices.Contains(tc.goos, runtime.GOOS) {
+				want = tc.elsewhere
+				if runtime.GOOS == "windows" {
+					want = slices.DeleteFunc(slices.Clone(want), func(i Install) bool { return !strings.HasPrefix(i.Binary, onPATH("")) })
+					if len(want) == 0 {
+						want = nil
+					}
+				}
+			}
+			d, err := h.Detect(t.Context(), execer, "")
+			require.NoError(t, err)
+			require.Equal(t, path, d.Path)
+			require.Equal(t, want != nil, d.Installed)
+			require.Equal(t, want, d.Installs)
+			var executed []string
+			for _, install := range want {
+				executed = append(executed, install.Binary)
+			}
+			require.Equal(t, executed, execer.executed, "every install's version is read, and only those")
+		})
+	}
+}
+
+func cli(binary, version string) Install {
+	return Install{Kind: InstallCLI, Binary: binary, Version: version}
+}
+func desktop(binary, version string) Install {
+	return Install{Kind: InstallDesktop, Binary: binary, Version: version}
 }
 
 func TestCodexDesktopDetection(t *testing.T) {
@@ -86,52 +147,66 @@ func TestCodexDesktopDetection(t *testing.T) {
 	}
 	chatgpt := bundled("/Applications", "ChatGPT.app")
 	linuxChatGPT := "/usr/lib/chatgpt/resources/codex"
-	for _, tc := range []struct {
-		name     string
-		binaries map[string]bool
-		want     string
-		// goos is the only platform where want applies; elsewhere nothing is found.
-		goos string
-	}{
-		{"chatgpt", map[string]bool{chatgpt: true}, chatgpt, "darwin"},
-		{"new chatgpt", map[string]bool{newBundled("/Applications", "ChatGPT.app"): true}, newBundled("/Applications", "ChatGPT.app"), "darwin"},
-		{"codex", map[string]bool{bundled("/Applications", "Codex.app"): true}, bundled("/Applications", "Codex.app"), "darwin"},
-		{"new codex", map[string]bool{newBundled("/Applications", "Codex.app"): true}, newBundled("/Applications", "Codex.app"), "darwin"},
-		{"user chatgpt", map[string]bool{bundled(filepath.Join(home, "Applications"), "ChatGPT.app"): true}, bundled(filepath.Join(home, "Applications"), "ChatGPT.app"), "darwin"},
-		{"new user chatgpt", map[string]bool{newBundled(filepath.Join(home, "Applications"), "ChatGPT.app"): true}, newBundled(filepath.Join(home, "Applications"), "ChatGPT.app"), "darwin"},
-		{"user codex", map[string]bool{bundled(filepath.Join(home, "Applications"), "Codex.app"): true}, bundled(filepath.Join(home, "Applications"), "Codex.app"), "darwin"},
-		{"new user codex", map[string]bool{newBundled(filepath.Join(home, "Applications"), "Codex.app"): true}, newBundled(filepath.Join(home, "Applications"), "Codex.app"), "darwin"},
-		{"linux chatgpt", map[string]bool{linuxChatGPT: true}, linuxChatGPT, "linux"},
-		{"CLI takes precedence", map[string]bool{"codex": true, chatgpt: true, linuxChatGPT: true}, "/cli/codex", ""},
-		{"config alone is not an installation", nil, "", ""},
-		{"classic app without bundled codex", map[string]bool{"/Applications/ChatGPT.app/Contents/MacOS/ChatGPT": true}, "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			execer := &codexDetectionExecer{binaries: tc.binaries}
-			want := tc.want
-			if tc.goos != "" && tc.goos != runtime.GOOS {
-				want = ""
-			}
-			d, err := codexHarness{}.Detect(t.Context(), execer, "")
-			require.NoError(t, err)
-			require.Equal(t, path, d.Path)
-			require.Equal(t, want != "", d.Installed)
-			require.Equal(t, want, execer.executed)
-			if d.Installed {
-				require.Equal(t, "1.2.3", d.Version)
-			}
-		})
+	one := func(binary string, goos string) desktopDetectionCase {
+		return desktopDetectionCase{name: binary, binaries: map[string]any{binary: true}, want: []Install{desktop(binary, "1.2.3")}, goos: []string{goos}}
 	}
+	darwin := map[string]any{"codex": "0.1.0", chatgpt: "0.2.0"}
+	linux := map[string]any{"codex": "0.1.0", linuxChatGPT: "0.3.0"}
+	testDesktopDetection(t, codexHarness{}, path, []desktopDetectionCase{
+		one(chatgpt, "darwin"),
+		one(newBundled("/Applications", "ChatGPT.app"), "darwin"),
+		one(bundled("/Applications", "Codex.app"), "darwin"),
+		one(newBundled("/Applications", "Codex.app"), "darwin"),
+		one(bundled(filepath.Join(home, "Applications"), "ChatGPT.app"), "darwin"),
+		one(newBundled(filepath.Join(home, "Applications"), "ChatGPT.app"), "darwin"),
+		one(bundled(filepath.Join(home, "Applications"), "Codex.app"), "darwin"),
+		one(newBundled(filepath.Join(home, "Applications"), "Codex.app"), "darwin"),
+		one(linuxChatGPT, "linux"),
+		{name: "CLI and desktop on darwin", binaries: darwin, want: []Install{cli(onPATH("codex"), "0.1.0"), desktop(chatgpt, "0.2.0")}, goos: []string{"darwin"}, elsewhere: []Install{cli(onPATH("codex"), "0.1.0")}},
+		{name: "CLI and desktop on linux", binaries: linux, want: []Install{cli(onPATH("codex"), "0.1.0"), desktop(linuxChatGPT, "0.3.0")}, goos: []string{"linux"}, elsewhere: []Install{cli(onPATH("codex"), "0.1.0")}},
+		{name: "config alone is not an installation"},
+		{name: "classic app without bundled codex", binaries: map[string]any{"/Applications/ChatGPT.app/Contents/MacOS/ChatGPT": true}},
+	})
 }
 
 func TestCodexDesktopDetectionWithoutHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	t.Setenv("USERPROFILE", "")
 	chatgpt := filepath.Join("/Applications", "ChatGPT.app", "Contents", "Resources", "codex")
-	execer := &codexDetectionExecer{binaries: map[string]bool{chatgpt: true}}
+	execer := &detectionExecer{binaries: map[string]any{chatgpt: true}}
 	d, err := codexHarness{}.Detect(t.Context(), execer, t.TempDir())
 	require.NoError(t, err)
 	require.Equal(t, runtime.GOOS == "darwin", d.Installed)
+}
+
+// lookPathExecer resolves binaries like the real CLI does, and fakes only
+// running them.
+type lookPathExecer struct{ fakeExecer }
+
+func (lookPathExecer) LookPath(name string) (string, error) { return exec.LookPath(name) }
+
+func TestDetectListsOneInstallPerExecutable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("desktop installs are not looked for on Windows")
+	}
+	// OpenCode Desktop's CLI installer puts the CLI in ~/.opencode/bin and
+	// the user links it onto PATH, so the same executable is found twice.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	target := filepath.Join(home, ".opencode", "bin", "opencode")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
+	require.NoError(t, os.WriteFile(target, []byte("#!/bin/sh\n"), 0o700))
+	link := filepath.Join(home, "bin", "opencode")
+	require.NoError(t, os.MkdirAll(filepath.Dir(link), 0o700))
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Setenv("PATH", filepath.Dir(link))
+	d, err := openCodeHarness{}.Detect(t.Context(), lookPathExecer{}, "")
+	require.NoError(t, err)
+	require.Equal(t, []Install{cli(link, "1.2.3")}, d.Installs)
 }
 
 // settingsPath is the settings file h uses in a fresh configuration directory.
@@ -682,27 +757,6 @@ func TestOpenCodeV2OptionalSubagentCleanup(t *testing.T) {
 	require.False(t, get(load(t, path), openCodeV2SubagentPaths[0]).Exists, "a retired subagent route is cleared on refresh")
 }
 
-type openCodeDetectionExecer struct {
-	fakeExecer
-	binaries map[string]bool
-	executed string
-}
-
-func (e *openCodeDetectionExecer) LookPath(name string) (string, error) {
-	if !e.binaries[name] {
-		return "", exec.ErrNotFound
-	}
-	if name == "opencode" {
-		return "/cli/opencode", nil
-	}
-	return name, nil
-}
-
-func (e *openCodeDetectionExecer) Exec(command *exec.Cmd) error {
-	e.executed = command.Path
-	return e.fakeExecer.Exec(command)
-}
-
 func TestOpenCodeDesktopDetection(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -713,36 +767,24 @@ func TestOpenCodeDesktopDetection(t *testing.T) {
 		return filepath.Join(root, app, "Contents", "Resources", "opencode-cli")
 	}
 	installed := filepath.Join(home, ".opencode", "bin", "opencode")
-	desktop := bundled("/Applications", "OpenCode.app")
-	for _, tc := range []struct {
-		name     string
-		binaries map[string]bool
-		want     string
-		// goos lists the platforms where want applies; elsewhere nothing is
-		// found. Empty means every platform.
-		goos []string
-	}{
-		{"desktop", map[string]bool{desktop: true}, desktop, []string{"darwin"}},
-		{"beta", map[string]bool{bundled("/Applications", "OpenCode Beta.app"): true}, bundled("/Applications", "OpenCode Beta.app"), []string{"darwin"}},
-		{"user desktop", map[string]bool{bundled(filepath.Join(home, "Applications"), "OpenCode.app"): true}, bundled(filepath.Join(home, "Applications"), "OpenCode.app"), []string{"darwin"}},
-		{"linux desktop", map[string]bool{linuxDesktopOpenCode: true}, linuxDesktopOpenCode, []string{"linux"}},
-		{"installed by desktop", map[string]bool{installed: true}, installed, []string{"darwin", "linux"}},
-		{"CLI takes precedence", map[string]bool{"opencode": true, desktop: true, linuxDesktopOpenCode: true, installed: true}, "/cli/opencode", nil},
-		{"config alone is not an installation", nil, "", nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			execer := &openCodeDetectionExecer{binaries: tc.binaries}
-			want := tc.want
-			if len(tc.goos) > 0 && !slices.Contains(tc.goos, runtime.GOOS) {
-				want = ""
-			}
-			d, err := openCodeHarness{}.Detect(t.Context(), execer, "")
-			require.NoError(t, err)
-			require.Equal(t, path, d.Path)
-			require.Equal(t, want != "", d.Installed)
-			require.Equal(t, want, execer.executed)
-		})
+	desktopApp := bundled("/Applications", "OpenCode.app")
+	one := func(binary string, goos string) desktopDetectionCase {
+		return desktopDetectionCase{name: binary, binaries: map[string]any{binary: true}, want: []Install{desktop(binary, "1.2.3")}, goos: []string{goos}}
 	}
+	darwin := map[string]any{"opencode": "1.0.0", desktopApp: "2.0.0", installed: "2.0.1"}
+	linux := map[string]any{"opencode": "1.0.0", linuxDesktopOpenCode: "2.0.0", installed: "2.0.1"}
+	testDesktopDetection(t, openCodeHarness{}, path, []desktopDetectionCase{
+		one(desktopApp, "darwin"),
+		one(bundled("/Applications", "OpenCode Beta.app"), "darwin"),
+		one(bundled(filepath.Join(home, "Applications"), "OpenCode.app"), "darwin"),
+		one(linuxDesktopOpenCode, "linux"),
+		{name: "installed by desktop", binaries: map[string]any{installed: true}, want: []Install{cli(installed, "1.2.3")}, goos: []string{"darwin", "linux"}},
+		{name: "everything on darwin", binaries: darwin, want: []Install{cli(onPATH("opencode"), "1.0.0"), desktop(desktopApp, "2.0.0"), cli(installed, "2.0.1")}, goos: []string{"darwin"},
+			elsewhere: []Install{cli(onPATH("opencode"), "1.0.0"), cli(installed, "2.0.1")}},
+		{name: "everything on linux", binaries: linux, want: []Install{cli(onPATH("opencode"), "1.0.0"), desktop(linuxDesktopOpenCode, "2.0.0"), cli(installed, "2.0.1")}, goos: []string{"linux"},
+			elsewhere: []Install{cli(onPATH("opencode"), "1.0.0"), cli(installed, "2.0.1")}},
+		{name: "config alone is not an installation"},
+	})
 }
 
 func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
@@ -889,7 +931,13 @@ func TestDetect(t *testing.T) {
 		t.Run(tc.h.Name(), func(t *testing.T) {
 			d, err := tc.h.Detect(t.Context(), fakeExecer{}, "")
 			require.NoError(t, err)
-			require.Equal(t, Detection{Name: tc.h.Name(), Path: tc.defaultPath, Installed: true, Version: "1.2.3"}, d)
+			// fakeExecer finds every binary, so desktop installs are listed too.
+			require.NotEmpty(t, d.Installs)
+			d.Installs = d.Installs[:1]
+			binary := map[string]string{ClaudeCode: "claude", Codex: "codex", OpenCode: "opencode", Pi: "pi"}[tc.h.Name()]
+			want := Detection{Name: tc.h.Name(), Path: tc.defaultPath, Installed: true,
+				Installs: []Install{cli(filepath.Join(string(filepath.Separator), "fake", binary), "1.2.3")}}
+			require.Equal(t, want, d)
 			t.Setenv(tc.env, custom)
 			d, err = tc.h.Detect(t.Context(), fakeExecer{missing: true}, "")
 			require.NoError(t, err)

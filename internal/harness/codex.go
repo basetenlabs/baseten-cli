@@ -30,9 +30,14 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 		return Detection{}, err
 	}
 	path := filepath.Join(dir, "config.toml")
-	return detect(ctx, execer, h.Name(), codexBinary(execer), path)
+	return detect(ctx, execer, h.Name(), codexCandidates(), path)
 }
 
+func codexCandidates() []candidate {
+	return append([]candidate{cliCandidate("codex")}, desktopCandidates(desktopCodexBinaries()...)...)
+}
+
+// codexBinary is the Codex that codexCommand runs: the CLI, else a desktop app's.
 func codexBinary(execer Execer) string {
 	for _, binary := range append([]string{"codex"}, desktopCodexBinaries()...) {
 		if _, err := execer.LookPath(binary); err == nil {
