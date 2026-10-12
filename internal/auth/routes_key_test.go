@@ -13,13 +13,14 @@ import (
 func TestRoutesKey_ScopeIsolation(t *testing.T) {
 	keyring.MockInit()
 	store := auth.NewStore(auth.StoreOptions{Dir: t.TempDir()})
-	scope := auth.RoutesKeyScope{ManagementURL: "https://api.example.com", UserID: "u", TeamID: "t"}
+	scope := auth.RoutesKeyScope{ManagementURL: "https://api.example.com", Profile: "alice", UserID: "u", TeamID: "t"}
 	require.NoError(t, store.SetRoutesKey(scope, "saved-secret", nil))
 	key, err := store.GetRoutesKey(scope)
 	require.NoError(t, err)
 	require.Equal(t, "saved-secret", key)
 	for _, mutate := range []func(*auth.RoutesKeyScope){
 		func(s *auth.RoutesKeyScope) { s.ManagementURL = "https://api.other.example.com" },
+		func(s *auth.RoutesKeyScope) { s.Profile = "bob" },
 		func(s *auth.RoutesKeyScope) { s.UserID = "v" },
 		func(s *auth.RoutesKeyScope) { s.TeamID = "other" },
 	} {

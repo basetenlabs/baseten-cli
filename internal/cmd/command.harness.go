@@ -1112,10 +1112,14 @@ func defaultHarnessKeyName(hostname string) string {
 }
 
 // ensureHarnessToken returns the routes API key setup installs: the one saved
-// on this machine for this user and team while it still exists, or else a new
-// one.
+// on this machine for this profile, user, and team while it still exists, or
+// else a new one.
 func ensureHarnessToken(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, name string) (string, error) {
 	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return "", err
+	}
+	session, err := ctx.authInfo.Session()
 	if err != nil {
 		return "", err
 	}
@@ -1127,7 +1131,7 @@ func ensureHarnessToken(ctx *CommandContext, api *managementapi.Client, team *ma
 	if err != nil {
 		return "", err
 	}
-	scope := auth.RoutesKeyScope{ManagementURL: remote.ManagementURL(), UserID: user.UserId, TeamID: team.Id}
+	scope := auth.RoutesKeyScope{ManagementURL: remote.ManagementURL(), Profile: session.ProfileName(), UserID: user.UserId, TeamID: team.Id}
 	saved, err := store.GetRoutesKey(scope)
 	if err != nil {
 		return "", err

@@ -13,10 +13,12 @@ import (
 // [RoutesKeyScope].
 const routesKeyService = "baseten-harness-routes"
 
-// RoutesKeyScope identifies a saved routes API key by issuing endpoint, user,
-// and team: each user keeps one key per team on this machine.
+// RoutesKeyScope identifies a saved routes API key by issuing endpoint,
+// profile, user, and team: each profile keeps one key per user and team on
+// this machine.
 type RoutesKeyScope struct {
 	ManagementURL string `json:"management_url"`
+	Profile       string `json:"profile"`
 	UserID        string `json:"user_id"`
 	TeamID        string `json:"team_id"`
 }
