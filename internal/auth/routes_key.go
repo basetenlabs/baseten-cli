@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/zalando/go-keyring"
@@ -14,15 +13,12 @@ import (
 // [RoutesKeyScope].
 const routesKeyService = "baseten-harness-routes"
 
-// RoutesKeyScope identifies a saved routes API key by issuing endpoint,
-// profile, user, team, and key name, so a key is reused only where it was
-// created.
+// RoutesKeyScope identifies a saved routes API key by issuing endpoint, user,
+// and team: each user keeps one key per team on this machine.
 type RoutesKeyScope struct {
 	ManagementURL string `json:"management_url"`
-	Profile       string `json:"profile"`
 	UserID        string `json:"user_id"`
 	TeamID        string `json:"team_id"`
-	Name          string `json:"name"`
 }
 
 func (s RoutesKeyScope) account() string {
@@ -70,25 +66,4 @@ func (s *Store) SetRoutesKey(scope RoutesKeyScope, key string, warnWriter func(s
 	}
 	af.InsecureRoutesKeys[scope.account()] = key
 	return s.saveLocked(af)
-}
-
-// DeleteRoutesKey forgets the routes API key saved for scope, from both the
-// keyring and auth.json.
-func (s *Store) DeleteRoutesKey(scope RoutesKeyScope) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	keyringErr := keyring.Delete(routesKeyService, scope.account())
-	af, err := s.loadLocked()
-	if err != nil {
-		return err
-	}
-	if _, ok := af.InsecureRoutesKeys[scope.account()]; ok {
-		delete(af.InsecureRoutesKeys, scope.account())
-		return s.saveLocked(af)
-	}
-	if keyringErr != nil && !errors.Is(keyringErr, keyring.ErrNotFound) && !s.insecureStorage {
-		return fmt.Errorf("deleting routes API key from system keyring: %w", keyringErr)
-	}
-	return nil
 }

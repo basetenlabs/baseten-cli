@@ -283,9 +283,6 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 			h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, name, path))
 			h.Require.NoFileExists(filepath.Join(dir, "baseten-models.json"))
 			h.Require.Equal(1, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"), "teardown deletes the unused key")
-			key, err := configDirStore(t).GetRoutesKey(auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: "team-a", Name: "laptop"})
-			h.Require.NoError(err)
-			h.Require.Empty(key, "teardown forgets the deleted key")
 
 			h.Require.NoError(h.Execute("harness", "status", "--harness", name, "--config-dir", dir, "--output", "json"))
 			h.Require.Contains(h.Stdout.String(), `"state": "not-configured"`)
@@ -482,7 +479,7 @@ func Test_Harness_Setup_Teams(t *testing.T) {
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
-func Test_Harness_Setup_KeyPerTeamAndProfile(t *testing.T) {
+func Test_Harness_Setup_KeyPerTeamAndUser(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
@@ -497,11 +494,11 @@ func Test_Harness_Setup_KeyPerTeamAndProfile(t *testing.T) {
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-b/api_keys"))
 	h.Require.Equal(map[string]any{"type": "ROUTES", "name": "laptop"}, api.FindCall("POST", "/v1/teams/team-a/api_keys").BodyJSON(t))
-	key, err := configDirStore(t).GetRoutesKey(auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: "team-b", Name: "laptop"})
+	key, err := configDirStore(t).GetRoutesKey(auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: "team-b"})
 	h.Require.NoError(err)
 	h.Require.Equal("secret-team-b", key)
 
-	// Another user of the same profile gets their own key.
+	// Another user gets their own key.
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-b"})
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--team", "team-a", "--key-name", "laptop", "--yes"))
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
@@ -512,25 +509,12 @@ func Test_Harness_Setup_DefaultKeyName(t *testing.T) {
 	h, api := fakeHarnessAPI(t)
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"))
 	name := api.FindCall("POST", "/v1/teams/team-a/api_keys").BodyJSON(t)["name"].(string)
-	h.Require.Regexp(`^baseten-harness-[a-z0-9]+(-[a-z0-9]+)*$`, name)
+	h.Require.Regexp(`^baseten-harness-[a-z0-9]+(-[a-z0-9]+)*-[0-9a-f]{6}$`, name)
 
-	// A key made under another profile, or whose saved copy is gone, holds the default name.
-	h, api = fakeHarnessAPI(t)
-	keys := []any{map[string]any{"prefix": "elsewhere", "type": "ROUTES", "name": name, "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"}}
-	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": keys})
-	args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"}
-	h.Require.NoError(h.Execute(args...))
-	h.Require.Equal(map[string]any{"type": "ROUTES", "name": name + "-2"}, api.FindCall("POST", "/v1/teams/team-a/api_keys").BodyJSON(t))
-
-	keys = append(keys, map[string]any{"prefix": "secret-team-a", "type": "ROUTES", "name": name + "-2", "team_name": "Engineering", "created_at": "2026-09-02T00:00:00Z"})
-	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": keys})
-	h.Require.NoError(h.Execute(args...))
-	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "a rerun reuses the numbered key")
-
-	// The saved numbered key still wins once the default name is free.
-	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": keys[1:]})
-	h.Require.NoError(h.Execute(args...))
-	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	// A saved key that's since been deleted is replaced.
+	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{}})
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"))
+	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
 func Test_Harness_Setup_KeyCreationFailureCanBeRetried(t *testing.T) {
