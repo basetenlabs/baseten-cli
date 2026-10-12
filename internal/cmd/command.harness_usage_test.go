@@ -124,12 +124,12 @@ func Test_Harness_Usage_DefaultsToMonthToDateForCurrentUser(t *testing.T) {
 	h.Require.Equal([]string{"user-a"}, q["user_ids"], "admins must not see other users' usage by default")
 	h.Require.Equal([]string{"TEAM", "MODEL"}, q["group_by"])
 	h.Require.Equal([]string{"31"}, q["limit"])
-	h.Require.Empty(q["team_id"], "every team by default")
+	h.Require.Equal([]string{"team-a"}, q["team_id"], "your only team needs no --team")
 	h.Require.Equal("September 2026 · resets Oct 1\n", h.Stderr.String())
 	h.Require.NotContains(h.Stdout.String(), "September")
 }
 
-func Test_Harness_Usage_BlocksPerTeam(t *testing.T) {
+func Test_Harness_Usage_HeaderPerTeam(t *testing.T) {
 	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
 	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []map[string]any{
 		harnessTeamSettings("team-a", "Engineering", "1.75", "100", nil),
@@ -144,23 +144,26 @@ func Test_Harness_Usage_BlocksPerTeam(t *testing.T) {
 		harnessTeamSettings("team-d", "Infra", "0", nil, map[string]any{"spend_limit": map[string]any{"effective": map[string]any{}}}),
 	}})
 
-	h.Require.NoError(h.Execute("harness", "usage"))
+	h.Require.ErrorContains(h.Execute("harness", "usage"),
+		`you're in 4 teams; pass --team with one of "Engineering", "Research", "FDE", "Infra"`)
+
+	h.Require.NoError(h.Execute("harness", "usage", "--team", "Engineering"))
 	out := h.Stdout.String()
 	h.Require.Equal([]string{"Engineering", "$2", "of", "$100"}, harnessUsageRow(h, out, "Engineering"), "whole dollars")
-	h.Require.Equal([]string{"●", "claude-sonnet-5", "$1", "(71%)"}, harnessUsageRow(h, out, "claude-sonnet-5"), "days are summed")
-	h.Require.Equal([]string{"●", "gpt-5.2", "$1", "(29%)"}, harnessUsageRow(h, out, "gpt-5.2"), "half a dollar rounds up")
-	h.Require.Equal([]string{"Research", "$13", "of", "$10", "(team", "default", "$100)", "·", "limit", "reached"},
-		harnessUsageRow(h, out, "Research"), "the team default only when yours differs")
-	h.Require.Equal([]string{"FDE", "$80", "of", "$100", "·", "team", "limit", "reached"}, harnessUsageRow(h, out, "FDE"))
-	h.Require.Equal([]string{"Infra", "$0", "·", "no", "limit"}, harnessUsageRow(h, out, "Infra"))
-	h.Require.Equal([]string{"(no", "team)", "$1"}, harnessUsageRow(h, out, "(no team)"), "usage metered before team attribution")
-	h.Require.Equal([]string{"●", "glm-5.2", "$1", "(100%)"}, harnessUsageRow(h, out, "glm-5.2"))
-	h.Require.Regexp(`(?s)Engineering.*claude-sonnet-5.*gpt-5.2.*\n\nResearch.*\n\nFDE.*\n\nInfra.*\n\n\(no team\).*glm-5.2`, out,
-		"teams in the API's order, models most expensive first, legacy usage last")
-	h.Require.Regexp(`(?m)^Engineering +\$2 of \$100$`, out)
-	h.Require.Regexp(`\n  ● gpt-5.2 +\$1 +\(29%\)\n`, out, "amounts line up")
+	h.Require.Equal([]string{"●", "claude-sonnet-5", "$1", "(56%)"}, harnessUsageRow(h, out, "claude-sonnet-5"), "days are summed")
+	h.Require.Equal([]string{"●", "gpt-5.2", "$1", "(22%)"}, harnessUsageRow(h, out, "gpt-5.2"), "half a dollar rounds up")
+	h.Require.Regexp(`(?m)^Engineering +\$2 of \$100\n  ● claude-sonnet-5.*\n  ● glm-5.2.*\n  ● gpt-5.2 +\$1 +\(22%\)\n$`, out,
+		"models most expensive first then by name, amounts lined up")
 	h.Require.NotContains(out, "┤", "no chart when stdout isn't a terminal")
 	h.Require.NotContains(out, "\x1b[", "no color when stdout isn't a terminal")
+
+	h.Require.NoError(h.Execute("harness", "usage", "--team", "Research"))
+	h.Require.Equal([]string{"Research", "$13", "of", "$10", "(team", "default", "$100)", "·", "limit", "reached"},
+		harnessUsageRow(h, h.Stdout.String(), "Research"), "the team default only when yours differs")
+	h.Require.NoError(h.Execute("harness", "usage", "--team", "FDE"))
+	h.Require.Equal([]string{"FDE", "$80", "of", "$100", "·", "team", "limit", "reached"}, harnessUsageRow(h, h.Stdout.String(), "FDE"))
+	h.Require.NoError(h.Execute("harness", "usage", "--team", "Infra"))
+	h.Require.Equal([]string{"Infra", "$0", "·", "no", "limit"}, harnessUsageRow(h, h.Stdout.String(), "Infra"))
 }
 
 func Test_Harness_Usage_TeamFlag(t *testing.T) {
@@ -173,7 +176,6 @@ func Test_Harness_Usage_TeamFlag(t *testing.T) {
 	h.Require.NoError(h.Execute("harness", "usage", "--team", "Research"))
 	h.Require.Equal([]string{"team-b"}, harnessUsageLastQuery(h, api)["team_id"], "--team also narrows the usage")
 	h.Require.Contains(h.Stdout.String(), "Research")
-	h.Require.NotContains(h.Stdout.String(), "Engineering")
 
 	h.Require.NoError(h.Execute("harness", "usage", "--team", "team-a"))
 	h.Require.Equal([]string{"team-a"}, harnessUsageLastQuery(h, api)["team_id"], "by ID too")
