@@ -71,11 +71,25 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 		team = teams[0]
 	}
 
-	// This month so far, the period spend limits apply to, in whole UTC days
-	// like the API.
+	// This month so far, the period spend limits apply to, or all of a past
+	// one, in whole UTC days like the API.
 	today := ctx.Now().UTC()
-	start := time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, time.UTC)
-	startDate, endDate := start.Format(time.DateOnly), today.AddDate(0, 0, 1).Format(time.DateOnly)
+	thisMonth := time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, time.UTC)
+	start := thisMonth
+	if f.Month != "" {
+		m, err := time.Parse("2006-01", f.Month)
+		if err != nil || m.After(thisMonth) {
+			return cmd.NewErrUsagef("--month must be a past month as YYYY-MM, like %s", thisMonth.AddDate(0, -1, 0).Format("2006-01"))
+		}
+		start = m
+	}
+	current := start.Equal(thisMonth)
+	end := start.AddDate(0, 1, 0)
+	if current {
+		end = today.AddDate(0, 0, 1)
+	}
+	days := int(end.Sub(start).Hours() / 24)
+	startDate, endDate := start.Format(time.DateOnly), end.Format(time.DateOnly)
 	dims := []managementapi.RouteUsageDimension{managementapi.RouteUsageDimension_TEAM, managementapi.RouteUsageDimension_MODEL}
 	// Spend limits are per user, and admins would otherwise see the whole
 	// organization's usage.
@@ -108,7 +122,7 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 				name := cmp.Or(deref(r.Model), "(unknown)")
 				m := byModel[name]
 				if m == nil {
-					m = &harnessModel{name: name, priced: true, daily: make([]float64, today.Day())}
+					m = &harnessModel{name: name, priced: true, daily: make([]float64, days)}
 					byModel[name] = m
 				}
 				m.cost += cost
@@ -124,11 +138,15 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	if ctx.JSON {
 		return nil
 	}
-	ctx.LogLine(today.Format("January 2006") + " · resets " + start.AddDate(0, 1, 0).Format("Jan 2"))
+	heading := start.Format("January 2006")
+	if current {
+		heading += " · resets " + start.AddDate(0, 1, 0).Format("Jan 2")
+	}
+	ctx.LogLine(heading)
 	models := slices.SortedFunc(maps.Values(byModel), func(x, y *harnessModel) int {
 		return cmp.Or(cmp.Compare(y.cost, x.cost), strings.Compare(x.name, y.name))
 	})
-	harnessRender(ctx, team, start, models)
+	harnessRender(ctx, team, start, current, models)
 	return nil
 }
 
@@ -143,23 +161,31 @@ type harnessModel struct {
 	daily []float64
 }
 
-// harnessRender prints what you spent in the team this month of your limit
-// there, a chart of spend per day when stdout is a terminal, and each model's
-// spend and share, most expensive first, all to the nearest dollar.
-func harnessRender(ctx *CommandContext, s managementapi.RouteTeamUserSettings, start time.Time, models []*harnessModel) {
-	spentUSD, limitUSD := harnessFloat(s.MonthSpendUsd), 0.0
-	spent, limit := harnessDollars(spentUSD), ""
-	if l := s.SpendLimit.Effective.MonthlyLimitUsd; l != nil {
-		limitUSD = harnessFloat(*l)
-		limit = harnessDollars(limitUSD)
+// harnessRender prints what you spent in the team the month starting at
+// start of your limit there, a chart of spend per day when stdout is a
+// terminal, and each model's spend and share, most expensive first, all to
+// the nearest dollar. The limit, and the settings' spend and blocked state,
+// are this month's, so a past month shows only what the usage adds up to.
+func harnessRender(ctx *CommandContext, s managementapi.RouteTeamUserSettings, start time.Time, current bool, models []*harnessModel) {
+	all, priced := 0.0, true
+	for _, m := range models {
+		all += m.cost
+		priced = priced && m.priced
 	}
+	spentUSD, limitUSD, limit := all, 0.0, ""
+	if current {
+		spentUSD = harnessFloat(s.MonthSpendUsd)
+		if l := s.SpendLimit.Effective.MonthlyLimitUsd; l != nil {
+			limitUSD = harnessFloat(*l)
+			limit = harnessDollars(limitUSD)
+		}
+	}
+	spent := harnessDollars(spentUSD)
 	// One label and one amount column for the team and its models.
-	labelWidth, amountWidth, all, priced := ansi.StringWidth(s.TeamName)+2, len(spent), 0.0, true
+	labelWidth, amountWidth := ansi.StringWidth(s.TeamName)+2, len(spent)
 	for _, m := range models {
 		labelWidth = max(labelWidth, 4+ansi.StringWidth(m.name)+2)
 		amountWidth = max(amountWidth, len(harnessMoney(m)))
-		all += m.cost
-		priced = priced && m.priced
 	}
 	// The writer drops the styling stdout can't show, so there is no need to
 	// query the terminal for it.
@@ -175,15 +201,15 @@ func harnessRender(ctx *CommandContext, s managementapi.RouteTeamUserSettings, s
 
 	styled := spent
 	switch {
-	case s.IsBlocked:
+	case current && s.IsBlocked:
 		styled = crit.Styled(spent)
 	case limit != "" && spentUSD >= 0.75*limitUSD:
 		styled = warn.Styled(spent)
 	}
 	line := pad(bold.Styled(s.TeamName), labelWidth) + right(styled, amountWidth)
-	if limit == "" {
+	if current && limit == "" {
 		line += " " + dim.Styled("· no limit")
-	} else {
+	} else if current {
 		line += " of " + limit
 		// The team default only when yours differs from it.
 		if d := s.SpendLimit.TeamDefault; d != nil {
@@ -192,7 +218,7 @@ func harnessRender(ctx *CommandContext, s managementapi.RouteTeamUserSettings, s
 			}
 		}
 	}
-	if s.IsBlocked {
+	if current && s.IsBlocked {
 		what := "limit reached"
 		if s.BlockedBy != nil && *s.BlockedBy == managementapi.RouteSpendBlockedBy_team {
 			what = "team limit reached"

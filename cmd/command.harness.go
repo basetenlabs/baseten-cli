@@ -127,7 +127,8 @@ var commandHarness = Command{
 					"\"limit reached\" or \"team limit reached\" when your requests there are rejected; on a terminal, a " +
 					"chart of spend per day per model from the first of the month; and a line per model with its spend and " +
 					"share, most expensive first. A cost of \"-\" means some of that usage couldn't be priced. With no " +
-					"teams, prints \"No usage this month.\" to stderr.",
+					"teams, prints \"No usage this month.\" to stderr. For a past month, the team line is what you " +
+					"spent there that month, with no limit, since limits are per month.",
 				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-team, per-model usage " +
 					"in results, including days with no usage. cost_usd values are exact decimal strings.",
 				Examples: []CommandExample{
@@ -233,7 +234,8 @@ type HarnessStatusList struct {
 type HarnessUsageFlags struct {
 	CommandFlags
 
-	Team string `flag:"team" desc:"Team name or ID to show. Needed unless you're in only one team."`
+	Team  string `flag:"team" desc:"Team name or ID to show. Needed unless you're in only one team."`
+	Month string `flag:"month" desc:"A past month to show instead of this one, as YYYY-MM."`
 }
 
 // HarnessFlags selects the harnesses a command applies to.

@@ -136,6 +136,21 @@ func Test_Harness_Usage_Teams(t *testing.T) {
 	h.Require.Equal([]string{"Infra", "$0", "·", "no", "limit"}, harnessUsageRow(h, h.Stdout.String(), "Infra"))
 }
 
+func Test_Harness_Usage_Month(t *testing.T) {
+	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-08-31", harnessUsageModel("gpt-5.2", "40", 400, 0, 40))))
+
+	h.Require.NoError(h.Execute("harness", "usage", "--month", "2026-08"))
+	q := harnessUsageLastQuery(h, api)
+	h.Require.Equal([]string{"2026-08-01"}, q["start_date"])
+	h.Require.Equal([]string{"2026-09-01"}, q["end_date"], "the whole month")
+	h.Require.Equal("August 2026\n", h.Stderr.String(), "no reset date for a past month")
+	h.Require.Equal([]string{"Engineering", "$40"}, harnessUsageRow(h, h.Stdout.String(), "Engineering"),
+		"the usage summed, not this month's spend, and no limit, which is this month's")
+
+	h.Require.ErrorContains(h.Execute("harness", "usage", "--month", "2026-10"), "--month must be a past month as YYYY-MM, like 2026-08")
+	h.Require.ErrorContains(h.Execute("harness", "usage", "--month", "Aug"), "--month must be a past month")
+}
+
 func Test_Harness_Usage_JSONStreamsBucketsAsReturned(t *testing.T) {
 	h, _ := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
 
