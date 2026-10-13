@@ -227,8 +227,8 @@ type SandboxImagePushFlags struct {
 	Dir           string `flag:"dir" desc:"Directory to build the image from, with a Dockerfile at its root." oneof:"image-source"`
 	RegistryImage string `flag:"registry-image" desc:"Registry image reference to import, such as registry.example.com/app:v1." oneof:"image-source"`
 	DockerConfig  string `flag:"docker-config" desc:"Path to a Docker config.json with credentials for pulling --registry-image from a private registry."`
-	BuildMemory   int    `flag:"build-memory" desc:"Memory in MB, from 1 to 32768, of the temporary environment that builds or imports the image. Defaults to the server's size. Does not change the memory of sandboxes created from the image."`
-	BuildVolume   int    `flag:"build-volume" desc:"Scratch disk in MB, from 0 to 131072, for the temporary environment that builds or imports the image. Set it for large images that run out of space while building. 0, the default, builds in memory. Teams with HIPAA compliance enabled accept only 0."`
+	MemoryMB      int    `flag:"memory-mb" desc:"Memory in MB, from 1 to 32768, of the temporary environment that builds or imports the image. Defaults to the server's size. Does not change the memory of sandboxes created from the image."`
+	VolumeMB      int    `flag:"volume-mb" desc:"Scratch disk in MB, from 0 to 131072, for the temporary environment that builds or imports the image. Set it for large images that run out of space while building. 0, the default, builds in memory. Teams with HIPAA compliance enabled accept only 0."`
 	Wait          bool   `flag:"wait" desc:"Wait until the image is built. Exits non-zero if the build fails. Does not stop the build if interrupted."`
 }
 
