@@ -76,6 +76,26 @@ func TestJSONErrorNonJSONBodyCarriesStatusOnly(t *testing.T) {
 	h.Require.Empty(jsonErr.APIDetails)
 }
 
+func TestJSONErrorSandboxAPIErrorCarriesStatus(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := newSandboxTestAPI(h)
+	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, sandboxTestRecord(m, "sbx-1", "DEPLOYED"))
+	m.SetRoute("GET", "/process/9", 404, map[string]any{"error": "process not found"})
+	m.SetRoute("POST", "/process", 404, map[string]any{"error": "working directory not found"})
+
+	// Through the high-level client.
+	h.Require.Error(h.Execute("sandbox", "process", "describe", "--name", "sbx-1", "--pid", "9", "--output", "json"))
+	h.Require.Equal(int(cmd.ExitNotFound), h.ExitCode)
+	jsonErr := decodeJSONErrorEnvelope(h)
+	h.Require.Equal("ErrNotFound", jsonErr.Type)
+	h.Require.Equal(404, jsonErr.APIStatusCode)
+
+	// Through the generated client.
+	h.Require.Error(h.Execute("sandbox", "exec", "--name", "sbx-1", "--output", "json", "--", "true"))
+	h.Require.Equal(int(cmd.ExitNotFound), h.ExitCode)
+	h.Require.Equal(404, decodeJSONErrorEnvelope(h).APIStatusCode)
+}
+
 func TestJSONErrorLocalFailureHasNoAPIFields(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetHandlerFallback(func(_ http.ResponseWriter, _ *http.Request) {

@@ -12,7 +12,7 @@ const harnessPreRelease = "PRE-RELEASE: Harness commands are not GA yet and supp
 var commandHarness = Command{
 	Name:        "harness",
 	Summary:     "Configure Baseten harness integrations (PRE-RELEASE)",
-	Description: harnessPreRelease + "Configure Claude Code, Codex (CLI or ChatGPT desktop app), and OpenCode CLI to use Baseten routes.",
+	Description: harnessPreRelease + "Configure Claude Code, Codex (CLI or ChatGPT desktop app), OpenCode CLI, and Pi to use Baseten routes.",
 	Children: []Command{
 		{
 			Name:    "setup",
@@ -216,7 +216,7 @@ type HarnessUsageFlags struct {
 
 // HarnessFlags selects the harnesses a command applies to.
 type HarnessFlags struct {
-	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude-code,codex,opencode"`
+	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude-code,codex,opencode,pi"`
 	ConfigDir string   `flag:"config-dir" desc:"Harness configuration directory. Requires exactly one --harness. Defaults to the harness's own location."`
 }
 
@@ -230,7 +230,7 @@ type HarnessStatusFlags struct {
 type HarnessSetupFlags struct {
 	CommandFlags
 	HarnessFlags
-	Team            string `flag:"team" desc:"Team name or ID whose routes to use. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
+	Team            string `flag:"team" desc:"Team name or ID whose routes to use. Needed unless there is only one team. Run 'baseten org team list' to see teams."`
 	KeyName         string `flag:"key-name" desc:"Name of the routes API key created in Baseten. Defaults to baseten-harness-<hostname>, numbered (-2, -3, ...) if one of your keys has that name."`
 	Route           string `flag:"route" desc:"Default route. Defaults to the team's default for the harness, else the first route the harness lists."`
 	BackgroundRoute string `flag:"background-route" desc:"Route for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`

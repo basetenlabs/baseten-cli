@@ -33,3 +33,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Open a README version-bump pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --quiet origin main
+          git checkout --quiet -B "readme-$TAG" origin/main
+          sed -i "s|releases/download/v[0-9][0-9.]*/baseten_[0-9][0-9.]*_|releases/download/$TAG/baseten_${VERSION}_|g" README.md
+          if git diff --quiet README.md; then
+            echo "README already references $TAG"
+            exit 0
+          fi
+          git add README.md
+          git commit -m "Point the README install links at $TAG"
+          git push origin "HEAD:readme-$TAG"
+          gh pr create --title "Point the README install links at $TAG"             --body "Automated follow-up to the $TAG release: the release-verification CI check fails on every PR until the README references the newest release."             --reviewer "${GITHUB_TRIGGERING_ACTOR}"

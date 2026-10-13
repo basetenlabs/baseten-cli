@@ -66,10 +66,7 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 		invokeURL = api.URL
 	}
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
-	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []map[string]any{
-		{"id": "team-a", "name": "Engineering", "default": true},
-		{"id": "team-b", "name": "Research", "default": false},
-	}})
+	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []map[string]any{{"id": "team-a", "name": "Engineering", "default": true}}})
 	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -89,6 +86,13 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 }
 
 // fakeHarnessAPI is harnessAPI with every harness reported as installed.
+// harnessTwoTeams is a GET /v1/teams body for an organization with two teams,
+// where setup needs --team.
+var harnessTwoTeams = map[string]any{"teams": []map[string]any{
+	{"id": "team-a", "name": "Engineering", "default": true},
+	{"id": "team-b", "name": "Research", "default": false},
+}}
+
 func fakeHarnessAPI(t *testing.T) (*CommandHarness, *MockManagementAPI) {
 	t.Helper()
 	h, api := harnessAPI(t, "")
@@ -102,6 +106,8 @@ func harnessSettingsFile(name, dir string) string {
 		return filepath.Join(dir, "config.toml")
 	case "opencode":
 		return filepath.Join(dir, "opencode.json")
+	case "pi":
+		return filepath.Join(dir, "models.json")
 	default:
 		return filepath.Join(dir, "settings.json")
 	}
@@ -123,6 +129,27 @@ func readHarnessSettings(t *testing.T, name, path string) map[string]any {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func catalogSlugs(t *testing.T, path string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []struct {
+			Slug string `json:"slug"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	slugs := make([]string, 0, len(catalog.Models))
+	for _, m := range catalog.Models {
+		slugs = append(slugs, m.Slug)
+	}
+	return slugs
 }
 
 func countCalls(api *MockManagementAPI, method, path string) int {
@@ -156,7 +183,7 @@ func Test_HarnessCommands_RejectOtherPlatforms(t *testing.T) {
 
 func Test_Harness_Setup_Lifecycle(t *testing.T) {
 	skipUnlessSupported(t)
-	for _, name := range []string{"claude-code", "codex", "opencode"} {
+	for _, name := range []string{"claude-code", "codex", "opencode", "pi"} {
 		t.Run(name, func(t *testing.T) {
 			h, api := fakeHarnessAPI(t)
 			dir := t.TempDir()
@@ -327,6 +354,7 @@ func Test_Harness_Setup_Teams(t *testing.T) {
 			h, api := fakeHarnessAPI(t)
 			args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"}
 			if tc.team != "" {
+				api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
 				args = append(args, "--team", tc.team)
 			}
 			h.Require.NoError(h.Execute(args...))
@@ -334,15 +362,18 @@ func Test_Harness_Setup_Teams(t *testing.T) {
 			h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/"+tc.want+"/api_keys"))
 		})
 	}
+	// With several teams the CLI never picks one, not even the default.
 	h, api := fakeHarnessAPI(t)
-	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []map[string]any{{"id": "team-b", "name": "Research"}}})
+	api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
 	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"))
-	h.Require.Contains(h.Stderr.String(), "no default team; pass --team")
+	h.Require.Contains(h.Stderr.String(), `pass --team with one of "Engineering", "Research"`)
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
 func Test_Harness_Setup_KeyPerTeamAndProfile(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
+	api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude-code", dir)
 	for _, team := range []string{"team-a", "team-b", "team-a"} {
@@ -360,7 +391,7 @@ func Test_Harness_Setup_KeyPerTeamAndProfile(t *testing.T) {
 
 	// Another user of the same profile gets their own key.
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-b"})
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--key-name", "laptop", "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--team", "team-a", "--key-name", "laptop", "--yes"))
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
@@ -420,6 +451,7 @@ func Test_Harness_Setup_RouteFlags(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, tc := range []struct{ name, flag string }{
 		{"codex", "--background-route"}, {"codex", "--subagent-route"}, {"codex", "--fallback-route"}, {"opencode", "--fallback-route"},
+		{"pi", "--background-route"}, {"pi", "--subagent-route"}, {"pi", "--fallback-route"},
 	} {
 		t.Run(tc.name+tc.flag, func(t *testing.T) {
 			h, api := fakeHarnessAPI(t)
@@ -435,6 +467,194 @@ func Test_Harness_Setup_RouteFlags(t *testing.T) {
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--background-route", "acme/primary", "--yes"))
 	env := readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["env"].(map[string]any)
 	h.Require.Equal("acme/primary", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+}
+
+func harnessDefaultsModel(name string) map[string]any {
+	if name == "" {
+		return nil
+	}
+	return map[string]any{"route": map[string]any{"name": name}, "source": "team"}
+}
+
+func claudeHarnessDefaultsBody(primary, background string) map[string]any {
+	return map[string]any{"harness_defaults": map[string]any{
+		"claude_code": map[string]any{
+			"primary": harnessDefaultsModel(primary), "background": harnessDefaultsModel(background),
+		},
+	}}
+}
+
+func Test_Harness_Setup_ServerDefaults(t *testing.T) {
+	skipUnlessSupported(t)
+	for _, tc := range []struct {
+		name           string
+		harnessName    string
+		flags          []string
+		endpoint       func(api *MockManagementAPI)
+		wantFetch      bool
+		wantPrimary    string
+		wantBackground string
+	}{
+		{
+			name:        "server defaults seed primary and background",
+			harnessName: "claude-code",
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+			},
+			wantFetch:      true,
+			wantPrimary:    "acme/server",
+			wantBackground: "acme/background",
+		},
+		{
+			name:        "route flag wins over server default",
+			harnessName: "claude-code",
+			flags:       []string{"--route", "acme/first"},
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+			},
+			wantFetch:      true,
+			wantPrimary:    "acme/first",
+			wantBackground: "acme/background",
+		},
+		{
+			name:        "background route flag wins over server default",
+			harnessName: "claude-code",
+			flags:       []string{"--background-route", "acme/first"},
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+			},
+			wantFetch:      true,
+			wantPrimary:    "acme/server",
+			wantBackground: "acme/first",
+		},
+		{
+			name:        "server primary missing from routes falls back to positional",
+			harnessName: "claude-code",
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/missing", "acme/background"))
+			},
+			wantFetch:      true,
+			wantPrimary:    "acme/first",
+			wantBackground: "acme/background",
+		},
+		{
+			name:        "server background missing from routes falls back to the default",
+			harnessName: "claude-code",
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
+			},
+			wantFetch:      true,
+			wantPrimary:    "acme/server",
+			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
+		},
+		{
+			name:        "server defaults without a primary still seed the background",
+			harnessName: "claude-code",
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, map[string]any{
+					"harness_defaults": map[string]any{
+						"claude_code": map[string]any{"background": harnessDefaultsModel("acme/background")},
+					},
+				})
+			},
+			wantFetch:      true,
+			wantPrimary:    "acme/first",
+			wantBackground: "acme/background",
+		},
+		{
+			name:        "a response without a claude_code entry is ignored",
+			harnessName: "claude-code",
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, map[string]any{
+					"harness_defaults": map[string]any{
+						"codex": map[string]any{"primary": harnessDefaultsModel("acme/server")},
+					},
+				})
+			},
+			wantFetch:      true,
+			wantPrimary:    "acme/first",
+			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
+		},
+		{
+			name:           "an unrouted routes settings endpoint falls back to positional",
+			harnessName:    "claude-code",
+			wantFetch:      true,
+			wantPrimary:    "acme/first",
+			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
+		},
+		{
+			name:        "a routes settings error falls back to positional",
+			harnessName: "claude-code",
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 500, map[string]string{"message": "unavailable"})
+			},
+			wantFetch:      true,
+			wantPrimary:    "acme/first",
+			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
+		},
+		{
+			name:        "a malformed routes settings response falls back to positional",
+			harnessName: "claude-code",
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, "not an object")
+			},
+			wantFetch:      true,
+			wantPrimary:    "acme/first",
+			wantBackground: "deepseek-ai/DeepSeek-V4.1-Flash",
+		},
+		{
+			name:        "both route flags set skip the fetch",
+			harnessName: "claude-code",
+			flags:       []string{"--route", "acme/first", "--background-route", "acme/background"},
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
+			},
+			wantPrimary:    "acme/first",
+			wantBackground: "acme/background",
+		},
+		{
+			name:        "codex ignores defaults for other harnesses",
+			harnessName: "codex",
+			endpoint: func(api *MockManagementAPI) {
+				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+			},
+			wantFetch:   true,
+			wantPrimary: "acme/first",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, api := fakeHarnessAPI(t)
+			api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				items := []any{}
+				for _, route := range []struct{ name, display string }{
+					{"acme/first", "First"}, {"acme/server", "Server"}, {"acme/background", "Background"},
+				} {
+					items = append(items, map[string]any{"name": route.name, "display_name": route.display, "invoke_url": api.URL, "team_id": r.URL.Query().Get("team_id"), "metadata": harnessRouteMetadata})
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
+			})
+			if tc.endpoint != nil {
+				tc.endpoint(api)
+			}
+			dir := t.TempDir()
+			args := append([]string{"harness", "setup", "--harness", tc.harnessName, "--config-dir", dir, "--yes"}, tc.flags...)
+			h.Require.NoError(h.Execute(args...))
+			settings := readHarnessSettings(t, tc.harnessName, harnessSettingsFile(tc.harnessName, dir))
+			h.Require.Equal(tc.wantPrimary, settings["model"])
+			if tc.harnessName == "claude-code" {
+				env := settings["env"].(map[string]any)
+				h.Require.Equal(tc.wantBackground, env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+				h.Require.Equal(settings["model"], env["ANTHROPIC_MODEL"])
+			}
+			call := api.FindCall("GET", "/v1/routes/settings/teams/team-a")
+			if tc.wantFetch {
+				h.Require.NotNil(call, "setup fetches the routes settings endpoint")
+			} else {
+				h.Require.Nil(call, "setup does not fetch the routes settings endpoint")
+			}
+		})
+	}
 }
 
 func Test_Harness_Setup_ReplacesSettingsAndPicker(t *testing.T) {
@@ -467,6 +687,7 @@ func Test_Harness_DefaultDiscovery(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "codex", "--yes", "--output", "json"))
 	var setup public.HarnessPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &setup))
@@ -517,6 +738,7 @@ func Test_Harness_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--yes"))
 	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "opencode", "--yes"))
 	h.Require.Equal(0, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"), "Claude Code still uses the key")
@@ -538,9 +760,10 @@ func Test_Harness_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 // harnessGateway records the model and client each inference request names and
 // refuses it.
 type harnessGateway struct {
-	mu      sync.Mutex
-	models  []string
-	clients []string
+	mu             sync.Mutex
+	models         []string
+	clients        []string
+	requestClasses []string
 }
 
 func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -552,6 +775,7 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		g.models = append(g.models, body.Model)
 		g.clients = append(g.clients, r.Header.Get("X-Baseten-Client"))
+		g.requestClasses = append(g.requestClasses, r.Header.Get("x-claude-code-request-class"))
 		g.mu.Unlock()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -573,6 +797,12 @@ func (g *harnessGateway) sentClients() []string {
 	return slices.Clone(g.clients)
 }
 
+func (g *harnessGateway) sentRequestClasses() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.requestClasses)
+}
+
 // Test_Harness_Setup_RealHarness configures each installed harness in an
 // isolated directory, runs it, and checks that it asks the gateway for the
 // configured route. Harnesses not on PATH are skipped.
@@ -585,6 +815,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 		{"claude-code", "claude", []string{"-p", "Reply with OK."}},
 		{"codex", "codex", []string{"exec", "--skip-git-repo-check", "Reply with OK."}},
 		{"opencode", "opencode", []string{"run", "Reply with OK."}},
+		{"pi", "pi", []string{"--print", "Reply with OK."}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			binary, err := exec.LookPath(tc.binary)
@@ -600,6 +831,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 				"claude-code": filepath.Join(root, ".claude"),
 				"codex":       filepath.Join(root, ".codex"),
 				"opencode":    filepath.Join(root, ".config", "opencode"),
+				"pi":          filepath.Join(root, ".pi", "agent"),
 			}[tc.name]
 			h.Require.NoError(h.Execute("harness", "setup", "--harness", tc.name, "--config-dir", configDir, "--yes"))
 
@@ -611,7 +843,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 			// a real provider and make the test pass for the wrong reason.
 			run.Env = []string{
 				"HOME=" + root, "USERPROFILE=" + root,
-				"CLAUDE_CONFIG_DIR=" + configDir, "CODEX_HOME=" + configDir,
+				"CLAUDE_CONFIG_DIR=" + configDir, "CODEX_HOME=" + configDir, "PI_CODING_AGENT_DIR=" + configDir,
 				"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"),
 				"XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
 				"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"),
@@ -652,8 +884,47 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.requested(), output.String())
 			}
 			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Client")
+			if tc.name == "claude-code" {
+				h.Require.True(slices.ContainsFunc(gateway.sentRequestClasses(), func(v string) bool { return v != "" }), "x-claude-code-request-class")
+			}
 		})
 	}
+}
+
+func Test_Harness_Setup_RouterRouteInPickers(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeHarnessAPI(t)
+	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+		"items": []any{
+			map[string]any{"id": "route-a", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
+			map[string]any{"id": "route-b", "name": "acme/auto", "display_name": "Auto", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "ROUTER"}},
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	t.Setenv("XDG_CONFIG_HOME", root)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--route", "acme/auto", "--background-route", "acme/auto", "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--route", "acme/auto", "--yes"))
+	h.Require.NotContains(h.Stderr.String(), "skipping routes")
+
+	claude := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))
+	h.Require.Equal("acme/auto", claude["model"])
+	h.Require.Contains(claude["modelPicker"].(map[string]any)["options"], map[string]any{"model": "acme/auto", "label": "Auto"})
+	h.Require.Equal("acme/auto", claude["env"].(map[string]any)["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+
+	opencode := readHarnessSettings(t, "opencode", filepath.Join(root, "opencode", "opencode.json"))
+	h.Require.Equal("baseten-harness/acme/auto", opencode["model"])
+	h.Require.Equal("baseten-harness/acme/auto", opencode["small_model"])
+	models := opencode["provider"].(map[string]any)["baseten-harness"].(map[string]any)["models"].(map[string]any)
+	h.Require.Contains(models, "acme/auto")
+	h.Require.NotContains(models["acme/auto"], "provider")
+
+	h.Require.Equal("acme/auto", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
+	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 }
 
 func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
@@ -678,6 +949,32 @@ func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/claude"].(map[string]any)["provider"])
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/openai"}, models["acme/gpt"].(map[string]any)["provider"])
 	h.Require.NotContains(models["acme/open"], "provider")
+}
+
+func Test_Harness_Setup_PiFirstPartyRoutes(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeHarnessAPI(t)
+	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+		"items": []any{
+			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "ANTHROPIC", "model": "claude-opus-5-5", "secret_name": "anthropic-key"}},
+			map[string]any{"id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "OPENAI", "model": "gpt-5.5", "secret_name": "openai-key"}},
+			map[string]any{"id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "pi", "--config-dir", dir, "--yes"))
+	provider := readHarnessSettings(t, "pi", harnessSettingsFile("pi", dir))["providers"].(map[string]any)["baseten-harness"].(map[string]any)
+	apis := map[string]any{}
+	for _, m := range provider["models"].([]any) {
+		apis[m.(map[string]any)["id"].(string)] = m.(map[string]any)["api"]
+	}
+	h.Require.Equal(map[string]any{"acme/claude": "anthropic-messages", "acme/gpt": "openai-responses", "acme/open": nil}, apis)
+	settings := readHarnessSettings(t, "pi", filepath.Join(dir, "settings.json"))
+	h.Require.Equal(map[string]any{"defaultProvider": "baseten-harness", "defaultModel": "acme/claude"}, settings)
 }
 
 func Test_Harness_Setup_RouteMetadata(t *testing.T) {
@@ -751,11 +1048,7 @@ func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
 	h.Require.Equal("acme/claude", claude["model"])
 	h.Require.Equal([]any{"acme/claude", "acme/open", "acme/new", "deepseek-ai/DeepSeek-V4.1-Flash"}, claude["availableModels"])
 	h.Require.Equal("acme/gpt", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
-	var slugs []any
-	for _, m := range readHarnessSettings(t, "catalog", filepath.Join(root, "codex", "baseten-models.json"))["models"].([]any) {
-		slugs = append(slugs, m.(map[string]any)["slug"])
-	}
-	h.Require.Equal([]any{"acme/gpt", "acme/open", "acme/new"}, slugs)
+	h.Require.Equal([]string{"acme/gpt", "acme/open", "acme/new"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 
 	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/gpt", "--yes"))
 	h.Require.Contains(h.Stderr.String(), `route "acme/gpt" is not one of the team's routes this harness can call`)
@@ -994,6 +1287,7 @@ func harnessDefaultsAPI(t *testing.T, defaults map[string]any) (*CommandHarness,
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
 	return h, api, root
 }
 
@@ -1017,6 +1311,9 @@ func harnessSetupRoutes(t *testing.T, root string) map[string][2]string {
 	}
 	if path := filepath.Join(root, "codex", "config.toml"); fileExists(path) {
 		h["codex"] = [2]string{readHarnessSettings(t, "codex", path)["model"].(string), ""}
+	}
+	if path := filepath.Join(root, "pi", "settings.json"); fileExists(path) {
+		h["pi"] = [2]string{readHarnessSettings(t, "pi", path)["defaultModel"].(string), ""}
 	}
 	return h
 }
@@ -1042,6 +1339,9 @@ func Test_Harness_Setup_Defaults(t *testing.T) {
 		"codex": map[string]any{
 			"primary": harnessDefaultModel("team", route("gpt")),
 		},
+		"pi": map[string]any{
+			"primary": harnessDefaultModel("team", route("claude")),
+		},
 	}))
 	// Every harness, so one setup can't read defaults for has to be added here.
 	args := []string{"harness", "setup"}
@@ -1066,6 +1366,7 @@ func Test_Harness_Setup_Defaults(t *testing.T) {
 		"claude-code": {"acme/claude", "acme/fast"},
 		"opencode":    {"acme/gpt", "acme/claude"},
 		"codex":       {"acme/gpt", ""},
+		"pi":          {"acme/claude", ""},
 	}, harnessSetupRoutes(t, root))
 	env := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))["env"].(map[string]any)
 	h.Require.Equal("acme/fast", env["ANTHROPIC_SMALL_FAST_MODEL"])
@@ -1140,6 +1441,8 @@ func Test_Harness_Setup_DefaultsSkippedWhenFlagsSetEveryRoute(t *testing.T) {
 		{"--harness", "claude-code", "--harness", "opencode", "--route", "acme/primary", "--background-route", "acme/fast"},
 		// Codex has no background route, so --route sets every route it uses.
 		{"--harness", "codex", "--route", "acme/primary"},
+		// Pi also has only a primary route.
+		{"--harness", "pi", "--route", "acme/primary"},
 	} {
 		h.Require.NoError(h.Execute(append([]string{"harness", "setup", "--dry-run"}, args...)...))
 	}

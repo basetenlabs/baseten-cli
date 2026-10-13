@@ -138,7 +138,7 @@ func routeTarget(flags cmd.RouteTargetFlags) (*managementapi.CreateRouteRequest_
 		if flags.TargetSecret != "" {
 			return nil, cmd.NewErrUsagef("--target-secret is not valid with --target-type baseten-model-api")
 		}
-		err := target.FromRouteTargetBasetenModelAPI(managementapi.RouteTargetBasetenModelAPI{
+		err := target.FromRouteTargetConfigBasetenModelAPI(managementapi.RouteTargetConfigBasetenModelAPI{
 			Type:  "BASETEN_MODEL_API",
 			Model: flags.TargetModel,
 		})
@@ -150,19 +150,19 @@ func routeTarget(flags cmd.RouteTargetFlags) (*managementapi.CreateRouteRequest_
 	var err error
 	switch flags.TargetType {
 	case "anthropic":
-		err = target.FromRouteTargetAnthropic(managementapi.RouteTargetAnthropic{
+		err = target.FromRouteTargetConfigAnthropic(managementapi.RouteTargetConfigAnthropic{
 			Type:       "ANTHROPIC",
 			Model:      flags.TargetModel,
 			SecretName: flags.TargetSecret,
 		})
 	case "openai":
-		err = target.FromRouteTargetOpenAI(managementapi.RouteTargetOpenAI{
+		err = target.FromRouteTargetConfigOpenAI(managementapi.RouteTargetConfigOpenAI{
 			Type:       "OPENAI",
 			Model:      flags.TargetModel,
 			SecretName: flags.TargetSecret,
 		})
 	case "xai":
-		err = target.FromRouteTargetXAI(managementapi.RouteTargetXAI{
+		err = target.FromRouteTargetConfigXAI(managementapi.RouteTargetConfigXAI{
 			Type:       "XAI",
 			Model:      flags.TargetModel,
 			SecretName: flags.TargetSecret,

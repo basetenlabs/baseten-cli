@@ -135,7 +135,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		return err
 	}
 	api := cl.API()
-	team, err := resolveTeamOrDefault(ctx, api, f.Team)
+	team, err := resolveTeamOrOnly(ctx, api, f.Team)
 	if err != nil {
 		return err
 	}
@@ -267,7 +267,7 @@ func harnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
 		return
 	}
 	hint := "Run `codex logout` and delete `" + harnessDisplayPath(harness.CodexCloudConfigPath(dir)) + "` to stop the workspace default model from overriding the Baseten route."
-	ctx.LogLine("Signing codex out of OpenAI/ChatGPT and disabling ChatGPT login while the Baseten harness is configured: codex only needs the Baseten route, and a ChatGPT login lets your workspace override the model for new threads.")
+	ctx.LogLine("Signing codex out of OpenAI/ChatGPT and disabling ChatGPT login while the Baseten harness is configured.")
 	if !yes && ctx.ConfirmYesNo("Sign codex out of OpenAI/ChatGPT now?") != nil {
 		ctx.LogLine(hint)
 		return
@@ -391,6 +391,8 @@ func harnessDefaultModels(defaults *managementapi.RouteHarnessDefaults, harnessN
 		}
 	case harness.Codex:
 		return map[string]*managementapi.RouteHarnessModel{harnessRolePrimary: defaults.Codex.Primary}
+	case harness.Pi:
+		return map[string]*managementapi.RouteHarnessModel{harnessRolePrimary: defaults.Pi.Primary}
 	default:
 		panic(fmt.Sprintf("no harness defaults for harness %q", harnessName))
 	}
@@ -416,7 +418,7 @@ func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice
 			s.Primary, s.primarySource = name, source
 		}
 	}
-	// Codex has no background setting, so the API has no background role for it.
+	// Codex and Pi have no background setting or background role in the API.
 	if s.Background == "" && choice.BackgroundRoute(harness.Selection{}) != "" {
 		s.backgroundSource = harnessRouteFromCLI
 		if name, source, ok := harnessDefaultRoute(ctx, choice.Name(), harnessRoleBackground, models, callable); ok {

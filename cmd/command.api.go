@@ -3,7 +3,7 @@ package cmd
 var commandAPI = Command{
 	Name:    "api",
 	Summary: "Make raw API requests",
-	Description: "Make raw HTTP requests to Baseten management or inference APIs.\n\n" +
+	Description: "Make raw HTTP requests to Baseten management, inference, or sandbox APIs.\n\n" +
 		"The HTTP method defaults to GET, or POST when --field, --raw-field, or --input is provided. " +
 		"JSON responses are pretty-printed by default; non-JSON responses are streamed raw. " +
 		"Use --jq to filter JSON responses.",
@@ -63,6 +63,33 @@ var commandAPI = Command{
 				},
 			},
 		},
+		{
+			Name:    "sandbox",
+			Summary: "Make sandbox API requests (PRE-RELEASE)",
+			Description: sandboxPreRelease +
+				"Make raw HTTP requests to a sandbox's own API, which runs processes and manages files " +
+				"inside the sandbox.\n\n" +
+				"Paths are relative to --sandbox-url, the sandbox's URL as shown by 'baseten sandbox describe', " +
+				"so 'baseten api sandbox process --sandbox-url <url>' requests <url>/process.",
+			ArgsUsage: "<api-path>",
+			ExactArgs: 1,
+			Flags:     APISandboxFlags{},
+			Output: &CommandOutput[JSONUndefined]{
+				TextDescription: "The sandbox API's response body, passed through verbatim. JSON " +
+					"responses are pretty-printed; non-JSON responses are streamed raw.",
+				JSONDescription: "Shape depends on the requested endpoint.",
+				Examples: []CommandExample{
+					{
+						Description: "List processes in a sandbox, looking up its URL by name.",
+						Command:     `baseten api sandbox process --sandbox-url "$(baseten sandbox describe --name my-sandbox --jq .url)"`,
+					},
+				},
+				JQExample: CommandExample{
+					Description: "List the names of the files in a sandbox's /tmp directory.",
+					Command:     `baseten api sandbox filesystem/tmp --sandbox-url <url> --jq '.files[].name'`,
+				},
+			},
+		},
 	},
 }
 
@@ -83,4 +110,9 @@ type APIManagementFlags struct {
 type APIInferenceFlags struct {
 	APIFlags
 	InferenceClientFlags
+}
+
+type APISandboxFlags struct {
+	APIFlags
+	SandboxURL string `flag:"sandbox-url" desc:"Sandbox URL to target, as shown by 'baseten sandbox describe'" required:"true"`
 }

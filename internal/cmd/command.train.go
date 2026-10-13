@@ -1020,6 +1020,7 @@ func commandTrainWorkstationCreate(ctx *CommandContext, flags *cmd.TrainWorkstat
 	args = trussIntArg(args, "gpu-count", flags.GPUCount)
 	args = trussIntArg(args, "node-count", flags.NodeCount)
 	args = trussArg(args, "image", flags.Image)
+	args = trussBoolArg(args, "spot", flags.Spot)
 	// The workstation's project is named rather than identified: it is created
 	// when no project of that name exists yet.
 	args = trussArg(args, "project-id", flags.Project)
