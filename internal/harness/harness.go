@@ -475,6 +475,18 @@ type Plan struct {
 	remove     bool
 }
 
+// StageCredentials puts the proposed token into configuration files, to aid with diff detection.
+func StageCredentials(plans []*Plan, token string) error {
+	for _, p := range plans {
+		if !p.teardown {
+			if err := p.setCredential(token); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // ApplyPlans writes plans in order, inserting token into setup plans first.
 // Concurrent invocations are not supported, and a multi-file operation is not a
 // transaction: rerun an interrupted setup or teardown to finish it.

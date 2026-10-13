@@ -105,6 +105,19 @@ func (s *Session) UsesAPIKey() bool {
 	return ok && p.AuthType == AuthTypeAPIKey
 }
 
+// APIKey returns the session's API key when it authenticates with one — the
+// ephemeral BASETEN_API_KEY value, or the stored key of an API key profile —
+// and "" for OAuth or unauthenticated sessions, which have no embeddable key.
+func (s *Session) APIKey() (string, error) {
+	if s.ephemeralAPIKey != "" {
+		return s.ephemeralAPIKey, nil
+	}
+	if !s.UsesAPIKey() {
+		return "", nil
+	}
+	return s.store.GetAPIKey(s.profileName)
+}
+
 // CacheIdentity returns a stable, filesystem-safe token for the resolved
 // credential, scoping on-disk caches so an entry written under one credential is
 // never read under another. Hashed to keep the profile name (an email by default)
