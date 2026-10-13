@@ -146,7 +146,7 @@ func (v *volumeTagsLifecycle) pushVersion(t *testing.T) (volumePushResult, strin
 // setTag runs `volume tag set` with any further flags and decodes what it wrote.
 func (v *volumeTagsLifecycle) setTag(t *testing.T, ref, tag string, flags ...string) volumeTagSetResult {
 	t.Helper()
-	args := append([]string{"volume", "tag", "set", "--volume-ref", ref, "--tag-name", tag}, flags...)
+	args := append([]string{"volume", "tag", "set", "--volume-ref", ref, "--tag", tag}, flags...)
 	out := mustCLI(t, append(args, "--output", "json")...)
 	var result volumeTagSetResult
 	require.NoError(t, json.Unmarshal([]byte(out), &result))
@@ -251,7 +251,7 @@ func (v *volumeTagsLifecycle) Head(t *testing.T) {
 
 func (v *volumeTagsLifecycle) Delete(t *testing.T) {
 	step(t, "deleting %s twice", v.tag)
-	out := mustCLI(t, "volume", "tag", "delete", "--volume-ref", v.ref, "--tag-name", v.tag, "--output", "json")
+	out := mustCLI(t, "volume", "tag", "delete", "--volume-ref", v.ref, "--tag", v.tag, "--output", "json")
 	var result volumeTagDeleteResult
 	require.NoError(t, json.Unmarshal([]byte(out), &result))
 	require.Equal(t, v.tag, result.Tag)
@@ -261,7 +261,7 @@ func (v *volumeTagsLifecycle) Delete(t *testing.T) {
 	require.ErrorContains(t, err, "exit 4")
 
 	// Deleting a tag the volume no longer has succeeds and says so.
-	out = mustCLI(t, "volume", "tag", "delete", "--volume-ref", v.ref, "--tag-name", v.tag, "--output", "json")
+	out = mustCLI(t, "volume", "tag", "delete", "--volume-ref", v.ref, "--tag", v.tag, "--output", "json")
 	require.NoError(t, json.Unmarshal([]byte(out), &result))
 	require.False(t, result.Deleted)
 }
