@@ -1014,7 +1014,7 @@ func (v *volumeLifecycle) Repush(t *testing.T) {
 // are untouched.
 func (v *volumeLifecycle) Expiration(t *testing.T) {
 	step(t, "setting the expiration time of %s", v.ref)
-	// The API requires a future time in whole seconds.
+	// The API requires a future time.
 	deadline := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	result := v.update(t, "--expires-at", deadline.Format(time.RFC3339))
 	require.NotNil(t, result.ExpiresAt)

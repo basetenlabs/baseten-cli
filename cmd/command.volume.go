@@ -559,7 +559,7 @@ type VolumeUpdateFlags struct {
 	CommandFlags
 
 	VolumeRef       string `flag:"volume-ref" desc:"Ref of the volume to update, as bdn:<namespace>/<volume>, with no selector and no path." required:"true"`
-	ExpiresAt       string `flag:"expires-at" desc:"Time at which the volume expires, as an RFC 3339 date-time with a UTC offset, to the whole second, as in 2030-01-01T00:00:00Z. It must be in the future and at most ten years ahead." oneof:"expiration"`
+	ExpiresAt       string `flag:"expires-at" desc:"Time at which the volume expires, as an RFC 3339 date-time with a UTC offset, as in 2030-01-01T00:00:00Z. It must be in the future and at most ten years ahead." oneof:"expiration"`
 	ClearExpiration bool   `flag:"clear-expiration" desc:"Clear the volume's expiration time." oneof:"expiration"`
 	Yes             bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
