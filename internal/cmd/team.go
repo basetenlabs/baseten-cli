@@ -41,7 +41,7 @@ func resolveTeamOrOnly(ctx context.Context, api *managementapi.Client, input str
 		case 1:
 			return &resp.Teams[0], nil
 		case 0:
-			return nil, errors.New("no teams found; pass --team")
+			return nil, errors.New("no teams found")
 		}
 		names := make([]string, len(resp.Teams))
 		for i, t := range resp.Teams {
