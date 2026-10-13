@@ -179,6 +179,8 @@ func Test_Harness_Usage_Empty(t *testing.T) {
 	h.Require.NoError(h.Execute("harness", "usage"))
 	h.Require.Empty(h.Stdout.String())
 	h.Require.Equal("No usage this month.\n", h.Stderr.String())
+	h.Require.NoError(h.Execute("harness", "usage", "--output", "json"))
+	h.Require.Equal("[]\n", h.Stdout.String(), "still valid JSON with no teams")
 
 	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 404, map[string]string{"message": "not found"})
 	h.Require.ErrorContains(h.Execute("harness", "usage"), "getting your teams: ")
@@ -197,6 +199,7 @@ func Test_Harness_Usage_Chart(t *testing.T) {
 		"a run per day with its date centered under it, a row per dollar, the largest series on top")
 
 	h.Require.Empty(cmd.RenderUsageChart(first, [][]float64{{1, 2, 3}}, 9), "too narrow for two columns per day")
+	h.Require.Empty(cmd.RenderUsageChart(first, [][]float64{make([]float64, 31)}, 66), "too narrow once the last date sticks out past the plot")
 	h.Require.Contains(cmd.RenderUsageChart(first, [][]float64{{0.001}}, 40), "$1 ┤", "at least a dollar tall")
 	h.Require.Contains(cmd.RenderUsageChart(first, [][]float64{{1500}}, 60), "$1,500 ┤", "large amounts in whole dollars")
 	h.Require.Contains(strip.ReplaceAllString(cmd.RenderUsageChart(first, [][]float64{{30}}, 200), ""), "$30 ┤"+strings.Repeat("─", 48)+"\n",

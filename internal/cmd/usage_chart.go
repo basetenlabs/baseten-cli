@@ -24,7 +24,9 @@ var usageChartColors = []ansi.BasicColor{ansi.Blue, ansi.Green, ansi.Magenta, an
 // first, as an asciichart-style step chart with a y-axis in whole dollars and
 // date labels below, fitting width columns, or "" when two columns per day
 // don't fit. Each day is a run of equal width with its date centered under
-// it, like Claude Code's, so the last day's run ends with its date. paint colors a series' characters by its index. It is
+// it, like Claude Code's, so the last day's run ends with its date, which can
+// stick out two columns past the plot. paint colors a series' characters by
+// its index. It is
 // hand-rolled rather than asciigraph's, which interpolates between points
 // instead of stepping, spaces its date ticks evenly rather than at day
 // starts, and paints with its own escapes rather than the terminal palette;
@@ -45,9 +47,9 @@ func renderUsageChart(first time.Time, series [][]float64, width int, paint func
 		labelWidth = max(labelWidth, len(labels[r]))
 	}
 	// Each day spans step columns, its first one stepping from the day before.
-	step := max(2, min(width-labelWidth-2, usageChartWidth)/days)
+	step := max(2, min(width-labelWidth-4, usageChartWidth)/days)
 	cols := days * step
-	if width < labelWidth+2+cols {
+	if width < labelWidth+4+cols {
 		return ""
 	}
 	grid := make([][]string, height+1) // grid[0] is the zero row.
@@ -90,7 +92,7 @@ func renderUsageChart(first time.Time, series [][]float64, width int, paint func
 	}
 	// Center the date labels, at most 6 wide, under days at least 8 columns
 	// apart, counting back from the last day so it always has one.
-	axis := []byte(strings.Repeat(" ", labelWidth+2+cols+6))
+	axis := []byte(strings.Repeat(" ", labelWidth+4+cols))
 	every := (8 + step - 1) / step
 	for d := (days - 1) % every; d < days; d += every {
 		label := first.AddDate(0, 0, d).Format("Jan 2")

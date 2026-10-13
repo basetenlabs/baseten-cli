@@ -48,6 +48,12 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	for i, t := range teams {
 		names[i] = strconv.Quote(t.TeamName)
 	}
+	// Opened before any early return, so JSON output is at least [].
+	var jw *JSONArrayWriter
+	if ctx.JSON {
+		jw = ctx.NewJSONArrayWriter()
+		defer jw.Close()
+	}
 	var team managementapi.RouteTeamUserSettings
 	switch {
 	case f.Team != "":
@@ -76,11 +82,6 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	userIDs := []string{me.UserId}
 	pageSize := routesUsageMaxBuckets
 	params := managementapi.GetV1RoutesUsageParams{StartDate: &startDate, EndDate: &endDate, GroupBy: &dims, UserIds: &userIDs, Limit: &pageSize, TeamId: &team.TeamId}
-	var jw *JSONArrayWriter
-	if ctx.JSON {
-		jw = ctx.NewJSONArrayWriter()
-		defer jw.Close()
-	}
 	byModel := map[string]*harnessModel{}
 	for {
 		resp, err := api.GetRoutesUsage(ctx, params)
