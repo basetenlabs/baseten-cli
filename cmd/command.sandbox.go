@@ -73,7 +73,9 @@ var commandSandbox = Command{
 				"Creates a sandbox and prints its record. Only the flags passed go into the request; " +
 				"the server applies its defaults to the rest.\n\n" +
 				"Environment variables from --env are secret, so their values are masked when read " +
-				"back; use --plain-env for values that are not.",
+				"back; use --plain-env for values that are not.\n\n" +
+				"--idle-ttl, --max-age, and --expires-at can be combined; whichever is reached first " +
+				"deletes the sandbox.",
 			Flags: SandboxCreateFlags{},
 			Output: &CommandOutput[managementapi.Sandbox]{
 				TextDescription: "One field per line describing the created sandbox. Empty fields are left out.",
@@ -101,6 +103,13 @@ var commandSandbox = Command{
 							"--label team=cli",
 						},
 					},
+					{
+						Description: "Create one that is deleted after an hour idle or a day at most.",
+						CommandLines: []string{
+							"baseten sandbox create --name scratch",
+							"--idle-ttl 1h --max-age 1d",
+						},
+					},
 				},
 				JQExample: CommandExample{
 					Description: "Create a sandbox and print its generated name.",
@@ -112,16 +121,24 @@ var commandSandbox = Command{
 			Name:    "update",
 			Summary: "Update a sandbox (PRE-RELEASE)",
 			Description: sandboxPreRelease +
-				"Updates a sandbox's environment variables or labels. Omitted flags leave " +
+				"Updates a sandbox's environment variables, labels, or lifecycle. Omitted flags leave " +
 				"their fields unchanged. Any --env or --plain-env replaces all of the sandbox's " +
-				"environment variables, and any --label replaces all of its labels.",
+				"environment variables, and any --label replaces all of its labels. Any of " +
+				"--idle-ttl, --max-age, --expires-at, or --terminated-retention replaces the " +
+				"sandbox's whole lifecycle, so pass every one that should still apply.",
 			Flags: SandboxUpdateFlags{},
 			Output: &CommandOutput[managementapi.Sandbox]{
 				TextDescription: "One field per line describing the updated sandbox. Empty fields are left out.",
-				Examples: []CommandExample{{
-					Description: "Replace a sandbox's labels.",
-					Command:     "baseten sandbox update --name my-sandbox --label env=dev",
-				}},
+				Examples: []CommandExample{
+					{
+						Description: "Replace a sandbox's labels.",
+						Command:     "baseten sandbox update --name my-sandbox --label env=dev",
+					},
+					{
+						Description: "Replace a sandbox's lifecycle so it is deleted after 30 minutes idle.",
+						Command:     "baseten sandbox update --name my-sandbox --idle-ttl 30m",
+					},
+				},
 				JQExample: CommandExample{
 					Description: "Replace a sandbox's labels and print them.",
 					CommandLines: []string{
@@ -257,11 +274,20 @@ type SandboxEnvFlags struct {
 	PlainEnv []string `flag:"plain-env" desc:"Environment variable that is not secret, as KEY=VALUE, readable when read back. Repeatable."`
 }
 
+// SandboxLifecycleFlags set when a sandbox is deleted automatically.
+type SandboxLifecycleFlags struct {
+	IdleTTL             time.Duration `flag:"idle-ttl" desc:"Delete the sandbox after it has been idle this long, such as 30m or 2d."`
+	MaxAge              time.Duration `flag:"max-age" desc:"Delete the sandbox once it is this old, such as 12h or 7d."`
+	ExpiresAt           time.Time     `flag:"expires-at" desc:"Delete the sandbox at this time. ISO 8601, local when no timezone is given."`
+	TerminatedRetention time.Duration `flag:"terminated-retention" desc:"How long to keep the sandbox's record after it terminates, for log access, such as 1h or 7d. The server defaults to 5m."`
+}
+
 // SandboxCreateFlags configures 'baseten sandbox create'. Unset flags are left
 // out of the request, so the server applies its defaults.
 type SandboxCreateFlags struct {
 	CommandFlags
 	SandboxEnvFlags
+	SandboxLifecycleFlags
 
 	Name        string   `flag:"name" desc:"Unique name of the sandbox. The server generates one when omitted."`
 	Team        string   `flag:"team" desc:"Team name or ID to create the sandbox in. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
@@ -278,6 +304,7 @@ type SandboxUpdateFlags struct {
 	CommandFlags
 	SandboxRefFlags
 	SandboxEnvFlags
+	SandboxLifecycleFlags
 
 	Label []string `flag:"label" desc:"Label as KEY=VALUE, replacing all of the sandbox's labels. Repeatable."`
 }
