@@ -752,8 +752,8 @@ func volumeExpiresAtArg(value string) (time.Time, error) {
 	expiresAt, err := time.Parse(time.RFC3339, value)
 	if err != nil {
 		return time.Time{}, cmd.NewErrUsagef(
-			"--expires-at %q must be an RFC 3339 date-time with a UTC offset, to the whole "+
-				"second, as in 2030-01-01T00:00:00Z", value)
+			"--expires-at %q must be an RFC 3339 date-time with a UTC offset, "+
+				"as in 2030-01-01T00:00:00Z", value)
 	}
 	return expiresAt, nil
 }

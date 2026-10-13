@@ -196,7 +196,7 @@ func (v *volumeTagsLifecycle) MoveToHead(t *testing.T) {
 
 func (v *volumeTagsLifecycle) Expiring(t *testing.T) {
 	step(t, "setting %s with an expiration time", v.expiring)
-	// The API requires a future time in whole seconds.
+	// The API requires a future time.
 	deadline := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	result := v.setTag(t, v.ref+"@"+v.digestA, v.expiring,
 		"--expires-at", deadline.Format(time.RFC3339))
