@@ -1029,14 +1029,14 @@ func (v *volumeLifecycle) Expiration(t *testing.T) {
 	require.True(t, listedAt.Equal(expiresAt), "stat reports %s, update reported %s", *listed, *result.ExpiresAt)
 
 	step(t, "clearing the expiration time of %s", v.ref)
-	result = v.update(t, "--clear-expiration")
+	result = v.update(t, "--clear-expires-at")
 	require.Nil(t, result.ExpiresAt)
 	require.Nil(t, v.statExpiresAt(t))
 }
 
 // update runs `volume update` on the lifecycle volume and decodes its JSON.
 func (v *volumeLifecycle) update(t *testing.T, args ...string) volumeUpdateResult {
-	out := mustCLI(t, append([]string{"volume", "update", "--volume-ref", v.ref, "--yes", "--output", "json"}, args...)...)
+	out := mustCLI(t, append([]string{"volume", "update", v.ref, "--yes", "--output", "json"}, args...)...)
 	var result volumeUpdateResult
 	require.NoError(t, json.Unmarshal([]byte(out), &result))
 	return result

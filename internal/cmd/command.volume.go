@@ -686,29 +686,29 @@ func commandVolumeRestore(ctx *CommandContext, flags *cmd.VolumeRestoreFlags) er
 }
 
 func commandVolumeUpdate(ctx *CommandContext, flags *cmd.VolumeUpdateFlags) error {
-	ref, err := volumeParseRef(flags.VolumeRef)
+	ref, err := volumeParseRef(ctx.Args[0])
 	if err != nil {
 		return err
 	}
 	switch ref.Level() {
 	case client.VolumeRefLevelNamespace:
 		return cmd.NewErrUsagef(
-			"--volume-ref %s names a namespace, and an expiration time belongs to a volume; "+
+			"ref %s names a namespace, and an expiration time belongs to a volume; "+
 				"write 'bdn:%s/<volume>'", ref, ref.Namespace)
 	case client.VolumeRefLevelPoint:
 		return cmd.NewErrUsagef(
-			"--volume-ref %s names a version, and an expiration time belongs to the whole "+
+			"ref %s names a version, and an expiration time belongs to the whole "+
 				"volume; write 'bdn:%s/%s'", ref, ref.Namespace, ref.Volume)
 	case client.VolumeRefLevelPath:
 		return cmd.NewErrUsagef(
-			"--volume-ref %s names a path, and an expiration time belongs to the whole volume; "+
+			"ref %s names a path, and an expiration time belongs to the whole volume; "+
 				"write 'bdn:%s/%s'", ref, ref.Namespace, ref.Volume)
 	}
 	// The request always carries expires_at, since the management API refuses
 	// a body without it. Null clears the expiration time.
 	expiresAt := managementapi.NewOptional[time.Time](nil)
 	question := fmt.Sprintf("Clear the expiration time of volume %s?", ref)
-	if !flags.ClearExpiration {
+	if !flags.ClearExpiresAt {
 		parsed, err := volumeExpiresAtArg(flags.ExpiresAt)
 		if err != nil {
 			return err

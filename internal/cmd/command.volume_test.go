@@ -735,7 +735,7 @@ func Test_Volume_Update_SetsExpiration(t *testing.T) {
 		"namespace": "weights", "volume": "llama", "expires_at": volumeExpiryTime, "volume_sequence": 12,
 	})
 
-	h.Require.NoError(h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama",
+	h.Require.NoError(h.Execute("volume", "update", "bdn:weights/llama",
 		"--expires-at", "2026-09-11T17:04:05Z", "--yes"))
 	h.Require.Equal(`{"expires_at":"2026-09-11T17:04:05Z"}`,
 		strings.TrimSpace(m.FindCall("PATCH", volumeUpdatePath).Body))
@@ -751,7 +751,7 @@ func Test_Volume_Update_ClearSendsNull(t *testing.T) {
 	m := h.MockManagementAPI()
 	m.SetRoute("PATCH", volumeUpdatePath, 200, volumeUpdatePayload)
 
-	h.Require.NoError(h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama", "--clear-expiration", "--yes"))
+	h.Require.NoError(h.Execute("volume", "update", "bdn:weights/llama", "--clear-expires-at", "--yes"))
 	// A clear sends an explicit null. An omitted field would be the API's 400.
 	h.Require.Equal(`{"expires_at":null}`, strings.TrimSpace(m.FindCall("PATCH", volumeUpdatePath).Body))
 	h.Require.Contains(h.Stdout.String(), "Expires:         -\n")
@@ -763,7 +763,7 @@ func Test_Volume_Update_BadExpiresAt(t *testing.T) {
 
 	// No --yes, so a "pass --yes" error would mean the prompt came before
 	// the check.
-	err := h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama", "--expires-at", "2030-01-01T00:00:00")
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--expires-at", "2030-01-01T00:00:00")
 	h.Require.ErrorContains(err, "must be an RFC 3339 date-time")
 	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
 	h.Require.Empty(m.Calls())
@@ -778,7 +778,7 @@ func Test_Volume_Update_PastExpiresAtReachesTheAPI(t *testing.T) {
 		"code": "VALIDATION_ERROR", "message": "expires_at must be after the request time",
 	})
 
-	err := h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama", "--expires-at", "2020-01-01T00:00:00Z", "--yes")
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--expires-at", "2020-01-01T00:00:00Z", "--yes")
 	h.Require.ErrorContains(err, "expires_at must be after the request time")
 	h.Require.Equal(int(public.ExitValidation), h.ExitCode)
 	h.Require.Len(m.Calls(), 1)
@@ -789,7 +789,7 @@ func Test_Volume_Update_RequiresOneFlag(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 
-	err := h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama", "--yes")
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--yes")
 	h.Require.ErrorContains(err, "at least one of the flags in the group")
 	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
 	h.Require.Empty(m.Calls())
@@ -799,8 +799,8 @@ func Test_Volume_Update_RejectsBothFlags(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 
-	err := h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama",
-		"--expires-at", "2030-01-01T00:00:00Z", "--clear-expiration", "--yes")
+	err := h.Execute("volume", "update", "bdn:weights/llama",
+		"--expires-at", "2030-01-01T00:00:00Z", "--clear-expires-at", "--yes")
 	h.Require.ErrorContains(err, "none of the others can be")
 	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
 	h.Require.Empty(m.Calls())
@@ -809,13 +809,13 @@ func Test_Volume_Update_RejectsBothFlags(t *testing.T) {
 func Test_Volume_Update_RequiresYesOffTerminal(t *testing.T) {
 	for _, args := range [][]string{
 		{"--expires-at", "2030-01-01T00:00:00Z"},
-		{"--clear-expiration"},
+		{"--clear-expires-at"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
 
-			err := h.Execute(append([]string{"volume", "update", "--volume-ref", "bdn:weights/llama"}, args...)...)
+			err := h.Execute(append([]string{"volume", "update", "bdn:weights/llama"}, args...)...)
 			h.Require.ErrorContains(err, "pass --yes")
 			h.Require.Equal(int(public.ExitUsage), h.ExitCode)
 			h.Require.Empty(m.Calls())
@@ -827,8 +827,8 @@ func Test_Volume_Update_Namespace(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 
-	err := h.Execute("volume", "update", "--volume-ref", "bdn:weights", "--clear-expiration", "--yes")
-	h.Require.ErrorContains(err, "--volume-ref bdn:weights/ names a namespace, and an expiration time belongs to a volume")
+	err := h.Execute("volume", "update", "bdn:weights", "--clear-expires-at", "--yes")
+	h.Require.ErrorContains(err, "ref bdn:weights/ names a namespace, and an expiration time belongs to a volume")
 	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
 	h.Require.Empty(m.Calls())
 }
@@ -839,7 +839,7 @@ func Test_Volume_Update_Selector(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
 
-			err := h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama"+selector, "--clear-expiration", "--yes")
+			err := h.Execute("volume", "update", "bdn:weights/llama"+selector, "--clear-expires-at", "--yes")
 			h.Require.ErrorContains(err, "names a version, and an expiration time belongs to the whole volume")
 			h.Require.Equal(int(public.ExitUsage), h.ExitCode)
 			h.Require.Empty(m.Calls())
@@ -851,7 +851,7 @@ func Test_Volume_Update_Path(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 
-	err := h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama/config", "--clear-expiration", "--yes")
+	err := h.Execute("volume", "update", "bdn:weights/llama/config", "--clear-expires-at", "--yes")
 	h.Require.ErrorContains(err, "names a path, and an expiration time belongs to the whole volume")
 	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
 	h.Require.Empty(m.Calls())
@@ -863,7 +863,7 @@ func Test_Volume_Update_JSON(t *testing.T) {
 		"namespace": "weights", "volume": "llama", "expires_at": volumeExpiryTime, "volume_sequence": 12,
 	})
 
-	h.Require.NoError(h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama",
+	h.Require.NoError(h.Execute("volume", "update", "bdn:weights/llama",
 		"--expires-at", "2026-09-11T17:04:05Z", "--yes", "--output", "json"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, `"expires_at": "2026-09-11T17:04:05Z"`)
@@ -878,7 +878,7 @@ func Test_Volume_Update_Conflict(t *testing.T) {
 		"details": map[string]any{"reason": "CAS_CONFLICT", "domain": "bdn.baseten.co"},
 	})
 
-	err := h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama", "--clear-expiration", "--yes", "--output", "json")
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--clear-expires-at", "--yes", "--output", "json")
 	h.Require.ErrorContains(err, "volume changed")
 	h.Require.Equal(int(public.ExitValidation), h.ExitCode)
 	// Nothing retries, so the conflict reaches the caller with its code.
@@ -896,28 +896,28 @@ func Test_Volume_Update_NotFound(t *testing.T) {
 		"code": "NOT_FOUND", "message": "volume not found",
 	})
 
-	err := h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama", "--clear-expiration", "--yes")
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--clear-expires-at", "--yes")
 	h.Require.ErrorContains(err, "volume not found")
 	h.Require.Equal(int(public.ExitNotFound), h.ExitCode)
 	h.Require.Len(m.Calls(), 1)
 }
 
-func Test_Volume_Update_MissingVolumeRef(t *testing.T) {
+func Test_Volume_Update_MissingRef(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 
-	err := h.Execute("volume", "update", "--clear-expiration", "--yes")
-	h.Require.ErrorContains(err, `"volume-ref" not set`)
+	err := h.Execute("volume", "update", "--clear-expires-at", "--yes")
+	h.Require.ErrorContains(err, "accepts 1 arg")
 	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
 	h.Require.Empty(m.Calls())
 }
 
-func Test_Volume_Update_Positional(t *testing.T) {
+func Test_Volume_Update_RejectsSecondRef(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 
-	err := h.Execute("volume", "update", "--volume-ref", "bdn:weights/llama", "--clear-expiration", "--yes", "bdn:weights/other")
-	h.Require.ErrorContains(err, "unknown command")
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--clear-expires-at", "--yes", "bdn:weights/other")
+	h.Require.ErrorContains(err, "accepts 1 arg")
 	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
 	h.Require.Empty(m.Calls())
 }
