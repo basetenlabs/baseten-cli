@@ -84,7 +84,7 @@ func volumeLsNamespaces(ctx *CommandContext) error {
 	}
 	rows := make([][]string, 0, len(items))
 	for _, namespace := range items {
-		rows = append(rows, []string{namespace})
+		rows = append(rows, []string{"bdn:" + namespace})
 	}
 	ctx.OutputTable(TableOutput{
 		Headers: []string{"NAMESPACE"},

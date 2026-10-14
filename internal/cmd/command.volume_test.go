@@ -213,8 +213,8 @@ func Test_Volume_Ls_Namespaces(t *testing.T) {
 	h.Require.NoError(h.Execute("volume", "ls"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "NAMESPACE")
-	h.Require.Contains(out, "cli-e2e")
-	h.Require.Contains(out, "weights")
+	h.Require.Contains(out, "bdn:cli-e2e")
+	h.Require.Contains(out, "bdn:weights")
 }
 
 func Test_Volume_Ls_Namespaces_SchemeOnly(t *testing.T) {
@@ -227,7 +227,7 @@ func Test_Volume_Ls_Namespaces_SchemeOnly(t *testing.T) {
 	})
 
 	h.Require.NoError(h.Execute("volume", "ls", "bdn:"))
-	h.Require.Contains(h.Stdout.String(), "weights")
+	h.Require.Contains(h.Stdout.String(), "bdn:weights")
 }
 
 func Test_Volume_Ls_Namespaces_Empty(t *testing.T) {
@@ -240,6 +240,17 @@ func Test_Volume_Ls_Namespaces_Empty(t *testing.T) {
 	h.Require.NoError(h.Execute("volume", "ls"))
 	h.Require.Equal("", h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "No volume namespaces found.")
+}
+
+func Test_Volume_Ls_Namespaces_JSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/volumes/namespaces", 200, map[string]any{
+		"items":      []string{"weights", "cli-e2e"},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	h.Require.NoError(h.Execute("volume", "ls", "--output", "json"))
+	h.Require.JSONEq(`{"items":["weights","cli-e2e"]}`, h.Stdout.String())
 }
 
 func Test_Volume_Ls_Volumes(t *testing.T) {

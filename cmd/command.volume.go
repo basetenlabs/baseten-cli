@@ -47,7 +47,8 @@ var commandVolume = Command{
 			Output: &CommandOutput[VolumeEntryList]{
 				TextDescription: "For entries, a table with columns: NAME, KIND, MODE, SIZE, MODIFIED, " +
 					"where a directory's name ends in '/' and carries no size. For namespaces, one column: " +
-					"NAMESPACE. For volumes, a table with columns: NAME, TAGS, HEAD SIZE, VERSIONS, " +
+					"NAMESPACE, with each namespace written as 'bdn:<namespace>'. " +
+					"For volumes, a table with columns: NAME, TAGS, HEAD SIZE, VERSIONS, " +
 					"EXPIRES, UPDATED. An expiring tag is annotated with its expiry. Prints what was empty " +
 					"to stderr when a listing has no rows.",
 				JSONDescription: "An object with version_ref and items, one entry per row, when the ref " +
