@@ -289,7 +289,7 @@ const volumeProgressInterval = 2 * time.Second
 // volumeProgressLogger flushes pending counters on ticks, phase changes,
 // and shutdown. Shutdown joins the worker before the command prints its result.
 func volumeProgressLogger(ctx *CommandContext) (func(client.VolumeProgress), func()) {
-	ticker := time.NewTicker(volumeProgressInterval)
+	ticks, stopTicker := ctx.NewTicker(volumeProgressInterval)
 	var mu sync.Mutex
 	var latest, printed client.VolumeProgress
 	var have, dirty bool
@@ -313,7 +313,7 @@ func volumeProgressLogger(ctx *CommandContext) (func(client.VolumeProgress), fun
 		defer close(exited)
 		for {
 			select {
-			case <-ticker.C:
+			case <-ticks:
 				mu.Lock()
 				flush()
 				mu.Unlock()
@@ -341,7 +341,7 @@ func volumeProgressLogger(ctx *CommandContext) (func(client.VolumeProgress), fun
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {
-			ticker.Stop()
+			stopTicker()
 			close(done)
 			<-exited
 		})

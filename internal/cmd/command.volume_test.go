@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -994,6 +995,12 @@ func Test_Volume_ProgressWhileTransferIsRunning(t *testing.T) {
 	for _, action := range []string{"push", "pull"} {
 		t.Run(action, func(t *testing.T) {
 			h := NewCommandHarness(t)
+			ticks := make(chan time.Time, 1)
+			var stopped atomic.Int64
+			h.Context = cmd.WithTicker(h.Context, func(interval time.Duration) (<-chan time.Time, func()) {
+				h.Require.Equal(2*time.Second, interval)
+				return ticks, func() { stopped.Add(1) }
+			})
 			fake := withVolumeTransfer(t, h)
 			output := make(volumeProgressOutput, 32)
 			phase := client.VolumePhaseUpload
@@ -1005,6 +1012,7 @@ func Test_Volume_ProgressWhileTransferIsRunning(t *testing.T) {
 				progress(p)
 				p.Files = 3
 				progress(p)
+				ticks <- time.Now() // Flush pending progress without another callback.
 				timeout := time.NewTimer(10 * time.Second)
 				defer timeout.Stop()
 				for {
@@ -1027,6 +1035,7 @@ func Test_Volume_ProgressWhileTransferIsRunning(t *testing.T) {
 			h.Require.NoError(cmd.Execute(h.Context, cmd.ExecuteOptions{
 				Args: args, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: output,
 			}))
+			h.Require.Equal(int64(1), stopped.Load())
 			close(output) // Execute has joined the progress worker.
 			var remaining strings.Builder
 			for line := range output {
