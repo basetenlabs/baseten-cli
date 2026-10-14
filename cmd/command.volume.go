@@ -339,7 +339,7 @@ var commandVolume = Command{
 						"time. The tag is still removed if its version or volume expires.\n\n" +
 						"--tag may be 'head'. Setting it changes which version a ref with no tag or " +
 						"digest resolves to. 'head' cannot take --expires-at and cannot point at an expiring " +
-						"version.\n\n" +
+						"version. Setting head prompts for confirmation first unless --yes is passed.\n\n" +
 						volumeRefGrammar,
 					Flags: VolumeTagSetFlags{},
 					Output: &CommandOutput[managementapi.SetVolumeTagResponse]{
@@ -365,7 +365,7 @@ var commandVolume = Command{
 							},
 							{
 								Description: "Move head, which is what refs without a tag or digest resolve to.",
-								Command:     "baseten volume tag set --volume-ref bdn:<namespace>/<volume>@b3:<digest> --tag head",
+								Command:     "baseten volume tag set --volume-ref bdn:<namespace>/<volume>@b3:<digest> --tag head --yes",
 							},
 						},
 						JQExample: CommandExample{
@@ -388,7 +388,8 @@ var commandVolume = Command{
 						"does not have succeeds and reports that nothing was deleted.\n\n" +
 						"--volume-ref must name a volume, with no selector and no path. A tag belongs to the " +
 						"volume, not to one version. Deleting 'head' makes refs without a tag or digest stop " +
-						"resolving until head is set again.\n\n" + volumeRefGrammar,
+						"resolving until head is set again. Deleting head prompts for confirmation first " +
+						"unless --yes is passed.\n\n" + volumeRefGrammar,
 					Flags: VolumeTagDeleteFlags{},
 					Output: &CommandOutput[managementapi.DeleteVolumeTagResponse]{
 						TextDescription: "One field per line: the tag, whether it existed and was deleted, " +
@@ -492,6 +493,7 @@ type VolumeTagSetFlags struct {
 	VolumeRef string               `flag:"volume-ref" desc:"Ref of the version to tag, as bdn:<namespace>/<volume> for the version head points at, or with a :<tag> or @<digest> selector for that version." required:"true"`
 	Tag       string               `flag:"tag" desc:"Tag to point at the version. May be 'head'." required:"true"`
 	ExpiresAt OptionalFlag[string] `flag:"expires-at" desc:"Time at which the tag expires, as an RFC 3339 date-time with a UTC offset, as in 2030-01-01T00:00:00Z. It must be in the future and at most ten years ahead. Omit it for a tag that does not expire. Omitting it on an existing tag clears its expiration time."`
+	Yes       bool                 `flag:"yes" desc:"Skip confirmation for 'head'. Required when stdin is not a terminal and --tag is 'head'."`
 }
 
 type VolumeTagDeleteFlags struct {
@@ -499,6 +501,7 @@ type VolumeTagDeleteFlags struct {
 
 	VolumeRef string `flag:"volume-ref" desc:"Ref of the volume the tag belongs to, as bdn:<namespace>/<volume>, with no selector and no path." required:"true"`
 	Tag       string `flag:"tag" desc:"Tag to delete. May be 'head'." required:"true"`
+	Yes       bool   `flag:"yes" desc:"Skip confirmation for 'head'. Required when stdin is not a terminal and --tag is 'head'."`
 }
 
 // VolumeNamespaceList is the JSON output of `baseten volume ls` with no ref:

@@ -1252,9 +1252,19 @@ func Test_Volume_Tag_Set_HeadAsTag(t *testing.T) {
 		"version_ref": volumeTagRefByDigest, "volume_sequence": 10, "expires_at": nil,
 	})
 
-	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "head"))
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "head", "--yes"))
 	h.Require.Equal("head", m.FindCall("POST", volumeTagsPath).BodyJSON(t)["tag"])
 	h.Require.Contains(h.Stdout.String(), "Tag:             head\n")
+}
+
+func Test_Volume_Tag_Set_HeadRequiresYesOffTerminal(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "head")
+	h.Require.ErrorContains(err, "pass --yes")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
 }
 
 func Test_Volume_Tag_Set_ExpiresAt(t *testing.T) {
@@ -1507,9 +1517,19 @@ func Test_Volume_Tag_Delete_Head(t *testing.T) {
 		"namespace": "weights", "volume": "llama", "tag": "head", "deleted": true, "volume_sequence": 11,
 	})
 
-	h.Require.NoError(h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "head"))
+	h.Require.NoError(h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "head", "--yes"))
 	h.Require.NotNil(m.FindCall("DELETE", volumeTagsPath+"/head"))
 	h.Require.Contains(h.Stdout.String(), "Deleted:         yes\n")
+}
+
+func Test_Volume_Tag_Delete_HeadRequiresYesOffTerminal(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "head")
+	h.Require.ErrorContains(err, "pass --yes")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
 }
 
 func Test_Volume_Tag_Delete_JSON(t *testing.T) {

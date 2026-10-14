@@ -715,6 +715,13 @@ func commandVolumeTagSet(ctx *CommandContext, flags *cmd.VolumeTagSetFlags) erro
 	if err != nil {
 		return err
 	}
+	// Moving head changes what refs without a tag or digest resolve to.
+	if tag == "head" && !flags.Yes {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Set head of bdn:%s/%s to version %s?",
+			ref.Namespace, ref.Volume, volumeVersionSelector(ref))); err != nil {
+			return err
+		}
+	}
 
 	resp, err := cl.API().PostVolumesTags(ctx, ref.Namespace, ref.Volume, body)
 	if err != nil {
@@ -759,6 +766,13 @@ func commandVolumeTagDelete(ctx *CommandContext, flags *cmd.VolumeTagDeleteFlags
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
+	}
+	// Deleting head leaves refs without a tag or digest unresolvable until head is set again.
+	if tag == "head" && !flags.Yes {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete head of bdn:%s/%s?",
+			ref.Namespace, ref.Volume)); err != nil {
+			return err
+		}
 	}
 
 	resp, err := cl.API().DeleteVolumesTags(ctx, ref.Namespace, ref.Volume, tag,

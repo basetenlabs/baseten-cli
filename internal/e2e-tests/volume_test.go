@@ -235,7 +235,7 @@ func (v *volumeTagsLifecycle) ClearExpiry(t *testing.T) {
 
 func (v *volumeTagsLifecycle) Head(t *testing.T) {
 	step(t, "moving head back to the first version")
-	result := v.setTag(t, v.ref+"@"+v.digestA, "head")
+	result := v.setTag(t, v.ref+"@"+v.digestA, "head", "--yes")
 	require.Equal(t, v.digestA, result.Digest)
 
 	out := mustCLI(t, "volume", "stat", v.ref, "--output", "json")
