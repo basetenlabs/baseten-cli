@@ -282,9 +282,9 @@ type Selection struct {
 	Fallback   string
 }
 
-// resolve defaults the primary route to the first route and the subagent and
+// Resolve defaults the primary route to the first route and the subagent and
 // fallback routes to the primary, then checks that every selected route exists.
-func (s Selection) resolve(routes []Route) (Selection, error) {
+func (s Selection) Resolve(routes []Route) (Selection, error) {
 	if len(routes) == 0 {
 		return s, errors.New("no accessible routes")
 	}
@@ -319,7 +319,41 @@ type Detection struct {
 	Name      string
 	Path      string
 	Installed bool
-	Version   string
+	// Installs lists every copy of the harness found, the one on PATH first.
+	// They all read the settings file at Path.
+	Installs []Install
+}
+
+// Install is one copy of a harness executable.
+type Install struct {
+	// Kind is how the harness was installed: InstallCLI or InstallDesktop.
+	Kind   string
+	Binary string
+	// Version is the executable's --version output, which is informational only.
+	Version string
+}
+
+// Install kinds.
+const (
+	InstallCLI     = "CLI"
+	InstallDesktop = "Desktop"
+)
+
+// candidate is a place a harness executable may be. A bare name is looked up
+// on PATH; a path is checked directly.
+type candidate struct {
+	kind   string
+	binary string
+}
+
+func cliCandidate(binary string) candidate { return candidate{InstallCLI, binary} }
+
+func desktopCandidates(binaries ...string) []candidate {
+	out := make([]candidate, 0, len(binaries))
+	for _, binary := range binaries {
+		out = append(out, candidate{InstallDesktop, binary})
+	}
+	return out
 }
 
 // Execer runs subprocesses. The CLI's shared executor satisfies it.
@@ -328,27 +362,46 @@ type Execer interface {
 	Exec(cmd *exec.Cmd) error
 }
 
-// detect looks up binary on PATH and reads its version, which is informational only.
-func detect(ctx context.Context, execer Execer, name, binary, path string) (Detection, error) {
+// detect looks for every candidate and reads the version of each one found.
+// The same executable reached two ways, such as a desktop app's CLI that is
+// also on PATH, is listed once.
+func detect(ctx context.Context, execer Execer, name string, candidates []candidate, path string) (Detection, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return Detection{}, err
 	}
 	d := Detection{Name: name, Path: path}
-	bin, err := execer.LookPath(binary)
-	if err != nil {
-		return d, nil
+	seen := map[string]bool{}
+	for _, c := range candidates {
+		bin, err := execer.LookPath(c.binary)
+		if err != nil {
+			continue
+		}
+		resolved := bin
+		if real, err := filepath.EvalSymlinks(bin); err == nil {
+			resolved = real
+		}
+		if seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		d.Installs = append(d.Installs, Install{Kind: c.kind, Binary: bin, Version: version(ctx, execer, bin)})
 	}
-	d.Installed = true
+	d.Installed = len(d.Installs) > 0
+	return d, nil
+}
+
+func version(ctx context.Context, execer Execer, bin string) string {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	var out bytes.Buffer
 	command := exec.CommandContext(ctx, bin, "--version")
 	command.Stdout = &out
-	if execer.Exec(command) == nil {
-		d.Version, _, _ = strings.Cut(strings.TrimSpace(out.String()), "\n")
+	if execer.Exec(command) != nil {
+		return ""
 	}
-	return d, nil
+	v, _, _ := strings.Cut(strings.TrimSpace(out.String()), "\n")
+	return v
 }
 
 // configDir returns dir, else the directory named by env, else home joined with rel.
@@ -420,6 +473,18 @@ type Plan struct {
 	bearerPath []string
 	teardown   bool
 	remove     bool
+}
+
+// StageCredentials puts the proposed token into configuration files, to aid with diff detection.
+func StageCredentials(plans []*Plan, token string) error {
+	for _, p := range plans {
+		if !p.teardown {
+			if err := p.setCredential(token); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ApplyPlans writes plans in order, inserting token into setup plans first.

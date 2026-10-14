@@ -152,6 +152,28 @@ func TestOpenCodeCarriesRouteCost(t *testing.T) {
 	require.NotContains(t, models["acme/unpriced"], "cost")
 }
 
+func TestOpenCodeV2CostAndVariants(t *testing.T) {
+	cacheRead, cacheWrite := 0.3, 3.75
+	priced := testRoute("acme/primary", "Primary")
+	priced.ReasoningLevels = []string{"none", "low", "high", "xhigh", "max"}
+	priced.Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, CacheWrite: &cacheWrite, LongContext: &Cost{Input: 6, Output: 22.5}}
+	path := settingsPath(t, openCodeHarness{})
+	save(t, path, map[string]any{"providers": map[string]any{}})
+	setup(t, openCodeHarness{}, path, []Route{priced, testRoute("acme/unpriced", "Unpriced")}, Selection{})
+	models := get(load(t, path), []string{"providers", providerID, "models"}).Data.(map[string]any)
+	primary := models["acme/primary"].(map[string]any)
+	require.Equal(t, []any{
+		map[string]any{"input": json.Number("3"), "output": json.Number("15"), "cache": map[string]any{"read": json.Number("0.3"), "write": json.Number("3.75")}},
+		map[string]any{"tier": map[string]any{"type": "context", "size": json.Number("200000")}, "input": json.Number("6"), "output": json.Number("22.5")},
+	}, primary["cost"])
+	ids := []any{}
+	for _, v := range primary["variants"].([]any) {
+		ids = append(ids, v.(map[string]any)["id"])
+	}
+	require.Equal(t, []any{"none", "low", "high", "xhigh"}, ids, "max becomes xhigh, in route order")
+	require.NotContains(t, models["acme/unpriced"], "cost")
+}
+
 func TestPiCarriesCompleteRouteCost(t *testing.T) {
 	cacheRead, cacheWrite := 0.3, 3.75
 	priced := testRoute("acme/primary", "Primary")

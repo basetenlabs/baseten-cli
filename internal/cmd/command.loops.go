@@ -611,7 +611,7 @@ func commandLoopsUsage(ctx *CommandContext, flags *cmd.LoopsUsageFlags) error {
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.LoopsUsageResult{Summary: summary, Rows: shown})
+		ctx.OutputJSON(cmd.LoopsUsageResult{Summary: summary, Rows: normalizeJSONSlice(shown)})
 		return nil
 	}
 	ctx.Outputf("Trainer GPUs: %d in use, %d scaled to zero. Sampler GPUs: %d in use, %d scaled to zero.\n",

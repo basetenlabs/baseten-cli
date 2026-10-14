@@ -50,7 +50,7 @@ func commandSandboxImageList(ctx *CommandContext, flags *cmd.SandboxImageListFla
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.SandboxImageList{Items: items})
+		ctx.OutputJSON(cmd.SandboxImageList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {
@@ -240,7 +240,7 @@ func commandSandboxImageListTags(ctx *CommandContext, flags *cmd.SandboxImageRef
 		return fmt.Errorf("listing tags of sandbox image %s: %w", flags.Name, err)
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.SandboxImageTagList{Items: items})
+		ctx.OutputJSON(cmd.SandboxImageTagList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {
@@ -273,7 +273,7 @@ func commandSandboxImageListLibrary(ctx *CommandContext, _ *cmd.SandboxImageList
 		return fmt.Errorf("listing starter sandbox images: %w", err)
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.SandboxImageLibraryList{Items: response.Items})
+		ctx.OutputJSON(cmd.SandboxImageLibraryList{Items: normalizeJSONSlice(response.Items)})
 		return nil
 	}
 	if len(response.Items) == 0 {

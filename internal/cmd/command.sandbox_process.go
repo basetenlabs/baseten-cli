@@ -71,7 +71,7 @@ func commandSandboxProcessList(ctx *CommandContext, flags *cmd.SandboxProcessLis
 		for _, process := range processes {
 			items = append(items, sandboxProcessResponseFromInfo(process))
 		}
-		ctx.OutputJSON(cmd.SandboxProcessList{Items: items})
+		ctx.OutputJSON(cmd.SandboxProcessList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(processes) == 0 {

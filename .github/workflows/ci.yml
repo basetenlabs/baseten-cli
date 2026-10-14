@@ -27,7 +27,8 @@ jobs:
 
       # The harness tests run the installed Claude Code, Codex, OpenCode, and Pi
       # CLIs against a local gateway, and skip any that are missing. Harness
-      # setup is only supported on macOS and Linux so far.
+      # setup is only supported on macOS and Linux so far. OpenCode 1 and 2
+      # both install `opencode`, so OpenCode 2 goes in its own prefix.
       - uses: actions/setup-node@v4
         if: matrix.os != 'windows-latest'
         with:
@@ -35,7 +36,10 @@ jobs:
 
       - name: Install harnesses
         if: matrix.os != 'windows-latest'
-        run: npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai @earendil-works/pi-coding-agent
+        run: |
+          npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai @earendil-works/pi-coding-agent
+          npm install -g --prefix "$RUNNER_TEMP/opencode2" @opencode/cli
+          echo "BASETEN_TEST_OPENCODE2=$RUNNER_TEMP/opencode2/bin/opencode" >> "$GITHUB_ENV"
 
       - name: Test
         run: go test ./...

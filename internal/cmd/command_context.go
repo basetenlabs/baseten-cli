@@ -102,6 +102,17 @@ func (c *CommandContext) OutputJSON(v any) {
 	c.encodeJSON(v)
 }
 
+// normalizeJSONSlice returns s, or an empty slice when s is nil, so JSON
+// output prints [] instead of null. Wrap every non-omitempty slice the CLI
+// builds for JSON output with it where the value is built, such as a list
+// command's Items, since a list with no matches is a normal result.
+func normalizeJSONSlice[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
 // normalizeForJQ round-trips v through JSON so struct values become the
 // map/slice primitives gojq expects.
 func normalizeForJQ(v any) (any, error) {

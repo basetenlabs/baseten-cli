@@ -24,7 +24,7 @@ var commandRoute = Command{
 			Summary: "List routes (PRE-RELEASE)",
 			Flags:   RouteListFlags{},
 			Description: routePrereleaseNotice +
-				"List a team's routes, newest first.",
+				"List all available routes, newest first.",
 			Output: &CommandOutput[RouteList]{
 				JSONDescription: "All matching routes in items. " + routeTargetJSONDescription,
 				TextDescription: "Table with columns: ID, DISPLAY NAME, NAME, CREATED. " +

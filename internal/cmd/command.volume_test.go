@@ -213,8 +213,8 @@ func Test_Volume_Ls_Namespaces(t *testing.T) {
 	h.Require.NoError(h.Execute("volume", "ls"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "NAMESPACE")
-	h.Require.Contains(out, "cli-e2e")
-	h.Require.Contains(out, "weights")
+	h.Require.Contains(out, "bdn:cli-e2e")
+	h.Require.Contains(out, "bdn:weights")
 }
 
 func Test_Volume_Ls_Namespaces_SchemeOnly(t *testing.T) {
@@ -227,7 +227,7 @@ func Test_Volume_Ls_Namespaces_SchemeOnly(t *testing.T) {
 	})
 
 	h.Require.NoError(h.Execute("volume", "ls", "bdn:"))
-	h.Require.Contains(h.Stdout.String(), "weights")
+	h.Require.Contains(h.Stdout.String(), "bdn:weights")
 }
 
 func Test_Volume_Ls_Namespaces_Empty(t *testing.T) {
@@ -240,6 +240,17 @@ func Test_Volume_Ls_Namespaces_Empty(t *testing.T) {
 	h.Require.NoError(h.Execute("volume", "ls"))
 	h.Require.Equal("", h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "No volume namespaces found.")
+}
+
+func Test_Volume_Ls_Namespaces_JSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/volumes/namespaces", 200, map[string]any{
+		"items":      []string{"weights", "cli-e2e"},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	h.Require.NoError(h.Execute("volume", "ls", "--output", "json"))
+	h.Require.JSONEq(`{"items":["weights","cli-e2e"]}`, h.Stdout.String())
 }
 
 func Test_Volume_Ls_Volumes(t *testing.T) {
@@ -718,6 +729,23 @@ func Test_Volume_Cat_File(t *testing.T) {
 	// A handler replaces the destination directory, which is what makes this
 	// a pipe rather than a download.
 	h.Require.Empty(fake.PullOptions.DestDir)
+	h.Require.Equal(client.VolumeConcurrencyOptions{}, fake.PullOptions.Concurrency)
+}
+
+func Test_Volume_Cat_Concurrency(t *testing.T) {
+	h := NewCommandHarness(t)
+	fake := withVolumeTransfer(t, h)
+	fake.Contents = map[string]string{"/config/model.json": `{"hidden_size":4096}`}
+
+	h.Require.NoError(h.Execute("volume", "cat", "bdn:weights/llama/config/model.json",
+		"--chunk-operations", "8", "--max-in-flight-mib", "512"))
+
+	h.Require.Equal(client.VolumeConcurrencyOptions{
+		ChunkOperations:  8,
+		MaxBytesInFlight: 512 * 1024 * 1024,
+	}, fake.PullOptions.Concurrency)
+	h.Require.Equal(`{"hidden_size":4096}`, h.Stdout.String())
+	h.Require.Empty(h.Stderr.String())
 }
 
 func Test_Volume_Cat_Directory(t *testing.T) {

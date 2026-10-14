@@ -46,7 +46,7 @@ func commandModelAPIList(ctx *CommandContext, flags *cmd.ModelAPIListFlags) erro
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.ModelAPIList{Items: items})
+		ctx.OutputJSON(cmd.ModelAPIList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {

@@ -76,8 +76,9 @@ func commandVolumeCat(ctx *CommandContext, flags *cmd.VolumeCatFlags) error {
 			_, err := io.Copy(ctx.Stdout, entry.Reader)
 			return err
 		},
-		Hasher: volumeHasher,
-		Store:  &volumeObjectStore{ctx: ctx},
+		Hasher:      volumeHasher,
+		Store:       &volumeObjectStore{ctx: ctx},
+		Concurrency: volumeConcurrency(flags.VolumeTransferFlags, 0),
 	})
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", ref, err)
@@ -156,7 +157,7 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 			Sequence:        result.Sequence,
 			HeadUpdated:     result.HeadUpdated,
 			HeadMoveDenied:  result.HeadMoveDenied,
-			TagsApplied:     result.TagsApplied,
+			TagsApplied:     normalizeJSONSlice(result.TagsApplied),
 			Files:           result.Files,
 			Bytes:           result.Bytes,
 			Chunks:          result.Chunks,

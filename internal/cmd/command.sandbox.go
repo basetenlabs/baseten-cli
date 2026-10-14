@@ -62,7 +62,7 @@ func commandSandboxList(ctx *CommandContext, flags *cmd.SandboxListFlags) error 
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.SandboxList{Items: items})
+		ctx.OutputJSON(cmd.SandboxList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {
@@ -146,15 +146,20 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 	if err != nil {
 		return err
 	}
+	lifecycle, err := sandboxLifecycle(flags.SandboxLifecycleFlags)
+	if err != nil {
+		return err
+	}
 	client, teamID, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
 	request := managementapi.CreateSandboxRequest{
-		Name:   sandboxOptionalString(flags.Name),
-		Region: sandboxOptionalString(flags.Region),
-		Image:  sandboxOptionalString(flags.Image),
-		Envs:   envs,
+		Name:      sandboxOptionalString(flags.Name),
+		Region:    sandboxOptionalString(flags.Region),
+		Image:     sandboxOptionalString(flags.Image),
+		Envs:      envs,
+		Lifecycle: lifecycle,
 	}
 	if flags.IfNotExists {
 		request.CreateIfNotExists = &flags.IfNotExists
@@ -183,11 +188,15 @@ func commandSandboxUpdate(ctx *CommandContext, flags *cmd.SandboxUpdateFlags) er
 	if err != nil {
 		return err
 	}
+	lifecycle, err := sandboxLifecycle(flags.SandboxLifecycleFlags)
+	if err != nil {
+		return err
+	}
 	client, teamID, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
 	}
-	request := managementapi.UpdateSandboxRequest{Envs: envs}
+	request := managementapi.UpdateSandboxRequest{Envs: envs, Lifecycle: lifecycle}
 	if labels != nil {
 		sandboxLabels := managementapi.SandboxMetadataLabels(labels)
 		request.Labels = &sandboxLabels
@@ -525,6 +534,35 @@ func sandboxOutputRecord(ctx *CommandContext, record *managementapi.Sandbox) {
 	if record.ExpiresIn != nil {
 		ctx.Outputf("Expires in:   %s\n", time.Duration(*record.ExpiresIn)*time.Second)
 	}
+	if record.Lifecycle != nil && record.Lifecycle.ExpirationPolicies != nil {
+		for _, policy := range *record.Lifecycle.ExpirationPolicies {
+			sandboxOutputExpirationPolicy(ctx, policy)
+		}
+	}
+}
+
+// sandboxOutputExpirationPolicy prints one expiration policy line. A type this
+// CLI does not know prints by its type name.
+func sandboxOutputExpirationPolicy(ctx *CommandContext, policy managementapi.SandboxExpirationPolicy) {
+	policyType, _ := policy.Discriminator()
+	switch policyType {
+	case string(managementapi.SandboxTTLIdleExpirationPolicyType_TTL_IDLE):
+		if idle, err := policy.AsSandboxTTLIdleExpirationPolicy(); err == nil {
+			ctx.Outputf("Idle TTL:     %s\n", idle.Value)
+			return
+		}
+	case string(managementapi.SandboxTTLMaxAgeExpirationPolicyType_TTL_MAX_AGE):
+		if maxAge, err := policy.AsSandboxTTLMaxAgeExpirationPolicy(); err == nil {
+			ctx.Outputf("Max age:      %s\n", maxAge.Value)
+			return
+		}
+	case string(managementapi.SandboxDateExpirationPolicyType_DATE):
+		if date, err := policy.AsSandboxDateExpirationPolicy(); err == nil {
+			ctx.Outputf("Expires at:   %s\n", sandboxFormatTime(&date.Value))
+			return
+		}
+	}
+	ctx.Outputf("Expiry:       %s\n", policyType)
 }
 
 // sandboxOutputField prints one labeled field, unless its value is empty or
@@ -586,6 +624,57 @@ func sandboxParseEnvs(flags cmd.SandboxEnvFlags) (*[]managementapi.SandboxEnv, e
 		envs = append(envs, managementapi.SandboxEnv{Name: &name, Value: new(plain[name]), Secret: &notSecret})
 	}
 	return &envs, nil
+}
+
+// sandboxLifecycle builds a sandbox's lifecycle, nil when no flag sets any.
+// Every policy deletes, the only action the API has. Durations go out in Go
+// syntax, which the server accepts and echoes back as sent.
+func sandboxLifecycle(flags cmd.SandboxLifecycleFlags) (*managementapi.SandboxLifecycle, error) {
+	var policies []managementapi.SandboxExpirationPolicy
+	if flags.IdleTTL != 0 {
+		var policy managementapi.SandboxExpirationPolicy
+		if err := policy.FromSandboxTTLIdleExpirationPolicy(managementapi.SandboxTTLIdleExpirationPolicy{
+			Action: managementapi.SandboxTTLIdleExpirationPolicyAction_DELETE,
+			Type:   managementapi.SandboxTTLIdleExpirationPolicyType_TTL_IDLE,
+			Value:  flags.IdleTTL.String(),
+		}); err != nil {
+			return nil, err
+		}
+		policies = append(policies, policy)
+	}
+	if flags.MaxAge != 0 {
+		var policy managementapi.SandboxExpirationPolicy
+		if err := policy.FromSandboxTTLMaxAgeExpirationPolicy(managementapi.SandboxTTLMaxAgeExpirationPolicy{
+			Action: managementapi.SandboxTTLMaxAgeExpirationPolicyAction_DELETE,
+			Type:   managementapi.SandboxTTLMaxAgeExpirationPolicyType_TTL_MAX_AGE,
+			Value:  flags.MaxAge.String(),
+		}); err != nil {
+			return nil, err
+		}
+		policies = append(policies, policy)
+	}
+	if !flags.ExpiresAt.IsZero() {
+		var policy managementapi.SandboxExpirationPolicy
+		if err := policy.FromSandboxDateExpirationPolicy(managementapi.SandboxDateExpirationPolicy{
+			Action: managementapi.SandboxDateExpirationPolicyAction_DELETE,
+			Type:   managementapi.SandboxDateExpirationPolicyType_DATE,
+			Value:  flags.ExpiresAt,
+		}); err != nil {
+			return nil, err
+		}
+		policies = append(policies, policy)
+	}
+	if len(policies) == 0 && flags.TerminatedRetention == 0 {
+		return nil, nil
+	}
+	var lifecycle managementapi.SandboxLifecycle
+	if len(policies) > 0 {
+		lifecycle.ExpirationPolicies = &policies
+	}
+	if flags.TerminatedRetention != 0 {
+		lifecycle.TerminatedRetention = new(flags.TerminatedRetention.String())
+	}
+	return &lifecycle, nil
 }
 
 func sandboxOptionalString(value string) *string {

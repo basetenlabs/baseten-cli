@@ -35,7 +35,7 @@ func (h piHarness) Detect(ctx context.Context, execer Execer, dir string) (Detec
 	if err != nil {
 		return Detection{}, err
 	}
-	return detect(ctx, execer, h.Name(), "pi", filepath.Join(dir, "models.json"))
+	return detect(ctx, execer, h.Name(), []candidate{cliCandidate("pi")}, filepath.Join(dir, "models.json"))
 }
 
 func (piHarness) BackgroundRoute(Selection) string { return "" }
@@ -52,7 +52,7 @@ func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint stri
 	case s.Fallback != "":
 		return nil, errors.New("--fallback-route is supported only for Claude Code")
 	}
-	s, err := s.resolve(routes)
+	s, err := s.Resolve(routes)
 	if err != nil {
 		return nil, err
 	}
