@@ -11,6 +11,7 @@ import (
 
 func harnessUsageModel(model string, cost any, input, cached, output int) map[string]any {
 	return map[string]any{
+		"team_id":               "team-a",
 		"model":                 model,
 		"cost_usd":              cost,
 		"input_tokens":          input,
@@ -103,7 +104,7 @@ func Test_Harness_Usage_DefaultsToMonthToDateForCurrentUser(t *testing.T) {
 	h.Require.Equal([]string{"2026-09-26"}, q["end_date"], "today's usage is included")
 	h.Require.Equal([]string{"user-a"}, q["user_ids"], "admins must not see other users' usage by default")
 	h.Require.Equal([]string{"TEAM", "MODEL"}, q["group_by"])
-	h.Require.Equal([]string{"team-a"}, q["team_id"], "your only team needs no --team")
+	h.Require.Nil(q["team_id"], "every team without --team")
 	h.Require.Equal("September 2026 · resets Oct 1\n", h.Stderr.String())
 }
 
@@ -116,7 +117,6 @@ func Test_Harness_Usage_Teams(t *testing.T) {
 		harnessTeamSettings("team-d", "Infra", "0", nil, nil, nil),
 	}})
 
-	h.Require.ErrorContains(h.Execute("harness", "usage"), `you're in 4 teams; pass --team with one of "Engineering", "Research", "FDE", "Infra"`)
 	h.Require.ErrorContains(h.Execute("harness", "usage", "--team", "Sales"), `no team of yours matched "Sales"; your teams are "Engineering", "Research", "FDE", "Infra"`)
 
 	h.Require.NoError(h.Execute("harness", "usage", "--team", "Engineering"))
@@ -126,6 +126,15 @@ func Test_Harness_Usage_Teams(t *testing.T) {
 		"whole dollars, half a dollar rounds up, days summed, models most expensive first then by name, amounts lined up")
 	h.Require.NotContains(out, "┤", "no chart when stdout isn't a terminal")
 	h.Require.NotContains(out, "\x1b[", "no color when stdout isn't a terminal")
+
+	body := harnessUsageMonth()
+	body["items"].([]map[string]any)[0]["results"].([]map[string]any)[1]["team_id"] = "team-b"
+	body["items"].([]map[string]any)[2]["results"].([]map[string]any)[1]["team_id"] = "team-z"
+	api.SetRoute("GET", "/v1/routes/usage", 200, body)
+	h.Require.NoError(h.Execute("harness", "usage"))
+	h.Require.Nil(harnessUsageLastQuery(h, api)["team_id"])
+	h.Require.Regexp(`(?m)^Engineering +\$2 of \$100\n  ● claude-sonnet-5 +\$1 +\(100%\)\n\nResearch +\$13 of \$10 .*\n  ● gpt-5.2 +\$1 +\(100%\)\n\nFDE +\$80 of \$100 .*\n\nInfra +\$0 · no limit\n$`, h.Stdout.String(),
+		"every team without --team, usage split by team, a team you're no longer in left out")
 
 	h.Require.NoError(h.Execute("harness", "usage", "--team", "team-b"))
 	h.Require.Equal([]string{"Research", "$13", "of", "$10", "(team", "default", "$100)", "·", "limit", "reached"},

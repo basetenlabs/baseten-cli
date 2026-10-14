@@ -22,7 +22,7 @@ func init() {
 	Register("harness usage", commandHarnessUsage)
 }
 
-// commandHarnessUsage shows your Code spend this month in one of your teams,
+// commandHarnessUsage shows your Code spend this month in each of your teams,
 // per day and per model, against your spend limit there.
 func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	cl, err := ctx.NewManagementClient()
@@ -54,21 +54,16 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 		jw = ctx.NewJSONArrayWriter()
 		defer jw.Close()
 	}
-	var team managementapi.RouteTeamUserSettings
-	switch {
-	case f.Team != "":
+	// --team narrows to one team; otherwise every team you're in.
+	if f.Team != "" {
 		i := slices.IndexFunc(teams, func(t managementapi.RouteTeamUserSettings) bool { return t.TeamId == f.Team || t.TeamName == f.Team })
 		if i < 0 {
 			return cmd.NewErrUsagef("no team of yours matched %q; your teams are %s", f.Team, strings.Join(names, ", "))
 		}
-		team = teams[i]
-	case len(teams) == 0:
+		teams = teams[i : i+1]
+	} else if len(teams) == 0 {
 		ctx.LogLine("No usage this month.")
 		return nil
-	case len(teams) > 1:
-		return cmd.NewErrUsagef("you're in %d teams; pass --team with one of %s", len(teams), strings.Join(names, ", "))
-	default:
-		team = teams[0]
 	}
 
 	// This month so far by default, the period spend limits apply to, in
@@ -93,8 +88,16 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	// organization's usage.
 	userIDs := []string{me.UserId}
 	pageSize := routesUsageMaxBuckets
-	params := managementapi.GetV1RoutesUsageParams{StartDate: &startDate, EndDate: &endDate, GroupBy: &dims, UserIds: &userIDs, Limit: &pageSize, TeamId: &team.TeamId}
-	byModel := map[string]*harnessModel{}
+	params := managementapi.GetV1RoutesUsageParams{StartDate: &startDate, EndDate: &endDate, GroupBy: &dims, UserIds: &userIDs, Limit: &pageSize}
+	if f.Team != "" {
+		params.TeamId = &teams[0].TeamId
+	}
+	// Usage in a team you're no longer in, or from before usage was attributed
+	// to teams, has no settings to show it against, so it is left out.
+	byTeam := map[string]map[string]*harnessModel{}
+	for _, t := range teams {
+		byTeam[t.TeamId] = map[string]*harnessModel{}
+	}
 	for {
 		resp, err := api.GetRoutesUsage(ctx, params)
 		if err != nil {
@@ -115,6 +118,10 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 				// Requests that produced no tokens, such as failed ones, cost
 				// nothing and would only add empty rows.
 				if cost == 0 && t.input+t.output == 0 {
+					continue
+				}
+				byModel := byTeam[deref(r.TeamId)]
+				if byModel == nil {
 					continue
 				}
 				name := cmp.Or(deref(r.Model), "(unknown)")
@@ -141,11 +148,34 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	} else {
 		ctx.LogLine(start.Format("Jan 2") + " to " + end.AddDate(0, 0, -1).Format("Jan 2, 2006"))
 	}
-	models := slices.SortedFunc(maps.Values(byModel), func(x, y *harnessModel) int {
-		return cmp.Or(cmp.Compare(y.cost, x.cost), strings.Compare(x.name, y.name))
-	})
-	harnessRender(ctx, team, start, current, models)
+	rows := make([]harnessTeam, len(teams))
+	for i, t := range teams {
+		rows[i] = harnessTeam{settings: t, models: slices.SortedFunc(maps.Values(byTeam[t.TeamId]), func(x, y *harnessModel) int {
+			return cmp.Or(cmp.Compare(y.cost, x.cost), strings.Compare(x.name, y.name))
+		})}
+	}
+	harnessRender(ctx, start, current, rows)
 	return nil
+}
+
+// harnessTeam is your settings in a team and your spend there by model, most
+// expensive first.
+type harnessTeam struct {
+	settings managementapi.RouteTeamUserSettings
+	models   []*harnessModel
+}
+
+// spent is what you spent in the team: this month's from the settings when
+// the window is this month so far, otherwise what the usage adds up to.
+func (t harnessTeam) spent(current bool) float64 {
+	if current {
+		return harnessFloat(t.settings.MonthSpendUsd)
+	}
+	all := 0.0
+	for _, m := range t.models {
+		all += m.cost
+	}
+	return all
 }
 
 // harnessModel is one model's spend in a team this month. Whole dollars don't
@@ -159,31 +189,21 @@ type harnessModel struct {
 	daily []float64
 }
 
-// harnessRender prints what you spent in the team over the window from start
-// of your limit there, a chart of spend per day when stdout is a terminal,
-// and each model's spend and share, most expensive first, all to the nearest
-// dollar. The limit, and the settings' spend and blocked state, are this
-// month's, so any other window shows only what the usage adds up to.
-func harnessRender(ctx *CommandContext, s managementapi.RouteTeamUserSettings, start time.Time, current bool, models []*harnessModel) {
-	all, priced := 0.0, true
-	for _, m := range models {
-		all += m.cost
-		priced = priced && m.priced
-	}
-	spentUSD, limitUSD, limit := all, 0.0, ""
-	if current {
-		spentUSD = harnessFloat(s.MonthSpendUsd)
-		if l := s.SpendLimit.Effective.MonthlyLimitUsd; l != nil {
-			limitUSD = harnessFloat(*l)
-			limit = harnessDollars(limitUSD)
+// harnessRender prints, for each team, what you spent there over the window
+// from start of your limit there, a chart of spend per day when stdout is a
+// terminal, and each model's spend and share, most expensive first, all to
+// the nearest dollar. The limit, and the settings' spend and blocked state,
+// are this month's, so any other window shows only what the usage adds up to.
+func harnessRender(ctx *CommandContext, start time.Time, current bool, teams []harnessTeam) {
+	// One label and one amount column shared by every team and its models.
+	labelWidth, amountWidth := 0, 0
+	for _, t := range teams {
+		labelWidth = max(labelWidth, ansi.StringWidth(t.settings.TeamName)+2)
+		amountWidth = max(amountWidth, len(harnessDollars(t.spent(current))))
+		for _, m := range t.models {
+			labelWidth = max(labelWidth, 4+ansi.StringWidth(m.name)+2)
+			amountWidth = max(amountWidth, len(harnessMoney(m)))
 		}
-	}
-	spent := harnessDollars(spentUSD)
-	// One label and one amount column for the team and its models.
-	labelWidth, amountWidth := ansi.StringWidth(s.TeamName)+2, len(spent)
-	for _, m := range models {
-		labelWidth = max(labelWidth, 4+ansi.StringWidth(m.name)+2)
-		amountWidth = max(amountWidth, len(harnessMoney(m)))
 	}
 	// The writer drops the styling stdout can't show, so there is no need to
 	// query the terminal for it.
@@ -196,50 +216,70 @@ func harnessRender(ctx *CommandContext, s managementapi.RouteTeamUserSettings, s
 	}
 	pad := func(s string, w int) string { return s + strings.Repeat(" ", w-ansi.StringWidth(s)) }
 	right := func(s string, w int) string { return strings.Repeat(" ", w-ansi.StringWidth(s)) + s }
-
-	styled := spent
-	switch {
-	case current && s.IsBlocked:
-		styled = crit.Styled(spent)
-	case limit != "" && spentUSD >= 0.75*limitUSD:
-		styled = warn.Styled(spent)
+	width := 0
+	if f, ok := ctx.Stdout.(*os.File); ok && term.IsTerminal(f.Fd()) {
+		w, _, _ := term.GetSize(f.Fd())
+		width = cmp.Or(w, 80)
 	}
-	line := pad(bold.Styled(s.TeamName), labelWidth) + right(styled, amountWidth)
-	if current && limit == "" {
-		line += " " + dim.Styled("· no limit")
-	} else if current {
-		line += " of " + limit
-		// The team default only when yours differs from it.
-		if d := s.SpendLimit.TeamDefault; d != nil {
-			if td := harnessDollars(harnessFloat(d.PerMemberMonthlyLimitUsd)); td != limit {
-				line += " " + dim.Styled("(team default "+td+")")
+
+	for ti, t := range teams {
+		if ti > 0 {
+			write("")
+		}
+		s, models := t.settings, t.models
+		all, priced := t.spent(false), true
+		for _, m := range models {
+			priced = priced && m.priced
+		}
+		spentUSD, limitUSD, limit := t.spent(current), 0.0, ""
+		if l := s.SpendLimit.Effective.MonthlyLimitUsd; current && l != nil {
+			limitUSD = harnessFloat(*l)
+			limit = harnessDollars(limitUSD)
+		}
+		spent := harnessDollars(spentUSD)
+		styled := spent
+		switch {
+		case current && s.IsBlocked:
+			styled = crit.Styled(spent)
+		case limit != "" && spentUSD >= 0.75*limitUSD:
+			styled = warn.Styled(spent)
+		}
+		line := pad(bold.Styled(s.TeamName), labelWidth) + right(styled, amountWidth)
+		if current && limit == "" {
+			line += " " + dim.Styled("· no limit")
+		} else if current {
+			line += " of " + limit
+			// The team default only when yours differs from it.
+			if d := s.SpendLimit.TeamDefault; d != nil {
+				if td := harnessDollars(harnessFloat(d.PerMemberMonthlyLimitUsd)); td != limit {
+					line += " " + dim.Styled("(team default "+td+")")
+				}
 			}
 		}
-	}
-	if current && s.IsBlocked {
-		what := "limit reached"
-		if s.BlockedBy != nil && *s.BlockedBy == managementapi.RouteSpendBlockedBy_team {
-			what = "team limit reached"
-		}
-		line += " · " + crit.Styled(what)
-	}
-	write(line)
-	if f, ok := ctx.Stdout.(*os.File); ok && term.IsTerminal(f.Fd()) && len(models) > 0 {
-		width, _, _ := term.GetSize(f.Fd())
-		series := make([][]float64, len(models))
-		for i, m := range models {
-			series[i] = m.daily
-		}
-		if c := renderUsageChart(start, series, cmp.Or(width, 80)-2, paint); c != "" {
-			write("\n  " + strings.ReplaceAll(strings.TrimSuffix(c, "\n"), "\n", "\n  ") + "\n")
-		}
-	}
-	for i, m := range models {
-		line := pad("  "+paint("●", i)+" "+m.name, labelWidth) + right(harnessMoney(m), amountWidth)
-		if priced && all > 0 {
-			line += " " + dim.Styled(right("("+strconv.Itoa(int(m.cost/all*100+0.5))+"%)", 6))
+		if current && s.IsBlocked {
+			what := "limit reached"
+			if s.BlockedBy != nil && *s.BlockedBy == managementapi.RouteSpendBlockedBy_team {
+				what = "team limit reached"
+			}
+			line += " · " + crit.Styled(what)
 		}
 		write(line)
+		if width > 0 && len(models) > 0 {
+			series := make([][]float64, len(models))
+			for i, m := range models {
+				series[i] = m.daily
+			}
+			if c := renderUsageChart(start, series, width-2, paint); c != "" {
+				write("\n  " + strings.ReplaceAll(strings.TrimSuffix(c, "\n"), "\n", "\n  ") + "\n")
+			}
+		}
+		for i, m := range models {
+			line := pad("  "+paint("●", i)+" "+m.name, labelWidth) + right(harnessMoney(m), amountWidth)
+			if priced && all > 0 {
+				line += " " + dim.Styled(right("("+strconv.Itoa(int(m.cost/all*100+0.5))+"%)", 6))
+			}
+			write(line)
+		}
 	}
 }
 

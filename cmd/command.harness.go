@@ -107,11 +107,11 @@ var commandHarness = Command{
 		},
 		{
 			Name:    "usage",
-			Summary: "Show your routes spend in one of your teams, this month by default (PRE-RELEASE)",
+			Summary: "Show your routes spend in your teams, this month by default (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Show what you've spent on routes in one of your teams: your spend there against your limit there, a " +
-				"chart of spend per day, and each model's spend. --team picks the team, and is needed unless you're in " +
-				"only one. The window is this UTC month so far, the period monthly spend limits apply to, unless " +
+				"Show what you've spent on routes in each of your teams: your spend there against your limit there, a " +
+				"chart of spend per day, and each model's spend. --team narrows it to one team. " +
+				"The window is this UTC month so far, the period monthly spend limits apply to, unless " +
 				"--start, --end, or --since narrows or moves it; the limit is only shown for this month so far.\n\n" +
 				"This is the same spend that spend limits are checked against, and it can lag by up to 15 minutes. " +
 				"Model API costs use your prices and include tool calls. OpenAI, Anthropic, and xAI costs estimate what " +
@@ -125,7 +125,7 @@ var commandHarness = Command{
 			Flags: HarnessUsageFlags{},
 			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
 				JSONArrayStreamed: true,
-				TextDescription: "The month and when limits reset go to stderr. Then a line with the team, what you spent " +
+				TextDescription: "The month and when limits reset go to stderr. Then, for each team, a line with the team, what you spent " +
 					"there this month and your limit there, with the team's default when yours differs from it, ending in " +
 					"\"limit reached\" or \"team limit reached\" when your requests there are rejected; on a terminal, a " +
 					"chart of spend per day per model from the first of the month; and a line per model with its spend and " +
@@ -136,7 +136,7 @@ var commandHarness = Command{
 					"in results, including days with no usage. cost_usd values are exact decimal strings.",
 				Examples: []CommandExample{
 					{
-						Description: "Show your spend this month in your team.",
+						Description: "Show your spend this month in each of your teams.",
 						Command:     "baseten harness usage",
 					},
 					{
@@ -241,7 +241,7 @@ type HarnessStatusList struct {
 type HarnessUsageFlags struct {
 	CommandFlags
 
-	Team string `flag:"team" desc:"Team name or ID to show. Needed unless you're in only one team."`
+	Team string `flag:"team" desc:"Team name or ID to show. Without it, every team you're in."`
 
 	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the start of the current UTC month."`
 	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
