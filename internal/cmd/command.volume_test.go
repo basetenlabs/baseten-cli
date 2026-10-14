@@ -718,6 +718,23 @@ func Test_Volume_Cat_File(t *testing.T) {
 	// A handler replaces the destination directory, which is what makes this
 	// a pipe rather than a download.
 	h.Require.Empty(fake.PullOptions.DestDir)
+	h.Require.Equal(client.VolumeConcurrencyOptions{}, fake.PullOptions.Concurrency)
+}
+
+func Test_Volume_Cat_Concurrency(t *testing.T) {
+	h := NewCommandHarness(t)
+	fake := withVolumeTransfer(t, h)
+	fake.Contents = map[string]string{"/config/model.json": `{"hidden_size":4096}`}
+
+	h.Require.NoError(h.Execute("volume", "cat", "bdn:weights/llama/config/model.json",
+		"--chunk-operations", "8", "--max-in-flight-mib", "512"))
+
+	h.Require.Equal(client.VolumeConcurrencyOptions{
+		ChunkOperations:  8,
+		MaxBytesInFlight: 512 * 1024 * 1024,
+	}, fake.PullOptions.Concurrency)
+	h.Require.Equal(`{"hidden_size":4096}`, h.Stdout.String())
+	h.Require.Empty(h.Stderr.String())
 }
 
 func Test_Volume_Cat_Directory(t *testing.T) {

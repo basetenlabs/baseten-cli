@@ -76,8 +76,9 @@ func commandVolumeCat(ctx *CommandContext, flags *cmd.VolumeCatFlags) error {
 			_, err := io.Copy(ctx.Stdout, entry.Reader)
 			return err
 		},
-		Hasher: volumeHasher,
-		Store:  &volumeObjectStore{ctx: ctx},
+		Hasher:      volumeHasher,
+		Store:       &volumeObjectStore{ctx: ctx},
+		Concurrency: volumeConcurrency(flags.VolumeTransferFlags, 0),
 	})
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", ref, err)

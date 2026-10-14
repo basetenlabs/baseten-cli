@@ -319,9 +319,9 @@ var commandVolume = Command{
 	},
 }
 
-// VolumeTransferFlags bounds the data path of a push or a pull. Both default
-// to what the transfer picks for itself; set them to cap the load on a shared
-// machine or a metered link.
+// VolumeTransferFlags bounds the data path of a push, pull, or cat. The limits
+// default to what the transfer picks for itself; set them to cap the load on
+// a shared machine or a metered link.
 type VolumeTransferFlags struct {
 	ChunkOperations int `flag:"chunk-operations" desc:"Maximum object operations in flight, honored exactly. Defaults to a count the transfer adapts to what the service will bear." group:"transfer" group-pri:"200"`
 	MaxInFlightMiB  int `flag:"max-in-flight-mib" desc:"Cap on the chunk data held in memory, in MiB. Defaults to 2048." group:"transfer"`
@@ -348,6 +348,7 @@ type VolumeStatFlags struct {
 
 type VolumeCatFlags struct {
 	CommandFlags
+	VolumeTransferFlags
 }
 
 type VolumePushFlags struct {
