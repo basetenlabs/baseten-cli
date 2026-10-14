@@ -134,14 +134,8 @@ func commandSandboxImagePush(ctx *CommandContext, flags *cmd.SandboxImagePushFla
 			options.SourceRegistry.DockerConfig = string(dockerConfig)
 		}
 	}
-	// Sent only when given, so an explicit --volume 0 is sent and the
-	// server's defaults apply otherwise.
-	if ctx.Command.Flags().Changed("memory") {
-		options.Memory = flags.Memory
-	}
-	if ctx.Command.Flags().Changed("volume") {
-		options.Volume = &flags.Volume
-	}
+	// 0 is not sent, so the server's defaults apply.
+	options.Memory, options.Volume = flags.Memory, flags.Volume
 	client, teamID, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err

@@ -154,13 +154,13 @@ func Test_Sandbox_Image_Push_BuildSizesOnlyWhenSet(t *testing.T) {
 	registry := []string{"sandbox", "image", "push", "--name", "img", "--registry-image", "registry.example.com/app:v1"}
 
 	h.Require.NoError(h.Execute(append(registry, "--memory", "2048", "--volume", "8192")...))
-	// An explicit 0 builds in memory, as the default does, but is still sent.
+	// 0 is the default, so it is not sent.
 	h.Require.NoError(h.Execute("sandbox", "image", "push", "--name", "img", "--dir", dir, "--volume", "0"))
 	h.Require.NoError(h.Execute(registry...))
 	calls := sandboxTestCalls(m, "POST", "/v1/sandboxes/images")
 	h.Require.Equal(map[string]any{"name": "img", "image": "registry.example.com/app:v1", "memory": float64(2048), "volume": float64(8192)},
 		calls[0].BodyJSON(t))
-	h.Require.Equal(map[string]any{"name": "img", "volume": float64(0)}, calls[1].BodyJSON(t))
+	h.Require.Equal(map[string]any{"name": "img"}, calls[1].BodyJSON(t))
 	h.Require.Equal(map[string]any{"name": "img", "image": "registry.example.com/app:v1"}, calls[2].BodyJSON(t))
 }
 
