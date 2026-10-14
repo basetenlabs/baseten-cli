@@ -1457,6 +1457,7 @@ func recordDir(t *testing.T) string {
 func Test_Harness_Setup_RecordsSyncOptions(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := harnessAPI(t, "")
+	api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
 	setHarnessRoutes(api, "acme/primary", "acme/second")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()

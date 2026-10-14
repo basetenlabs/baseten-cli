@@ -68,12 +68,7 @@ type selectedHarness struct {
 	selection harness.Selection
 }
 
-// Constructs a unique key per sync target, which combines the Team + named credential.
-func constructSyncGroupKey(teamID, keyName string) string {
-	return teamID + ":" + keyName
-}
-
-type syncRun struct {
+type harnessSyncRun struct {
 	team    *managementapi.Team
 	targets []harnessTarget
 	plans   []*harness.Plan
@@ -172,7 +167,7 @@ type harnessTarget struct {
 // behavior differs slightly on ineligible Route selection:
 //  1. If in `setup`, we emit a validation error.
 //  2. If in `sync`, we emit a warning, and clobber with the new server default.
-func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, targets []harnessTarget, sync bool) ([]*harness.Plan, error) {
+func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, targets []harnessTarget, forSync bool) ([]*harness.Plan, error) {
 	listed, err := listRoutes(ctx, api, managementapi.GetV1RoutesParams{TeamId: &team.Id})
 	if err != nil {
 		return nil, err
@@ -197,7 +192,7 @@ func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *mana
 			if kind, _ := l.Target.Discriminator(); kind == "CONNECTION" && r.Provider == "" {
 				unresolved = append(unresolved, l.Name)
 			}
-		case !sync && slices.ContainsFunc(targets, func(t harnessTarget) bool { return t.record.Route == l.Name }):
+		case !forSync && slices.ContainsFunc(targets, func(t harnessTarget) bool { return t.record.Route == l.Name }):
 			return nil, cmd.NewErrValidation(err)
 		default:
 			skipped = append(skipped, l.Name)
@@ -247,7 +242,7 @@ func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *mana
 			defaults = serverDefaults.Selectable(callable)
 		}
 		var dropped [][2]string // option label, vanished route name
-		if sync {
+		if forSync {
 			for _, option := range []struct {
 				label  string
 				stored *string
@@ -445,26 +440,27 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 	// planned and applied together.
 	groups := map[string][]harnessTarget{}
 	for _, t := range targets {
-		key := constructSyncGroupKey(t.record.TeamID, t.record.KeyName)
+		// A unique key per sync target, which combines the Team + named credential.
+		key := t.record.TeamID + ":" + t.record.KeyName
 		groups[key] = append(groups[key], t)
 	}
 
-	var runs []syncRun
+	var runs []harnessSyncRun
 	for _, group := range groups {
 		team, err := resolveTeamOrOnly(ctx, api, group[0].record.TeamID)
 		if err != nil {
 			return fmt.Errorf("%s: %w; rerun 'baseten harness setup --harness %s' to record a current team", group[0].Name(), err, group[0].Name())
 		}
-		run := syncRun{team: team, targets: group}
+		run := harnessSyncRun{team: team, targets: group}
 		if run.plans, err = planHarnessSetup(ctx, api, run.team, run.targets, true); err != nil {
 			return err
 		}
 		runs = append(runs, run)
 	}
 
-	// NB(nihil): Re-extract targets / plans from the runs, because they might have changed due to
+	// NB(nikhil): Re-extract targets / plans from the runs, because they might have changed due to
 	// route eligibility.
-	targets, plans := extractFromSyncRuns(runs)
+	targets, plans := extractFromHarnessSyncRuns(runs)
 	switch {
 	case ctx.JSON:
 	case ctx.verbose || f.DryRun:
@@ -486,7 +482,7 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 	if !changed {
 		// Retry codex daemon restarts that were declined or failed earlier.
 		for i := range targets {
-			syncCodexDaemon(ctx, &targets[i], false, f.Yes)
+			harnessSyncCodexDaemon(ctx, &targets[i], false, f.Yes)
 		}
 		if err := saveHarnessRecords(dir, file, targets); err != nil {
 			return err
@@ -522,7 +518,9 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
 	}
 	for i := range targets {
-		syncCodexDaemon(ctx, &targets[i], harnessPlansChanged(plans, targets[i].Name()), f.Yes)
+		name := targets[i].Name()
+		plansChanged := slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Harness == name && p.Changed })
+		harnessSyncCodexDaemon(ctx, &targets[i], plansChanged, f.Yes)
 	}
 	if err := saveHarnessRecords(dir, file, targets); err != nil {
 		return err
@@ -533,7 +531,7 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 	return nil
 }
 
-func extractFromSyncRuns(runs []syncRun) (targets []harnessTarget, plans []*harness.Plan) {
+func extractFromHarnessSyncRuns(runs []harnessSyncRun) (targets []harnessTarget, plans []*harness.Plan) {
 	for _, run := range runs {
 		targets = append(targets, run.targets...)
 		plans = append(plans, run.plans...)
@@ -542,19 +540,14 @@ func extractFromSyncRuns(runs []syncRun) (targets []harnessTarget, plans []*harn
 	return targets, plans
 }
 
-// syncCodexDaemon restarts the codex app-server daemon for one target, like
+// harnessSyncCodexDaemon restarts the codex app-server daemon for one target, like
 // setup does, when this sync changed its settings or an earlier restart is
 // still pending. A declined or failed restart stays pending for the next sync.
-func syncCodexDaemon(ctx *CommandContext, target *harnessTarget, changed, yes bool) {
+func harnessSyncCodexDaemon(ctx *CommandContext, target *harnessTarget, changed, yes bool) {
 	if target.Name() != harness.Codex || (!changed && !target.record.CodexRestartPending) {
 		return
 	}
 	target.record.CodexRestartPending = !harnessRestartCodexDaemon(ctx, filepath.Dir(target.detection.Path), yes)
-}
-
-// harnessPlansChanged reports whether any plan of the named harness changed.
-func harnessPlansChanged(plans []*harness.Plan, name string) bool {
-	return slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Harness == name && p.Changed })
 }
 
 // harnessRecordScope returns the profile and management URL that scope harness
