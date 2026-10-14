@@ -197,9 +197,16 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 		// add those flags to the parent so they appear in its help output.
 		// These are regular flags (not persistent) because each child binds
 		// its own copy — persistent flags would be shadowed and unused.
+		// Never required on the parent: the parent only shows help, and a
+		// required mark would fail it before help runs. Children still enforce
+		// their own.
 		if shared := sharedEmbeddedTypes(def.Children); len(shared) > 0 {
 			for _, t := range shared {
-				bindFlags(c.Flags(), reflect.New(t).Elem(), cmd.LoadFlagsFromType(t))
+				metas := cmd.LoadFlagsFromType(t)
+				for i := range metas {
+					metas[i].Required = false
+				}
+				bindFlags(c.Flags(), reflect.New(t).Elem(), metas)
 			}
 		}
 	} else if def.Flags == nil {
