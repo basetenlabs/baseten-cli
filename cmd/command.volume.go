@@ -490,10 +490,10 @@ type VolumeTagSetFlags struct {
 	CommandFlags
 	VolumeRefFlags
 
-	VolumeRef string               `flag:"volume-ref" desc:"Ref of the version to tag, as bdn:<namespace>/<volume> for the version head points at, or with a :<tag> or @<digest> selector for that version." required:"true"`
-	Tag       string               `flag:"tag" desc:"Tag to point at the version. May be 'head'." required:"true"`
-	ExpiresAt OptionalFlag[string] `flag:"expires-at" desc:"Time at which the tag expires, as an RFC 3339 date-time with a UTC offset, as in 2030-01-01T00:00:00Z. It must be in the future and at most ten years ahead. Omit it for a tag that does not expire. Omitting it on an existing tag clears its expiration time."`
-	Yes       bool                 `flag:"yes" desc:"Skip confirmation for 'head'. Required when stdin is not a terminal and --tag is 'head'."`
+	VolumeRef string `flag:"volume-ref" desc:"Ref of the version to tag, as bdn:<namespace>/<volume> for the version head points at, or with a :<tag> or @<digest> selector for that version." required:"true"`
+	Tag       string `flag:"tag" desc:"Tag to point at the version. May be 'head'." required:"true"`
+	ExpiresAt string `flag:"expires-at" desc:"Time at which the tag expires, as an RFC 3339 date-time with a UTC offset, as in 2030-01-01T00:00:00Z. It must be in the future and at most ten years ahead. Omit it for a tag that does not expire. Omitting it on an existing tag clears its expiration time."`
+	Yes       bool   `flag:"yes" desc:"Skip confirmation for 'head'. Required when stdin is not a terminal and --tag is 'head'."`
 }
 
 type VolumeTagDeleteFlags struct {

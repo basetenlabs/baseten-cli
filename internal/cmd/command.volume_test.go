@@ -1310,17 +1310,15 @@ func Test_Volume_Tag_Set_BadExpiresAt(t *testing.T) {
 	h.Require.Empty(m.Calls())
 }
 
-func Test_Volume_Tag_Set_EmptyExpiresAt(t *testing.T) {
-	// A plain string flag would read an empty value as omitted and set a
-	// permanent tag.
+func Test_Volume_Tag_Set_EmptyExpiresAtMeansNoExpiration(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
+	m.SetRoute("POST", volumeTagsPath, 200, volumeTagSetPayload)
 
-	err := h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod",
-		"--expires-at", "")
-	h.Require.ErrorContains(err, "must be an RFC 3339 date-time")
-	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
-	h.Require.Empty(m.Calls())
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod",
+		"--expires-at", ""))
+	h.Require.Equal(`{"tag":"prod","version":"@b3:aabbccddeeff"}`,
+		strings.TrimSpace(m.FindCall("POST", volumeTagsPath).Body))
 }
 
 func Test_Volume_Tag_Set_CaseKept(t *testing.T) {

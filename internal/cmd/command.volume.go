@@ -704,8 +704,8 @@ func commandVolumeTagSet(ctx *CommandContext, flags *cmd.VolumeTagSetFlags) erro
 		return err
 	}
 	body := managementapi.SetVolumeTagRequest{Tag: tag, Version: volumeVersionSelector(ref)}
-	if flags.ExpiresAt.IsSet() {
-		expiresAt, err := volumeExpiresAtArg(*flags.ExpiresAt.Pointer())
+	if flags.ExpiresAt != "" {
+		expiresAt, err := volumeExpiresAtArg(flags.ExpiresAt)
 		if err != nil {
 			return err
 		}
