@@ -40,7 +40,6 @@ var harnessVersionNumber = regexp.MustCompile(`\d+(\.\d+)+\S*`)
 type selectedHarness struct {
 	harness.Harness
 	detection harness.Detection
-	// selection is set by setup.
 	selection harnessSelection
 }
 
@@ -318,36 +317,27 @@ func harnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) {
 	ctx.Logf("Restarted codex app-server daemon (pid %d) so the new model catalog takes effect.\n", pid)
 }
 
-// Where a harness's route came from, as setup's summary reports it.
 const (
-	harnessRouteFromFlag = "flag"
-	harnessRouteFromCLI  = "CLI default"
-	harnessRouteFromTeam = "team default"
-	// harnessRouteFromDefault labels a default whose source this CLI doesn't know.
+	harnessRouteFromFlag    = "flag"
+	harnessRouteFromCLI     = "CLI default"
+	harnessRouteFromTeam    = "team default"
 	harnessRouteFromDefault = "default"
 )
 
-// Harness default roles.
 const (
 	harnessRolePrimary    = "primary"
 	harnessRoleBackground = "background"
 )
 
-// harnessSelection is the routes setup writes for one harness and where they came from.
 type harnessSelection struct {
 	harness.Selection
 	primarySource    string
 	backgroundSource string
 }
 
-// harnessDefaultsTimeout bounds the harness defaults request, so a stalled
-// endpoint falls back to the CLI's defaults instead of blocking setup.
 const harnessDefaultsTimeout = 5 * time.Second
 
-// harnessDefaults returns the team's harness default models, or nil when flags
-// set every route a selected harness uses. Setup falls back to its own
-// defaults when there are none, when the backend lacks the endpoint, or when
-// they can't be read; only an interrupt is an error.
+// Defaults are optional; only cancellation of setup is fatal.
 func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID string, f *cmd.HarnessSetupFlags, selected []selectedHarness) (*managementapi.RouteHarnessDefaults, error) {
 	needed := slices.ContainsFunc(selected, func(choice selectedHarness) bool {
 		return f.Route == "" || (f.BackgroundRoute == "" && choice.BackgroundRoute(harness.Selection{}) != "")
@@ -372,8 +362,6 @@ func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID stri
 	return &settings.HarnessDefaults, nil
 }
 
-// harnessDefaultModels returns a harness's default model for each role it has.
-// A role is nil when the team has no route to use for it.
 func harnessDefaultModels(defaults *managementapi.RouteHarnessDefaults, harnessName string) map[string]*managementapi.RouteHarnessModel {
 	if defaults == nil {
 		return nil
@@ -398,8 +386,7 @@ func harnessDefaultModels(defaults *managementapi.RouteHarnessDefaults, harnessN
 	}
 }
 
-// harnessRouteSelection picks the routes for one harness: flags first, then the
-// team's defaults, then the CLI's own defaults.
+// Explicit flags take precedence over server defaults, then CLI defaults.
 func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice selectedHarness, defaults *managementapi.RouteHarnessDefaults, callable []harness.Route) harnessSelection {
 	s := harnessSelection{
 		Selection: harness.Selection{
@@ -418,7 +405,6 @@ func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice
 			s.Primary, s.primarySource = name, source
 		}
 	}
-	// Codex and Pi have no background setting or background role in the API.
 	if s.Background == "" && choice.BackgroundRoute(harness.Selection{}) != "" {
 		s.backgroundSource = harnessRouteFromCLI
 		if name, source, ok := harnessDefaultRoute(ctx, choice.Name(), harnessRoleBackground, models, callable); ok {
@@ -428,12 +414,6 @@ func harnessRouteSelection(ctx *CommandContext, f *cmd.HarnessSetupFlags, choice
 	return s
 }
 
-// harnessDefaultRoute returns the default route for a role if the harness can
-// call it. A role a team admin didn't set falls back to a route chosen from the
-// team's Model APIs without checking API formats, and the API reports both as
-// `team`, so a default the harness can't call is skipped with only a verbose
-// log rather than a warning on every run. A source added after this CLI was
-// built is still the server's chosen default, so it's used.
 func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models map[string]*managementapi.RouteHarnessModel, callable []harness.Route) (string, string, bool) {
 	model := models[role]
 	if model == nil {
@@ -447,6 +427,8 @@ func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models m
 	if slices.ContainsFunc(callable, func(r harness.Route) bool { return r.Name == model.Route.Name }) {
 		return model.Route.Name, source, true
 	}
+	// The API also labels auto-selected defaults as "team", without checking
+	// API compatibility. Skip incompatible defaults without a user-facing warning.
 	ctx.VerboseLogf("Ignoring the %s for the %s %s route: %s can't call route %s\n", source, harnessName, role, harnessName, model.Route.Name)
 	return "", "", false
 }

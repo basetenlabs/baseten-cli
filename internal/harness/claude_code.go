@@ -112,8 +112,6 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{claudeMarker, "1"},
 		{"ANTHROPIC_BASE_URL", endpoint},
 		{"ANTHROPIC_AUTH_TOKEN", ""},
-		// Unlike `model`, this beats an organization's claude.ai default model,
-		// which the gateway can't serve.
 		{"ANTHROPIC_MODEL", modelID(s.Primary)},
 		{"ANTHROPIC_DEFAULT_SONNET_MODEL", modelID(s.Primary)},
 		{"ANTHROPIC_DEFAULT_OPUS_MODEL", modelID(s.Primary)},
