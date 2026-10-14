@@ -117,7 +117,7 @@ func commandVolumeSyncList(ctx *CommandContext, flags *cmd.VolumeSyncListFlags) 
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.VolumeSyncList{Items: items})
+		ctx.OutputJSON(cmd.VolumeSyncList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {

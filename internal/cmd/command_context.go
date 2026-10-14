@@ -102,6 +102,17 @@ func (c *CommandContext) OutputJSON(v any) {
 	c.encodeJSON(v)
 }
 
+// normalizeJSONSlice returns s, or an empty slice when s is nil, so JSON
+// output prints [] instead of null. Wrap every non-omitempty slice the CLI
+// builds for JSON output with it where the value is built, such as a list
+// command's Items, since a list with no matches is a normal result.
+func normalizeJSONSlice[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
 // normalizeForJQ round-trips v through JSON so struct values become the
 // map/slice primitives gojq expects.
 func normalizeForJQ(v any) (any, error) {
@@ -559,6 +570,25 @@ func (c *CommandContext) Sleep(d time.Duration) error {
 	case <-time.After(d):
 		return nil
 	}
+}
+
+// NewTicker returns periodic ticks and a cleanup function. WithTicker can
+// replace the timer in tests while keeping command invocation unchanged.
+func (c *CommandContext) NewTicker(interval time.Duration) (<-chan time.Time, func()) {
+	if fn, ok := c.Value(tickerKey{}).(func(time.Duration) (<-chan time.Time, func())); ok {
+		return fn(interval)
+	}
+	ticker := time.NewTicker(interval)
+	return ticker.C, ticker.Stop
+}
+
+type tickerKey struct{}
+
+// WithTicker overrides CommandContext.NewTicker so tests can trigger ticks
+// without waiting for wall-clock intervals. The returned channel must remain
+// open until cleanup; cleanup must stop the tick source without closing it.
+func WithTicker(ctx context.Context, fn func(time.Duration) (<-chan time.Time, func())) context.Context {
+	return context.WithValue(ctx, tickerKey{}, fn)
 }
 
 type nowKey struct{}

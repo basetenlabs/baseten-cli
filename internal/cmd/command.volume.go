@@ -77,7 +77,7 @@ func volumeLsNamespaces(ctx *CommandContext) error {
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.VolumeNamespaceList{Items: items})
+		ctx.OutputJSON(cmd.VolumeNamespaceList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {
@@ -86,7 +86,7 @@ func volumeLsNamespaces(ctx *CommandContext) error {
 	}
 	rows := make([][]string, 0, len(items))
 	for _, namespace := range items {
-		rows = append(rows, []string{namespace})
+		rows = append(rows, []string{"bdn:" + namespace})
 	}
 	ctx.OutputTable(TableOutput{
 		Headers: []string{"NAMESPACE"},
@@ -116,7 +116,7 @@ func volumeLsVolumes(ctx *CommandContext, namespace string) error {
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.VolumeList{Items: items})
+		ctx.OutputJSON(cmd.VolumeList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {
@@ -183,7 +183,7 @@ func volumeLsEntries(ctx *CommandContext, flags *cmd.VolumeLsFlags, ref client.V
 		for _, entry := range entries {
 			items = append(items, volumeEntryOf(entry))
 		}
-		ctx.OutputJSON(cmd.VolumeEntryList{VersionRef: manifest.VersionRef.String(), Items: items})
+		ctx.OutputJSON(cmd.VolumeEntryList{VersionRef: manifest.VersionRef.String(), Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(entries) == 0 {

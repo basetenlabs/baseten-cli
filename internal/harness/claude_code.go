@@ -32,7 +32,8 @@ var claudePaths = [][]string{
 	{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}, {"env", "ANTHROPIC_DEFAULT_FABLE_MODEL"},
 	{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}, {"env", "ANTHROPIC_SMALL_FAST_MODEL"},
 	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"}, {"env", "ANTHROPIC_CUSTOM_HEADERS"},
-	{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}, {"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"},
+	{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}, {"env", "ENABLE_TOOL_SEARCH"},
+	{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"},
 }
 
 func (claudeCodeHarness) Name() string { return ClaudeCode }
@@ -42,7 +43,7 @@ func (h claudeCodeHarness) Detect(ctx context.Context, execer Execer, dir string
 	if err != nil {
 		return Detection{}, err
 	}
-	return detect(ctx, execer, h.Name(), "claude", filepath.Join(dir, "settings.json"))
+	return detect(ctx, execer, h.Name(), []candidate{cliCandidate("claude")}, filepath.Join(dir, "settings.json"))
 }
 
 func (claudeCodeHarness) BackgroundRoute(s Selection) string {
@@ -66,7 +67,7 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, end
 }
 
 func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any) ([]setting, error) {
-	s, err := selection.resolve(routes)
+	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +121,7 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"},
 		{"ANTHROPIC_CUSTOM_HEADERS", clientHeader + ": " + ClaudeCode},
 		{"CLAUDE_CODE_GATEWAY_HINT_HEADERS", "1"},
+		{"ENABLE_TOOL_SEARCH", "true"},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}

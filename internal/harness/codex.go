@@ -30,9 +30,14 @@ func (h codexHarness) Detect(ctx context.Context, execer Execer, dir string) (De
 		return Detection{}, err
 	}
 	path := filepath.Join(dir, "config.toml")
-	return detect(ctx, execer, h.Name(), codexBinary(execer), path)
+	return detect(ctx, execer, h.Name(), codexCandidates(), path)
 }
 
+func codexCandidates() []candidate {
+	return append([]candidate{cliCandidate("codex")}, desktopCandidates(desktopCodexBinaries()...)...)
+}
+
+// codexBinary is the Codex that codexCommand runs: the CLI, else a desktop app's.
 func codexBinary(execer Execer) string {
 	for _, binary := range append([]string{"codex"}, desktopCodexBinaries()...) {
 		if _, err := execer.LookPath(binary); err == nil {
@@ -221,7 +226,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 	case s.Fallback != "":
 		return nil, errors.New("--fallback-route is supported only for Claude Code")
 	}
-	s, err := s.resolve(routes)
+	s, err := s.Resolve(routes)
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +277,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 			"context_window":               r.ContextWindow,
 			"input_modalities":             r.InputModalities,
 			"supports_parallel_tool_calls": r.ParallelTools,
+			"supports_search_tool":         true,
 			"experimental_supported_tools": []any{},
 		})
 	}

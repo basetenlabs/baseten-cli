@@ -35,7 +35,7 @@ func commandOrgUserList(ctx *CommandContext, flags *cmd.OrgUserListFlags) error 
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.OrgUserList{Items: items})
+		ctx.OutputJSON(cmd.OrgUserList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {

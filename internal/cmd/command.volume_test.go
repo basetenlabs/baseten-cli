@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -214,8 +215,8 @@ func Test_Volume_Ls_Namespaces(t *testing.T) {
 	h.Require.NoError(h.Execute("volume", "ls"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "NAMESPACE")
-	h.Require.Contains(out, "cli-e2e")
-	h.Require.Contains(out, "weights")
+	h.Require.Contains(out, "bdn:cli-e2e")
+	h.Require.Contains(out, "bdn:weights")
 }
 
 func Test_Volume_Ls_Namespaces_SchemeOnly(t *testing.T) {
@@ -228,7 +229,7 @@ func Test_Volume_Ls_Namespaces_SchemeOnly(t *testing.T) {
 	})
 
 	h.Require.NoError(h.Execute("volume", "ls", "bdn:"))
-	h.Require.Contains(h.Stdout.String(), "weights")
+	h.Require.Contains(h.Stdout.String(), "bdn:weights")
 }
 
 func Test_Volume_Ls_Namespaces_Empty(t *testing.T) {
@@ -241,6 +242,17 @@ func Test_Volume_Ls_Namespaces_Empty(t *testing.T) {
 	h.Require.NoError(h.Execute("volume", "ls"))
 	h.Require.Equal("", h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "No volume namespaces found.")
+}
+
+func Test_Volume_Ls_Namespaces_JSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/volumes/namespaces", 200, map[string]any{
+		"items":      []string{"weights", "cli-e2e"},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	h.Require.NoError(h.Execute("volume", "ls", "--output", "json"))
+	h.Require.JSONEq(`{"items":["weights","cli-e2e"]}`, h.Stdout.String())
 }
 
 func Test_Volume_Ls_Volumes(t *testing.T) {
@@ -720,6 +732,23 @@ func Test_Volume_Cat_File(t *testing.T) {
 	// A handler replaces the destination directory, which is what makes this
 	// a pipe rather than a download.
 	h.Require.Empty(fake.PullOptions.DestDir)
+	h.Require.Equal(client.VolumeConcurrencyOptions{}, fake.PullOptions.Concurrency)
+}
+
+func Test_Volume_Cat_Concurrency(t *testing.T) {
+	h := NewCommandHarness(t)
+	fake := withVolumeTransfer(t, h)
+	fake.Contents = map[string]string{"/config/model.json": `{"hidden_size":4096}`}
+
+	h.Require.NoError(h.Execute("volume", "cat", "bdn:weights/llama/config/model.json",
+		"--chunk-operations", "8", "--max-in-flight-mib", "512"))
+
+	h.Require.Equal(client.VolumeConcurrencyOptions{
+		ChunkOperations:  8,
+		MaxBytesInFlight: 512 * 1024 * 1024,
+	}, fake.PullOptions.Concurrency)
+	h.Require.Equal(`{"hidden_size":4096}`, h.Stdout.String())
+	h.Require.Empty(h.Stderr.String())
 }
 
 func Test_Volume_Cat_Directory(t *testing.T) {
@@ -945,7 +974,7 @@ func Test_Volume_ProgressFinalCounters(t *testing.T) {
 					h.Require.NoError(err)
 				}
 				output := h.Stderr.String()
-				final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B\n", phase)
+				final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B, 0 B/s\n", phase)
 				h.Require.Equal(1, strings.Count(output, final), output)
 				if outcome == "phase-change" {
 					h.Require.Contains(output, final+fmt.Sprintf("  %s...\n", next))
@@ -968,6 +997,12 @@ func Test_Volume_ProgressWhileTransferIsRunning(t *testing.T) {
 	for _, action := range []string{"push", "pull"} {
 		t.Run(action, func(t *testing.T) {
 			h := NewCommandHarness(t)
+			ticks := make(chan time.Time, 1)
+			var stopped atomic.Int64
+			h.Context = cmd.WithTicker(h.Context, func(interval time.Duration) (<-chan time.Time, func()) {
+				h.Require.Equal(2*time.Second, interval)
+				return ticks, func() { stopped.Add(1) }
+			})
 			fake := withVolumeTransfer(t, h)
 			output := make(volumeProgressOutput, 32)
 			phase := client.VolumePhaseUpload
@@ -979,6 +1014,7 @@ func Test_Volume_ProgressWhileTransferIsRunning(t *testing.T) {
 				progress(p)
 				p.Files = 3
 				progress(p)
+				ticks <- time.Now() // Flush pending progress without another callback.
 				timeout := time.NewTimer(10 * time.Second)
 				defer timeout.Stop()
 				for {
@@ -1001,6 +1037,7 @@ func Test_Volume_ProgressWhileTransferIsRunning(t *testing.T) {
 			h.Require.NoError(cmd.Execute(h.Context, cmd.ExecuteOptions{
 				Args: args, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: output,
 			}))
+			h.Require.Equal(int64(1), stopped.Load())
 			close(output) // Execute has joined the progress worker.
 			var remaining strings.Builder
 			for line := range output {
@@ -1016,11 +1053,9 @@ func Test_Volume_ProgressDoesNotCorruptJSON(t *testing.T) {
 	for _, action := range []string{"push", "pull"} {
 		t.Run(action, func(t *testing.T) {
 			h := NewCommandHarness(t)
-			now := volumeTestTime
+			var clock atomic.Int64
 			h.Context = cmd.WithNow(h.Context, func() time.Time {
-				result := now
-				now = now.Add(1500 * time.Millisecond)
-				return result
+				return volumeTestTime.Add(time.Duration(clock.Load()))
 			})
 			fake := withVolumeTransfer(t, h)
 			ref := client.VolumeRef{Namespace: "weights", Volume: "llama", Digest: "b3:a1b2"}
@@ -1035,6 +1070,7 @@ func Test_Volume_ProgressDoesNotCorruptJSON(t *testing.T) {
 				progress(p)
 				p.Files, p.Bytes = 2, 73
 				progress(p)
+				clock.Store(int64(1500 * time.Millisecond))
 				progress(client.VolumeProgress{Phase: next})
 				return nil
 			}
@@ -1055,7 +1091,7 @@ func Test_Volume_ProgressDoesNotCorruptJSON(t *testing.T) {
 			h.Require.Equal(int64(2), result.Files)
 			h.Require.Equal(int64(73), result.Bytes)
 			h.Require.Equal(1.5, result.Duration)
-			final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B\n", phase)
+			final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B, 0 B/s\n", phase)
 			h.Require.Contains(h.Stderr.String(), final+fmt.Sprintf("  %s...\n", next))
 			h.Require.Equal(1, strings.Count(h.Stderr.String(), final))
 		})
@@ -1571,4 +1607,147 @@ func Test_Volume_Tag_Delete_NotFound(t *testing.T) {
 	err := h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "prod")
 	h.Require.ErrorContains(err, "volume not found")
 	h.Require.Equal(int(public.ExitNotFound), h.ExitCode)
+}
+
+func Test_Volume_BandwidthSummary(t *testing.T) {
+	for _, action := range []string{"push", "pull"} {
+		for _, format := range []string{"text", "json"} {
+			for _, scenario := range []string{"payload", "reuse", "empty", "zero-duration"} {
+				t.Run(action+"/"+format+"/"+scenario, func(t *testing.T) {
+					h := NewCommandHarness(t)
+					var clock atomic.Int64
+					h.Context = cmd.WithNow(h.Context, func() time.Time { return volumeTestTime.Add(time.Duration(clock.Load())) })
+					fake := withVolumeTransfer(t, h)
+					ref := client.VolumeRef{Namespace: "weights", Volume: "llama", Digest: "b3:a1b2"}
+					logical, transferred := int64(16<<20), int64(2<<20)
+					if scenario == "reuse" || scenario == "empty" {
+						transferred = 0
+					}
+					if scenario == "empty" {
+						logical = 0
+					}
+					fake.PushResult = &client.PushVolumeResult{VersionRef: ref, Files: 1, Bytes: logical, TransferredBytes: transferred}
+					fake.PullResult = &client.PullVolumeResult{VersionRef: ref, Files: 1, Bytes: logical, TransferredBytes: transferred}
+					setup, phase, next := client.VolumePhaseScan, client.VolumePhaseUpload, client.VolumePhaseCommit
+					if action == "pull" {
+						setup, phase, next = client.VolumePhaseResolve, client.VolumePhaseDownload, client.VolumePhasePublish
+					}
+					fake.OnProgress = func(progress func(client.VolumeProgress)) error {
+						progress(client.VolumeProgress{Phase: setup})
+						clock.Store(int64(time.Second))
+						p := client.VolumeProgress{Phase: phase, TotalFiles: 1, TotalBytes: logical}
+						progress(p)
+						if scenario != "zero-duration" {
+							clock.Store(int64(3 * time.Second))
+						}
+						p.Files, p.Bytes, p.TransferredBytes = 1, logical, transferred
+						progress(p)
+						progress(client.VolumeProgress{Phase: next})
+						clock.Store(int64(4 * time.Second))
+						return nil
+					}
+					args := []string{"volume", action, t.TempDir(), "bdn:weights/llama", "--output", format}
+					if action == "pull" {
+						args[2], args[3] = args[3], args[2]
+					}
+					h.Require.NoError(h.Execute(args...))
+					rate := float64(1 << 20)
+					if scenario == "zero-duration" {
+						rate = 0
+					}
+					if scenario == "reuse" || scenario == "empty" {
+						rate = 0
+					}
+					if format == "json" {
+						var result struct {
+							Rate  float64 `json:"average_bytes_per_second"`
+							Total float64 `json:"duration_seconds"`
+						}
+						h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+						h.Require.Equal(rate, result.Rate)
+						h.Require.Equal(float64(4), result.Total)
+						var fields map[string]any
+						h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &fields))
+						h.Require.NotContains(fields, "transferred_bytes")
+						h.Require.NotContains(fields, "transfer_duration_seconds")
+					} else {
+						wantRate := "0 B/s"
+						if rate > 0 {
+							wantRate = "1.0 MiB/s"
+						}
+						h.Require.Contains(h.Stdout.String(), "Bandwidth: "+wantRate)
+						h.Require.NotContains(h.Stdout.String(), "Transferred:")
+						h.Require.Contains(h.Stdout.String(), "4s")
+					}
+					if scenario == "empty" {
+						h.Require.Contains(h.Stderr.String(), "1/1 files, 0 B/s")
+					} else {
+						h.Require.Contains(h.Stderr.String(), "1/1 files, 16.0 MiB/16.0 MiB")
+					}
+				})
+			}
+		}
+	}
+}
+
+func Test_Volume_LiveBandwidthDropsDuringStall(t *testing.T) {
+	for _, action := range []string{"push", "pull"} {
+		t.Run(action, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			ticks := make(chan time.Time, 1)
+			var stopped atomic.Int64
+			h.Context = cmd.WithTicker(h.Context, func(interval time.Duration) (<-chan time.Time, func()) {
+				h.Require.Equal(2*time.Second, interval)
+				return ticks, func() { stopped.Add(1) }
+			})
+			var clock atomic.Int64
+			h.Context = cmd.WithNow(h.Context, func() time.Time { return volumeTestTime.Add(time.Duration(clock.Load())) })
+			fake := withVolumeTransfer(t, h)
+			output := make(volumeProgressOutput, 32)
+			phase := client.VolumePhaseUpload
+			if action == "pull" {
+				phase = client.VolumePhaseDownload
+			}
+			fake.OnProgress = func(progress func(client.VolumeProgress)) error {
+				p := client.VolumeProgress{Phase: phase, TotalFiles: 1, TotalBytes: 16 << 20}
+				progress(p)
+				clock.Store(int64(2 * time.Second))
+				p.TransferredBytes = 2 << 20 // Payload arrives before a file or chunk completes.
+				progress(p)
+				ticks <- volumeTestTime.Add(2 * time.Second)
+				waitFor := func(text string) error {
+					timer := time.NewTimer(10 * time.Second)
+					defer timer.Stop()
+					for {
+						select {
+						case line := <-output:
+							if strings.Contains(line, text) {
+								return nil
+							}
+						case <-timer.C:
+							return fmt.Errorf("did not display %s during transfer", text)
+						}
+					}
+				}
+				if err := waitFor("0/1 files, 0 B/16.0 MiB, 1.0 MiB/s"); err != nil {
+					return err
+				}
+				clock.Store(int64(4 * time.Second))
+				// No callback: trigger a tick to refresh the rate to zero.
+				ticks <- volumeTestTime.Add(4 * time.Second)
+				if err := waitFor("0/1 files, 0 B/16.0 MiB, 0 B/s"); err != nil {
+					return err
+				}
+				p.Files, p.Bytes = 1, 16<<20
+				progress(p)
+				return nil
+			}
+			args := []string{"volume", action, t.TempDir(), "bdn:weights/llama"}
+			if action == "pull" {
+				args[2], args[3] = args[3], args[2]
+			}
+			h.Require.NoError(cmd.Execute(h.Context, cmd.ExecuteOptions{Args: args, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: output}))
+			h.Require.Equal(int64(1), stopped.Load())
+		})
+	}
 }

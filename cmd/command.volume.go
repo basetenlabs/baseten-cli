@@ -47,7 +47,8 @@ var commandVolume = Command{
 			Output: &CommandOutput[VolumeEntryList]{
 				TextDescription: "For entries, a table with columns: NAME, KIND, MODE, SIZE, MODIFIED, " +
 					"where a directory's name ends in '/' and carries no size. For namespaces, one column: " +
-					"NAMESPACE. For volumes, a table with columns: NAME, TAGS, HEAD SIZE, VERSIONS, " +
+					"NAMESPACE, with each namespace written as 'bdn:<namespace>'. " +
+					"For volumes, a table with columns: NAME, TAGS, HEAD SIZE, VERSIONS, " +
 					"EXPIRES, UPDATED. An expiring tag is annotated with its expiry. Prints what was empty " +
 					"to stderr when a listing has no rows.",
 				JSONDescription: "An object with version_ref and items, one entry per row, when the ref " +
@@ -411,9 +412,9 @@ var commandVolume = Command{
 	},
 }
 
-// VolumeTransferFlags bounds the data path of a push or a pull. Both default
-// to what the transfer picks for itself; set them to cap the load on a shared
-// machine or a metered link.
+// VolumeTransferFlags bounds the data path of a push, pull, or cat. The limits
+// default to what the transfer picks for itself; set them to cap the load on
+// a shared machine or a metered link.
 type VolumeTransferFlags struct {
 	ChunkOperations int `flag:"chunk-operations" desc:"Maximum object operations in flight, honored exactly. Defaults to a count the transfer adapts to what the service will bear." group:"transfer" group-pri:"200"`
 	MaxInFlightMiB  int `flag:"max-in-flight-mib" desc:"Cap on the chunk data held in memory, in MiB. Defaults to 2048." group:"transfer"`
@@ -440,6 +441,7 @@ type VolumeStatFlags struct {
 
 type VolumeCatFlags struct {
 	CommandFlags
+	VolumeTransferFlags
 }
 
 type VolumePushFlags struct {
@@ -562,6 +564,9 @@ type VolumeEntryDetail struct {
 
 // VolumePushResult is the JSON output of `baseten volume push`.
 type VolumePushResult struct {
+	// AverageBytesPerSecond divides transferred payload by the transfer phase
+	// duration. Zero is reported when no positive duration is available.
+	AverageBytesPerSecond float64 `json:"average_bytes_per_second"`
 	// DurationSeconds is total elapsed SDK transfer time, including setup and finalization.
 	DurationSeconds float64 `json:"duration_seconds"`
 	// VersionRef is the published version, pinned to its digest, which is what
@@ -590,6 +595,9 @@ type VolumePushResult struct {
 
 // VolumePullResult is the JSON output of `baseten volume pull`.
 type VolumePullResult struct {
+	// AverageBytesPerSecond divides transferred payload by the transfer phase
+	// duration. Zero is reported when no positive duration is available.
+	AverageBytesPerSecond float64 `json:"average_bytes_per_second"`
 	// DurationSeconds is total elapsed SDK transfer time, including setup and finalization.
 	DurationSeconds float64 `json:"duration_seconds"`
 	// VersionRef is the version that was downloaded, pinned to its digest.

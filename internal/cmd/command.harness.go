@@ -25,11 +25,37 @@ import (
 func init() {
 	Register("harness setup", commandHarnessSetup)
 	Register("harness status", commandHarnessStatus)
+	Register("harness sync", commandHarnessSync)
 	Register("harness teardown", commandHarnessTeardown)
 }
 
 // harnessPickerLabelWidth caps picker labels so they don't wrap.
 const harnessPickerLabelWidth = 80
+
+func harnessInstalls(d harness.Detection) []cmd.HarnessInstall {
+	installs := make([]cmd.HarnessInstall, 0, len(d.Installs))
+	for _, install := range d.Installs {
+		installs = append(installs, cmd.HarnessInstall{Kind: install.Kind, Binary: install.Binary, Version: install.Version})
+	}
+	return installs
+}
+
+// harnessInstallsLabel summarizes a harness's installs as "1.2.3" for one
+// CLI, or "1.2.3 (CLI), 2.0.1 (Desktop)" when several were found.
+func harnessInstallsLabel(installs []cmd.HarnessInstall) string {
+	if len(installs) == 0 {
+		return "not found"
+	}
+	parts := make([]string, 0, len(installs))
+	for _, install := range installs {
+		version := cmp.Or(harnessVersionNumber.FindString(install.Version), "version unavailable")
+		if len(installs) > 1 {
+			version += " (" + install.Kind + ")"
+		}
+		parts = append(parts, version)
+	}
+	return strings.Join(parts, ", ")
+}
 
 // harnessVersionNumber finds the version number in a harness's --version
 // output, such as "2.1.272" in "2.1.272 (Claude Code)" or "0.134.0" in
@@ -40,6 +66,14 @@ type selectedHarness struct {
 	harness.Harness
 	detection harness.Detection
 	selection harness.Selection
+}
+
+type harnessSyncRun struct {
+	team    *managementapi.Team
+	targets []harnessTarget
+	plans   []*harness.Plan
+	// token is the session's API key for targets set up with --use-session-credential.
+	token string
 }
 
 // selectHarnesses returns the harnesses a command applies to. Setup offers
@@ -68,8 +102,9 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		switch {
 		case setup && !d.Installed && explicit:
 			searched := "not on PATH"
-			if locations := harness.CodexDesktopLocations(); h.Name() == harness.Codex && locations != "" {
-				searched += " or in " + locations
+			locations := map[string]string{harness.Codex: harness.CodexDesktopLocations(), harness.OpenCode: harness.OpenCodeDesktopLocations()}
+			if l := locations[h.Name()]; l != "" {
+				searched += " or in " + l
 			}
 			return nil, fmt.Errorf("%s is not installed or %s", h.Name(), searched)
 		case setup && !d.Installed:
@@ -98,8 +133,7 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 	// path, which can be arbitrarily long, and the rest of the version output.
 	options := make([]huh.Option[string], 0, len(selected))
 	for _, s := range selected {
-		version := cmp.Or(harnessVersionNumber.FindString(s.detection.Version), "version unavailable")
-		label := ansi.Truncate(s.Name()+"  "+version, harnessPickerLabelWidth, "…")
+		label := ansi.Truncate(s.Name()+"  "+harnessInstallsLabel(harnessInstalls(s.detection)), harnessPickerLabelWidth, "…")
 		options = append(options, huh.NewOption(label, s.Name()))
 	}
 	var names []string
@@ -112,7 +146,7 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		Value(&names).
 		Validate(func(names []string) error {
 			if len(names) == 0 {
-				return errors.New("choose at least one harness")
+				return errors.New("choose at least one harness (space to select, enter to confirm)")
 			}
 			return nil
 		}).
@@ -123,42 +157,54 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 	return slices.DeleteFunc(selected, func(s selectedHarness) bool { return !slices.Contains(names, s.Name()) }), nil
 }
 
-func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
-	selected, err := selectHarnesses(ctx, f.HarnessFlags, true)
-	if err != nil {
-		return err
-	}
-	cl, err := ctx.NewManagementClient()
-	if err != nil {
-		return err
-	}
-	api := cl.API()
-	team, err := resolveTeamOrDefault(ctx, api, f.Team)
-	if err != nil {
-		return err
-	}
+// harnessTarget pairs a detected harness with the raw setup options to apply.
+// Setup fills the record from flags; sync fills it from the harness.json
+// record and may blank stored routes that no longer exist.
+type harnessTarget struct {
+	selectedHarness
+	record harness.Record
+}
+
+// planHarnessSetup builds the setup plans for targets that share one team. The
+// behavior differs slightly on ineligible Route selection:
+//  1. If in `setup`, we emit a validation error.
+//  2. If in `sync`, we emit a warning, and clobber with the new server default.
+func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, targets []harnessTarget, forSync bool) ([]*harness.Plan, error) {
 	listed, err := listRoutes(ctx, api, managementapi.GetV1RoutesParams{TeamId: &team.Id})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(listed) == 0 {
-		return fmt.Errorf("team %s has no routes; create one with 'baseten route create'", team.Name)
+		return nil, fmt.Errorf("team %s has no routes; create one with 'baseten route create'", team.Name)
 	}
+	// Routes reach external providers through team connections, and the
+	// provider decides which API a harness calls the route with.
+	connections, err := listConnections(ctx, api, managementapi.GetV1RoutesConnectionsParams{TeamId: &team.Id})
+	if err != nil {
+		return nil, err
+	}
+	providers := harness.NewProviders(connections)
 	var routes []harness.Route
-	var skipped []string
+	var skipped, unresolved []string
 	for _, l := range listed {
-		r, err := harness.NewRoute(l)
+		r, err := harness.NewRoute(l, providers)
 		switch {
 		case err == nil:
 			routes = append(routes, r)
-		case l.Name == f.Route:
-			return cmd.NewErrValidation(err)
+			if kind, _ := l.Target.Discriminator(); kind == "CONNECTION" && r.Provider == "" {
+				unresolved = append(unresolved, l.Name)
+			}
+		case !forSync && slices.ContainsFunc(targets, func(t harnessTarget) bool { return t.record.Route == l.Name }):
+			return nil, cmd.NewErrValidation(err)
 		default:
 			skipped = append(skipped, l.Name)
 		}
 	}
+	if len(unresolved) > 0 {
+		ctx.Logf("warning: routes whose connection is not in the team's connections are called with the Chat Completions API: %s\n", strings.Join(unresolved, ", "))
+	}
 	if len(routes) == 0 {
-		return cmd.NewErrValidation(errors.New("none of the team's routes have usable model metadata"))
+		return nil, cmd.NewErrValidation(errors.New("none of the team's routes have usable model metadata"))
 	}
 	if len(skipped) > 0 {
 		ctx.Logf("warning: skipping routes without usable model metadata: %s\n", strings.Join(skipped, ", "))
@@ -173,57 +219,134 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		if endpoint == "" {
 			endpoint = invokeURL
 		} else if invokeURL != endpoint {
-			return fmt.Errorf("team %s has routes with different invoke URLs", team.Name)
+			return nil, fmt.Errorf("team %s has routes with different invoke URLs", team.Name)
 		}
 	}
 	var serverDefaults harness.ServerDefaults
-	configuresClaudeCode := slices.ContainsFunc(selected, func(s selectedHarness) bool { return s.Name() == harness.ClaudeCode })
-	if configuresClaudeCode && (f.Route == "" || f.BackgroundRoute == "") {
-		serverDefaults, err = fetchServerDefaults(ctx, api, listed[0].TeamId)
-		if err != nil {
-			ctx.VerboseLogf("warning: could not load the team's harness defaults: %v\n", err)
+	for _, t := range targets {
+		if t.Name() == harness.ClaudeCode && (t.record.Route == "" || t.record.BackgroundRoute == "") {
+			serverDefaults, err = fetchServerDefaults(ctx, api, listed[0].TeamId)
+			if err != nil {
+				ctx.VerboseLogf("warning: could not load the team's harness defaults: %v\n", err)
+			}
+			break
 		}
 	}
 	var plans []*harness.Plan
-	for i := range selected {
-		choice := &selected[i]
-		callable := choice.Routes(routes)
+	for i := range targets {
+		target := &targets[i]
+		callable := target.Routes(routes)
 		if len(callable) == 0 {
-			return fmt.Errorf("team %s has no routes that %s can call", team.Name, choice.Name())
+			return nil, fmt.Errorf("team %s has no routes that %s can call", team.Name, target.Name())
 		}
 		var defaults harness.ServerDefaults
-		if choice.Name() == harness.ClaudeCode {
+		if target.Name() == harness.ClaudeCode {
 			defaults = serverDefaults.Selectable(callable)
 		}
-		choice.selection = harness.Selection{
-			Primary:    cmp.Or(f.Route, defaults.Primary, callable[0].Name),
-			Background: cmp.Or(f.BackgroundRoute, defaults.Background),
-			Subagent:   f.SubagentRoute,
-			Fallback:   f.FallbackRoute,
+		var dropped [][2]string // option label, vanished route name
+		if forSync {
+			for _, option := range []struct {
+				label  string
+				stored *string
+			}{
+				{"default route", &target.record.Route},
+				{"background route", &target.record.BackgroundRoute},
+				{"subagent route", &target.record.SubagentRoute},
+				{"fallback route", &target.record.FallbackRoute},
+			} {
+				if *option.stored != "" && !slices.ContainsFunc(callable, func(r harness.Route) bool { return r.Name == *option.stored }) {
+					dropped = append(dropped, [2]string{option.label, *option.stored})
+					*option.stored = ""
+				}
+			}
 		}
-		current, err := choice.Prepare(choice.detection.Path, callable, choice.selection, endpoint)
+		selection := harness.Selection{
+			Primary:    cmp.Or(target.record.Route, defaults.Primary, callable[0].Name),
+			Background: cmp.Or(target.record.BackgroundRoute, defaults.Background),
+			Subagent:   target.record.SubagentRoute,
+			Fallback:   target.record.FallbackRoute,
+		}
+		resolved, err := selection.Resolve(callable)
 		if err != nil {
-			return fmt.Errorf("%s: %w", choice.Name(), err)
+			return nil, fmt.Errorf("%s: %w", target.Name(), err)
+		}
+		for _, d := range dropped {
+			using := resolved.Primary
+			switch d[0] {
+			case "background route":
+				using = target.BackgroundRoute(resolved)
+			case "subagent route":
+				using = resolved.Subagent
+			case "fallback route":
+				using = resolved.Fallback
+			}
+			ctx.Logf("warning: %s: %s %q no longer exists; using %q\n", target.Name(), d[0], d[1], using)
+		}
+		target.selection = selection
+		current, err := target.Prepare(target.detection.Path, callable, selection, endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
 		for _, p := range current {
-			p.Harness = choice.Name()
+			p.Harness = target.Name()
 		}
 		plans = append(plans, current...)
+	}
+	return plans, nil
+}
+
+func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
+	if f.UseSessionCredential && f.KeyName != "" {
+		return cmd.NewErrUsagef("--key-name is not used with --use-session-credential; the session's API key already exists")
+	}
+	selected, err := selectHarnesses(ctx, f.HarnessFlags, true)
+	if err != nil {
+		return err
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	api := cl.API()
+	team, err := resolveTeamOrOnly(ctx, api, f.Team)
+	if err != nil {
+		return err
+	}
+	credentialSource := ""
+	if f.UseSessionCredential {
+		credentialSource = harness.CredentialSourceSession
+	}
+	record := harness.Record{
+		KeyName:          f.KeyName,
+		CredentialSource: credentialSource,
+		Route:            f.Route,
+		BackgroundRoute:  f.BackgroundRoute,
+		SubagentRoute:    f.SubagentRoute,
+		FallbackRoute:    f.FallbackRoute,
+	}
+	targets := make([]harnessTarget, len(selected))
+	for i := range selected {
+		targets[i] = harnessTarget{selectedHarness: selected[i], record: record}
+	}
+	plans, err := planHarnessSetup(ctx, api, team, targets, false)
+	if err != nil {
+		return err
+	}
+	var sessionToken string
+	if f.UseSessionCredential {
+		if sessionToken, err = harnessSessionAPIKey(ctx); err != nil {
+			return err
+		}
+		if err := harness.StageCredentials(plans, sessionToken); err != nil {
+			return err
+		}
 	}
 	switch {
 	case ctx.JSON:
 	case ctx.verbose || f.DryRun:
-		harnessVerboseSetupSummary(ctx, team, selected, plans)
+		harnessVerboseSetupSummary(ctx, team, targets, plans)
 	default:
-		var replaced []string
-		for _, p := range plans {
-			if len(p.Replaced) > 0 && !slices.Contains(replaced, p.Harness) {
-				replaced = append(replaced, p.Harness)
-			}
-		}
-		if len(replaced) > 0 {
-			ctx.Logf("warning: existing integration settings in %s will be overwritten; teardown does not restore them\n", strings.Join(replaced, ", "))
-		}
+		harnessReplacedWarnings(ctx, plans)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -239,17 +362,15 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		}
 	}
 	// The routes API key is only read or created once the user has confirmed.
-	key, err := loadHarnessKey(ctx, api, team, f.KeyName)
-	if err != nil {
-		return err
+	token := sessionToken
+	if token == "" {
+		if token, err = ensureHarnessToken(ctx, api, team, f.KeyName); err != nil {
+			return err
+		}
 	}
-	token, err := key.ensure(ctx, api)
-	if err != nil {
-		return err
-	}
-	for _, choice := range selected {
-		if choice.Name() == harness.Codex {
-			harnessLogoutCodex(ctx, filepath.Dir(choice.detection.Path), f.Yes)
+	for i := range targets {
+		if targets[i].Name() == harness.Codex {
+			harnessLogoutCodex(ctx, filepath.Dir(targets[i].detection.Path), f.Yes)
 		}
 	}
 	if err := harness.ApplyPlans(plans, token); err != nil {
@@ -258,19 +379,316 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if !ctx.JSON {
 		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
 	}
-	for _, choice := range selected {
-		if choice.Name() == harness.Codex {
-			harnessRestartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
+	for i := range targets {
+		t := &targets[i]
+		if t.Name() == harness.Codex && !harnessRestartCodexDaemon(ctx, filepath.Dir(t.detection.Path), f.Yes) {
+			// The restart was declined or failed; sync retries it later.
+			t.record.CodexRestartPending = true
 		}
+	}
+	if err := recordHarnessSetup(ctx, team, targets); err != nil {
+		return err
 	}
 	if ctx.JSON {
 		outputHarnessPlansJSON(ctx, plans, nil)
 		return nil
 	}
-	for _, choice := range selected {
-		ctx.Logf("Undo with: %s\n", harnessFollowupCommand("teardown", choice, f.ConfigDir))
+	for i := range targets {
+		ctx.Logf("Undo with: %s\n", harnessFollowupCommand("teardown", targets[i].selectedHarness, f.ConfigDir))
 	}
 	return nil
+}
+
+// commandHarnessSync refreshes the harnesses configured on this machine with
+// the team and options recorded by their last setup.
+func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
+	if !harness.Supported() {
+		return errors.New("harness commands support only macOS and Linux for now")
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	api := cl.API()
+	dir, err := auth.DefaultConfigDir()
+	if err != nil {
+		return err
+	}
+	file, err := harness.LoadRecords(dir)
+	if err != nil {
+		return err
+	}
+	profile, managementURL, err := harnessRecordScope(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Record exactly what was setup, preserving the flags. We skip any records that don't match
+	// the targets of this current `sync`.
+	var targets []harnessTarget
+	for _, h := range harness.All() {
+		record, ok := file.Harnesses[h.Name()]
+		if !ok || record.Profile != profile || record.ManagementURL != managementURL {
+			continue
+		}
+		d, err := h.Detect(ctx, ctx.Execer(), filepath.Dir(record.Config))
+		if err != nil {
+			return err
+		}
+		if d.Path != record.Config {
+			continue
+		}
+		status, err := h.Inspect(d)
+		if err != nil {
+			ctx.Logf("warning: skipping %s: settings at %s are misconfigured: %v\n", h.Name(), harnessDisplayPath(d.Path), err)
+			continue
+		}
+		if status.State == harness.StateNotConfigured {
+			continue
+		}
+		targets = append(targets, harnessTarget{selectedHarness: selectedHarness{Harness: h, detection: d}, record: record})
+	}
+	if len(targets) == 0 {
+		if ctx.JSON {
+			ctx.OutputJSON(cmd.HarnessPlanList{Items: []cmd.HarnessPlan{}})
+		} else {
+			ctx.LogLine("No harnesses to sync. Run 'baseten harness setup' first.")
+		}
+		return nil
+	}
+
+	// NB(nikhil): Group targets that share a team and routes API key, so each group is
+	// planned and applied together.
+	groups := map[string][]harnessTarget{}
+	for _, t := range targets {
+		key := t.record.TeamID + ":" + t.record.CredentialSource + ":" + t.record.KeyName
+		groups[key] = append(groups[key], t)
+	}
+
+	var runs []harnessSyncRun
+	for _, group := range groups {
+		// Fetching the current session key allows us to inject into plans and detect if rotation has happened.
+		var sessionToken string
+		if group[0].record.CredentialSource == harness.CredentialSourceSession {
+			var err error
+			if sessionToken, err = harnessSessionAPIKey(ctx); err != nil {
+				return fmt.Errorf("%s: %w; these harnesses were set up with --use-session-credential", group[0].Name(), err)
+			}
+		}
+		team, err := resolveTeamOrOnly(ctx, api, group[0].record.TeamID)
+		if err != nil {
+			return fmt.Errorf("%s: %w; rerun 'baseten harness setup --harness %s' to record a current team", group[0].Name(), err, group[0].Name())
+		}
+		run := harnessSyncRun{team: team, targets: group, token: sessionToken}
+		if run.plans, err = planHarnessSetup(ctx, api, run.team, run.targets, true); err != nil {
+			return err
+		}
+		if sessionToken != "" {
+			if err := harness.StageCredentials(run.plans, sessionToken); err != nil {
+				return err
+			}
+		}
+		runs = append(runs, run)
+	}
+
+	// NB(nikhil): Re-extract targets / plans from the runs, because they might have changed due to
+	// route eligibility.
+	targets, plans := extractFromHarnessSyncRuns(runs)
+	switch {
+	case ctx.JSON:
+	case ctx.verbose || f.DryRun:
+		for _, run := range runs {
+			harnessVerboseSetupSummary(ctx, run.team, run.targets, run.plans)
+		}
+	default:
+		harnessReplacedWarnings(ctx, plans)
+	}
+	if f.DryRun {
+		if ctx.JSON {
+			outputHarnessPlansJSON(ctx, plans, nil)
+		} else {
+			ctx.LogLine("Preview only. No files changed and no routes API key created.")
+		}
+		return nil
+	}
+	changed := slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Changed })
+	if !changed {
+		// Retry codex daemon restarts that were declined or failed earlier.
+		for i := range targets {
+			harnessSyncCodexDaemon(ctx, &targets[i], false, f.Yes)
+		}
+		if err := saveHarnessRecords(dir, file, targets); err != nil {
+			return err
+		}
+		if ctx.JSON {
+			outputHarnessPlansJSON(ctx, plans, nil)
+		} else {
+			ctx.LogLine("All configured harnesses are up to date.")
+		}
+		return nil
+	}
+	if !f.Yes {
+		if err := ctx.ConfirmYesNo("Apply these harness changes?"); err != nil {
+			return err
+		}
+	}
+	for i := range runs {
+		run := &runs[i]
+		// The routes API key is only read or created once the user has confirmed.
+		token := run.token
+		if token == "" {
+			if token, err = ensureHarnessToken(ctx, api, run.team, run.targets[0].record.KeyName); err != nil {
+				return err
+			}
+		}
+		for j := range run.targets {
+			if run.targets[j].Name() == harness.Codex {
+				harnessLogoutCodex(ctx, filepath.Dir(run.targets[j].detection.Path), f.Yes)
+			}
+		}
+		if err := harness.ApplyPlans(run.plans, token); err != nil {
+			return err
+		}
+	}
+	if !ctx.JSON {
+		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
+	}
+	for i := range targets {
+		name := targets[i].Name()
+		plansChanged := slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Harness == name && p.Changed })
+		harnessSyncCodexDaemon(ctx, &targets[i], plansChanged, f.Yes)
+	}
+	if err := saveHarnessRecords(dir, file, targets); err != nil {
+		return err
+	}
+	if ctx.JSON {
+		outputHarnessPlansJSON(ctx, plans, nil)
+	}
+	return nil
+}
+
+func extractFromHarnessSyncRuns(runs []harnessSyncRun) (targets []harnessTarget, plans []*harness.Plan) {
+	for _, run := range runs {
+		targets = append(targets, run.targets...)
+		plans = append(plans, run.plans...)
+	}
+
+	return targets, plans
+}
+
+// harnessSyncCodexDaemon restarts the codex app-server daemon for one target, like
+// setup does, when this sync changed its settings or an earlier restart is
+// still pending. A declined or failed restart stays pending for the next sync.
+func harnessSyncCodexDaemon(ctx *CommandContext, target *harnessTarget, changed, yes bool) {
+	if target.Name() != harness.Codex || (!changed && !target.record.CodexRestartPending) {
+		return
+	}
+	target.record.CodexRestartPending = !harnessRestartCodexDaemon(ctx, filepath.Dir(target.detection.Path), yes)
+}
+
+// harnessRecordScope returns the profile and management URL that scope harness
+// records, matching the scope of saved routes API keys.
+func harnessRecordScope(ctx *CommandContext) (profile, managementURL string, err error) {
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return "", "", err
+	}
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return "", "", err
+	}
+	return session.ProfileName(), remote.ManagementURL(), nil
+}
+
+// recordHarnessSetup saves the setup options of targets as their harness
+// records, so sync can replay them.
+func recordHarnessSetup(ctx *CommandContext, team *managementapi.Team, targets []harnessTarget) error {
+	profile, managementURL, err := harnessRecordScope(ctx)
+	if err != nil {
+		return err
+	}
+	dir, err := auth.DefaultConfigDir()
+	if err != nil {
+		return err
+	}
+	file, err := harness.LoadRecords(dir)
+	if err != nil {
+		return err
+	}
+	for i := range targets {
+		t := &targets[i]
+		t.record.Config = t.detection.Path
+		t.record.Profile = profile
+		t.record.ManagementURL = managementURL
+		t.record.TeamID = team.Id
+		file.Harnesses[t.Name()] = t.record
+	}
+	return harness.SaveRecords(dir, file)
+}
+
+// saveHarnessRecords writes the targets' records back, persisting routes that
+// fell back to defaults and deferred codex restarts.
+func saveHarnessRecords(dir string, file harness.RecordFile, targets []harnessTarget) error {
+	for i := range targets {
+		file.Harnesses[targets[i].Name()] = targets[i].record
+	}
+	return harness.SaveRecords(dir, file)
+}
+
+// forgetHarnessRecords removes the setup records of the named harnesses, so
+// sync no longer refreshes them.
+func forgetHarnessRecords(names []string) error {
+	dir, err := auth.DefaultConfigDir()
+	if err != nil {
+		return err
+	}
+	file, err := harness.LoadRecords(dir)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		delete(file.Harnesses, name)
+	}
+	return harness.SaveRecords(dir, file)
+}
+
+// ensureHarnessToken returns the routes API key for the team, creating one on
+// first use and saving it for later reuse.
+func ensureHarnessToken(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, name string) (string, error) {
+	key, err := loadHarnessKey(ctx, api, team, name)
+	if err != nil {
+		return "", err
+	}
+	return key.ensure(ctx, api)
+}
+
+// harnessSessionAPIKey returns the session's API key to install in harness
+// settings. Never mints a new key, read only.
+func harnessSessionAPIKey(ctx *CommandContext) (string, error) {
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return "", err
+	}
+	key, err := session.APIKey()
+	if err != nil {
+		return "", fmt.Errorf("reading the session's API key: %w", err)
+	}
+	if key == "" {
+		return "", errors.New("the session has no API key to install; set BASETEN_API_KEY or use an API-key profile")
+	}
+	return key, nil
+}
+
+func harnessReplacedWarnings(ctx *CommandContext, plans []*harness.Plan) {
+	var replaced []string
+	for _, p := range plans {
+		if len(p.Replaced) > 0 && !slices.Contains(replaced, p.Harness) {
+			replaced = append(replaced, p.Harness)
+		}
+	}
+	if len(replaced) > 0 {
+		ctx.Logf("warning: existing integration settings in %s will be overwritten; teardown does not restore them\n", strings.Join(replaced, ", "))
+	}
 }
 
 func fetchServerDefaults(ctx context.Context, api *managementapi.Client, teamID string) (harness.ServerDefaults, error) {
@@ -320,10 +738,13 @@ func harnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
 
 const harnessCodexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done to pick up the new models."
 
-func harnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) {
+// harnessRestartCodexDaemon restarts the codex app-server daemon after setup,
+// asking first when sessions are attached. It reports false when a restart is
+// still needed: the prompt was declined or the restart failed.
+func harnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) bool {
 	socket := harness.CodexDaemonSocket(ctx, ctx.Execer(), dir)
 	if socket == "" {
-		return
+		return true
 	}
 	clients, err := harness.CodexDaemonClients(ctx, ctx.Execer(), socket)
 	switch {
@@ -335,16 +756,17 @@ func harnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) {
 	if (err != nil || clients > 0) && !yes {
 		if ctx.ConfirmYesNo("Restart the codex app-server daemon now?") != nil {
 			ctx.LogLine(harnessCodexDaemonRestartHint)
-			return
+			return false
 		}
 	}
 	pid, err := harness.RestartCodexDaemon(ctx, ctx.Execer(), dir)
 	if err != nil {
 		ctx.Logf("warning: could not restart the codex app-server daemon: %v\n", err)
 		ctx.LogLine(harnessCodexDaemonRestartHint)
-		return
+		return false
 	}
 	ctx.Logf("Restarted codex app-server daemon (pid %d) so the new model catalog takes effect.\n", pid)
+	return true
 }
 
 func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error {
@@ -366,7 +788,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 			Harness:         r.Name,
 			Config:          r.Path,
 			Installed:       r.Installed,
-			Version:         r.Version,
+			Installs:        harnessInstalls(r.Detection),
 			State:           r.State,
 			DefaultRoute:    r.DefaultRoute,
 			BackgroundRoute: r.BackgroundRoute,
@@ -375,7 +797,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 		})
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.HarnessStatusList{Items: results})
+		ctx.OutputJSON(cmd.HarnessStatusList{Items: normalizeJSONSlice(results)})
 		return nil
 	}
 	if len(results) == 0 {
@@ -385,11 +807,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 	for _, r := range results {
 		ctx.Outputf("%s: %s\n", r.Harness, r.State)
 		ctx.Outputf("  Config            %s\n", harnessDisplayPath(r.Config))
-		if !r.Installed {
-			ctx.OutputLine("  Version           not found")
-		} else {
-			ctx.Outputf("  Version           %s\n", cmp.Or(r.Version, "unavailable"))
-		}
+		ctx.Outputf("  Version           %s\n", harnessInstallsLabel(r.Installs))
 		if r.DefaultRoute != "" {
 			ctx.Outputf("  Default route     %s\n", r.DefaultRoute)
 		}
@@ -432,6 +850,17 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 		plans = append(plans, current...)
 	}
 	if len(names) == 0 {
+		// A hand-reverted harness still has a record; forget it so a restored
+		// settings file doesn't bring it back under sync.
+		if !f.DryRun {
+			var all []string
+			for _, choice := range selected {
+				all = append(all, choice.Name())
+			}
+			if err := forgetHarnessRecords(all); err != nil {
+				return err
+			}
+		}
 		if ctx.JSON {
 			outputHarnessPlansJSON(ctx, plans, nil)
 		} else {
@@ -478,6 +907,10 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	if err := harness.ApplyPlans(plans, ""); err != nil {
 		return err
 	}
+	// Teardown forgets the recorded setup so sync no longer refreshes these.
+	if err := forgetHarnessRecords(names); err != nil {
+		return err
+	}
 	if !ctx.JSON {
 		ctx.LogLine("Baseten settings removed. Restart the harnesses to load the changes.")
 	}
@@ -514,7 +947,7 @@ func outputHarnessPlansJSON(ctx *CommandContext, plans []*harness.Plan, deletedK
 			Changed:          p.Changed,
 		})
 	}
-	ctx.OutputJSON(cmd.HarnessPlanList{Items: items, DeletedAPIKeys: deletedKeys})
+	ctx.OutputJSON(cmd.HarnessPlanList{Items: normalizeJSONSlice(items), DeletedAPIKeys: deletedKeys})
 }
 
 func harnessDisplayPath(path string) string {
@@ -540,7 +973,7 @@ func harnessRouteTable(ctx *CommandContext, title string, routes []harness.Route
 	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "DISPLAY NAME"}, Rows: rows})
 }
 
-func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, selected []selectedHarness, plans []*harness.Plan) {
+func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, selected []harnessTarget, plans []*harness.Plan) {
 	renderer := lipgloss.NewRenderer(ctx.Stdout)
 	accent := renderer.NewStyle().Inherit(inlineCodeStyle)
 	heading := renderer.NewStyle().Bold(true)
@@ -584,10 +1017,18 @@ func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, s
 }
 
 // unusedHarnessKeys returns the routes API keys the selected harnesses use that
-// no other harness on this machine still uses.
+// no other harness on this machine still uses. Credentials this CLI does not
+// own are never candidates.
 func unusedHarnessKeys(ctx *CommandContext, selected []selectedHarness) ([]string, error) {
+	protected, sessionToken, err := protectedHarnessCredentials(ctx, selected)
+	if err != nil {
+		return nil, err
+	}
 	keys := map[string]bool{}
-	for _, s := range selected {
+	for i, s := range selected {
+		if protected[i] {
+			continue
+		}
 		token, err := s.Credential(s.detection.Path)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", s.Name(), err)
@@ -614,7 +1055,35 @@ func unusedHarnessKeys(ctx *CommandContext, selected []selectedHarness) ([]strin
 		}
 		delete(keys, token)
 	}
+	delete(keys, sessionToken)
 	return slices.Sorted(maps.Keys(keys)), nil
+}
+
+// protectedHarnessCredentials ensures we don't tear down any credentials
+// that are likely shared / owned external to this device (most commonly via --use-session-credential).
+func protectedHarnessCredentials(ctx *CommandContext, selected []selectedHarness) (protected []bool, sessionKey string, err error) {
+	dir, err := auth.DefaultConfigDir()
+	if err != nil {
+		return nil, "", err
+	}
+	file, err := harness.LoadRecords(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	sessionKey, _ = harnessSessionAPIKey(ctx)
+	protected = make([]bool, len(selected))
+	kept := false
+	for i, s := range selected {
+		record, ok := file.Harnesses[s.Name()]
+		if ok && record.CredentialSource == harness.CredentialSourceSession && record.Config == s.detection.Path {
+			protected[i] = true
+			kept = true
+		}
+	}
+	if kept {
+		ctx.Logf("Keeping the API key installed with --use-session-credential, which this CLI did not create. Delete it where it was created.\n")
+	}
+	return protected, sessionKey, nil
 }
 
 // deleteHarnessKeys deletes the routes API keys with these values, and this
