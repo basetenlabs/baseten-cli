@@ -43,7 +43,7 @@ func (h claudeCodeHarness) Detect(ctx context.Context, execer Execer, dir string
 	if err != nil {
 		return Detection{}, err
 	}
-	return detect(ctx, execer, h.Name(), "claude", filepath.Join(dir, "settings.json"))
+	return detect(ctx, execer, h.Name(), []candidate{cliCandidate("claude")}, filepath.Join(dir, "settings.json"))
 }
 
 func (claudeCodeHarness) BackgroundRoute(s Selection) string {
@@ -67,7 +67,7 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, end
 }
 
 func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any) ([]setting, error) {
-	s, err := selection.resolve(routes)
+	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
 	}

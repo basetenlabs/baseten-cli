@@ -31,19 +31,9 @@ func routeCases() []routeCase {
 			target: map[string]any{"type": "BASETEN_MODEL_API", "model": "test-model-api"},
 		},
 		{
-			name:   "anthropic",
-			flags:  []string{"--target-type", "anthropic", "--target-model", "test-model", "--target-secret", "provider-key"},
-			target: map[string]any{"type": "ANTHROPIC", "model": "test-model", "secret_name": "provider-key"},
-		},
-		{
-			name:   "openai",
-			flags:  []string{"--target-type", "openai", "--target-model", "test-model", "--target-secret", "provider-key"},
-			target: map[string]any{"type": "OPENAI", "model": "test-model", "secret_name": "provider-key"},
-		},
-		{
-			name:   "xai",
-			flags:  []string{"--target-type", "xai", "--target-model", "test-model", "--target-secret", "provider-key"},
-			target: map[string]any{"type": "XAI", "model": "test-model", "secret_name": "provider-key"},
+			name:   "connection",
+			flags:  []string{"--target-type", "connection", "--target-model", "test-model", "--target-connection", "c123456"},
+			target: map[string]any{"type": "CONNECTION", "model": "test-model", "connection_id": "c123456"},
 		},
 	}
 	cases := make([]routeCase, 0, len(targets))
@@ -268,8 +258,12 @@ func Test_Route_List_TextAndJQ(t *testing.T) {
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases()[0].Response, routeCases()[1].Response}, nil))
 	h.Require.NoError(h.Execute("route", "list"))
-	for _, text := range []string{"ID", "NAME", "TEAM", "Engineering", "DISPLAY NAME", "test-model-api", "anthropic:test-model", "CREATED", "2026-09-17T10:00:00Z"} {
+	h.Require.Regexp(`^ID\s+DISPLAY NAME\s+NAME\s+CREATED\s*\n`, h.Stdout.String(), "display name comes before name")
+	for _, text := range []string{"r123456", "Assistant", "acme/assistant", "2026-09-17T10:00:00Z"} {
 		h.Require.Contains(h.Stdout.String(), text)
+	}
+	for _, text := range []string{"TEAM", "Engineering", "TARGET", "test-model-api", "c123456"} {
+		h.Require.NotContains(h.Stdout.String(), text, "the team is the listing's scope, and targets are for describe")
 	}
 	h.Require.Empty(h.Stderr.String())
 	h.Require.NoError(h.Execute("route", "list", "--jq", ".items[0].name"))
@@ -281,18 +275,22 @@ func Test_Route_List_TextAndJQ(t *testing.T) {
 }
 
 func Test_Route_Usage_InvalidTargets(t *testing.T) {
-	provider := []string{"--target-type", "openai", "--target-model", "test-model", "--target-secret", "key"}
+	provider := []string{"--target-type", "connection", "--target-model", "test-model", "--target-connection", "c123456"}
 	cases := [][]string{
 		{}, {"--target-type", "baseten-model-api", "--target-model", ""}, {"--target-type", ""},
-		{"--target-type", "baseten-model-api", "--target-model", "model", "--target-type", "openai"},
-		{"--target-type", "baseten-model-api", "--target-model", "model", "--target-secret", "key"},
-		{"--target-model", "model"}, {"--target-type", "openai"},
-		{"--target-type", "openai", "--target-model", "model"},
-		{"--target-type", "openai", "--target-secret", "key"},
-		{"--target-type", "invalid", "--target-model", "model", "--target-secret", "key"},
+		{"--target-type", "baseten-model-api", "--target-model", "model", "--target-type", "connection"},
+		{"--target-type", "baseten-model-api", "--target-model", "model", "--target-connection", "c123456"},
+		{"--target-model", "model"}, {"--target-type", "connection"},
+		{"--target-type", "connection", "--target-model", "model"},
+		{"--target-type", "connection", "--target-connection", "c123456"},
+		{"--target-type", "invalid", "--target-model", "model", "--target-connection", "c123456"},
 		// Targets and flags the routes API no longer accepts.
+		{"--target-type", "openai", "--target-model", "model", "--target-secret", "key"},
+		{"--target-type", "anthropic", "--target-model", "model", "--target-secret", "key"},
+		{"--target-type", "xai", "--target-model", "model", "--target-secret", "key"},
 		{"--target-type", "openai-compatible", "--target-model", "model", "--target-secret", "key"},
 		{"--target-type", "vertex", "--target-model", "model", "--target-secret", "key"},
+		append(append([]string{}, provider...), "--target-secret", "key"),
 		append(append([]string{}, provider...), "--target-base-url", "https://api.example.com"),
 		append(append([]string{}, provider...), "--target-vertex-project", "project"),
 		append(append([]string{}, provider...), "--target-vertex-location", "global"),
@@ -338,8 +336,11 @@ func Test_Route_Describe_AllTargetFields(t *testing.T) {
 			h.Require.Contains(h.Stdout.String(), "Target Type:      "+tc.Flags[1])
 			h.Require.Contains(h.Stdout.String(), "Target Model:     "+tc.Flags[3])
 			h.Require.NotContains(h.Stdout.String(), "Provider:")
-			if tc.Name != "model-api" {
-				h.Require.Contains(h.Stdout.String(), "Target Secret:    provider-key")
+			h.Require.NotContains(h.Stdout.String(), "Secret")
+			if tc.Name == "connection" {
+				h.Require.Contains(h.Stdout.String(), "Target Connection: c123456")
+			} else {
+				h.Require.NotContains(h.Stdout.String(), "Connection")
 			}
 		})
 	}
@@ -482,7 +483,7 @@ func Test_Route_RequiresFlagsWithoutReadingStdin(t *testing.T) {
 func Test_Route_TargetNamesAreLiteral(t *testing.T) {
 	for _, args := range [][]string{
 		{"--target-type", "baseten-model-api", "--target-model", "__manual__"},
-		{"--target-type", "anthropic", "--target-model", "test-model", "--target-secret", "__create_secret__"},
+		{"--target-type", "connection", "--target-model", "test-model", "--target-connection", "__create_connection__"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -495,7 +496,7 @@ func Test_Route_TargetNamesAreLiteral(t *testing.T) {
 			if args[1] == "baseten-model-api" {
 				h.Require.Equal("__manual__", target["model"])
 			} else {
-				h.Require.Equal("__create_secret__", target["secret_name"])
+				h.Require.Equal("__create_connection__", target["connection_id"])
 			}
 			h.Require.Len(m.Calls(), 2)
 			h.Require.NotNil(m.FindCall("GET", "/v1/teams"))
@@ -554,17 +555,35 @@ func Test_Route_List_UnknownTarget(t *testing.T) {
 	m.SetRoute("GET", "/v1/routes", 200, routePage(items, nil))
 	h.Require.NoError(h.Execute("route", "list"))
 	h.Require.Empty(h.Stderr.String())
-	h.Require.Contains(h.Stdout.String(), "acme/future")
-	h.Require.Contains(h.Stdout.String(), "<unrecognized type>")
-	for _, target := range []string{"test-model-api", "anthropic:test-model", "openai:test-model", "xai:test-model"} {
-		h.Require.Contains(h.Stdout.String(), target)
-	}
+	h.Require.Contains(h.Stdout.String(), "acme/future", "a route with an unknown target is still listed")
 	h.Require.NoError(h.Execute("route", "list", "--output", "json"))
 	var result publiccmd.RouteList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
 	h.Require.Len(result.Items, len(items))
 	h.Require.Contains(h.Stdout.String(), "FUTURE_PROVIDER")
 	h.Require.Empty(h.Stderr.String())
+}
+
+func Test_Route_ClassifierTarget(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	classifier := routeFixture(map[string]any{
+		"type": "CLASSIFIER_MODEL_BASED", "classifier_model_id": "m123456", "classifier_environment_name": nil,
+		"default_route":  map[string]any{"id": "r1", "slug": "acme/fast"},
+		"allowed_routes": []any{map[string]any{"id": "r1", "slug": "acme/fast"}, map[string]any{"id": "r2", "slug": "acme/smart"}},
+	})
+	classifier["name"] = "acme/auto"
+	m.SetRoute("GET", "/v1/routes/r123456", 200, classifier)
+	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
+	for _, text := range []string{
+		"Target Type:      classifier-model-based",
+		"Classifier Model: m123456",
+		"Default Route:    acme/fast",
+		"Allowed Routes:   acme/fast, acme/smart",
+	} {
+		h.Require.Contains(h.Stdout.String(), text)
+	}
+	h.Require.NotContains(h.Stdout.String(), "Target Model:")
 }
 
 func Test_Route_Describe_UnknownTarget(t *testing.T) {

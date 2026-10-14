@@ -24,6 +24,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/harness"
+	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 )
 
@@ -50,6 +51,30 @@ func (fakeHarnessExecer) Exec(command *exec.Cmd) error {
 	return err
 }
 
+// versionedHarnessExecer finds only the listed binaries, each printing its
+// own --version output. Bare names resolve under /fake, as on PATH.
+type versionedHarnessExecer map[string]string
+
+func (e versionedHarnessExecer) LookPath(name string) (string, error) {
+	if _, ok := e[name]; !ok {
+		return "", exec.ErrNotFound
+	}
+	if filepath.IsAbs(name) {
+		return name, nil
+	}
+	return "/fake/" + name, nil
+}
+
+func (e versionedHarnessExecer) Exec(command *exec.Cmd) error {
+	for name, version := range e {
+		if command.Path == name || command.Path == "/fake/"+name {
+			_, err := fmt.Fprintln(command.Stdout, version)
+			return err
+		}
+	}
+	return errors.New("unknown harness executed")
+}
+
 type missingHarnessExecer struct{}
 
 func (missingHarnessExecer) LookPath(string) (string, error) { return "", exec.ErrNotFound }
@@ -74,6 +99,7 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
+	api.SetRoute("GET", "/v1/routes/connections", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}})
 	for _, team := range []string{"team-a", "team-b"} {
 		api.SetRoute("POST", "/v1/teams/"+team+"/api_keys", 200, map[string]string{"api_key": "secret-" + team})
 		api.SetRoute("DELETE", "/v1/api_keys/secret-"+team, 200, map[string]string{"prefix": "secret-" + team})
@@ -345,6 +371,92 @@ func Test_Harness_Setup_NotInstalledFailsBeforeAPI(t *testing.T) {
 	}
 	h.Require.Contains(h.Stderr.String(), want)
 	h.Require.Empty(api.Calls())
+
+	h.Require.Error(h.Execute("harness", "setup", "--harness", "opencode", "--dry-run"))
+	want = "opencode is not installed or not on PATH"
+	switch runtime.GOOS {
+	case "darwin":
+		want = "opencode is not installed or not on PATH or in OpenCode.app or ~/.opencode/bin"
+	case "linux":
+		want = "opencode is not installed or not on PATH or in /opt/OpenCode or ~/.opencode/bin"
+	}
+	h.Require.Contains(h.Stderr.String(), want)
+	h.Require.Empty(api.Calls())
+}
+
+func Test_Harness_Setup_OpenCodeDesktopWithoutCLI(t *testing.T) {
+	skipUnlessSupported(t)
+	binary := "/Applications/OpenCode.app/Contents/Resources/opencode-cli"
+	if runtime.GOOS == "linux" {
+		binary = "/opt/OpenCode/resources/opencode-cli"
+	}
+	h, _ := harnessAPI(t, "")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{binary: binary})
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--yes"))
+	settings := readHarnessSettings(t, "opencode", filepath.Join(dir, "opencode", "opencode.json"))
+	h.Require.Equal("baseten-harness/acme/primary", settings["model"])
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "opencode", "--output", "json"))
+	var statuses public.HarnessStatusList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
+	h.Require.Len(statuses.Items, 1)
+	h.Require.True(statuses.Items[0].Installed)
+	h.Require.Equal("configured", statuses.Items[0].State)
+	h.Require.Equal([]public.HarnessInstall{{Kind: "Desktop", Binary: binary, Version: "1.2.3"}}, statuses.Items[0].Installs)
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "opencode"))
+	h.Require.Contains(h.Stdout.String(), "Version           1.2.3\n")
+}
+
+func Test_Harness_Status_ListsEveryInstall(t *testing.T) {
+	skipUnlessSupported(t)
+	desktop := "/Applications/OpenCode.app/Contents/Resources/opencode-cli"
+	if runtime.GOOS == "linux" {
+		desktop = "/opt/OpenCode/resources/opencode-cli"
+	}
+	h, _ := fakeHarnessAPI(t)
+	h.Context = internalcmd.WithExecer(h.Context, versionedHarnessExecer{"opencode": "1.18.34", desktop: "opencode v2.0.27"})
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--yes"))
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "opencode"))
+	h.Require.Contains(h.Stdout.String(), "Version           1.18.34 (CLI), 2.0.27 (Desktop)\n")
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "opencode", "--output", "json"))
+	var statuses public.HarnessStatusList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
+	h.Require.Equal([]public.HarnessInstall{
+		{Kind: "CLI", Binary: "/fake/opencode", Version: "1.18.34"},
+		{Kind: "Desktop", Binary: desktop, Version: "opencode v2.0.27"},
+	}, statuses.Items[0].Installs)
+}
+
+func Test_Harness_Setup_OpenCodeFormatFollowsTheFile(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := fakeHarnessAPI(t)
+	dir := t.TempDir()
+	path := harnessSettingsFile("opencode", dir)
+	h.Require.NoError(os.MkdirAll(dir, 0o700))
+	h.Require.NoError(os.WriteFile(path, []byte(`{"providers": {"other": {"name": "Other"}}}`), 0o600))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"))
+	settings := readHarnessSettings(t, "opencode", path)
+	h.Require.Contains(settings["providers"], "baseten-harness")
+	h.Require.NotContains(settings, "provider")
+	h.Require.NotContains(settings, "small_model")
+	h.Require.Equal("baseten-harness/deepseek-ai/DeepSeek-V4.1-Flash", settings["agents"].(map[string]any)["title"].(map[string]any)["model"])
+
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "opencode", "--config-dir", dir, "--output", "json"))
+	var statuses public.HarnessStatusList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
+	h.Require.Equal("configured", statuses.Items[0].State)
+	h.Require.Equal("acme/primary", statuses.Items[0].DefaultRoute)
+	h.Require.Equal("deepseek-ai/DeepSeek-V4.1-Flash", statuses.Items[0].BackgroundRoute)
+	h.Require.NoError(h.Execute("harness", "status", "--harness", "opencode", "--config-dir", dir, "--verbose"))
+	h.Require.Contains(h.Stderr.String(), "providers.baseten-harness")
+	h.Require.Contains(h.Stderr.String(), "agents.title.model")
+	h.Require.NotContains(h.Stderr.String(), " provider.baseten-harness")
+
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "opencode", "--config-dir", dir, "--yes"))
+	h.Require.Equal(map[string]any{"providers": map[string]any{"other": map[string]any{"name": "Other"}}}, readHarnessSettings(t, "opencode", path))
 }
 
 func Test_Harness_Setup_Teams(t *testing.T) {
@@ -806,18 +918,37 @@ func (g *harnessGateway) sentRequestClasses() []string {
 // Test_Harness_Setup_RealHarness configures each installed harness in an
 // isolated directory, runs it, and checks that it asks the gateway for the
 // configured route. Harnesses not on PATH are skipped.
+//
+// OpenCode 1 and 2 install the same `opencode` command, so the one on PATH is
+// taken for OpenCode 1 and OpenCode 2 is the binary named by
+// BASETEN_TEST_OPENCODE2, when set. OpenCode 2 reads both settings formats
+// and runs with each; OpenCode 1 reads only the original.
 func Test_Harness_Setup_RealHarness(t *testing.T) {
 	skipUnlessSupported(t)
-	for _, tc := range []struct {
-		name, binary string
-		args         []string
-	}{
-		{"claude-code", "claude", []string{"-p", "Reply with OK."}},
-		{"codex", "codex", []string{"exec", "--skip-git-repo-check", "Reply with OK."}},
-		{"opencode", "opencode", []string{"run", "Reply with OK."}},
-		{"pi", "pi", []string{"--print", "Reply with OK."}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	type harnessCase struct {
+		label, name, binary string
+		args                []string
+		// seed is a settings file in place before setup, which decides the
+		// OpenCode settings format.
+		seed string
+	}
+	cases := []harnessCase{
+		{label: "claude-code", name: "claude-code", binary: "claude", args: []string{"-p", "Reply with OK."}},
+		{label: "codex", name: "codex", binary: "codex", args: []string{"exec", "--skip-git-repo-check", "Reply with OK."}},
+		{label: "opencode/v1", name: "opencode", binary: "opencode", args: []string{"run", "Reply with OK."}},
+		{label: "pi", name: "pi", binary: "pi", args: []string{"--print", "Reply with OK."}},
+	}
+	if opencode2 := os.Getenv("BASETEN_TEST_OPENCODE2"); opencode2 != "" {
+		// OpenCode 2 runs a shared background server per user by default; a
+		// private one keeps the test off the developer's.
+		args := []string{"run", "--standalone", "Reply with OK."}
+		cases = append(cases,
+			harnessCase{label: "opencode2/v1", name: "opencode", binary: opencode2, args: args},
+			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}}`},
+		)
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
 			binary, err := exec.LookPath(tc.binary)
 			if err != nil {
 				t.Skipf("%s is not on PATH", tc.binary)
@@ -833,6 +964,10 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 				"opencode":    filepath.Join(root, ".config", "opencode"),
 				"pi":          filepath.Join(root, ".pi", "agent"),
 			}[tc.name]
+			if tc.seed != "" {
+				h.Require.NoError(os.MkdirAll(configDir, 0o700))
+				h.Require.NoError(os.WriteFile(harnessSettingsFile(tc.name, configDir), []byte(tc.seed), 0o600))
+			}
 			h.Require.NoError(h.Execute("harness", "setup", "--harness", tc.name, "--config-dir", configDir, "--yes"))
 
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
@@ -927,20 +1062,46 @@ func Test_Harness_Setup_RouterRouteInPickers(t *testing.T) {
 	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 }
 
-func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
-	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+// serveFirstPartyRoutes serves an Anthropic route and an OpenAI route, each
+// through a team connection, a Baseten-hosted route, and a route whose
+// connection no longer exists.
+func serveFirstPartyRoutes(api *MockManagementAPI) {
 	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
 		"items": []any{
 			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "ANTHROPIC", "model": "claude-opus-5-5", "secret_name": "anthropic-key"}},
+				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}},
 			map[string]any{"id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "OPENAI", "model": "gpt-5.5", "secret_name": "openai-key"}},
+				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-openai"}},
 			map[string]any{"id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
+			map[string]any{"id": "route-d", "name": "acme/orphan", "display_name": "Orphan", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-deleted"}},
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
+	// Connections page, so the join reads every page.
+	api.SetRouteFunc("GET", "/v1/routes/connections", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("cursor") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []any{map[string]any{"id": "conn-anthropic", "team_id": r.URL.Query().Get("team_id"), "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z",
+					"config": map[string]any{"provider": "ANTHROPIC", "secret_id": "s1", "secret_name": "anthropic-key"}}},
+				"pagination": map[string]any{"has_more": true, "cursor": "page-two"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []any{map[string]any{"id": "conn-openai", "team_id": r.URL.Query().Get("team_id"), "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z",
+				"config": map[string]any{"provider": "OPENAI", "secret_id": "s2", "secret_name": "openai-key"}}},
+			"pagination": map[string]any{"has_more": false},
+		})
+	})
+}
+
+func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeHarnessAPI(t)
+	serveFirstPartyRoutes(api)
 	dir := t.TempDir()
 	path := harnessSettingsFile("opencode", dir)
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"))
@@ -949,22 +1110,17 @@ func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/claude"].(map[string]any)["provider"])
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/openai"}, models["acme/gpt"].(map[string]any)["provider"])
 	h.Require.NotContains(models["acme/open"], "provider")
+	h.Require.NotContains(models["acme/orphan"], "provider", "a route whose connection is unknown is called with Chat Completions")
+	h.Require.Contains(h.Stderr.String(), "warning: routes whose connection is not in the team's connections are called with the Chat Completions API: acme/orphan")
+	connections := api.FindCall("GET", "/v1/routes/connections")
+	h.Require.NotNil(connections)
+	h.Require.Contains(connections.RawQuery, "team_id=team-a")
 }
 
 func Test_Harness_Setup_PiFirstPartyRoutes(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
-	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
-		"items": []any{
-			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "ANTHROPIC", "model": "claude-opus-5-5", "secret_name": "anthropic-key"}},
-			map[string]any{"id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "OPENAI", "model": "gpt-5.5", "secret_name": "openai-key"}},
-			map[string]any{"id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
-		},
-		"pagination": map[string]any{"has_more": false},
-	})
+	serveFirstPartyRoutes(api)
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "pi", "--config-dir", dir, "--yes"))
 	provider := readHarnessSettings(t, "pi", harnessSettingsFile("pi", dir))["providers"].(map[string]any)["baseten-harness"].(map[string]any)
@@ -972,7 +1128,7 @@ func Test_Harness_Setup_PiFirstPartyRoutes(t *testing.T) {
 	for _, m := range provider["models"].([]any) {
 		apis[m.(map[string]any)["id"].(string)] = m.(map[string]any)["api"]
 	}
-	h.Require.Equal(map[string]any{"acme/claude": "anthropic-messages", "acme/gpt": "openai-responses", "acme/open": nil}, apis)
+	h.Require.Equal(map[string]any{"acme/claude": "anthropic-messages", "acme/gpt": "openai-responses", "acme/open": nil, "acme/orphan": nil}, apis)
 	settings := readHarnessSettings(t, "pi", filepath.Join(dir, "settings.json"))
 	h.Require.Equal(map[string]any{"defaultProvider": "baseten-harness", "defaultModel": "acme/claude"}, settings)
 }
@@ -1511,4 +1667,301 @@ func Test_Harness_Setup_DryRunSkipsCodexSignOut(t *testing.T) {
 	h.Require.Equal(0, execer.logouts)
 	h.Require.Equal(0, execer.restarts)
 	h.Require.NotContains(h.Stderr.String(), "Signing codex out")
+}
+
+// harnessRecordFile reads the harness.json in the test's BASETEN_CONFIG_DIR.
+func harnessRecordFile(t *testing.T) harness.RecordFile {
+	t.Helper()
+	dir, err := auth.DefaultConfigDir()
+	require.NoError(t, err)
+	file, err := harness.LoadRecords(dir)
+	require.NoError(t, err)
+	return file
+}
+
+func saveHarnessRecordFile(t *testing.T, file harness.RecordFile) {
+	t.Helper()
+	dir, err := auth.DefaultConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, harness.SaveRecords(dir, file))
+}
+
+// setHarnessRoutes serves a route per name, each with usable metadata.
+func setHarnessRoutes(api *MockManagementAPI, names ...string) {
+	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		items := []any{}
+		for _, name := range names {
+			items = append(items, map[string]any{"id": name, "name": name, "team_id": r.URL.Query().Get("team_id"), "display_name": name, "invoke_url": api.URL, "metadata": harnessRouteMetadata})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
+	})
+}
+
+// recordDir returns the test's BASETEN_CONFIG_DIR.
+func recordDir(t *testing.T) string {
+	t.Helper()
+	dir, err := auth.DefaultConfigDir()
+	require.NoError(t, err)
+	return dir
+}
+
+func Test_Harness_Setup_RecordsSyncOptions(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
+	setHarnessRoutes(api, "acme/primary", "acme/second")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "No harnesses to sync")
+
+	// A dry run records nothing.
+	args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--team", "team-b", "--key-name", "laptop", "--route", "acme/primary", "--background-route", "acme/second"}
+	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
+	h.Require.Empty(harnessRecordFile(t).Harnesses)
+
+	h.Require.NoError(h.Execute(append(args, "--yes")...))
+	record, ok := harnessRecordFile(t).Harnesses["claude-code"]
+	h.Require.True(ok, "setup records the harness")
+	h.Require.Equal(filepath.Join(dir, "settings.json"), record.Config)
+	h.Require.Equal(api.URL, record.ManagementURL)
+	h.Require.Equal("team-b", record.TeamID)
+	h.Require.Equal("laptop", record.KeyName)
+	h.Require.Equal("acme/primary", record.Route)
+	h.Require.Equal("acme/second", record.BackgroundRoute)
+	h.Require.Empty(record.SubagentRoute, "unset flags stay empty so sync follows defaults")
+	h.Require.Empty(record.Profile, "an ephemeral session has no profile name")
+
+	// A record from another profile is not synced.
+	file := harnessRecordFile(t)
+	record.Profile = "someone-else@example.com"
+	file.Harnesses["claude-code"] = record
+	saveHarnessRecordFile(t, file)
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "No harnesses to sync")
+
+	// Teardown forgets the record.
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	h.Require.NotContains(harnessRecordFile(t).Harnesses, "claude-code")
+
+	// So does teardown of a hand-reverted harness, which has no settings left
+	// to remove; a dry run keeps the record.
+	h.Require.NoError(h.Execute(append(args, "--yes")...))
+	h.Require.NoError(os.Remove(filepath.Join(dir, "settings.json")))
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config-dir", dir, "--dry-run"))
+	h.Require.Contains(harnessRecordFile(t).Harnesses, "claude-code")
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config-dir", dir))
+	h.Require.Contains(h.Stderr.String(), "No Baseten settings to remove.")
+	h.Require.NotContains(harnessRecordFile(t).Harnesses, "claude-code")
+}
+
+func Test_Harness_Sync(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+
+	// A configured harness whose record is gone (setup by an older CLI) is skipped.
+	require.NoError(t, os.Remove(filepath.Join(recordDir(t), "harness.json")))
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "No harnesses to sync")
+	h.Require.Equal(0, h.ExitCode)
+
+	// With a record and nothing changed, sync applies nothing without prompting
+	// (stdin is not a terminal) and creates no key.
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	keys := countCalls(api, "POST", "/v1/teams/team-a/api_keys")
+	h.Require.NoError(h.Execute("harness", "sync"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+
+	// A changed catalog needs confirmation, then applies with the recorded key.
+	setHarnessRoutes(api, "acme/primary", "acme/second")
+	h.Require.Error(h.Execute("harness", "sync"))
+	h.Require.Contains(h.Stderr.String(), "pass --yes")
+	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "no key before confirmation")
+	h.Require.NoError(h.Execute("harness", "sync", "--yes", "--output", "json"))
+	var result public.HarnessPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	for _, item := range result.Items {
+		h.Require.True(item.Changed)
+	}
+	picker := readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["modelPicker"].(map[string]any)
+	h.Require.Len(picker["options"], 2)
+	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "sync reuses the recorded key")
+
+	// Nothing changed again: up to date.
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+}
+
+func Test_Harness_Sync_FallsBackWhenRouteVanishes(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary", "acme/bg")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--background-route", "acme/bg", "--yes"))
+	settings := readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))
+	h.Require.Equal("acme/bg", settings["env"].(map[string]any)["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+
+	// The team removes acme/bg; sync falls back to the default and records it.
+	setHarnessRoutes(api, "acme/primary")
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), `warning: claude-code: background route "acme/bg" no longer exists; using "deepseek-ai/DeepSeek-V4.1-Flash"`)
+	settings = readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))
+	h.Require.Equal("deepseek-ai/DeepSeek-V4.1-Flash", settings["env"].(map[string]any)["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	h.Require.Empty(harnessRecordFile(t).Harnesses["claude-code"].BackgroundRoute, "the fallback is recorded for the next sync")
+
+	// The next sync is up to date and does not warn again.
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.NotContains(h.Stderr.String(), "no longer exists")
+}
+
+func Test_Harness_Sync_ServerDefaults(t *testing.T) {
+	skipUnlessSupported(t)
+	for _, tc := range []struct {
+		name, apiName string
+		background    bool
+	}{
+		{"claude-code", "claude_code", true},
+		{"opencode", "opencode", true},
+		{"codex", "codex", false},
+		{"pi", "pi", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, api, _ := harnessDefaultsAPI(t, nil)
+			dir := t.TempDir()
+			setDefaults := func(primary, background string) {
+				roles := map[string]any{"primary": harnessDefaultModel("team", harnessRoute(api, primary))}
+				if tc.background {
+					roles["background"] = harnessDefaultModel("team", harnessRoute(api, background))
+				}
+				api.SetRoute("GET", harnessDefaultsPath, 200, harnessDefaultsBody(map[string]any{tc.apiName: roles}))
+			}
+			primaryModel := func() any {
+				path := harnessSettingsFile(tc.name, dir)
+				key := "model"
+				if tc.name == "pi" {
+					path, key = filepath.Join(dir, "settings.json"), "defaultModel"
+				}
+				return readHarnessSettings(t, tc.name, path)[key]
+			}
+			modelID := func(name string) string {
+				if tc.name == "opencode" {
+					return "baseten-harness/acme/" + name
+				}
+				return "acme/" + name
+			}
+			setup := []string{"harness", "setup", "--harness", tc.name, "--config-dir", dir, "--yes"}
+			setDefaults("claude", "fast")
+			h.Require.NoError(h.Execute(setup...))
+			h.Require.Equal(modelID("claude"), primaryModel())
+			h.Require.Empty(harnessRecordFile(t).Harnesses[tc.name].Route)
+
+			setDefaults("fast", "claude")
+			h.Require.NoError(h.Execute("harness", "sync", "--dry-run"))
+			h.Require.Contains(h.Stdout.String(), "acme/fast (team default)")
+			h.Require.Equal(modelID("claude"), primaryModel())
+			h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+			h.Require.Equal(modelID("fast"), primaryModel())
+			h.Require.Empty(harnessRecordFile(t).Harnesses[tc.name].Route)
+
+			setup = append(setup, "--route", "acme/primary")
+			if tc.background {
+				setup = append(setup, "--background-route", "acme/fast")
+			}
+			calls := countCalls(api, "GET", harnessDefaultsPath)
+			h.Require.NoError(h.Execute(setup...))
+			h.Require.Equal(calls, countCalls(api, "GET", harnessDefaultsPath))
+
+			setDefaults("claude", "claude")
+			setHarnessRoutes(api, "acme/claude")
+			h.Require.NoError(h.Execute("harness", "sync", "--dry-run"))
+			h.Require.Equal("acme/primary", harnessRecordFile(t).Harnesses[tc.name].Route)
+			h.Require.Equal(modelID("primary"), primaryModel())
+			h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+			h.Require.Greater(countCalls(api, "GET", harnessDefaultsPath), calls)
+			h.Require.Contains(h.Stderr.String(), `default route "acme/primary" no longer exists; using "acme/claude"`)
+			h.Require.Equal(modelID("claude"), primaryModel())
+			record := harnessRecordFile(t).Harnesses[tc.name]
+			h.Require.Empty(record.Route)
+			h.Require.Empty(record.BackgroundRoute)
+			if tc.background {
+				h.Require.Contains(h.Stderr.String(), `background route "acme/fast" no longer exists; using "acme/claude"`)
+			}
+			h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+			h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+			h.Require.NotContains(h.Stderr.String(), "no longer exists")
+		})
+	}
+}
+
+func Test_Harness_Sync_DryRun(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--background-route", "acme/primary", "--yes"))
+	keys := countCalls(api, "POST", "/v1/teams/team-a/api_keys")
+
+	setHarnessRoutes(api, "acme/primary", "acme/second")
+	h.Require.NoError(h.Execute("harness", "sync", "--dry-run", "--output", "json"))
+	var preview public.HarnessPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &preview))
+	for _, item := range preview.Items {
+		h.Require.True(item.Changed)
+	}
+	h.Require.Len(readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["modelPicker"].(map[string]any)["options"], 1, "no files changed")
+	h.Require.Equal("acme/primary", harnessRecordFile(t).Harnesses["claude-code"].BackgroundRoute, "no record changes")
+	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "no key created")
+}
+
+func Test_Harness_Sync_RestartsCodexDaemon(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	quiet := &codexDaemonHarnessExecer{}
+	h.Context = internalcmd.WithExecer(h.Context, quiet)
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--config-dir", dir, "--yes"))
+	h.Require.Equal(0, quiet.restarts)
+	h.Require.False(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+
+	// The catalog changes but the restart fails: it stays pending.
+	failing := &codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}
+	setHarnessRoutes(api, "acme/primary", "acme/second")
+	h.Context = internalcmd.WithExecer(h.Context, failing)
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Equal(1, failing.restarts)
+	h.Require.Contains(h.Stderr.String(), "could not restart the codex app-server daemon")
+	h.Require.True(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+
+	// The next sync retries even though nothing changed, and --yes restarts
+	// despite attached sessions, as setup does.
+	busy := &codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\n"}
+	h.Context = internalcmd.WithExecer(h.Context, busy)
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Equal(1, busy.restarts)
+	h.Require.Contains(h.Stderr.String(), "will disconnect 1 running codex session(s)")
+	h.Require.Contains(h.Stderr.String(), "Restarted codex app-server daemon (pid 4242)")
+	h.Require.False(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+
+	// An unchanged sync without a pending restart leaves the daemon alone.
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Equal(1, busy.restarts)
 }
