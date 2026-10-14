@@ -744,7 +744,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 		})
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.HarnessStatusList{Items: results})
+		ctx.OutputJSON(cmd.HarnessStatusList{Items: normalizeJSONSlice(results)})
 		return nil
 	}
 	if len(results) == 0 {
@@ -894,7 +894,7 @@ func outputHarnessPlansJSON(ctx *CommandContext, plans []*harness.Plan, deletedK
 			Changed:          p.Changed,
 		})
 	}
-	ctx.OutputJSON(cmd.HarnessPlanList{Items: items, DeletedAPIKeys: deletedKeys})
+	ctx.OutputJSON(cmd.HarnessPlanList{Items: normalizeJSONSlice(items), DeletedAPIKeys: deletedKeys})
 }
 
 func harnessDisplayPath(path string) string {

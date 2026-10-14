@@ -62,7 +62,7 @@ func commandSandboxList(ctx *CommandContext, flags *cmd.SandboxListFlags) error 
 	}
 
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.SandboxList{Items: items})
+		ctx.OutputJSON(cmd.SandboxList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {

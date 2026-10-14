@@ -156,7 +156,7 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 			Sequence:        result.Sequence,
 			HeadUpdated:     result.HeadUpdated,
 			HeadMoveDenied:  result.HeadMoveDenied,
-			TagsApplied:     result.TagsApplied,
+			TagsApplied:     normalizeJSONSlice(result.TagsApplied),
 			Files:           result.Files,
 			Bytes:           result.Bytes,
 			Chunks:          result.Chunks,
