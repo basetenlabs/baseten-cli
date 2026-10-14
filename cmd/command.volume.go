@@ -454,6 +454,9 @@ type VolumeEntryDetail struct {
 
 // VolumePushResult is the JSON output of `baseten volume push`.
 type VolumePushResult struct {
+	// AverageBytesPerSecond divides transferred payload by the transfer phase
+	// duration. Zero is reported when no positive duration is available.
+	AverageBytesPerSecond float64 `json:"average_bytes_per_second"`
 	// DurationSeconds is total elapsed SDK transfer time, including setup and finalization.
 	DurationSeconds float64 `json:"duration_seconds"`
 	// VersionRef is the published version, pinned to its digest, which is what
@@ -482,6 +485,9 @@ type VolumePushResult struct {
 
 // VolumePullResult is the JSON output of `baseten volume pull`.
 type VolumePullResult struct {
+	// AverageBytesPerSecond divides transferred payload by the transfer phase
+	// duration. Zero is reported when no positive duration is available.
+	AverageBytesPerSecond float64 `json:"average_bytes_per_second"`
 	// DurationSeconds is total elapsed SDK transfer time, including setup and finalization.
 	DurationSeconds float64 `json:"duration_seconds"`
 	// VersionRef is the version that was downloaded, pinned to its digest.
