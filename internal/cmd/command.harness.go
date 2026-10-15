@@ -316,7 +316,12 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	}
 	targets := make([]harnessTarget, len(selected))
 	for i := range selected {
-		targets[i] = harnessTarget{selectedHarness: selected[i], record: record}
+		targetRecord := record
+		if targetRecord.SubagentRoute != "" && !selected[i].SupportsSubagent() {
+			targetRecord.SubagentRoute = ""
+			ctx.Logf("warning: --subagent-route is not supported by %s; it will be ignored\n", selected[i].Name())
+		}
+		targets[i] = harnessTarget{selectedHarness: selected[i], record: targetRecord}
 	}
 	plans, err := planHarnessSetup(ctx, api, team, targets, false)
 	if err != nil {

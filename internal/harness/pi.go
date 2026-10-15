@@ -43,6 +43,8 @@ func (piHarness) BackgroundRoute(Selection) string { return "" }
 // Routes returns every route, since Pi picks each route's API by its target.
 func (piHarness) Routes(routes []Route) []Route { return routes }
 
+func (piHarness) SupportsSubagent() bool { return false }
+
 func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
 	switch {
 	case s.Background != "":
