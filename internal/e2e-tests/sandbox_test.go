@@ -7,8 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -77,7 +80,6 @@ func cliJSON[T any](t *testing.T, args ...string) T {
 // TestE2ESandbox creates one sandbox, works in it with every sandbox and
 // process command, and deletes it.
 func TestE2ESandbox(t *testing.T) {
-	t.Skip("TODO(DI-2715): fails for the staging CI org since 2026-10-09")
 	setupSandboxE2E(t)
 	name := "cli-e2e-" + randomSuffix(t)[:8]
 
@@ -236,6 +238,48 @@ func TestE2ESandbox(t *testing.T) {
 		session.run("echo ne''w-[$E2E_VALUE]-$(pwd)", "new-[]-")
 	})
 
+	t.Run("Preview", func(t *testing.T) {
+		mustCLI(t, "sandbox", "process", "start", "--name", name, "--process-name", "e2e-web", "--wait-for-port", "8123",
+			"--", "python3 -m http.server 8123")
+		previewName := "e2e-" + randomSuffix(t)[:8]
+		previewFlags := []string{"--name", name, "--preview-name", previewName}
+
+		created := cliJSON[map[string]any](t, append([]string{"sandbox", "preview", "create", "--port", "8123",
+			"--response-header", "X-E2E=added", "--ttl", "1h"}, previewFlags...)...)
+		require.Equal(t, previewName, created["name"])
+		require.Equal(t, float64(8123), created["port"])
+		require.Equal(t, false, created["public"])
+		url := created["url"].(string)
+		require.True(t, strings.HasPrefix(url, "https://"), url)
+
+		described := mustCLI(t, append([]string{"sandbox", "preview", "describe"}, previewFlags...)...)
+		require.Contains(t, described, "URL:               "+url+"\n")
+		require.Contains(t, described, "Response headers:  X-E2E=added\n")
+		require.Contains(t, mustCLI(t, "sandbox", "preview", "list", "--name", name), previewName)
+
+		expiresAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+		tokenText := mustCLI(t, append([]string{"sandbox", "preview", "token", "create", "--expires-at", expiresAt}, previewFlags...)...)
+		require.Regexp(t, `URL:\s+`+regexp.QuoteMeta(url)+`\?preview_token=\S+\n`, tokenText)
+		token := cliJSON[map[string]any](t, append([]string{"sandbox", "preview", "token", "create", "--expires-at", expiresAt}, previewFlags...)...)
+		// TODO: Use ?preview_token= once the server accepts it.
+		header := fetchE2EPreview(t, url+"?bl_preview_token="+token["token"].(string))
+		require.Equal(t, "added", header.Get("X-E2E"))
+
+		tokenName := token["name"].(string)
+		require.Contains(t, mustCLI(t, append([]string{"sandbox", "preview", "token", "list"}, previewFlags...)...), tokenName)
+		_, errOut, err := cli(t, append([]string{"sandbox", "preview", "token", "delete", "--token-name", tokenName, "--yes"}, previewFlags...)...)
+		require.NoError(t, err, errOut)
+		require.Contains(t, errOut, "Deleted token "+tokenName+".")
+
+		updated := cliJSON[map[string]any](t, append([]string{"sandbox", "preview", "update", "--public"}, previewFlags...)...)
+		require.Equal(t, true, updated["public"])
+		fetchE2EPreview(t, url)
+
+		_, errOut, err = cli(t, append([]string{"sandbox", "preview", "delete", "--yes"}, previewFlags...)...)
+		require.NoError(t, err, errOut)
+		require.Contains(t, errOut, "Deleted preview "+previewName+".")
+	})
+
 	t.Run("ListLibrary", func(t *testing.T) {
 		require.Contains(t, mustCLI(t, "sandbox", "image", "list-library"), "baseten/base-image:latest")
 	})
@@ -244,6 +288,37 @@ func TestE2ESandbox(t *testing.T) {
 	_, errOut, err := cli(t, "sandbox", "delete", "--name", name, "--yes")
 	require.NoError(t, err, errOut)
 	require.Contains(t, errOut, "Deleting sandbox "+name+".")
+}
+
+// fetchE2EPreview GETs a preview URL until it answers 200, and returns the
+// response's header. The edge applies preview changes shortly after the API
+// returns, so other responses and connection errors are retried, but only for
+// a few seconds.
+func fetchE2EPreview(t *testing.T, url string) http.Header {
+	t.Helper()
+	// No cookie jar, so the cookie a token request sets never stands in for
+	// the token.
+	client := &http.Client{Timeout: 10 * time.Second}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		var last string
+		resp, err := client.Get(url)
+		if err != nil {
+			last = err.Error()
+		} else {
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			require.NoError(t, err)
+			if resp.StatusCode == http.StatusOK {
+				return resp.Header
+			}
+			last = fmt.Sprintf("status %d: %s", resp.StatusCode, body)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("preview %s: want 200, got %s", url, last)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 // e2eConnectSession is a 'sandbox connect' running in a pseudo-terminal, as a

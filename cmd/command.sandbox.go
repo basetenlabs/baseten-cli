@@ -236,6 +236,7 @@ var commandSandbox = Command{
 		},
 		commandSandboxProcess,
 		commandSandboxImage,
+		commandSandboxPreview,
 	},
 }
 
