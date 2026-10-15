@@ -34,9 +34,11 @@ var e2eVolumeFiles = map[string]string{
 // TestE2EVolumeLifecycle pushes a directory as a volume version, reads it back
 // through every volume command, pulls it whole and narrowed, re-pushes to
 // confirm the second push reuses what the first stored, and then deletes and
-// restores its way back to an empty volume. It also syncs a remote source and
-// verifies the resulting immutable version through the volume CLI. Skips when
-// the required env vars are absent.
+// restores its way back to an empty volume. It sets, moves and deletes tags on
+// a volume of its own and changes their expiration times. It sets and clears
+// the volume's expiration time. It also syncs a remote source and verifies the
+// resulting immutable version through the volume CLI. Skips when the required
+// env vars are absent.
 //
 // The organization behind the e2e key needs volumes enabled. A missing
 // prerequisite fails rather than skips, so a misconfigured environment does
@@ -48,8 +50,222 @@ func TestE2EVolumeLifecycle(t *testing.T) {
 	t.Run("Entries", v.Entries)
 	t.Run("Pull", v.Pull)
 	t.Run("Repush", v.Repush)
+	t.Run("Tags", testE2EVolumeTags)
+	t.Run("Expiration", v.Expiration)
 	t.Run("Delete", v.Delete)
 	t.Run("Sync", testE2EVolumeSync)
+}
+
+// testE2EVolumeTags sets, moves and deletes tags on a volume with two versions
+// and changes their expiration times. It uses a separate volume because the
+// lifecycle's Delete step counts versions, tombstones included, and a second
+// version would break those counts.
+func testE2EVolumeTags(t *testing.T) {
+	apiKey := os.Getenv("BASETEN_E2E_TEST_API_KEY")
+	if apiKey == "" {
+		t.Skip("BASETEN_E2E_TEST_API_KEY not set")
+	}
+	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
+	require.NotEmpty(t, remoteURL,
+		"BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
+
+	t.Setenv("BASETEN_API_KEY", apiKey)
+	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
+	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
+
+	suffix := randomSuffix(t)
+	v := &volumeTagsLifecycle{
+		ref:       "bdn:" + e2eVolumeNamespace + "/tags-" + suffix,
+		tag:       "e2e-" + suffix,
+		expiring:  "nightly-" + suffix,
+		sourceDir: writeVolumeTree(t),
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, errOut, err := cliCtx(t, ctx,
+			"volume", "rm", "--recursive", "--yes", v.ref); err != nil {
+			t.Logf("cleanup delete of volume %s failed: %v\nstderr: %s", v.ref, err, errOut)
+		}
+	})
+	steps := []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"PushTwo", v.PushTwo},
+		{"SetByDigest", v.SetByDigest},
+		{"MoveToHead", v.MoveToHead},
+		{"Expiring", v.Expiring},
+		{"ClearExpiry", v.ClearExpiry},
+		{"Head", v.Head},
+		{"Delete", v.Delete},
+	}
+	for _, step := range steps {
+		if !t.Run(step.name, step.run) {
+			t.FailNow()
+		}
+	}
+}
+
+type volumeTagsLifecycle struct {
+	ref       string
+	tag       string
+	expiring  string
+	sourceDir string
+
+	// Captured by PushTwo. A is the first version and B the second, which
+	// head points at until the Head step moves it back to A.
+	digestA string
+	digestB string
+}
+
+// volumeTagSetResult mirrors the JSON `baseten volume tag set` writes.
+type volumeTagSetResult struct {
+	VersionRef string  `json:"version_ref"`
+	Tag        string  `json:"tag"`
+	Digest     string  `json:"digest"`
+	ExpiresAt  *string `json:"expires_at"`
+}
+
+// volumeTagDeleteResult mirrors the JSON `baseten volume tag delete` writes.
+type volumeTagDeleteResult struct {
+	Tag     string `json:"tag"`
+	Deleted bool   `json:"deleted"`
+}
+
+// pushVersion publishes the source tree and returns the push result with the
+// digest cut out of its version ref.
+func (v *volumeTagsLifecycle) pushVersion(t *testing.T) (volumePushResult, string) {
+	t.Helper()
+	out := mustCLI(t, "volume", "push", v.sourceDir, v.ref, "--output", "json")
+	var result volumePushResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	_, digest, found := strings.Cut(result.VersionRef, "@")
+	require.True(t, found, "version ref %q carries no digest", result.VersionRef)
+	return result, digest
+}
+
+// setTag runs `volume tag set` with any further flags and decodes what it wrote.
+func (v *volumeTagsLifecycle) setTag(t *testing.T, ref, tag string, flags ...string) volumeTagSetResult {
+	t.Helper()
+	args := append([]string{"volume", "tag", "set", "--volume-ref", ref, "--tag", tag}, flags...)
+	out := mustCLI(t, append(args, "--output", "json")...)
+	var result volumeTagSetResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	return result
+}
+
+// statVersionDigest resolves a version ref through `volume stat`.
+func (v *volumeTagsLifecycle) statVersionDigest(t *testing.T, ref string) string {
+	t.Helper()
+	out := mustCLI(t, "volume", "stat", ref, "--output", "json")
+	var version struct {
+		Digest string `json:"digest"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &version))
+	return version.Digest
+}
+
+func (v *volumeTagsLifecycle) PushTwo(t *testing.T) {
+	step(t, "pushing two versions of %s", v.ref)
+	_, v.digestA = v.pushVersion(t)
+	// One more file, so the second push publishes a new version instead of
+	// finding the first one again.
+	require.NoError(t, os.WriteFile(filepath.Join(v.sourceDir, "extra.txt"),
+		[]byte("a second version\n"), 0o644))
+	second, digestB := v.pushVersion(t)
+	v.digestB = digestB
+	require.NotEqual(t, v.digestA, v.digestB)
+	require.True(t, second.HeadUpdated)
+}
+
+func (v *volumeTagsLifecycle) SetByDigest(t *testing.T) {
+	step(t, "setting %s on the first version", v.tag)
+	result := v.setTag(t, v.ref+"@"+v.digestA, v.tag)
+	require.Equal(t, v.ref+"@"+v.digestA, result.VersionRef)
+	require.Equal(t, v.tag, result.Tag)
+	require.Equal(t, v.digestA, result.Digest)
+	require.Nil(t, result.ExpiresAt)
+	require.Equal(t, v.digestA, v.statVersionDigest(t, v.ref+":"+v.tag))
+}
+
+func (v *volumeTagsLifecycle) MoveToHead(t *testing.T) {
+	step(t, "moving %s to the version head points at", v.tag)
+	result := v.setTag(t, v.ref, v.tag)
+	require.Equal(t, v.digestB, result.Digest)
+	require.Equal(t, v.digestB, v.statVersionDigest(t, v.ref+":"+v.tag))
+}
+
+func (v *volumeTagsLifecycle) Expiring(t *testing.T) {
+	step(t, "setting %s with an expiration time", v.expiring)
+	// The API requires a future time.
+	deadline := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	result := v.setTag(t, v.ref+"@"+v.digestA, v.expiring,
+		"--expires-at", deadline.Format(time.RFC3339))
+	require.NotNil(t, result.ExpiresAt)
+	expiresAt, err := time.Parse(time.RFC3339, *result.ExpiresAt)
+	require.NoError(t, err)
+	require.True(t, expiresAt.Equal(deadline), "set reported %s, sent %s", *result.ExpiresAt, deadline)
+
+	// The volume lists the tag with the same expiration the set reported.
+	out := mustCLI(t, "volume", "stat", v.ref, "--output", "json")
+	var volume struct {
+		Tags []struct {
+			Name      string  `json:"name"`
+			ExpiresAt *string `json:"expires_at"`
+		} `json:"tags"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &volume))
+	for _, tag := range volume.Tags {
+		if tag.Name != v.expiring {
+			continue
+		}
+		require.NotNil(t, tag.ExpiresAt)
+		listed, err := time.Parse(time.RFC3339, *tag.ExpiresAt)
+		require.NoError(t, err)
+		require.True(t, listed.Equal(expiresAt), "stat lists %s, set reported %s", *tag.ExpiresAt, *result.ExpiresAt)
+		return
+	}
+	t.Fatalf("tag %q not in the volume's tags", v.expiring)
+}
+
+func (v *volumeTagsLifecycle) ClearExpiry(t *testing.T) {
+	step(t, "setting %s again without an expiration time", v.expiring)
+	result := v.setTag(t, v.ref+"@"+v.digestA, v.expiring)
+	require.Nil(t, result.ExpiresAt)
+}
+
+func (v *volumeTagsLifecycle) Head(t *testing.T) {
+	step(t, "moving head back to the first version")
+	result := v.setTag(t, v.ref+"@"+v.digestA, "head", "--yes")
+	require.Equal(t, v.digestA, result.Digest)
+
+	out := mustCLI(t, "volume", "stat", v.ref, "--output", "json")
+	var volume struct {
+		Head *struct {
+			Digest string `json:"digest"`
+		} `json:"head"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &volume))
+	require.NotNil(t, volume.Head)
+	require.Equal(t, v.digestA, volume.Head.Digest)
+}
+
+func (v *volumeTagsLifecycle) Delete(t *testing.T) {
+	step(t, "deleting %s twice", v.tag)
+	out := mustCLI(t, "volume", "tag", "delete", "--volume-ref", v.ref, "--tag", v.tag, "--output", "json")
+	var result volumeTagDeleteResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	require.Equal(t, v.tag, result.Tag)
+	require.True(t, result.Deleted)
+
+	_, _, err := cli(t, "volume", "stat", v.ref+":"+v.tag)
+	require.ErrorContains(t, err, "exit 4")
+
+	// Deleting a tag the volume no longer has succeeds and says so.
+	out = mustCLI(t, "volume", "tag", "delete", "--volume-ref", v.ref, "--tag", v.tag, "--output", "json")
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	require.False(t, result.Deleted)
 }
 
 // testE2EVolumeSync starts a small anonymous Hugging Face sync and exercises
@@ -288,6 +504,11 @@ type volumeLifecycle struct {
 	digest     string
 	files      int64
 	bytes      int64
+}
+
+// volumeUpdateResult mirrors the JSON `baseten volume update` writes.
+type volumeUpdateResult struct {
+	ExpiresAt *string `json:"expires_at"`
 }
 
 // volumePushResult mirrors the JSON `baseten volume push` writes.
@@ -786,6 +1007,49 @@ func (v *volumeLifecycle) Repush(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(list), &versions))
 	require.Len(t, versions.Versions, 1)
+}
+
+// Expiration sets and clears the volume's expiration time and reads each back
+// through stat. It runs before Delete, so the version counts Delete asserts
+// are untouched.
+func (v *volumeLifecycle) Expiration(t *testing.T) {
+	step(t, "setting the expiration time of %s", v.ref)
+	// The API requires a future time.
+	deadline := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	result := v.update(t, "--expires-at", deadline.Format(time.RFC3339))
+	require.NotNil(t, result.ExpiresAt)
+	expiresAt, err := time.Parse(time.RFC3339, *result.ExpiresAt)
+	require.NoError(t, err)
+	require.True(t, expiresAt.Equal(deadline), "update reported %s, sent %s", *result.ExpiresAt, deadline)
+
+	listed := v.statExpiresAt(t)
+	require.NotNil(t, listed)
+	listedAt, err := time.Parse(time.RFC3339, *listed)
+	require.NoError(t, err)
+	require.True(t, listedAt.Equal(expiresAt), "stat reports %s, update reported %s", *listed, *result.ExpiresAt)
+
+	step(t, "clearing the expiration time of %s", v.ref)
+	result = v.update(t, "--clear-expires-at")
+	require.Nil(t, result.ExpiresAt)
+	require.Nil(t, v.statExpiresAt(t))
+}
+
+// update runs `volume update` on the lifecycle volume and decodes its JSON.
+func (v *volumeLifecycle) update(t *testing.T, args ...string) volumeUpdateResult {
+	out := mustCLI(t, append([]string{"volume", "update", v.ref, "--yes", "--output", "json"}, args...)...)
+	var result volumeUpdateResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	return result
+}
+
+// statExpiresAt reads the volume's own expires_at through `volume stat`.
+func (v *volumeLifecycle) statExpiresAt(t *testing.T) *string {
+	out := mustCLI(t, "volume", "stat", v.ref, "--output", "json")
+	var volume struct {
+		ExpiresAt *string `json:"expires_at"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &volume))
+	return volume.ExpiresAt
 }
 
 func (v *volumeLifecycle) Delete(t *testing.T) {

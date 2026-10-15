@@ -36,7 +36,7 @@ func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
 		return err
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.RouteList{Items: items})
+		ctx.OutputJSON(cmd.RouteList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {

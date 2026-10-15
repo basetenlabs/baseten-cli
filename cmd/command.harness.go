@@ -21,11 +21,10 @@ var commandHarness = Command{
 				"Configure installed harnesses with your team's routes and a routes API key.\n\n" +
 				"Setup offers a picker of installed harnesses when --harness is omitted. Repeat --harness to select several. " +
 				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code lists the routes that serve " +
-				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. " +
-				"Unless set with flags, each harness's routes come from the team's default models for it. Without one, " +
-				"the default route is the first listed route and the background route is deepseek-ai/DeepSeek-V4.1-Flash.\n\n" +
+				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the default unless --route is set.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
-				"The routes API key is created on first setup and reused afterward. Setup records its team and options so 'harness sync' can replay them. Restart the harness after setup. " +
+				"The routes API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
+				"Setup records its team and options so 'harness sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.",
 			Flags: HarnessSetupFlags{},
@@ -35,6 +34,10 @@ var commandHarness = Command{
 					{
 						Description: "Configure installed harnesses interactively.",
 						Command:     "baseten harness setup",
+					},
+					{
+						Description: "Install a pre-minted key from the environment instead of creating one.",
+						Command:     "baseten harness setup --harness claude-code --use-session-credential --yes",
 					},
 					{
 						Description: "Preview configuration for one harness.",
@@ -84,7 +87,8 @@ var commandHarness = Command{
 				"Reapply the setup of every harness configured on this machine, using the team, location, and options recorded by its last 'harness setup'. " +
 				"Sync takes no harness selection: to change what is configured, run 'harness setup' or 'harness teardown'. " +
 				"Stored routes the team has removed fall back to their defaults with a warning. Only harnesses whose record matches the current profile are synced, " +
-				"and a machine with no record needs 'harness setup' first.\n\n" +
+				"and a machine with no record needs 'harness setup' first. Harnesses set up with --use-session-credential re-resolve the session's API key; " +
+				"when it is unavailable, sync errors instead of creating a replacement.\n\n" +
 				"When nothing changes, sync does nothing and exits 0, so it is safe to run from a schedule; pass --yes to skip the prompt when changes are found. " +
 				"For Codex, sync restarts the app-server daemon like setup does, asking first when sessions are attached unless --yes is passed; an in-progress turn is interrupted, " +
 				"and thread history is preserved. A declined or failed restart is retried on the next sync.",
@@ -109,55 +113,50 @@ var commandHarness = Command{
 		},
 		{
 			Name:    "usage",
-			Summary: "Show your routes spend and tokens, month to date by default (PRE-RELEASE)",
+			Summary: "Show your routes spend in your teams, this month by default (PRE-RELEASE)",
 			Description: harnessPreRelease +
-				"Show your routes spend and token usage for the month so far, the period monthly spend limits apply to.\n\n" +
-				"This is a shortcut for 'baseten route usage --user-id <your user ID> --start <first of this month, UTC>' " +
-				"and takes " +
-				"the same flags. The only other difference is the text table, which totals each --group-by combination " +
-				"over the window instead of listing each day; JSON output is identical. Organization admins can pass " +
-				"--user-id for other users; other members only ever see usage from keys they created.\n\n" +
-				"Usage comes in whole UTC days: --start is snapped down to its day and --end is rounded up to the end of " +
-				"its day. Every bucket in the window is fetched, paging as needed, until --limit buckets are collected.\n\n" +
+				"Show what you've spent on routes in each of your teams: your spend there against your limit there, a " +
+				"chart of spend per day, and each model's spend. --team narrows it to one team. " +
+				"The window is this UTC month so far, the period monthly spend limits apply to, unless " +
+				"--start, --end, or --since narrows or moves it; the limit is only shown for this month so far.\n\n" +
 				"This is the same spend that spend limits are checked against, and it can lag by up to 15 minutes. " +
 				"Model API costs use your prices and include tool calls. OpenAI, Anthropic, and xAI costs estimate what " +
-				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage isn't included. " +
-				"Usage is retained for 92 days.\n\n" +
-				"For machine-readable streaming, prefer --output jsonl over --output json.",
+				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage isn't included.\n\n" +
+				"For filters, token counts, or other users' usage, use 'baseten route usage'. For " +
+				"machine-readable streaming, prefer --output jsonl over --output json.",
 			// TODO: Revisit this description, and null-cost handling in
 			// internal/cmd/command.harness_usage.go, as server-side usage changes:
 			// which providers are included (Vertex and OpenAI-compatible aren't
-			// yet), whether costs are always present, the 15-minute lag, and the
-			// 92-day retention.
+			// yet), whether costs are always present, and the 15-minute lag.
 			Flags: HarnessUsageFlags{},
 			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
 				JSONArrayStreamed: true,
-				TextDescription: "Table with one column per --group-by dimension, then INPUT, CACHED, and OUTPUT token " +
-					"counts and COST, totaled over the window, most expensive first, followed by an ALL totals row. A cost " +
-					"of \"-\" means some of that usage couldn't be priced. The window goes to stderr. With no usage in the " +
-					"window, prints \"No usage in the selected window.\" to stderr instead of a table.",
-				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-dimension usage in " +
-					"results, including days with no usage. cost_usd values are exact decimal strings.",
+				TextDescription: "The month and when limits reset go to stderr. Then, for each team, a line with the team, what you spent " +
+					"there this month and your limit there, with the team's default when yours differs from it, ending in " +
+					"\"limit reached\" or \"team limit reached\" when your requests there are rejected; on a terminal, a " +
+					"chart of spend per day per model from the first of the month; and a line per model with its spend and " +
+					"share, most expensive first. A cost of \"-\" means some of that usage couldn't be priced. With no " +
+					"teams, prints \"No usage this month.\" to stderr. For a window other than this month so far, the " +
+					"month line is the window instead, and the team line is what you spent there in it, with no limit.",
+				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-team, per-model usage " +
+					"in results, including days with no usage. cost_usd values are exact decimal strings.",
 				Examples: []CommandExample{
 					{
-						Description: "Show your usage this month so far, by model.",
+						Description: "Show your spend this month in each of your teams.",
 						Command:     "baseten harness usage",
 					},
 					{
-						Description: "Show usage over the last 7 days by provider.",
-						Command:     "baseten harness usage --since 7d --group-by provider",
+						Description: "Show your spend this month in one of your teams.",
+						Command:     "baseten harness usage --team <team>",
 					},
 					{
-						Description: "Break August's usage down by user and model for two users (admins).",
-						CommandLines: []string{
-							"baseten harness usage --start 2026-08-01T00:00:00Z --end 2026-09-01T00:00:00Z",
-							"--group-by user --group-by model --user-id <id> --user-id <id>",
-						},
+						Description: "Show your spend over the last week.",
+						Command:     "baseten harness usage --since 7d",
 					},
 				},
 				JQExample: CommandExample{
-					Description: "Stream each day's cost per model as a JSONL stream.",
-					Command:     "baseten harness usage --output jsonl --jq '.results[] | {model, cost_usd}'",
+					Description: "Stream each day's cost per team and model as a JSONL stream.",
+					Command:     "baseten harness usage --output jsonl --jq '.results[] | {team_id, model, cost_usd}'",
 				},
 			},
 		},
@@ -168,7 +167,8 @@ var commandHarness = Command{
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
 				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path.\n\n" +
 				"Teardown also deletes the routes API key the removed harnesses use, once no other harness on this machine uses it, " +
-				"and forgets the recorded setup so 'harness sync' no longer refreshes the removed harnesses. " +
+				"except a key installed with --use-session-credential, whose lifecycle this CLI does not own. " +
+				"It forgets the recorded setup so 'harness sync' no longer refreshes the removed harnesses. " +
 				"It works after the harness is uninstalled. For Codex, teardown re-enables ChatGPT login and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. Run 'codex login' to sign back in.",
 			Flags: HarnessTeardownFlags{},
 			Output: &CommandOutput[HarnessPlanList]{
@@ -248,13 +248,11 @@ type HarnessStatusList struct {
 type HarnessUsageFlags struct {
 	CommandFlags
 
+	Team string `flag:"team" desc:"Team name or ID to show. Without it, every team you're in."`
+
 	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the start of the current UTC month."`
 	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
 	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
-
-	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. Defaults to your own user ID."`
-
-	RouteUsageQueryFlags
 }
 
 // HarnessFlags selects the harnesses a command applies to.
@@ -273,14 +271,15 @@ type HarnessStatusFlags struct {
 type HarnessSetupFlags struct {
 	CommandFlags
 	HarnessFlags
-	Team            string `flag:"team" desc:"Team name or ID whose routes to use. Needed unless there is only one team. Run 'baseten org team list' to see teams."`
-	KeyName         string `flag:"key-name" desc:"Name of the routes API key created in Baseten. Defaults to baseten-harness-<hostname>, numbered (-2, -3, ...) if one of your keys has that name."`
-	Route           string `flag:"route" desc:"Default route. Defaults to the team's default for the harness, else the first route the harness lists."`
-	BackgroundRoute string `flag:"background-route" desc:"Route for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
-	SubagentRoute   string `flag:"subagent-route" desc:"Route for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
-	FallbackRoute   string `flag:"fallback-route" desc:"Route to fall back to when the default is unavailable (Claude Code). Defaults to the default route."`
-	DryRun          bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
-	Yes             bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+	Team                 string `flag:"team" desc:"Team name or ID whose routes to use. Needed unless there is only one team. Run 'baseten org team list' to see teams."`
+	KeyName              string `flag:"key-name" desc:"Name of the routes API key created in Baseten. Defaults to baseten-harness-<hostname>, numbered (-2, -3, ...) if one of your keys has that name."`
+	Route                string `flag:"route" desc:"Default route. Defaults to the team's default for the harness, else the first route the harness lists."`
+	BackgroundRoute      string `flag:"background-route" desc:"Route for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
+	SubagentRoute        string `flag:"subagent-route" desc:"Route for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
+	FallbackRoute        string `flag:"fallback-route" desc:"Route to fall back to when the default is unavailable (Claude Code). Defaults to the default route."`
+	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a routes API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
+	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
+	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
 // HarnessSyncFlags are the flags for `baseten harness sync`.

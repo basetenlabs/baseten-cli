@@ -73,6 +73,8 @@ type harnessSyncRun struct {
 	team    *managementapi.Team
 	targets []harnessTarget
 	plans   []*harness.Plan
+	// token is the session's API key for targets set up with --use-session-credential.
+	token string
 }
 
 // selectHarnesses returns the harnesses a command applies to. Setup offers
@@ -145,7 +147,7 @@ func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([
 		Value(&names).
 		Validate(func(names []string) error {
 			if len(names) == 0 {
-				return errors.New("choose at least one harness")
+				return errors.New("choose at least one harness (space to select, enter to confirm)")
 			}
 			return nil
 		}).
@@ -284,6 +286,9 @@ func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *mana
 }
 
 func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
+	if f.UseSessionCredential && f.KeyName != "" {
+		return cmd.NewErrUsagef("--key-name is not used with --use-session-credential; the session's API key already exists")
+	}
 	selected, err := selectHarnesses(ctx, f.HarnessFlags, true)
 	if err != nil {
 		return err
@@ -297,12 +302,17 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	credentialSource := ""
+	if f.UseSessionCredential {
+		credentialSource = harness.CredentialSourceSession
+	}
 	record := harness.Record{
-		KeyName:         f.KeyName,
-		Route:           f.Route,
-		BackgroundRoute: f.BackgroundRoute,
-		SubagentRoute:   f.SubagentRoute,
-		FallbackRoute:   f.FallbackRoute,
+		KeyName:          f.KeyName,
+		CredentialSource: credentialSource,
+		Route:            f.Route,
+		BackgroundRoute:  f.BackgroundRoute,
+		SubagentRoute:    f.SubagentRoute,
+		FallbackRoute:    f.FallbackRoute,
 	}
 	targets := make([]harnessTarget, len(selected))
 	for i := range selected {
@@ -311,6 +321,15 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	plans, err := planHarnessSetup(ctx, api, team, targets, false)
 	if err != nil {
 		return err
+	}
+	var sessionToken string
+	if f.UseSessionCredential {
+		if sessionToken, err = harnessSessionAPIKey(ctx); err != nil {
+			return err
+		}
+		if err := harness.StageCredentials(plans, sessionToken); err != nil {
+			return err
+		}
 	}
 	switch {
 	case ctx.JSON:
@@ -333,9 +352,11 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		}
 	}
 	// The routes API key is only read or created once the user has confirmed.
-	token, err := ensureHarnessToken(ctx, api, team, f.KeyName)
-	if err != nil {
-		return err
+	token := sessionToken
+	if token == "" {
+		if token, err = ensureHarnessToken(ctx, api, team, f.KeyName); err != nil {
+			return err
+		}
 	}
 	for i := range targets {
 		if targets[i].Name() == harness.Codex {
@@ -430,20 +451,32 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 	// planned and applied together.
 	groups := map[string][]harnessTarget{}
 	for _, t := range targets {
-		// A unique key per sync target, which combines the Team + named credential.
-		key := t.record.TeamID + ":" + t.record.KeyName
+		key := t.record.TeamID + ":" + t.record.CredentialSource + ":" + t.record.KeyName
 		groups[key] = append(groups[key], t)
 	}
 
 	var runs []harnessSyncRun
 	for _, group := range groups {
+		// Fetching the current session key allows us to inject into plans and detect if rotation has happened.
+		var sessionToken string
+		if group[0].record.CredentialSource == harness.CredentialSourceSession {
+			var err error
+			if sessionToken, err = harnessSessionAPIKey(ctx); err != nil {
+				return fmt.Errorf("%s: %w; these harnesses were set up with --use-session-credential", group[0].Name(), err)
+			}
+		}
 		team, err := resolveTeamOrOnly(ctx, api, group[0].record.TeamID)
 		if err != nil {
 			return fmt.Errorf("%s: %w; rerun 'baseten harness setup --harness %s' to record a current team", group[0].Name(), err, group[0].Name())
 		}
-		run := harnessSyncRun{team: team, targets: group}
+		run := harnessSyncRun{team: team, targets: group, token: sessionToken}
 		if run.plans, err = planHarnessSetup(ctx, api, run.team, run.targets, true); err != nil {
 			return err
+		}
+		if sessionToken != "" {
+			if err := harness.StageCredentials(run.plans, sessionToken); err != nil {
+				return err
+			}
 		}
 		runs = append(runs, run)
 	}
@@ -489,15 +522,18 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 			return err
 		}
 	}
-	for _, run := range runs {
+	for i := range runs {
+		run := &runs[i]
 		// The routes API key is only read or created once the user has confirmed.
-		token, err := ensureHarnessToken(ctx, api, run.team, run.targets[0].record.KeyName)
-		if err != nil {
-			return err
+		token := run.token
+		if token == "" {
+			if token, err = ensureHarnessToken(ctx, api, run.team, run.targets[0].record.KeyName); err != nil {
+				return err
+			}
 		}
-		for i := range run.targets {
-			if run.targets[i].Name() == harness.Codex {
-				harnessLogoutCodex(ctx, filepath.Dir(run.targets[i].detection.Path), f.Yes)
+		for j := range run.targets {
+			if run.targets[j].Name() == harness.Codex {
+				harnessLogoutCodex(ctx, filepath.Dir(run.targets[j].detection.Path), f.Yes)
 			}
 		}
 		if err := harness.ApplyPlans(run.plans, token); err != nil {
@@ -614,6 +650,23 @@ func ensureHarnessToken(ctx *CommandContext, api *managementapi.Client, team *ma
 		return "", err
 	}
 	return key.ensure(ctx, api)
+}
+
+// harnessSessionAPIKey returns the session's API key to install in harness
+// settings. Never mints a new key, read only.
+func harnessSessionAPIKey(ctx *CommandContext) (string, error) {
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return "", err
+	}
+	key, err := session.APIKey()
+	if err != nil {
+		return "", fmt.Errorf("reading the session's API key: %w", err)
+	}
+	if key == "" {
+		return "", errors.New("the session has no API key to install; set BASETEN_API_KEY or use an API-key profile")
+	}
+	return key, nil
 }
 
 func harnessReplacedWarnings(ctx *CommandContext, plans []*harness.Plan) {
@@ -832,7 +885,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 		})
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.HarnessStatusList{Items: results})
+		ctx.OutputJSON(cmd.HarnessStatusList{Items: normalizeJSONSlice(results)})
 		return nil
 	}
 	if len(results) == 0 {
@@ -982,7 +1035,7 @@ func outputHarnessPlansJSON(ctx *CommandContext, plans []*harness.Plan, deletedK
 			Changed:          p.Changed,
 		})
 	}
-	ctx.OutputJSON(cmd.HarnessPlanList{Items: items, DeletedAPIKeys: deletedKeys})
+	ctx.OutputJSON(cmd.HarnessPlanList{Items: normalizeJSONSlice(items), DeletedAPIKeys: deletedKeys})
 }
 
 func harnessDisplayPath(path string) string {
@@ -1052,10 +1105,18 @@ func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, s
 }
 
 // unusedHarnessKeys returns the routes API keys the selected harnesses use that
-// no other harness on this machine still uses.
+// no other harness on this machine still uses. Credentials this CLI does not
+// own are never candidates.
 func unusedHarnessKeys(ctx *CommandContext, selected []selectedHarness) ([]string, error) {
+	protected, sessionToken, err := protectedHarnessCredentials(ctx, selected)
+	if err != nil {
+		return nil, err
+	}
 	keys := map[string]bool{}
-	for _, s := range selected {
+	for i, s := range selected {
+		if protected[i] {
+			continue
+		}
 		token, err := s.Credential(s.detection.Path)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", s.Name(), err)
@@ -1082,7 +1143,35 @@ func unusedHarnessKeys(ctx *CommandContext, selected []selectedHarness) ([]strin
 		}
 		delete(keys, token)
 	}
+	delete(keys, sessionToken)
 	return slices.Sorted(maps.Keys(keys)), nil
+}
+
+// protectedHarnessCredentials ensures we don't tear down any credentials
+// that are likely shared / owned external to this device (most commonly via --use-session-credential).
+func protectedHarnessCredentials(ctx *CommandContext, selected []selectedHarness) (protected []bool, sessionKey string, err error) {
+	dir, err := auth.DefaultConfigDir()
+	if err != nil {
+		return nil, "", err
+	}
+	file, err := harness.LoadRecords(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	sessionKey, _ = harnessSessionAPIKey(ctx)
+	protected = make([]bool, len(selected))
+	kept := false
+	for i, s := range selected {
+		record, ok := file.Harnesses[s.Name()]
+		if ok && record.CredentialSource == harness.CredentialSourceSession && record.Config == s.detection.Path {
+			protected[i] = true
+			kept = true
+		}
+	}
+	if kept {
+		ctx.Logf("Keeping the API key installed with --use-session-credential, which this CLI did not create. Delete it where it was created.\n")
+	}
+	return protected, sessionKey, nil
 }
 
 // deleteHarnessKeys deletes the routes API keys with these values, and this

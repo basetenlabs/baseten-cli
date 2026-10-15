@@ -8,9 +8,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	public "github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-go/client"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
@@ -213,8 +215,8 @@ func Test_Volume_Ls_Namespaces(t *testing.T) {
 	h.Require.NoError(h.Execute("volume", "ls"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "NAMESPACE")
-	h.Require.Contains(out, "cli-e2e")
-	h.Require.Contains(out, "weights")
+	h.Require.Contains(out, "bdn:cli-e2e")
+	h.Require.Contains(out, "bdn:weights")
 }
 
 func Test_Volume_Ls_Namespaces_SchemeOnly(t *testing.T) {
@@ -227,7 +229,7 @@ func Test_Volume_Ls_Namespaces_SchemeOnly(t *testing.T) {
 	})
 
 	h.Require.NoError(h.Execute("volume", "ls", "bdn:"))
-	h.Require.Contains(h.Stdout.String(), "weights")
+	h.Require.Contains(h.Stdout.String(), "bdn:weights")
 }
 
 func Test_Volume_Ls_Namespaces_Empty(t *testing.T) {
@@ -240,6 +242,17 @@ func Test_Volume_Ls_Namespaces_Empty(t *testing.T) {
 	h.Require.NoError(h.Execute("volume", "ls"))
 	h.Require.Equal("", h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "No volume namespaces found.")
+}
+
+func Test_Volume_Ls_Namespaces_JSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/volumes/namespaces", 200, map[string]any{
+		"items":      []string{"weights", "cli-e2e"},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	h.Require.NoError(h.Execute("volume", "ls", "--output", "json"))
+	h.Require.JSONEq(`{"items":["weights","cli-e2e"]}`, h.Stdout.String())
 }
 
 func Test_Volume_Ls_Volumes(t *testing.T) {
@@ -674,6 +687,7 @@ func Test_Volume_Rm_Tag(t *testing.T) {
 	h := NewCommandHarness(t)
 	err := h.Execute("volume", "rm", "--yes", "bdn:weights/llama:prod")
 	h.Require.ErrorContains(err, "name that version by digest")
+	h.Require.ErrorContains(err, "'baseten volume tag delete --volume-ref bdn:weights/llama --tag prod'")
 }
 
 func Test_Volume_Rm_Path(t *testing.T) {
@@ -707,6 +721,207 @@ func Test_Volume_Restore_RequiresDigest(t *testing.T) {
 	h.Require.ErrorContains(err, "does not name a deleted version")
 }
 
+const volumeUpdatePath = "/v1/volumes/weights/llama"
+
+// volumeUpdatePayload is a volume update response with no expiration time.
+var volumeUpdatePayload = map[string]any{
+	"namespace": "weights", "volume": "llama", "expires_at": nil, "volume_sequence": 12,
+}
+
+func Test_Volume_Update_SetsExpiration(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", volumeUpdatePath, 200, map[string]any{
+		"namespace": "weights", "volume": "llama", "expires_at": volumeExpiryTime, "volume_sequence": 12,
+	})
+
+	h.Require.NoError(h.Execute("volume", "update", "bdn:weights/llama",
+		"--expires-at", "2026-09-11T17:04:05Z", "--yes"))
+	h.Require.Equal(`{"expires_at":"2026-09-11T17:04:05Z"}`,
+		strings.TrimSpace(m.FindCall("PATCH", volumeUpdatePath).Body))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Namespace:       weights\n")
+	h.Require.Contains(out, "Volume:          llama\n")
+	h.Require.Contains(out, "Expires:         2026-09-11T17:04:05Z\n")
+	h.Require.Contains(out, "Volume sequence: 12\n")
+}
+
+func Test_Volume_Update_ClearSendsNull(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", volumeUpdatePath, 200, volumeUpdatePayload)
+
+	h.Require.NoError(h.Execute("volume", "update", "bdn:weights/llama", "--clear-expires-at", "--yes"))
+	// A clear sends an explicit null. An omitted field would be the API's 400.
+	h.Require.Equal(`{"expires_at":null}`, strings.TrimSpace(m.FindCall("PATCH", volumeUpdatePath).Body))
+	h.Require.Contains(h.Stdout.String(), "Expires:         -\n")
+}
+
+func Test_Volume_Update_BadExpiresAt(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	// No --yes, so a "pass --yes" error would mean the prompt came before
+	// the check.
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--expires-at", "2030-01-01T00:00:00")
+	h.Require.ErrorContains(err, "must be an RFC 3339 date-time")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Update_PastExpiresAtReachesTheAPI(t *testing.T) {
+	// The future bound is the management API's, so a past time is sent and
+	// its 400 is the error.
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", volumeUpdatePath, 400, map[string]any{
+		"code": "VALIDATION_ERROR", "message": "expires_at must be after the request time",
+	})
+
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--expires-at", "2020-01-01T00:00:00Z", "--yes")
+	h.Require.ErrorContains(err, "expires_at must be after the request time")
+	h.Require.Equal(int(public.ExitValidation), h.ExitCode)
+	h.Require.Len(m.Calls(), 1)
+	h.Require.Equal("2020-01-01T00:00:00Z", m.Calls()[0].BodyJSON(t)["expires_at"])
+}
+
+func Test_Volume_Update_RequiresOneFlag(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--yes")
+	h.Require.ErrorContains(err, "at least one of the flags in the group")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Update_RejectsBothFlags(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "update", "bdn:weights/llama",
+		"--expires-at", "2030-01-01T00:00:00Z", "--clear-expires-at", "--yes")
+	h.Require.ErrorContains(err, "none of the others can be")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Update_RequiresYesOffTerminal(t *testing.T) {
+	for _, args := range [][]string{
+		{"--expires-at", "2030-01-01T00:00:00Z"},
+		{"--clear-expires-at"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+
+			err := h.Execute(append([]string{"volume", "update", "bdn:weights/llama"}, args...)...)
+			h.Require.ErrorContains(err, "pass --yes")
+			h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+			h.Require.Empty(m.Calls())
+		})
+	}
+}
+
+func Test_Volume_Update_Namespace(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "update", "bdn:weights", "--clear-expires-at", "--yes")
+	h.Require.ErrorContains(err, "ref bdn:weights/ names a namespace, and an expiration time belongs to a volume")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Update_Selector(t *testing.T) {
+	for _, selector := range []string{":prod", "@b3:aabbccddeeff"} {
+		t.Run(selector, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+
+			err := h.Execute("volume", "update", "bdn:weights/llama"+selector, "--clear-expires-at", "--yes")
+			h.Require.ErrorContains(err, "names a version, and an expiration time belongs to the whole volume")
+			h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+			h.Require.Empty(m.Calls())
+		})
+	}
+}
+
+func Test_Volume_Update_Path(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "update", "bdn:weights/llama/config", "--clear-expires-at", "--yes")
+	h.Require.ErrorContains(err, "names a path, and an expiration time belongs to the whole volume")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Update_JSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("PATCH", volumeUpdatePath, 200, map[string]any{
+		"namespace": "weights", "volume": "llama", "expires_at": volumeExpiryTime, "volume_sequence": 12,
+	})
+
+	h.Require.NoError(h.Execute("volume", "update", "bdn:weights/llama",
+		"--expires-at", "2026-09-11T17:04:05Z", "--yes", "--output", "json"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, `"expires_at": "2026-09-11T17:04:05Z"`)
+	h.Require.Contains(out, `"volume_sequence": 12`)
+}
+
+func Test_Volume_Update_Conflict(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", volumeUpdatePath, 409, map[string]any{
+		"code": "CONFLICT", "message": "volume changed",
+		"details": map[string]any{"reason": "CAS_CONFLICT", "domain": "bdn.baseten.co"},
+	})
+
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--clear-expires-at", "--yes", "--output", "json")
+	h.Require.ErrorContains(err, "volume changed")
+	h.Require.Equal(int(public.ExitValidation), h.ExitCode)
+	// Nothing retries, so the conflict reaches the caller with its code.
+	h.Require.Len(m.Calls(), 1)
+	jsonErr := decodeJSONErrorEnvelope(h)
+	h.Require.Equal(409, jsonErr.APIStatusCode)
+	h.Require.Equal("CONFLICT", jsonErr.APIErrorCode)
+	h.Require.Equal("CAS_CONFLICT", jsonErr.APIDetails["reason"])
+}
+
+func Test_Volume_Update_NotFound(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", volumeUpdatePath, 404, map[string]any{
+		"code": "NOT_FOUND", "message": "volume not found",
+	})
+
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--clear-expires-at", "--yes")
+	h.Require.ErrorContains(err, "volume not found")
+	h.Require.Equal(int(public.ExitNotFound), h.ExitCode)
+	h.Require.Len(m.Calls(), 1)
+}
+
+func Test_Volume_Update_MissingRef(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "update", "--clear-expires-at", "--yes")
+	h.Require.ErrorContains(err, "accepts 1 arg")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Update_RejectsSecondRef(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "update", "bdn:weights/llama", "--clear-expires-at", "--yes", "bdn:weights/other")
+	h.Require.ErrorContains(err, "accepts 1 arg")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
 func Test_Volume_Cat_File(t *testing.T) {
 	h := NewCommandHarness(t)
 	fake := withVolumeTransfer(t, h)
@@ -718,6 +933,23 @@ func Test_Volume_Cat_File(t *testing.T) {
 	// A handler replaces the destination directory, which is what makes this
 	// a pipe rather than a download.
 	h.Require.Empty(fake.PullOptions.DestDir)
+	h.Require.Equal(client.VolumeConcurrencyOptions{}, fake.PullOptions.Concurrency)
+}
+
+func Test_Volume_Cat_Concurrency(t *testing.T) {
+	h := NewCommandHarness(t)
+	fake := withVolumeTransfer(t, h)
+	fake.Contents = map[string]string{"/config/model.json": `{"hidden_size":4096}`}
+
+	h.Require.NoError(h.Execute("volume", "cat", "bdn:weights/llama/config/model.json",
+		"--chunk-operations", "8", "--max-in-flight-mib", "512"))
+
+	h.Require.Equal(client.VolumeConcurrencyOptions{
+		ChunkOperations:  8,
+		MaxBytesInFlight: 512 * 1024 * 1024,
+	}, fake.PullOptions.Concurrency)
+	h.Require.Equal(`{"hidden_size":4096}`, h.Stdout.String())
+	h.Require.Empty(h.Stderr.String())
 }
 
 func Test_Volume_Cat_Directory(t *testing.T) {
@@ -943,7 +1175,7 @@ func Test_Volume_ProgressFinalCounters(t *testing.T) {
 					h.Require.NoError(err)
 				}
 				output := h.Stderr.String()
-				final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B\n", phase)
+				final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B, 0 B/s\n", phase)
 				h.Require.Equal(1, strings.Count(output, final), output)
 				if outcome == "phase-change" {
 					h.Require.Contains(output, final+fmt.Sprintf("  %s...\n", next))
@@ -966,6 +1198,12 @@ func Test_Volume_ProgressWhileTransferIsRunning(t *testing.T) {
 	for _, action := range []string{"push", "pull"} {
 		t.Run(action, func(t *testing.T) {
 			h := NewCommandHarness(t)
+			ticks := make(chan time.Time, 1)
+			var stopped atomic.Int64
+			h.Context = cmd.WithTicker(h.Context, func(interval time.Duration) (<-chan time.Time, func()) {
+				h.Require.Equal(2*time.Second, interval)
+				return ticks, func() { stopped.Add(1) }
+			})
 			fake := withVolumeTransfer(t, h)
 			output := make(volumeProgressOutput, 32)
 			phase := client.VolumePhaseUpload
@@ -977,6 +1215,7 @@ func Test_Volume_ProgressWhileTransferIsRunning(t *testing.T) {
 				progress(p)
 				p.Files = 3
 				progress(p)
+				ticks <- time.Now() // Flush pending progress without another callback.
 				timeout := time.NewTimer(10 * time.Second)
 				defer timeout.Stop()
 				for {
@@ -999,6 +1238,7 @@ func Test_Volume_ProgressWhileTransferIsRunning(t *testing.T) {
 			h.Require.NoError(cmd.Execute(h.Context, cmd.ExecuteOptions{
 				Args: args, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: output,
 			}))
+			h.Require.Equal(int64(1), stopped.Load())
 			close(output) // Execute has joined the progress worker.
 			var remaining strings.Builder
 			for line := range output {
@@ -1014,11 +1254,9 @@ func Test_Volume_ProgressDoesNotCorruptJSON(t *testing.T) {
 	for _, action := range []string{"push", "pull"} {
 		t.Run(action, func(t *testing.T) {
 			h := NewCommandHarness(t)
-			now := volumeTestTime
+			var clock atomic.Int64
 			h.Context = cmd.WithNow(h.Context, func() time.Time {
-				result := now
-				now = now.Add(1500 * time.Millisecond)
-				return result
+				return volumeTestTime.Add(time.Duration(clock.Load()))
 			})
 			fake := withVolumeTransfer(t, h)
 			ref := client.VolumeRef{Namespace: "weights", Volume: "llama", Digest: "b3:a1b2"}
@@ -1033,6 +1271,7 @@ func Test_Volume_ProgressDoesNotCorruptJSON(t *testing.T) {
 				progress(p)
 				p.Files, p.Bytes = 2, 73
 				progress(p)
+				clock.Store(int64(1500 * time.Millisecond))
 				progress(client.VolumeProgress{Phase: next})
 				return nil
 			}
@@ -1053,7 +1292,7 @@ func Test_Volume_ProgressDoesNotCorruptJSON(t *testing.T) {
 			h.Require.Equal(int64(2), result.Files)
 			h.Require.Equal(int64(73), result.Bytes)
 			h.Require.Equal(1.5, result.Duration)
-			final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B\n", phase)
+			final := fmt.Sprintf("  %s: 2/2 files, 73 B/73 B, 0 B/s\n", phase)
 			h.Require.Contains(h.Stderr.String(), final+fmt.Sprintf("  %s...\n", next))
 			h.Require.Equal(1, strings.Count(h.Stderr.String(), final))
 		})
@@ -1180,4 +1419,536 @@ func Test_Volume_Pull_UnrelatedErrorPreserved(t *testing.T) {
 	err := h.Execute("volume", "pull", "bdn:weights/llama", "destination")
 	h.Require.ErrorContains(err, original.Error())
 	h.Require.Contains(h.Stderr.String(), original.Error())
+}
+
+const (
+	volumeTagsPath       = "/v1/volumes/weights/llama/tags"
+	volumeTagDeletePath  = volumeTagsPath + "/prod"
+	volumeTagRefByDigest = "bdn:weights/llama@b3:aabbccddeeff"
+)
+
+// volumeTagSetPayload is a tag response with no tag expiration.
+var volumeTagSetPayload = map[string]any{
+	"namespace": "weights", "volume": "llama", "tag": "prod", "digest": "b3:aabbccddeeff",
+	"version_ref": volumeTagRefByDigest, "volume_sequence": 10, "expires_at": nil,
+}
+
+// volumeTagDeletePayload is a tag delete as the management API renders it.
+var volumeTagDeletePayload = map[string]any{
+	"namespace": "weights", "volume": "llama", "tag": "prod", "deleted": true, "volume_sequence": 11,
+}
+
+// volumeTagConflictPayload is the 409 the management API answers when the
+// volume changed under the request.
+var volumeTagConflictPayload = map[string]any{
+	"code": "CONFLICT", "message": "volume changed",
+	"details": map[string]any{"reason": "CAS_CONFLICT", "domain": "bdn.baseten.co"},
+}
+
+func Test_Volume_Tag_Set_ByDigest(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", volumeTagsPath, 200, volumeTagSetPayload)
+
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod"))
+	// expires_at and expected_sequence are absent unless asked for, and no flag
+	// exposes the sequence.
+	h.Require.Equal(`{"tag":"prod","version":"@b3:aabbccddeeff"}`,
+		strings.TrimSpace(m.FindCall("POST", volumeTagsPath).Body))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Ref:             bdn:weights/llama@b3:aabbccddeeff\n")
+	h.Require.Contains(out, "Tag:             prod\n")
+	h.Require.Contains(out, "Digest:          b3:aabbccddeeff\n")
+	h.Require.Contains(out, "Expires:         -\n")
+	h.Require.Contains(out, "Volume sequence: 10\n")
+}
+
+func Test_Volume_Tag_Set_ByTagSelector(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", volumeTagsPath, 200, volumeTagSetPayload)
+
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", "bdn:weights/llama:canary", "--tag", "prod"))
+	h.Require.Equal(":canary", m.FindCall("POST", volumeTagsPath).BodyJSON(t)["version"])
+}
+
+func Test_Volume_Tag_Set_ByHead(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", volumeTagsPath, 200, volumeTagSetPayload)
+
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", "bdn:weights/llama", "--tag", "prod"))
+	h.Require.Equal("head", m.FindCall("POST", volumeTagsPath).BodyJSON(t)["version"])
+}
+
+func Test_Volume_Tag_Set_HeadAsTag(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", volumeTagsPath, 200, map[string]any{
+		"namespace": "weights", "volume": "llama", "tag": "head", "digest": "b3:aabbccddeeff",
+		"version_ref": volumeTagRefByDigest, "volume_sequence": 10, "expires_at": nil,
+	})
+
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "head", "--yes"))
+	h.Require.Equal("head", m.FindCall("POST", volumeTagsPath).BodyJSON(t)["tag"])
+	h.Require.Contains(h.Stdout.String(), "Tag:             head\n")
+}
+
+func Test_Volume_Tag_Set_HeadRequiresYesOffTerminal(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "head")
+	h.Require.ErrorContains(err, "pass --yes")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Set_ExpiresAt(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", volumeTagsPath, 200, map[string]any{
+		"namespace": "weights", "volume": "llama", "tag": "prod", "digest": "b3:aabbccddeeff",
+		"version_ref": volumeTagRefByDigest, "volume_sequence": 10, "expires_at": tagExpiryTime,
+	})
+
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod",
+		"--expires-at", tagExpiryTime.Format(time.RFC3339)))
+	h.Require.Equal(`{"expires_at":"2026-09-09T05:04:05Z","tag":"prod","version":"@b3:aabbccddeeff"}`,
+		strings.TrimSpace(m.FindCall("POST", volumeTagsPath).Body))
+	h.Require.Contains(h.Stdout.String(), "Expires:         2026-09-09T05:04:05Z\n")
+}
+
+func Test_Volume_Tag_Set_PastExpiresAtReachesTheAPI(t *testing.T) {
+	// The future bound is the management API's, so a past time is sent and
+	// its 400 is the error.
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", volumeTagsPath, 400, map[string]any{
+		"code": "VALIDATION_ERROR", "message": "expires_at must be after the request time",
+	})
+
+	err := h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod",
+		"--expires-at", "2020-01-01T00:00:00Z")
+	h.Require.ErrorContains(err, "expires_at must be after the request time")
+	h.Require.Equal(int(public.ExitValidation), h.ExitCode)
+	h.Require.Len(m.Calls(), 1)
+	h.Require.Equal("2020-01-01T00:00:00Z", m.Calls()[0].BodyJSON(t)["expires_at"])
+}
+
+func Test_Volume_Tag_Set_BadExpiresAt(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod",
+		"--expires-at", "2030-01-01T00:00:00")
+	h.Require.ErrorContains(err, "must be an RFC 3339 date-time")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Set_EmptyExpiresAtMeansNoExpiration(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", volumeTagsPath, 200, volumeTagSetPayload)
+
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod",
+		"--expires-at", ""))
+	h.Require.Equal(`{"tag":"prod","version":"@b3:aabbccddeeff"}`,
+		strings.TrimSpace(m.FindCall("POST", volumeTagsPath).Body))
+}
+
+func Test_Volume_Tag_Set_CaseKept(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", volumeTagsPath, 200, map[string]any{
+		"namespace": "weights", "volume": "llama", "tag": "Prod", "digest": "b3:aabbccddeeff",
+		"version_ref": volumeTagRefByDigest, "volume_sequence": 10, "expires_at": nil,
+	})
+
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "Prod"))
+	h.Require.Equal("Prod", m.FindCall("POST", volumeTagsPath).BodyJSON(t)["tag"])
+}
+
+func Test_Volume_Tag_Set_JSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("POST", volumeTagsPath, 200, volumeTagSetPayload)
+
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod",
+		"--output", "json"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, `"version_ref": "bdn:weights/llama@b3:aabbccddeeff"`)
+	h.Require.Contains(out, `"expires_at": null`)
+	h.Require.Contains(out, `"volume_sequence": 10`)
+}
+
+func Test_Volume_Tag_Set_ShortensRef(t *testing.T) {
+	const digest = "b3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("POST", volumeTagsPath, 200, map[string]any{
+		"namespace": "weights", "volume": "llama", "tag": "prod", "digest": digest,
+		"version_ref": "bdn:weights/llama@" + digest, "volume_sequence": 10, "expires_at": nil,
+	})
+
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--volume-ref", "bdn:weights/llama@"+digest, "--tag", "prod"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Ref:             bdn:weights/llama@0123456789ab\n")
+	// The digest a command writes on its own stays whole.
+	h.Require.Contains(out, "Digest:          "+digest+"\n")
+}
+
+func Test_Volume_Tag_Set_FullRef(t *testing.T) {
+	const digest = "b3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("POST", volumeTagsPath, 200, map[string]any{
+		"namespace": "weights", "volume": "llama", "tag": "prod", "digest": digest,
+		"version_ref": "bdn:weights/llama@" + digest, "volume_sequence": 10, "expires_at": nil,
+	})
+
+	h.Require.NoError(h.Execute("volume", "tag", "set", "--full-ref", "--volume-ref", "bdn:weights/llama@"+digest,
+		"--tag", "prod"))
+	h.Require.Contains(h.Stdout.String(), "Ref:             bdn:weights/llama@"+digest+"\n")
+}
+
+func Test_Volume_Tag_Set_Namespace(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "set", "--volume-ref", "bdn:weights", "--tag", "prod")
+	h.Require.ErrorContains(err, "--volume-ref bdn:weights/ names a namespace, and a tag belongs to a volume")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Set_Path(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "set", "--volume-ref", "bdn:weights/llama:canary/config", "--tag", "prod")
+	h.Require.ErrorContains(err, "names a path, and a tag names a whole version")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Set_BadTag(t *testing.T) {
+	for _, tag := range []string{
+		"a/b", "a/", "/b", "a@b", "a:b", ".hidden", "",
+		// Trimmed by the ref parser, so only the comparison against the
+		// flag value catches it.
+		"prod ",
+		strings.Repeat("x", 129),
+	} {
+		t.Run(tag, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+
+			err := h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", tag)
+			h.Require.ErrorContains(err, "--tag")
+			h.Require.ErrorContains(err, "must begin with a letter, digit, or underscore")
+			h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+			h.Require.Empty(m.Calls())
+		})
+	}
+}
+
+func Test_Volume_Tag_Set_Conflict(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", volumeTagsPath, 409, volumeTagConflictPayload)
+
+	err := h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod",
+		"--output", "json")
+	h.Require.ErrorContains(err, "volume changed")
+	h.Require.Equal(int(public.ExitValidation), h.ExitCode)
+	// Nothing retries, so the conflict reaches the caller with its code.
+	h.Require.Len(m.Calls(), 1)
+	jsonErr := decodeJSONErrorEnvelope(h)
+	h.Require.Equal(409, jsonErr.APIStatusCode)
+	h.Require.Equal("CONFLICT", jsonErr.APIErrorCode)
+	h.Require.Equal("CAS_CONFLICT", jsonErr.APIDetails["reason"])
+}
+
+func Test_Volume_Tag_Set_MissingTag(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest)
+	h.Require.ErrorContains(err, `"tag" not set`)
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Set_Positional(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod", "canary")
+	h.Require.ErrorContains(err, "unknown command")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Delete_Deleted(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("DELETE", volumeTagDeletePath, 200, volumeTagDeletePayload)
+
+	// Stdin is a buffer and there is no --yes flag, so a prompt would fail
+	// this test.
+	h.Require.NoError(h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "prod"))
+	// The body is empty. No flag sends expected_sequence.
+	h.Require.Equal("{}", strings.TrimSpace(m.FindCall("DELETE", volumeTagDeletePath).Body))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Tag:             prod\n")
+	h.Require.Contains(out, "Deleted:         yes\n")
+	h.Require.Contains(out, "Volume sequence: 11\n")
+}
+
+func Test_Volume_Tag_Delete_Absent(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("DELETE", volumeTagDeletePath, 200, map[string]any{
+		"namespace": "weights", "volume": "llama", "tag": "prod", "deleted": false, "volume_sequence": 11,
+	})
+
+	h.Require.NoError(h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "prod"))
+	h.Require.Equal(0, h.ExitCode)
+	h.Require.Contains(h.Stdout.String(), "Deleted:         no\n")
+}
+
+func Test_Volume_Tag_Delete_Selector(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama:prod", "--tag", "prod")
+	h.Require.ErrorContains(err, "--volume-ref bdn:weights/llama:prod names a version, and a tag is deleted from the volume")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Delete_Path(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama/config", "--tag", "prod")
+	h.Require.ErrorContains(err, "names a path, and a tag belongs to the whole volume")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Delete_Namespace(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights", "--tag", "prod")
+	h.Require.ErrorContains(err, "names a namespace, and a tag belongs to a volume")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Delete_Head(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("DELETE", volumeTagsPath+"/head", 200, map[string]any{
+		"namespace": "weights", "volume": "llama", "tag": "head", "deleted": true, "volume_sequence": 11,
+	})
+
+	h.Require.NoError(h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "head", "--yes"))
+	h.Require.NotNil(m.FindCall("DELETE", volumeTagsPath+"/head"))
+	h.Require.Contains(h.Stdout.String(), "Deleted:         yes\n")
+}
+
+func Test_Volume_Tag_Delete_HeadRequiresYesOffTerminal(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "head")
+	h.Require.ErrorContains(err, "pass --yes")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Delete_JSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("DELETE", volumeTagDeletePath, 200, volumeTagDeletePayload)
+
+	h.Require.NoError(h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "prod",
+		"--output", "json"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, `"deleted": true`)
+	h.Require.Contains(out, `"volume_sequence": 11`)
+}
+
+func Test_Volume_Tag_Delete_Conflict(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("DELETE", volumeTagDeletePath, 409, volumeTagConflictPayload)
+
+	err := h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "prod")
+	h.Require.ErrorContains(err, "volume changed")
+	h.Require.Equal(int(public.ExitValidation), h.ExitCode)
+	h.Require.Len(m.Calls(), 1)
+}
+
+func Test_Volume_Tag_Delete_BadTag(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "a/b")
+	h.Require.ErrorContains(err, "must begin with a letter, digit, or underscore")
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Empty(m.Calls())
+}
+
+func Test_Volume_Tag_Delete_NotFound(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("DELETE", volumeTagDeletePath, 404, map[string]any{
+		"code": "NOT_FOUND", "message": "volume not found",
+	})
+
+	err := h.Execute("volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "prod")
+	h.Require.ErrorContains(err, "volume not found")
+	h.Require.Equal(int(public.ExitNotFound), h.ExitCode)
+}
+
+func Test_Volume_BandwidthSummary(t *testing.T) {
+	for _, action := range []string{"push", "pull"} {
+		for _, format := range []string{"text", "json"} {
+			for _, scenario := range []string{"payload", "reuse", "empty", "zero-duration"} {
+				t.Run(action+"/"+format+"/"+scenario, func(t *testing.T) {
+					h := NewCommandHarness(t)
+					var clock atomic.Int64
+					h.Context = cmd.WithNow(h.Context, func() time.Time { return volumeTestTime.Add(time.Duration(clock.Load())) })
+					fake := withVolumeTransfer(t, h)
+					ref := client.VolumeRef{Namespace: "weights", Volume: "llama", Digest: "b3:a1b2"}
+					logical, transferred := int64(16<<20), int64(2<<20)
+					if scenario == "reuse" || scenario == "empty" {
+						transferred = 0
+					}
+					if scenario == "empty" {
+						logical = 0
+					}
+					fake.PushResult = &client.PushVolumeResult{VersionRef: ref, Files: 1, Bytes: logical, TransferredBytes: transferred}
+					fake.PullResult = &client.PullVolumeResult{VersionRef: ref, Files: 1, Bytes: logical, TransferredBytes: transferred}
+					setup, phase, next := client.VolumePhaseScan, client.VolumePhaseUpload, client.VolumePhaseCommit
+					if action == "pull" {
+						setup, phase, next = client.VolumePhaseResolve, client.VolumePhaseDownload, client.VolumePhasePublish
+					}
+					fake.OnProgress = func(progress func(client.VolumeProgress)) error {
+						progress(client.VolumeProgress{Phase: setup})
+						clock.Store(int64(time.Second))
+						p := client.VolumeProgress{Phase: phase, TotalFiles: 1, TotalBytes: logical}
+						progress(p)
+						if scenario != "zero-duration" {
+							clock.Store(int64(3 * time.Second))
+						}
+						p.Files, p.Bytes, p.TransferredBytes = 1, logical, transferred
+						progress(p)
+						progress(client.VolumeProgress{Phase: next})
+						clock.Store(int64(4 * time.Second))
+						return nil
+					}
+					args := []string{"volume", action, t.TempDir(), "bdn:weights/llama", "--output", format}
+					if action == "pull" {
+						args[2], args[3] = args[3], args[2]
+					}
+					h.Require.NoError(h.Execute(args...))
+					rate := float64(1 << 20)
+					if scenario == "zero-duration" {
+						rate = 0
+					}
+					if scenario == "reuse" || scenario == "empty" {
+						rate = 0
+					}
+					if format == "json" {
+						var result struct {
+							Rate  float64 `json:"average_bytes_per_second"`
+							Total float64 `json:"duration_seconds"`
+						}
+						h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+						h.Require.Equal(rate, result.Rate)
+						h.Require.Equal(float64(4), result.Total)
+						var fields map[string]any
+						h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &fields))
+						h.Require.NotContains(fields, "transferred_bytes")
+						h.Require.NotContains(fields, "transfer_duration_seconds")
+					} else {
+						wantRate := "0 B/s"
+						if rate > 0 {
+							wantRate = "1.0 MiB/s"
+						}
+						h.Require.Contains(h.Stdout.String(), "Bandwidth: "+wantRate)
+						h.Require.NotContains(h.Stdout.String(), "Transferred:")
+						h.Require.Contains(h.Stdout.String(), "4s")
+					}
+					if scenario == "empty" {
+						h.Require.Contains(h.Stderr.String(), "1/1 files, 0 B/s")
+					} else {
+						h.Require.Contains(h.Stderr.String(), "1/1 files, 16.0 MiB/16.0 MiB")
+					}
+				})
+			}
+		}
+	}
+}
+
+func Test_Volume_LiveBandwidthDropsDuringStall(t *testing.T) {
+	for _, action := range []string{"push", "pull"} {
+		t.Run(action, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			ticks := make(chan time.Time, 1)
+			var stopped atomic.Int64
+			h.Context = cmd.WithTicker(h.Context, func(interval time.Duration) (<-chan time.Time, func()) {
+				h.Require.Equal(2*time.Second, interval)
+				return ticks, func() { stopped.Add(1) }
+			})
+			var clock atomic.Int64
+			h.Context = cmd.WithNow(h.Context, func() time.Time { return volumeTestTime.Add(time.Duration(clock.Load())) })
+			fake := withVolumeTransfer(t, h)
+			output := make(volumeProgressOutput, 32)
+			phase := client.VolumePhaseUpload
+			if action == "pull" {
+				phase = client.VolumePhaseDownload
+			}
+			fake.OnProgress = func(progress func(client.VolumeProgress)) error {
+				p := client.VolumeProgress{Phase: phase, TotalFiles: 1, TotalBytes: 16 << 20}
+				progress(p)
+				clock.Store(int64(2 * time.Second))
+				p.TransferredBytes = 2 << 20 // Payload arrives before a file or chunk completes.
+				progress(p)
+				ticks <- volumeTestTime.Add(2 * time.Second)
+				waitFor := func(text string) error {
+					timer := time.NewTimer(10 * time.Second)
+					defer timer.Stop()
+					for {
+						select {
+						case line := <-output:
+							if strings.Contains(line, text) {
+								return nil
+							}
+						case <-timer.C:
+							return fmt.Errorf("did not display %s during transfer", text)
+						}
+					}
+				}
+				if err := waitFor("0/1 files, 0 B/16.0 MiB, 1.0 MiB/s"); err != nil {
+					return err
+				}
+				clock.Store(int64(4 * time.Second))
+				// No callback: trigger a tick to refresh the rate to zero.
+				ticks <- volumeTestTime.Add(4 * time.Second)
+				if err := waitFor("0/1 files, 0 B/16.0 MiB, 0 B/s"); err != nil {
+					return err
+				}
+				p.Files, p.Bytes = 1, 16<<20
+				progress(p)
+				return nil
+			}
+			args := []string{"volume", action, t.TempDir(), "bdn:weights/llama"}
+			if action == "pull" {
+				args[2], args[3] = args[3], args[2]
+			}
+			h.Require.NoError(cmd.Execute(h.Context, cmd.ExecuteOptions{Args: args, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: output}))
+			h.Require.Equal(int64(1), stopped.Load())
+		})
+	}
 }

@@ -11,6 +11,10 @@ import (
 // recordFileName names the file of setup records, next to the CLI's auth.json.
 const recordFileName = "harness.json"
 
+// CredentialSourceSession marks a record whose setup installed the session's
+// API key with --use-session-credential instead of creating a routes API key.
+const CredentialSourceSession = "session"
+
 // Record remembers the options of the last successful setup for one harness,
 // so sync can replay them. It stores raw flag values only: an empty route means
 // the option was not passed and follows the current default, never the value
@@ -18,15 +22,16 @@ const recordFileName = "harness.json"
 // way saved routes API keys are scoped.
 type Record struct {
 	// Config is the settings file path setup wrote, which sync must match.
-	Config          string `json:"config"`
-	Profile         string `json:"profile"`
-	ManagementURL   string `json:"management_url"`
-	TeamID          string `json:"team_id"`
-	KeyName         string `json:"key_name,omitempty"`
-	Route           string `json:"route,omitempty"`
-	BackgroundRoute string `json:"background_route,omitempty"`
-	SubagentRoute   string `json:"subagent_route,omitempty"`
-	FallbackRoute   string `json:"fallback_route,omitempty"`
+	Config           string `json:"config"`
+	Profile          string `json:"profile"`
+	ManagementURL    string `json:"management_url"`
+	TeamID           string `json:"team_id"`
+	KeyName          string `json:"key_name,omitempty"`
+	CredentialSource string `json:"credential_source,omitempty"`
+	Route            string `json:"route,omitempty"`
+	BackgroundRoute  string `json:"background_route,omitempty"`
+	SubagentRoute    string `json:"subagent_route,omitempty"`
+	FallbackRoute    string `json:"fallback_route,omitempty"`
 	// CodexRestartPending records that the codex app-server daemon still needs
 	// a restart, because the last one was declined or failed. Retried on the
 	// next sync.

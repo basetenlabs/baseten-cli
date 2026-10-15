@@ -250,7 +250,7 @@ func Test_Route_List_WithoutFilters(t *testing.T) {
 	h.Require.NotContains(q, "team_id")
 	h.Require.NotContains(q, "name")
 	h.Require.NotContains(q, "limit")
-	h.Require.JSONEq(`{"items":null}`, h.Stdout.String())
+	h.Require.JSONEq(`{"items":[]}`, h.Stdout.String())
 }
 
 func Test_Route_List_TextAndJQ(t *testing.T) {

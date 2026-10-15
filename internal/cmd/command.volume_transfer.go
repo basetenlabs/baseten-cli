@@ -76,8 +76,9 @@ func commandVolumeCat(ctx *CommandContext, flags *cmd.VolumeCatFlags) error {
 			_, err := io.Copy(ctx.Stdout, entry.Reader)
 			return err
 		},
-		Hasher: volumeHasher,
-		Store:  &volumeObjectStore{ctx: ctx},
+		Hasher:      volumeHasher,
+		Store:       &volumeObjectStore{ctx: ctx},
+		Concurrency: volumeConcurrency(flags.VolumeTransferFlags, 0),
 	})
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", ref, err)
@@ -134,7 +135,7 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 		Concurrency: volumeConcurrency(flags.VolumeTransferFlags, flags.FileJobs),
 	})
 	elapsed := ctx.Now().Sub(started)
-	stopProgress()
+	transferDuration := stopProgress()
 	if err != nil {
 		var volumeErr *client.VolumeError
 		if errors.As(err, &volumeErr) && volumeErr.Reason == client.VolumeErrorReasonCASConflict {
@@ -151,18 +152,19 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(cmd.VolumePushResult{
-			DurationSeconds: elapsed.Seconds(),
-			VersionRef:      result.VersionRef.String(),
-			Sequence:        result.Sequence,
-			HeadUpdated:     result.HeadUpdated,
-			HeadMoveDenied:  result.HeadMoveDenied,
-			TagsApplied:     result.TagsApplied,
-			Files:           result.Files,
-			Bytes:           result.Bytes,
-			Chunks:          result.Chunks,
-			ChunksUnique:    result.Unique,
-			ChunksReused:    result.Reused,
-			ChunksExisting:  result.Existing,
+			DurationSeconds:       elapsed.Seconds(),
+			AverageBytesPerSecond: volumeTransferRate(result.TransferredBytes, transferDuration),
+			VersionRef:            result.VersionRef.String(),
+			Sequence:              result.Sequence,
+			HeadUpdated:           result.HeadUpdated,
+			HeadMoveDenied:        result.HeadMoveDenied,
+			TagsApplied:           normalizeJSONSlice(result.TagsApplied),
+			Files:                 result.Files,
+			Bytes:                 result.Bytes,
+			Chunks:                result.Chunks,
+			ChunksUnique:          result.Unique,
+			ChunksReused:          result.Reused,
+			ChunksExisting:        result.Existing,
 		})
 		return nil
 	}
@@ -171,6 +173,7 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 	ctx.Outputf("Digest:   %s\n", result.VersionRef.Digest)
 	ctx.Outputf("Contents: %d files, %s\n", result.Files, formatBytes(result.Bytes))
 	ctx.Outputf("Uploaded: %d of %d chunks\n", result.Unique, result.Chunks)
+	ctx.Outputf("Bandwidth: %s/s\n", formatBytes(int64(volumeTransferRate(result.TransferredBytes, transferDuration))))
 	ctx.Outputf("Total time: %s\n", elapsed.Round(time.Millisecond))
 	if len(result.TagsApplied) > 0 {
 		ctx.Outputf("Tags:     %s\n", volumeJoin(result.TagsApplied))
@@ -214,7 +217,7 @@ func commandVolumePull(ctx *CommandContext, flags *cmd.VolumePullFlags) error {
 		Concurrency:  volumeConcurrency(flags.VolumeTransferFlags, 0),
 	})
 	elapsed := ctx.Now().Sub(started)
-	stopProgress()
+	transferDuration := stopProgress()
 	if err != nil {
 		// The SDK exposes no typed error for a non-empty destination. Match
 		// its specific diagnostic until it provides one, without rewriting
@@ -235,16 +238,17 @@ func commandVolumePull(ctx *CommandContext, flags *cmd.VolumePullFlags) error {
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(cmd.VolumePullResult{
-			DurationSeconds: elapsed.Seconds(),
-			VersionRef:      result.VersionRef.String(),
-			DestDir:         dir,
-			Files:           result.Files,
-			Bytes:           result.Bytes,
-			SelectedFiles:   result.SelectedFiles,
-			TotalFiles:      result.TotalFiles,
-			ChunksFetched:   result.ChunksFetched,
-			ChunksReused:    result.ChunksReused,
-			Warnings:        warnings,
+			DurationSeconds:       elapsed.Seconds(),
+			AverageBytesPerSecond: volumeTransferRate(result.TransferredBytes, transferDuration),
+			VersionRef:            result.VersionRef.String(),
+			DestDir:               dir,
+			Files:                 result.Files,
+			Bytes:                 result.Bytes,
+			SelectedFiles:         result.SelectedFiles,
+			TotalFiles:            result.TotalFiles,
+			ChunksFetched:         result.ChunksFetched,
+			ChunksReused:          result.ChunksReused,
+			Warnings:              warnings,
 		})
 		return nil
 	}
@@ -256,6 +260,7 @@ func commandVolumePull(ctx *CommandContext, flags *cmd.VolumePullFlags) error {
 	ctx.Outputf("Digest:      %s\n", result.VersionRef.Digest)
 	ctx.Outputf("Destination: %s\n", dir)
 	ctx.Outputf("Written:     %d files, %s\n", result.Files, formatBytes(result.Bytes))
+	ctx.Outputf("Bandwidth: %s/s\n", formatBytes(int64(volumeTransferRate(result.TransferredBytes, transferDuration))))
 	ctx.Outputf("Total time:  %s\n", elapsed.Round(time.Millisecond))
 	if result.SelectedFiles != result.TotalFiles {
 		ctx.Outputf("Selected:    %d of %d files\n", result.SelectedFiles, result.TotalFiles)
@@ -285,40 +290,77 @@ func volumeConcurrency(flags cmd.VolumeTransferFlags, fileJobs int) client.Volum
 // volumeProgressInterval bounds output while retaining the latest counters.
 const volumeProgressInterval = 2 * time.Second
 
-// volumeProgressLogger flushes pending counters on ticks, phase changes,
-// and shutdown. Shutdown joins the worker before the command prints its result.
-func volumeProgressLogger(ctx *CommandContext) (func(client.VolumeProgress), func()) {
-	ticker := time.NewTicker(volumeProgressInterval)
+// volumeTransferRate measures observed chunk payload per second. A missing or
+// zero duration has no meaningful rate and is reported as zero.
+func volumeTransferRate(bytes int64, elapsed time.Duration) float64 {
+	if bytes <= 0 || elapsed <= 0 {
+		return 0
+	}
+	return float64(bytes) / elapsed.Seconds()
+}
+
+// volumeProgressLogger reports recent payload rates and retains the duration
+// of the upload/download phase for the completion average. Ticks refresh a
+// stalled rate even without new counters. Shutdown joins the output worker.
+func volumeProgressLogger(ctx *CommandContext) (func(client.VolumeProgress), func() time.Duration) {
+	ticks, stopTicker := ctx.NewTicker(volumeProgressInterval)
 	var mu sync.Mutex
 	var latest, printed client.VolumeProgress
 	var have, dirty bool
-	flush := func() {
-		if !dirty {
+	var phaseStart, sampleTime time.Time
+	var sampleBytes int64
+	var duration time.Duration
+	var printedRate float64
+	transferring := func() bool {
+		return have && (latest.Phase == client.VolumePhaseUpload || latest.Phase == client.VolumePhaseDownload)
+	}
+	flush := func(now time.Time, periodic bool) {
+		rate := float64(0)
+		active := transferring()
+		if active {
+			rate = volumeTransferRate(latest.TransferredBytes-sampleBytes, now.Sub(sampleTime))
+		}
+		if !dirty && !(periodic && active && rate != printedRate) {
 			return
 		}
 		p := latest
+		suffix := ""
+		if active {
+			suffix = fmt.Sprintf(", %s/s", formatBytes(int64(rate)))
+		}
 		switch {
 		case p.TotalBytes > 0:
-			ctx.Logf("  %s: %d/%d files, %s/%s\n", p.Phase, p.Files, p.TotalFiles, formatBytes(p.Bytes), formatBytes(p.TotalBytes))
+			ctx.Logf("  %s: %d/%d files, %s/%s%s\n", p.Phase, p.Files, p.TotalFiles, formatBytes(p.Bytes), formatBytes(p.TotalBytes), suffix)
 		case p.TotalFiles > 0:
-			ctx.Logf("  %s: %d/%d files\n", p.Phase, p.Files, p.TotalFiles)
+			ctx.Logf("  %s: %d/%d files%s\n", p.Phase, p.Files, p.TotalFiles, suffix)
 		default:
-			ctx.Logf("  %s...\n", p.Phase)
+			ctx.Logf("  %s...%s\n", p.Phase, suffix)
 		}
-		printed, dirty = p, false
+		printed, dirty, printedRate = p, false, rate
+		if active {
+			sampleTime, sampleBytes = now, p.TransferredBytes
+		}
 	}
 	done, exited := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(exited)
 		for {
 			select {
-			case <-ticker.C:
+			case <-ticks:
 				mu.Lock()
-				flush()
+				if have {
+					flush(ctx.Now(), true)
+				}
 				mu.Unlock()
 			case <-done:
 				mu.Lock()
-				flush()
+				if have {
+					now := ctx.Now()
+					if transferring() {
+						duration += now.Sub(phaseStart)
+					}
+					flush(now, false)
+				}
 				mu.Unlock()
 				return
 			}
@@ -328,22 +370,26 @@ func volumeProgressLogger(ctx *CommandContext) (func(client.VolumeProgress), fun
 		mu.Lock()
 		defer mu.Unlock()
 		changedPhase := !have || p.Phase != latest.Phase
+		var now time.Time
 		if changedPhase {
-			flush()
+			now = ctx.Now()
+			if transferring() {
+				duration += now.Sub(phaseStart)
+			}
+			flush(now, false)
 		}
 		latest, have = p, true
 		dirty = changedPhase || p != printed
 		if changedPhase {
-			flush()
+			phaseStart, sampleTime, sampleBytes = now, now, 0
+			printedRate = 0
+			flush(now, false)
 		}
 	}
 	var once sync.Once
-	stop := func() {
-		once.Do(func() {
-			ticker.Stop()
-			close(done)
-			<-exited
-		})
+	stop := func() time.Duration {
+		once.Do(func() { stopTicker(); close(done); <-exited })
+		return duration
 	}
 	return update, stop
 }

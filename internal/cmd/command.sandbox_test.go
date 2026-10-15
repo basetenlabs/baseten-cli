@@ -144,7 +144,9 @@ func Test_Sandbox_Create_SendsOnlySetFields(t *testing.T) {
 
 	h.Require.NoError(h.Execute("sandbox", "create", "--name", "sbx-1", "--if-not-exists",
 		"--region", "us-was-1", "--memory", "8192", "--image", "img:latest",
-		"--env", "TOKEN=s3cret", "--plain-env", "WORKERS=4", "--label", "team=cli"))
+		"--env", "TOKEN=s3cret", "--plain-env", "WORKERS=4", "--label", "team=cli",
+		"--idle-ttl", "30m", "--max-age", "2d", "--expires-at", "2026-11-01T12:00:00Z",
+		"--terminated-retention", "1h"))
 	body := sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[1].BodyJSON(t)
 	h.Require.Equal(map[string]any{
 		"name": "sbx-1", "create_if_not_exists": true, "region": "us-was-1", "memory": float64(8192),
@@ -154,9 +156,22 @@ func Test_Sandbox_Create_SendsOnlySetFields(t *testing.T) {
 			map[string]any{"name": "TOKEN", "value": "s3cret"},
 			map[string]any{"name": "WORKERS", "value": "4", "secret": false},
 		},
+		"lifecycle": map[string]any{
+			"expiration_policies": []any{
+				map[string]any{"type": "TTL_IDLE", "value": "30m0s", "action": "DELETE"},
+				map[string]any{"type": "TTL_MAX_AGE", "value": "48h0m0s", "action": "DELETE"},
+				map[string]any{"type": "DATE", "value": "2026-11-01T12:00:00Z", "action": "DELETE"},
+			},
+			"terminated_retention": "1h0m0s",
+		},
 	}, body)
 	h.Require.Contains(h.Stdout.String(), "Name:         sbx-1")
 	h.Require.Contains(h.Stdout.String(), "Labels:       a=1, b=2")
+
+	// A passed 0 is sent for the server to reject, not dropped as unset.
+	h.Require.NoError(h.Execute("sandbox", "create", "--memory", "0"))
+	h.Require.Equal(map[string]any{"memory": float64(0)},
+		sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[2].BodyJSON(t))
 }
 
 func Test_Sandbox_Create_RejectsMalformedKeyValues(t *testing.T) {
@@ -169,7 +184,14 @@ func Test_Sandbox_Create_RejectsMalformedKeyValues(t *testing.T) {
 func Test_Sandbox_Describe_ShowSecretsAndText(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := newSandboxTestAPI(h)
-	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, sandboxTestRecord(m, "sbx-1", "DEPLOYED"))
+	record := sandboxTestRecord(m, "sbx-1", "DEPLOYED")
+	record["lifecycle"] = map[string]any{"expiration_policies": []any{
+		map[string]any{"type": "TTL_IDLE", "value": "30m", "action": "DELETE"},
+		map[string]any{"type": "TTL_MAX_AGE", "value": "2d", "action": "DELETE"},
+		map[string]any{"type": "DATE", "value": "2026-11-01T12:00:00Z", "action": "DELETE"},
+		map[string]any{"type": "SOMETHING_NEW", "action": "DELETE"},
+	}}
+	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, record)
 
 	h.Require.NoError(h.Execute("sandbox", "describe", "--name", "sbx-1"))
 	h.Require.Empty(sandboxTestCalls(m, "GET", "/v1/sandboxes/instances/sbx-1")[0].Query().Get("show_secrets"))
@@ -177,6 +199,8 @@ func Test_Sandbox_Describe_ShowSecretsAndText(t *testing.T) {
 	h.Require.Contains(out, "Status:       DEPLOYED")
 	h.Require.Contains(out, "Memory:       4096 MB")
 	h.Require.Contains(out, "Envs:         TOKEN=****")
+	h.Require.Contains(out, "Idle TTL:     30m\nMax age:      2d\nExpires at:   2026-11-01T12:00:00Z\n"+
+		"Expiry:       SOMETHING_NEW\n")
 	// Empty fields are left out.
 	h.Require.NotContains(out, "External ID")
 
@@ -193,6 +217,11 @@ func Test_Sandbox_Update_SendsOnlySetFields(t *testing.T) {
 	// Without --env, environment variables are left alone, not cleared.
 	h.Require.Equal(map[string]any{"labels": map[string]any{"env": "dev"}},
 		sandboxTestCalls(m, "PATCH", "/v1/sandboxes/instances/sbx-1")[0].BodyJSON(t))
+
+	// One lifecycle flag sends only what is set; the server replaces the whole lifecycle.
+	h.Require.NoError(h.Execute("sandbox", "update", "--name", "sbx-1", "--terminated-retention", "7d"))
+	h.Require.Equal(map[string]any{"lifecycle": map[string]any{"terminated_retention": "168h0m0s"}},
+		sandboxTestCalls(m, "PATCH", "/v1/sandboxes/instances/sbx-1")[1].BodyJSON(t))
 }
 
 func Test_Sandbox_Delete_ConfirmsAndLogsToStderr(t *testing.T) {

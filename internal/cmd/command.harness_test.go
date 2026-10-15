@@ -1965,3 +1965,160 @@ func Test_Harness_Sync_RestartsCodexDaemon(t *testing.T) {
 	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
 	h.Require.Equal(1, busy.restarts)
 }
+
+func Test_Harness_Setup_UseSessionCredential(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	base := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+
+	// --key-name names a key the CLI creates, which it never does here.
+	h.Require.Error(h.Execute(append(slices.Clone(base), "--use-session-credential", "--key-name", "laptop")...))
+	h.Require.Contains(h.Stderr.String(), "--key-name is not used with --use-session-credential")
+
+	h.Require.NoError(h.Execute(append(slices.Clone(base), "--use-session-credential")...))
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "no routes API key is created")
+	h.Require.Nil(api.FindCall("GET", "/v1/users/me"), "the session key needs no user-scoped save")
+	h.Require.Equal("test-key", readHarnessSettings(t, "claude-code", path)["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
+	record := harnessRecordFile(t).Harnesses["claude-code"]
+	h.Require.Equal("session", record.CredentialSource)
+	h.Require.Empty(record.KeyName)
+
+	// A rerun with the same key changes nothing.
+	h.Require.NoError(h.Execute(append(slices.Clone(base), "--use-session-credential", "--output", "json")...))
+	var rerun public.HarnessPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
+	for _, item := range rerun.Items {
+		h.Require.False(item.Changed)
+	}
+
+	// A rotated key shows as a change in the preview and is applied.
+	t.Setenv("BASETEN_API_KEY", "rotated-key")
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--dry-run", "--output", "json"))
+	var preview public.HarnessPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &preview))
+	for _, item := range preview.Items {
+		h.Require.True(item.Changed, "a rotated session key is a change")
+	}
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "no key was created by the preview")
+	h.Require.NoError(h.Execute(append(slices.Clone(base), "--use-session-credential")...))
+	h.Require.Equal("rotated-key", readHarnessSettings(t, "claude-code", path)["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
+}
+
+func Test_Harness_Setup_UseSessionCredentialRequiresAPIKey(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	t.Setenv("BASETEN_API_KEY", "")
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+
+	// An OAuth session has no embeddable key.
+	h.Require.NoError(configDirStore(t).SetOAuthProfile("alice", api.URL, auth.OAuthCredential{AccessToken: "at", RefreshToken: "rt"}, true, nil))
+	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--dry-run"))
+	h.Require.Contains(h.Stderr.String(), "no API key to install")
+	h.Require.NoFileExists(path)
+
+	// Neither does an unauthenticated session, which cannot list teams at all.
+	h.Require.NoError(configDirStore(t).RemoveProfile("alice"))
+	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--dry-run"))
+	h.Require.Contains(h.Stderr.String(), "not logged in")
+	h.Require.NoFileExists(path)
+}
+
+func Test_Harness_Sync_UseSessionCredential(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--yes"))
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+
+	// Nothing changed: up to date, without creating a key.
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+
+	// A rotated key is rewritten even though no route changed.
+	t.Setenv("BASETEN_API_KEY", "rotated-key")
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Equal("rotated-key", readHarnessSettings(t, "claude-code", path)["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "sync never creates a replacement key")
+
+	// The key is gone: sync errors instead of minting one.
+	t.Setenv("BASETEN_API_KEY", "")
+	h.Require.Error(h.Execute("harness", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "set BASETEN_API_KEY or use an API-key profile")
+	h.Require.Contains(h.Stderr.String(), "--use-session-credential")
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+}
+
+func Test_Harness_Sync_MixedCredentialSources(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--config-dir", dir, "--key-name", "laptop", "--yes"))
+	keys := countCalls(api, "POST", "/v1/teams/team-a/api_keys")
+	h.Require.Equal(1, keys)
+
+	// Sync refreshes both without cross-applying credentials: the session key
+	// stays with claude-code and the created key with opencode.
+	setHarnessRoutes(api, "acme/primary", "acme/second")
+	h.Require.NoError(h.Execute("harness", "sync", "--yes"))
+	h.Require.Equal("test-key", readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
+	opencode, err := os.ReadFile(harnessSettingsFile("opencode", dir))
+	h.Require.NoError(err)
+	h.Require.Contains(string(opencode), "secret-team-a")
+	h.Require.NotContains(string(opencode), "test-key")
+	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "the created key is reused")
+}
+
+func Test_Harness_Teardown_KeepsSessionCredential(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := harnessAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	setup := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--yes"}
+	teardown := []string{"harness", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+	// List the session's key as a routes key the caller created, so teardown
+	// could delete it if it weren't protected.
+	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{
+		map[string]any{"prefix": "test-k", "type": "ROUTES", "name": "sandbox", "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"},
+	}})
+	api.SetRoute("DELETE", "/v1/api_keys/test-k", 200, map[string]string{"prefix": "test-k"})
+	h.Require.NoError(h.Execute(setup...))
+
+	// The settings are removed, but the key is never offered for deletion.
+	h.Require.NoError(h.Execute("harness", "teardown", "--harness", "claude-code", "--config-dir", dir, "--dry-run"))
+	h.Require.Contains(h.Stderr.String(), "Keeping the API key installed with --use-session-credential")
+	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also delete the routes API key")
+	h.Require.NoError(h.Execute(teardown...))
+	raw, err := os.ReadFile(path)
+	h.Require.NoError(err)
+	h.Require.NotContains(string(raw), "test-key", "the settings were removed")
+	h.Require.Equal(0, countCalls(api, "DELETE", "/v1/api_keys/test-k"))
+
+	// Settings without a record — a baked image, say — keep the session's key
+	// too, since it is the key the session runs with.
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NoError(os.Remove(filepath.Join(recordDir(t), "harness.json")))
+	h.Require.NoError(h.Execute(teardown...))
+	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also delete the routes API key")
+	raw, err = os.ReadFile(path)
+	h.Require.NoError(err)
+	h.Require.NotContains(string(raw), "test-key", "the settings were removed")
+	for _, call := range api.Calls() {
+		h.Require.NotEqual("DELETE", call.Method, "the session's key is never deleted")
+	}
+}
