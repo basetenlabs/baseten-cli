@@ -103,7 +103,7 @@ func commandSandboxPreviewCreate(ctx *CommandContext, flags *cmd.SandboxPreviewC
 	if err != nil {
 		return err
 	}
-	ttl, expiresAt := sandboxPreviewExpiry(flags.SandboxPreviewExpiryFlags)
+	ttl, expiresAt := sandboxPreviewExpiry(ctx, flags.SandboxPreviewExpiryFlags)
 	request := managementapi.CreateSandboxPreviewRequest{
 		Port:            flags.Port,
 		Name:            sandboxOptionalString(flags.PreviewName),
@@ -142,7 +142,7 @@ func commandSandboxPreviewUpdate(ctx *CommandContext, flags *cmd.SandboxPreviewU
 	if err != nil {
 		return err
 	}
-	ttl, expiresAt := sandboxPreviewExpiry(flags.SandboxPreviewExpiryFlags)
+	ttl, expiresAt := sandboxPreviewExpiry(ctx, flags.SandboxPreviewExpiryFlags)
 	request := managementapi.UpdateSandboxPreviewRequest{
 		ResponseHeaders: responseHeaders,
 		RequestHeaders:  requestHeaders,
@@ -314,10 +314,11 @@ func sandboxPreviewHeaders(flagName string, values []string) (*managementapi.San
 
 // sandboxPreviewExpiry builds a preview's ttl and expires_at, each nil when its
 // flag is unset. Both set is left for the server to reject. The TTL goes out
-// in Go syntax, which the server accepts.
-func sandboxPreviewExpiry(flags cmd.SandboxPreviewExpiryFlags) (*string, *time.Time) {
+// in Go syntax, which the server accepts, and whenever passed, 0 included, so
+// the server judges what was typed rather than it being dropped as unset.
+func sandboxPreviewExpiry(ctx *CommandContext, flags cmd.SandboxPreviewExpiryFlags) (*string, *time.Time) {
 	var ttl *string
-	if flags.TTL != 0 {
+	if ctx.Command.Flags().Changed("ttl") {
 		ttl = new(flags.TTL.String())
 	}
 	var expiresAt *time.Time

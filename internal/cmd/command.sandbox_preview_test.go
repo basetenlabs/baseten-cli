@@ -81,6 +81,11 @@ func Test_Sandbox_Preview_Create_SendsOnlySetFields(t *testing.T) {
 		"--expires-at", "2026-11-01T12:00:00Z"))
 	h.Require.Equal(map[string]any{"port": float64(3000), "expires_at": "2026-11-01T12:00:00Z"},
 		sandboxTestCalls(m, "POST", sandboxTestPreviewsPath)[2].BodyJSON(t))
+
+	// A passed 0 is sent for the server to judge, not dropped as unset.
+	h.Require.NoError(h.Execute("sandbox", "preview", "create", "--name", "sbx-1", "--port", "3000", "--ttl", "0"))
+	h.Require.Equal(map[string]any{"port": float64(3000), "ttl": "0s"},
+		sandboxTestCalls(m, "POST", sandboxTestPreviewsPath)[3].BodyJSON(t))
 }
 
 func Test_Sandbox_Preview_Create_RequiresPortAndValidHeaders(t *testing.T) {
@@ -106,9 +111,13 @@ func Test_Sandbox_Preview_Update_SendsOnlySetFields(t *testing.T) {
 	h.Require.Equal(map[string]any{"public": true, "request_headers": map[string]any{"X-A": "1"}, "ttl": "1h0m0s"},
 		sandboxTestCalls(m, "PATCH", sandboxTestPreviewsPath+"/web")[1].BodyJSON(t))
 
+	// A passed 0 is sent for the server to judge, not dropped as unchanged.
+	h.Require.NoError(h.Execute("sandbox", "preview", "update", "--name", "sbx-1", "--preview-name", "web", "--ttl", "0"))
+	h.Require.Equal(map[string]any{"ttl": "0s"}, sandboxTestCalls(m, "PATCH", sandboxTestPreviewsPath+"/web")[2].BodyJSON(t))
+
 	h.Require.ErrorContains(h.Execute("sandbox", "preview", "update", "--name", "sbx-1", "--preview-name", "web",
 		"--public", "--private"), "cannot be combined")
-	h.Require.Len(sandboxTestCalls(m, "PATCH", sandboxTestPreviewsPath+"/web"), 2)
+	h.Require.Len(sandboxTestCalls(m, "PATCH", sandboxTestPreviewsPath+"/web"), 3)
 }
 
 func Test_Sandbox_Preview_Delete_ConfirmsAndLogsToStderr(t *testing.T) {
