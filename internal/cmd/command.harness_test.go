@@ -546,8 +546,8 @@ func Test_Harness_Setup_KeyringUnavailableStoresPlaintext(t *testing.T) {
 func Test_Harness_Setup_RouteFlags(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, tc := range []struct{ name, flag string }{
-		{"codex", "--background-route"}, {"codex", "--subagent-route"}, {"codex", "--fallback-route"}, {"opencode", "--fallback-route"},
-		{"pi", "--background-route"}, {"pi", "--subagent-route"}, {"pi", "--fallback-route"},
+		{"codex", "--background-route"}, {"codex", "--fallback-route"}, {"opencode", "--fallback-route"},
+		{"pi", "--background-route"}, {"pi", "--fallback-route"},
 	} {
 		t.Run(tc.name+tc.flag, func(t *testing.T) {
 			h, api := fakeHarnessAPI(t)
@@ -563,6 +563,20 @@ func Test_Harness_Setup_RouteFlags(t *testing.T) {
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--background-route", "acme/primary", "--yes"))
 	env := readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["env"].(map[string]any)
 	h.Require.Equal("acme/primary", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+}
+
+func Test_Harness_Setup_SubagentRouteUnsupportedHarnessWarns(t *testing.T) {
+	skipUnlessSupported(t)
+	for _, name := range []string{"codex", "pi"} {
+		t.Run(name, func(t *testing.T) {
+			h, api := fakeHarnessAPI(t)
+			dir := t.TempDir()
+			require.NoError(t, h.Execute("harness", "setup", "--harness", name, "--config-dir", dir, "--subagent-route", "acme/primary", "--yes"))
+			require.Contains(t, h.Stderr.String(), "warning: --subagent-route is not supported by "+name+"; it will be ignored")
+			require.Equal(t, 1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+			require.FileExists(t, harnessSettingsFile(name, dir))
+		})
+	}
 }
 
 func harnessDefaultsModel(name string) map[string]any {

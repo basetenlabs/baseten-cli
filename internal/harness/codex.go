@@ -207,6 +207,8 @@ func (codexHarness) BackgroundRoute(Selection) string { return "" }
 
 var codexCredentialPath = []string{"model_providers", providerID, "experimental_bearer_token"}
 
+func (codexHarness) SupportsSubagent() bool { return false }
+
 func (codexHarness) Credential(path string) (string, error) {
 	return credential(path, codexCredentialPath)
 }
