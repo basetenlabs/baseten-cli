@@ -8,7 +8,7 @@ import (
 )
 
 // sandboxPreRelease leads every sandbox command's description, paired with
-// the " (PRE-RELEASE)" summary suffix, following volumePreRelease.
+// the " (PRE-RELEASE)" summary suffix.
 const sandboxPreRelease = "PRE-RELEASE: Sandbox commands are not GA yet. " +
 	"Their arguments, flags, and output may change.\n\n"
 
