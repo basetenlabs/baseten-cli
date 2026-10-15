@@ -51,10 +51,18 @@ func newHarnessUsageHarness(t *testing.T, now time.Time, body map[string]any) (*
 	api := h.MockManagementAPI()
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
 	api.SetRoute("GET", "/v1/routes/usage", 200, body)
-	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []any{
-		harnessTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil),
-	}})
+	harnessSetTeams(api, harnessTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil))
 	return h, api
+}
+
+// harnessSetTeams serves teams as yours, with your settings in each.
+func harnessSetTeams(api *MockManagementAPI, teams ...map[string]any) {
+	listing := make([]any, len(teams))
+	for i, t := range teams {
+		listing[i] = map[string]any{"id": t["team_id"], "name": t["team_name"], "default": false, "created_at": "2026-01-01T00:00:00Z"}
+		api.SetRoute("GET", "/v1/routes/settings/teams/"+t["team_id"].(string)+"/users/me", 200, t)
+	}
+	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": listing})
 }
 
 // harnessUsageLastQuery returns the query of the last usage request.
@@ -110,12 +118,12 @@ func Test_Harness_Usage_DefaultsToMonthToDateForCurrentUser(t *testing.T) {
 
 func Test_Harness_Usage_Teams(t *testing.T) {
 	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
-	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []any{
+	harnessSetTeams(api,
 		harnessTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil),
 		harnessTeamSettings("team-b", "Research", "12.5", "10", "100.00", "member"),
 		harnessTeamSettings("team-c", "FDE", "80", "100", "100", "team"),
 		harnessTeamSettings("team-d", "Infra", "0", nil, nil, nil),
-	}})
+	)
 
 	h.Require.ErrorContains(h.Execute("harness", "usage", "--team", "Sales"), `no team of yours matched "Sales"; your teams are "Engineering", "Research", "FDE", "Infra"`)
 
@@ -200,7 +208,7 @@ func Test_Harness_Usage_NullCostIsUnpriced(t *testing.T) {
 
 func Test_Harness_Usage_Empty(t *testing.T) {
 	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-09-01")))
-	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []any{}})
+	harnessSetTeams(api)
 
 	h.Require.NoError(h.Execute("harness", "usage"))
 	h.Require.Empty(h.Stdout.String())
@@ -208,8 +216,9 @@ func Test_Harness_Usage_Empty(t *testing.T) {
 	h.Require.NoError(h.Execute("harness", "usage", "--output", "json"))
 	h.Require.Equal("[]\n", h.Stdout.String(), "still valid JSON with no teams")
 
-	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 404, map[string]string{"message": "not found"})
-	h.Require.ErrorContains(h.Execute("harness", "usage"), "getting your teams: ")
+	harnessSetTeams(api, harnessTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil))
+	api.SetRoute("GET", "/v1/routes/settings/teams/team-a/users/me", 404, map[string]string{"message": "not found"})
+	h.Require.ErrorContains(h.Execute("harness", "usage"), "getting your settings in Engineering: ")
 	h.Require.Contains(h.Stderr.String(), "If you're using a team or workspace API key, run 'baseten auth login'",
 		"a service-account key has no teams or routes usage of its own")
 }
