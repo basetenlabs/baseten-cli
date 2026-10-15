@@ -229,7 +229,8 @@ var commandVolume = Command{
 				"ref that meant to name one version cannot take the whole volume with it.\n\n" +
 				"A deleted version is recoverable with 'volume restore' for a limited window, which " +
 				"the output reports.\n\n" +
-				"A tag ref is an error while tags cannot be mutated, and a path is an error because " +
+				"A tag ref is an error, since deleting through one would delete the version it " +
+				"points at. Delete the tag itself with 'volume tag delete'. A path is an error because " +
 				"versions are immutable.\n\n" + volumeRefGrammar,
 			ArgsUsage: "REF",
 			ExactArgs: 1,
@@ -316,7 +317,147 @@ var commandVolume = Command{
 				},
 			},
 		},
+		{
+			Name:    "update",
+			Summary: "Set or clear a volume's expiration time (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Updates the settings of the volume REF names. The expiration time is the " +
+				"only setting. Pass --expires-at with an RFC 3339 date-time to make the volume expire " +
+				"at that time, or --clear-expires-at to clear an expiration time set earlier. " +
+				"Exactly one of the two is required.\n\n" +
+				"When a volume expires, every live version is deleted, every tag is removed, and the " +
+				"volume leaves listings. Clearing the expiration time afterward brings nothing back. " +
+				"Each deleted version can be restored with 'volume restore' until its recovery window " +
+				"closes.\n\n" +
+				"REF must name a volume, with no selector and no path. The expiration time " +
+				"belongs to the whole volume, not to one version.\n\n" + volumeRefGrammar,
+			ArgsUsage: "REF",
+			ExactArgs: 1,
+			Flags:     VolumeUpdateFlags{},
+			Output: &CommandOutput[managementapi.PatchVolumeResponse]{
+				TextDescription: "One field per line: the namespace, the volume, when it expires, and " +
+					"the volume's sequence. Prompts for confirmation first unless --yes is passed.",
+				Examples: []CommandExample{
+					{
+						Description: "Make a volume expire at the start of 2030.",
+						Command:     "baseten volume update bdn:<namespace>/<volume> --expires-at 2030-01-01T00:00:00Z",
+					},
+					{
+						Description: "Clear a volume's expiration time.",
+						Command:     "baseten volume update bdn:<namespace>/<volume> --clear-expires-at",
+					},
+					{
+						Description: "Make a volume expire at a time, without prompting.",
+						CommandLines: []string{
+							"baseten volume update bdn:<namespace>/<volume>",
+							"--expires-at 2030-01-01T00:00:00Z",
+							"--yes",
+						},
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print when the volume now expires.",
+					CommandLines: []string{
+						"baseten volume update bdn:<namespace>/<volume>",
+						"--expires-at 2030-01-01T00:00:00Z",
+						"--yes",
+						"--jq '.expires_at'",
+					},
+				},
+			},
+		},
 		commandVolumeSync,
+		{
+			Name:    "tag",
+			Summary: "Set and delete volume tags (PRE-RELEASE)",
+			Description: volumePreRelease +
+				"Manage the tags of a volume. A tag is a mutable name pointing at one version, so " +
+				"setting it again moves it, and the version it pointed at before stays reachable by " +
+				"digest. 'volume stat' and 'volume versions' show a volume's tags, and so does " +
+				"'volume ls' on a namespace.\n\n" + volumeRefGrammar,
+			Children: []Command{
+				{
+					Name:    "set",
+					Summary: "Point a tag at a version (PRE-RELEASE)",
+					Description: volumePreRelease +
+						"Points the tag in --tag at the version --volume-ref selects. Creates the tag if " +
+						"it does not exist. A volume ref with no selector tags the version head points at. A " +
+						"':<tag>' or '@<digest>' selector tags that version. A path is an error, since a tag " +
+						"names a whole version.\n\n" +
+						"Setting a tag that already exists overwrites it. Pass --expires-at to make the tag " +
+						"expire at that time. Setting it again without --expires-at clears the tag's expiration " +
+						"time. The tag is still removed if its version or volume expires.\n\n" +
+						"--tag may be 'head'. Setting it changes which version a ref with no tag or " +
+						"digest resolves to. 'head' cannot take --expires-at and cannot point at an expiring " +
+						"version. Setting head prompts for confirmation first unless --yes is passed.\n\n" +
+						volumeRefGrammar,
+					Flags: VolumeTagSetFlags{},
+					Output: &CommandOutput[managementapi.SetVolumeTagResponse]{
+						TextDescription: "One field per line: the ref of the version the tag now points at, " +
+							"the tag, the digest, when the tag expires, and the volume's sequence.",
+						Examples: []CommandExample{
+							{
+								Description: "Point a tag at a version.",
+								Command:     "baseten volume tag set --volume-ref bdn:<namespace>/<volume>@b3:<digest> --tag prod",
+							},
+							{
+								Description: "Move a tag to the version head points at.",
+								Command:     "baseten volume tag set --volume-ref bdn:<namespace>/<volume> --tag prod",
+							},
+							{
+								Description: "Point a tag at the version another tag selects, with the tag expiring at the start of 2030.",
+								CommandLines: []string{
+									"baseten volume tag set",
+									"--volume-ref bdn:<namespace>/<volume>:canary",
+									"--tag nightly",
+									"--expires-at 2030-01-01T00:00:00Z",
+								},
+							},
+							{
+								Description: "Move head, which is what refs without a tag or digest resolve to.",
+								Command:     "baseten volume tag set --volume-ref bdn:<namespace>/<volume>@b3:<digest> --tag head --yes",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print the ref of the version the tag now points at, pinned to its digest.",
+							CommandLines: []string{
+								"baseten volume tag set",
+								"--volume-ref bdn:<namespace>/<volume>@b3:<digest>",
+								"--tag prod",
+								"--jq '.version_ref'",
+							},
+						},
+					},
+				},
+				{
+					Name:    "delete",
+					Summary: "Delete a volume tag (PRE-RELEASE)",
+					Description: volumePreRelease +
+						"Deletes the tag in --tag from the volume --volume-ref names. The version it " +
+						"pointed at stays reachable by digest and by any other tag. Deleting a tag the volume " +
+						"does not have succeeds and reports that nothing was deleted.\n\n" +
+						"--volume-ref must name a volume, with no selector and no path. A tag belongs to the " +
+						"volume, not to one version. Deleting 'head' makes refs without a tag or digest stop " +
+						"resolving until head is set again. Deleting head prompts for confirmation first " +
+						"unless --yes is passed.\n\n" + volumeRefGrammar,
+					Flags: VolumeTagDeleteFlags{},
+					Output: &CommandOutput[managementapi.DeleteVolumeTagResponse]{
+						TextDescription: "One field per line: the tag, whether it existed and was deleted, " +
+							"and the volume's sequence.",
+						Examples: []CommandExample{
+							{
+								Description: "Delete a tag.",
+								Command:     "baseten volume tag delete --volume-ref bdn:<namespace>/<volume> --tag prod",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print whether the tag existed.",
+							Command:     "baseten volume tag delete --volume-ref bdn:<namespace>/<volume> --tag prod --jq '.deleted'",
+						},
+					},
+				},
+			},
+		},
 	},
 }
 
@@ -357,7 +498,7 @@ type VolumePushFlags struct {
 	VolumeRefFlags
 	VolumeTransferFlags
 
-	Tags []string `flag:"tag" desc:"Tag to apply to the new version at commit. May be repeated, and adds to a tag written on REF. Push is the only command where a tag is written rather than read."`
+	Tags []string `flag:"tag" desc:"Tag to apply to the new version at commit. May be repeated, and adds to a tag written on REF."`
 
 	SourceURI string `flag:"source-uri" desc:"Where the tree came from, for example 'hf://<repo>@<revision>'. Defaults to a file URI for DIR and is part of the version's digest, so a fixed value keeps the same tree at one version across directories."`
 
@@ -394,6 +535,32 @@ type VolumeVersionsFlags struct {
 type VolumeRestoreFlags struct {
 	CommandFlags
 	VolumeRefFlags
+}
+
+type VolumeTagSetFlags struct {
+	CommandFlags
+	VolumeRefFlags
+
+	VolumeRef string `flag:"volume-ref" desc:"Ref of the version to tag, as bdn:<namespace>/<volume> for the version head points at, or with a :<tag> or @<digest> selector for that version." required:"true"`
+	Tag       string `flag:"tag" desc:"Tag to point at the version. May be 'head'." required:"true"`
+	ExpiresAt string `flag:"expires-at" desc:"Time at which the tag expires, as an RFC 3339 date-time with a UTC offset, as in 2030-01-01T00:00:00Z. It must be in the future and at most ten years ahead. Omit it for a tag that does not expire. Omitting it on an existing tag clears its expiration time."`
+	Yes       bool   `flag:"yes" desc:"Skip confirmation for 'head'. Required when stdin is not a terminal and --tag is 'head'."`
+}
+
+type VolumeTagDeleteFlags struct {
+	CommandFlags
+
+	VolumeRef string `flag:"volume-ref" desc:"Ref of the volume the tag belongs to, as bdn:<namespace>/<volume>, with no selector and no path." required:"true"`
+	Tag       string `flag:"tag" desc:"Tag to delete. May be 'head'." required:"true"`
+	Yes       bool   `flag:"yes" desc:"Skip confirmation for 'head'. Required when stdin is not a terminal and --tag is 'head'."`
+}
+
+type VolumeUpdateFlags struct {
+	CommandFlags
+
+	ExpiresAt      string `flag:"expires-at" desc:"Time at which the volume expires, as an RFC 3339 date-time with a UTC offset, as in 2030-01-01T00:00:00Z. It must be in the future and at most ten years ahead." oneof:"expiration"`
+	ClearExpiresAt bool   `flag:"clear-expires-at" desc:"Clear the volume's expiration time." oneof:"expiration"`
+	Yes            bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
 // VolumeNamespaceList is the JSON output of `baseten volume ls` with no ref:
@@ -454,6 +621,9 @@ type VolumeEntryDetail struct {
 
 // VolumePushResult is the JSON output of `baseten volume push`.
 type VolumePushResult struct {
+	// AverageBytesPerSecond divides transferred payload by the transfer phase
+	// duration. Zero is reported when no positive duration is available.
+	AverageBytesPerSecond float64 `json:"average_bytes_per_second"`
 	// DurationSeconds is total elapsed SDK transfer time, including setup and finalization.
 	DurationSeconds float64 `json:"duration_seconds"`
 	// VersionRef is the published version, pinned to its digest, which is what
@@ -482,6 +652,9 @@ type VolumePushResult struct {
 
 // VolumePullResult is the JSON output of `baseten volume pull`.
 type VolumePullResult struct {
+	// AverageBytesPerSecond divides transferred payload by the transfer phase
+	// duration. Zero is reported when no positive duration is available.
+	AverageBytesPerSecond float64 `json:"average_bytes_per_second"`
 	// DurationSeconds is total elapsed SDK transfer time, including setup and finalization.
 	DurationSeconds float64 `json:"duration_seconds"`
 	// VersionRef is the version that was downloaded, pinned to its digest.

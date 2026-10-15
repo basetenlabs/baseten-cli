@@ -167,6 +167,11 @@ func Test_Sandbox_Create_SendsOnlySetFields(t *testing.T) {
 	}, body)
 	h.Require.Contains(h.Stdout.String(), "Name:         sbx-1")
 	h.Require.Contains(h.Stdout.String(), "Labels:       a=1, b=2")
+
+	// A passed 0 is sent for the server to reject, not dropped as unset.
+	h.Require.NoError(h.Execute("sandbox", "create", "--memory", "0"))
+	h.Require.Equal(map[string]any{"memory": float64(0)},
+		sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[2].BodyJSON(t))
 }
 
 func Test_Sandbox_Create_RejectsMalformedKeyValues(t *testing.T) {

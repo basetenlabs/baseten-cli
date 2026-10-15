@@ -164,7 +164,9 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 	if flags.IfNotExists {
 		request.CreateIfNotExists = &flags.IfNotExists
 	}
-	if flags.Memory != 0 {
+	// Sent whenever passed, 0 included, so the server rejects what was typed
+	// rather than applying its default.
+	if ctx.Command.Flags().Changed("memory") {
 		request.Memory = &flags.Memory
 	}
 	if labels != nil {

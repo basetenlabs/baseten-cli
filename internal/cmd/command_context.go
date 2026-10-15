@@ -572,6 +572,25 @@ func (c *CommandContext) Sleep(d time.Duration) error {
 	}
 }
 
+// NewTicker returns periodic ticks and a cleanup function. WithTicker can
+// replace the timer in tests while keeping command invocation unchanged.
+func (c *CommandContext) NewTicker(interval time.Duration) (<-chan time.Time, func()) {
+	if fn, ok := c.Value(tickerKey{}).(func(time.Duration) (<-chan time.Time, func())); ok {
+		return fn(interval)
+	}
+	ticker := time.NewTicker(interval)
+	return ticker.C, ticker.Stop
+}
+
+type tickerKey struct{}
+
+// WithTicker overrides CommandContext.NewTicker so tests can trigger ticks
+// without waiting for wall-clock intervals. The returned channel must remain
+// open until cleanup; cleanup must stop the tick source without closing it.
+func WithTicker(ctx context.Context, fn func(time.Duration) (<-chan time.Time, func())) context.Context {
+	return context.WithValue(ctx, tickerKey{}, fn)
+}
+
 type nowKey struct{}
 type sleepKey struct{}
 

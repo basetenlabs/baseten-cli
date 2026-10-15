@@ -17,6 +17,9 @@ func init() {
 	Register("volume rm", commandVolumeRm)
 	Register("volume versions", commandVolumeVersions)
 	Register("volume restore", commandVolumeRestore)
+	Register("volume tag set", commandVolumeTagSet)
+	Register("volume tag delete", commandVolumeTagDelete)
+	Register("volume update", commandVolumeUpdate)
 }
 
 // volumeRefScheme is the whole of a ref that names nothing at all. Every
@@ -577,7 +580,9 @@ func commandVolumeRm(ctx *CommandContext, flags *cmd.VolumeRmFlags) error {
 	case ref.Tag != "":
 		return cmd.NewErrUsagef(
 			"ref %s names a tag, and deleting through one would delete the "+
-				"version it points at; name that version by digest", ref)
+				"version it points at; name that version by digest, or delete the "+
+				"tag itself with 'baseten volume tag delete --volume-ref bdn:%s/%s --tag %s'",
+			ref, ref.Namespace, ref.Volume, ref.Tag)
 	case ref.Digest != "":
 		return volumeRmVersion(ctx, flags, ref)
 	case !flags.Recursive:
@@ -680,6 +685,189 @@ func commandVolumeRestore(ctx *CommandContext, flags *cmd.VolumeRestoreFlags) er
 	return nil
 }
 
+func commandVolumeUpdate(ctx *CommandContext, flags *cmd.VolumeUpdateFlags) error {
+	ref, err := volumeParseRef(ctx.Args[0])
+	if err != nil {
+		return err
+	}
+	switch ref.Level() {
+	case client.VolumeRefLevelNamespace:
+		return cmd.NewErrUsagef(
+			"ref %s names a namespace, and an expiration time belongs to a volume; "+
+				"write 'bdn:%s/<volume>'", ref, ref.Namespace)
+	case client.VolumeRefLevelPoint:
+		return cmd.NewErrUsagef(
+			"ref %s names a version, and an expiration time belongs to the whole "+
+				"volume; write 'bdn:%s/%s'", ref, ref.Namespace, ref.Volume)
+	case client.VolumeRefLevelPath:
+		return cmd.NewErrUsagef(
+			"ref %s names a path, and an expiration time belongs to the whole volume; "+
+				"write 'bdn:%s/%s'", ref, ref.Namespace, ref.Volume)
+	}
+	// The request always carries expires_at, since the management API refuses
+	// a body without it. Null clears the expiration time.
+	expiresAt := managementapi.NewOptional[time.Time](nil)
+	question := fmt.Sprintf("Clear the expiration time of volume %s?", ref)
+	if !flags.ClearExpiresAt {
+		parsed, err := volumeExpiresAtArg(flags.ExpiresAt)
+		if err != nil {
+			return err
+		}
+		expiresAt = managementapi.NewOptional(&parsed)
+		question = fmt.Sprintf("Make volume %s expire at %s? Every live version and every tag "+
+			"is deleted when it does.", ref, flags.ExpiresAt)
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	if !flags.Yes {
+		if err := ctx.ConfirmYesNo(question); err != nil {
+			return err
+		}
+	}
+
+	resp, err := cl.API().PatchVolumes(ctx, ref.Namespace, ref.Volume,
+		managementapi.PatchVolumeRequest{ExpiresAt: expiresAt})
+	if err != nil {
+		return fmt.Errorf("updating %s: %w", ref, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(resp)
+		return nil
+	}
+	ctx.Outputf("Namespace:       %s\n", resp.Namespace)
+	ctx.Outputf("Volume:          %s\n", resp.Volume)
+	ctx.Outputf("Expires:         %s\n", volumeExpiryText(resp.ExpiresAt))
+	ctx.Outputf("Volume sequence: %d\n", resp.VolumeSequence)
+	return nil
+}
+
+func commandVolumeTagSet(ctx *CommandContext, flags *cmd.VolumeTagSetFlags) error {
+	ref, err := volumeParseRef(flags.VolumeRef)
+	if err != nil {
+		return err
+	}
+	// A path is refused here because volumeVersionSelector ignores it.
+	switch ref.Level() {
+	case client.VolumeRefLevelNamespace:
+		return cmd.NewErrUsagef(
+			"--volume-ref %s names a namespace, and a tag belongs to a volume; write "+
+				"'bdn:%s/<volume>', with a selector to pick a version other than head", ref, ref.Namespace)
+	case client.VolumeRefLevelPath:
+		return cmd.NewErrUsagef(
+			"--volume-ref %s names a path, and a tag names a whole version; drop the path", ref)
+	}
+	tag := flags.Tag
+	if err := volumeTagArg(ref, tag); err != nil {
+		return err
+	}
+	body := managementapi.SetVolumeTagRequest{Tag: tag, Version: volumeVersionSelector(ref)}
+	if flags.ExpiresAt != "" {
+		expiresAt, err := volumeExpiresAtArg(flags.ExpiresAt)
+		if err != nil {
+			return err
+		}
+		body.ExpiresAt = &expiresAt
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	// Moving head changes what refs without a tag or digest resolve to.
+	if tag == "head" && !flags.Yes {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Set head of bdn:%s/%s to version %s?",
+			ref.Namespace, ref.Volume, volumeVersionSelector(ref))); err != nil {
+			return err
+		}
+	}
+
+	resp, err := cl.API().PostVolumesTags(ctx, ref.Namespace, ref.Volume, body)
+	if err != nil {
+		return fmt.Errorf("setting tag %s on %s: %w", tag, ref, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(resp)
+		return nil
+	}
+	ctx.Outputf("Ref:             %s\n", volumeRefTextOf(resp.VersionRef, flags.VolumeRefFlags))
+	ctx.Outputf("Tag:             %s\n", resp.Tag)
+	ctx.Outputf("Digest:          %s\n", resp.Digest)
+	ctx.Outputf("Expires:         %s\n", volumeExpiryText(resp.ExpiresAt))
+	ctx.Outputf("Volume sequence: %d\n", resp.VolumeSequence)
+	return nil
+}
+
+func commandVolumeTagDelete(ctx *CommandContext, flags *cmd.VolumeTagDeleteFlags) error {
+	ref, err := volumeParseRef(flags.VolumeRef)
+	if err != nil {
+		return err
+	}
+	switch ref.Level() {
+	case client.VolumeRefLevelNamespace:
+		return cmd.NewErrUsagef(
+			"--volume-ref %s names a namespace, and a tag belongs to a volume; write "+
+				"'bdn:%s/<volume>' and the tag in --tag", ref, ref.Namespace)
+	case client.VolumeRefLevelPoint:
+		return cmd.NewErrUsagef(
+			"--volume-ref %s names a version, and a tag is deleted from the volume, not from a "+
+				"version; write 'bdn:%s/%s' and the tag in --tag", ref, ref.Namespace, ref.Volume)
+	case client.VolumeRefLevelPath:
+		return cmd.NewErrUsagef(
+			"--volume-ref %s names a path, and a tag belongs to the whole volume; write "+
+				"'bdn:%s/%s' and the tag in --tag", ref, ref.Namespace, ref.Volume)
+	}
+	tag := flags.Tag
+	if err := volumeTagArg(ref, tag); err != nil {
+		return err
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	// Deleting head leaves refs without a tag or digest unresolvable until head is set again.
+	if tag == "head" && !flags.Yes {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete head of bdn:%s/%s?",
+			ref.Namespace, ref.Volume)); err != nil {
+			return err
+		}
+	}
+
+	resp, err := cl.API().DeleteVolumesTags(ctx, ref.Namespace, ref.Volume, tag,
+		managementapi.DeleteVolumeTagRequest{})
+	if err != nil {
+		return fmt.Errorf("deleting tag %s from %s: %w", tag, ref, err)
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(resp)
+		return nil
+	}
+	deleted := "no"
+	if resp.Deleted {
+		deleted = "yes"
+	}
+	ctx.Outputf("Tag:             %s\n", resp.Tag)
+	ctx.Outputf("Deleted:         %s\n", deleted)
+	ctx.Outputf("Volume sequence: %d\n", resp.VolumeSequence)
+	return nil
+}
+
+// volumeTagArg checks --tag against the SDK's tag grammar, the only copy
+// this client has. On delete the tag is a URL path segment, so a slash in it
+// would come back from the API as a 404.
+func volumeTagArg(ref client.VolumeRef, tag string) error {
+	parsed, err := client.ParseVolumeRef(volumeRefScheme + ref.Namespace + "/" + ref.Volume + ":" + tag)
+	if err != nil || parsed.Tag != tag {
+		return cmd.NewErrUsagef(
+			"--tag %q must begin with a letter, digit, or underscore, contain only those "+
+				"characters plus dots and hyphens, and be at most 128 characters", tag)
+	}
+	return nil
+}
+
 // volumeVersionSelector renders the version a ref selects in the syntax the
 // REST path segment takes. A ref selecting nothing is the head lookup, which
 // upstream spells as a reserved tag needing no punctuation.
@@ -742,6 +930,18 @@ func volumeExpiryText(expiresAt *time.Time) string {
 		return "-"
 	}
 	return expiresAt.UTC().Format(time.RFC3339)
+}
+
+// volumeExpiresAtArg parses an --expires-at value. The management API checks
+// the future and ten-year bounds, since it has the request time.
+func volumeExpiresAtArg(value string) (time.Time, error) {
+	expiresAt, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, cmd.NewErrUsagef(
+			"--expires-at %q must be an RFC 3339 date-time with a UTC offset, "+
+				"as in 2030-01-01T00:00:00Z", value)
+	}
+	return expiresAt, nil
 }
 
 func volumeJoin(values []string) string {
