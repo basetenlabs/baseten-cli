@@ -112,6 +112,34 @@ var commandHarness = Command{
 			},
 		},
 		{
+			Name:    "harness-defaults",
+			Summary: "Show team default routes for harnesses (PRE-RELEASE)",
+			Description: harnessPreRelease +
+				"Show the default routes for each harness. " +
+				"Use --harness to narrow the output; without it, every harness is shown. " +
+				"Defaults can be changed on app.baseten.co or by API by an admin; this command only reads them.",
+			Flags: HarnessDefaultsFlags{},
+			Output: &CommandOutput[HarnessDefaultsList]{
+				TextDescription: "Table with columns: HARNESS, PRIMARY, BACKGROUND. " +
+					"Each route is followed by its source in parentheses; '-' means no default is set. " +
+					"JSON includes the team and each default's full route and source.",
+				Examples: []CommandExample{
+					{
+						Description: "Show every harness's defaults for your only team.",
+						Command:     "baseten harness harness-defaults",
+					},
+					{
+						Description: "Show one team's defaults for one harness.",
+						Command:     "baseten harness harness-defaults --team Engineering --harness claude-code",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the primary route for Claude Code.",
+					Command:     "baseten harness harness-defaults --harness claude-code --jq '.items[0].primary.route.name'",
+				},
+			},
+		},
+		{
 			Name:    "usage",
 			Summary: "Show your routes spend in your teams, this month by default (PRE-RELEASE)",
 			Description: harnessPreRelease +
@@ -210,6 +238,20 @@ type HarnessPlanList struct {
 	DeletedAPIKeys []string `json:"deleted_api_keys,omitempty"`
 }
 
+// HarnessDefault is one harness's default routes.
+type HarnessDefault struct {
+	Harness    string                           `json:"harness"`
+	Primary    *managementapi.RouteHarnessModel `json:"primary"`
+	Background *managementapi.RouteHarnessModel `json:"background"`
+}
+
+// HarnessDefaultsList is the JSON output of `baseten harness harness-defaults`.
+type HarnessDefaultsList struct {
+	TeamId   string           `json:"team_id"`
+	TeamName string           `json:"team_name"`
+	Items    []HarnessDefault `json:"items"`
+}
+
 // HarnessRoute is a route configured in a harness.
 type HarnessRoute struct {
 	Name        string `json:"name"`
@@ -280,6 +322,13 @@ type HarnessSetupFlags struct {
 	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a routes API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
 	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+}
+
+// HarnessDefaultsFlags are the flags for `baseten harness harness-defaults`.
+type HarnessDefaultsFlags struct {
+	CommandFlags
+	Team    string   `flag:"team" desc:"Team name or ID whose defaults to show. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
+	Harness []string `flag:"harness" desc:"Harness to show. May be repeated. Defaults to every harness." enum:"claude-code,codex,opencode,pi"`
 }
 
 // HarnessSyncFlags are the flags for `baseten harness sync`.
