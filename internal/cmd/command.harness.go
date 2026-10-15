@@ -232,7 +232,7 @@ func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *mana
 				label  string
 				stored *string
 			}{
-				{"default route", &target.record.Route},
+				{"primary route", &target.record.Route},
 				{"background route", &target.record.BackgroundRoute},
 				{"subagent route", &target.record.SubagentRoute},
 				{"fallback route", &target.record.FallbackRoute},
@@ -309,7 +309,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	record := harness.Record{
 		KeyName:          f.KeyName,
 		CredentialSource: credentialSource,
-		Route:            f.Route,
+		Route:            f.PrimaryRoute,
 		BackgroundRoute:  f.BackgroundRoute,
 		SubagentRoute:    f.SubagentRoute,
 		FallbackRoute:    f.FallbackRoute,
@@ -902,7 +902,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 		ctx.Outputf("  Config            %s\n", harnessDisplayPath(r.Config))
 		ctx.Outputf("  Version           %s\n", harnessInstallsLabel(r.Installs))
 		if r.DefaultRoute != "" {
-			ctx.Outputf("  Default route     %s\n", r.DefaultRoute)
+			ctx.Outputf("  Primary route     %s\n", r.DefaultRoute)
 		}
 		if r.BackgroundRoute != "" {
 			ctx.Outputf("  Background route  %s\n", r.BackgroundRoute)
@@ -1075,7 +1075,7 @@ func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, s
 		s := choice.selection
 		ctx.Outputf("\n%s\n", heading.Render(choice.Name()))
 		ctx.Outputf("  Config            %s\n", harnessDisplayPath(choice.detection.Path))
-		ctx.Outputf("  Default route     %s (%s)\n", accent.Render(s.Primary), s.primarySource)
+		ctx.Outputf("  Primary route     %s (%s)\n", accent.Render(s.Primary), s.primarySource)
 		if background := choice.BackgroundRoute(s.Selection); background != "" {
 			ctx.Outputf("  Background route  %s (%s)\n", accent.Render(background), s.backgroundSource)
 		}

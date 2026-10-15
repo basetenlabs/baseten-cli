@@ -328,7 +328,7 @@ func Test_Harness_Setup_TextSummary(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Configuration saved.")
 	h.Require.Contains(h.Stderr.String(), "Undo with: baseten harness teardown --harness claude-code --config-dir '"+dir+"'")
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--verbose"))
-	for _, want := range []string{"Team: Engineering", "Default route     acme/primary", "Background route  deepseek-ai/DeepSeek-V4.1-Flash", "Already configured"} {
+	for _, want := range []string{"Team: Engineering", "Primary route     acme/primary", "Background route  deepseek-ai/DeepSeek-V4.1-Flash", "Already configured"} {
 		h.Require.Contains(h.Stdout.String(), want)
 	}
 	h.Require.NotContains(h.Stdout.String(), "Available routes")
@@ -634,7 +634,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 		{
 			name:        "route flag wins over server default",
 			harnessName: "claude-code",
-			flags:       []string{"--route", "acme/first"},
+			flags:       []string{"--primary-route", "acme/first"},
 			endpoint: func(api *MockManagementAPI) {
 				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
 			},
@@ -731,7 +731,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 		{
 			name:        "both route flags set skip the fetch",
 			harnessName: "claude-code",
-			flags:       []string{"--route", "acme/first", "--background-route", "acme/background"},
+			flags:       []string{"--primary-route", "acme/first", "--background-route", "acme/background"},
 			endpoint: func(api *MockManagementAPI) {
 				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
 			},
@@ -1056,8 +1056,8 @@ func Test_Harness_Setup_RouterRouteInPickers(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("XDG_CONFIG_HOME", root)
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--route", "acme/auto", "--background-route", "acme/auto", "--yes"))
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--route", "acme/auto", "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--primary-route", "acme/auto", "--background-route", "acme/auto", "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "codex", "--primary-route", "acme/auto", "--yes"))
 	h.Require.NotContains(h.Stderr.String(), "skipping routes")
 
 	claude := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))
@@ -1172,7 +1172,7 @@ func Test_Harness_Setup_RouteMetadata(t *testing.T) {
 	h.Require.NotContains(fmt.Sprint(readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["availableModels"]), "acme/bare")
 
 	h.Stderr.Reset()
-	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/bare", "--config-dir", t.TempDir(), "--yes"))
+	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--primary-route", "acme/bare", "--config-dir", t.TempDir(), "--yes"))
 	h.Require.Contains(h.Stderr.String(), `route "acme/bare" has no model metadata`)
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "a failed setup creates no key")
 
@@ -1220,7 +1220,7 @@ func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
 	h.Require.Equal("acme/gpt", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
 	h.Require.Equal([]string{"acme/gpt", "acme/open", "acme/new"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 
-	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/gpt", "--yes"))
+	h.Require.Error(h.Execute("harness", "setup", "--harness", "claude-code", "--primary-route", "acme/gpt", "--yes"))
 	h.Require.Contains(h.Stderr.String(), `route "acme/gpt" is not one of the team's routes this harness can call`)
 }
 
@@ -1522,9 +1522,9 @@ func Test_Harness_Setup_Defaults(t *testing.T) {
 	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
 	h.Require.Equal(1, countCalls(api, "GET", harnessDefaultsPath), "setup reads the setup team's defaults once")
 	for _, want := range []string{
-		"Default route     acme/claude (team default)",
+		"Primary route     acme/claude (team default)",
 		"Background route  acme/fast (team default)",
-		"Default route     acme/gpt (team default)",
+		"Primary route     acme/gpt (team default)",
 		"Background route  acme/claude (team default)",
 	} {
 		h.Require.Contains(h.Stdout.String(), want)
@@ -1543,18 +1543,18 @@ func Test_Harness_Setup_Defaults(t *testing.T) {
 	h.Require.Equal("acme/claude", env["ANTHROPIC_MODEL"], "the primary also beats an organization's claude.ai default")
 
 	// Flags override the defaults for every harness.
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--route", "acme/primary", "--background-route", "acme/claude", "--dry-run"))
-	h.Require.Contains(h.Stdout.String(), "Default route     acme/primary (flag)")
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--primary-route", "acme/primary", "--background-route", "acme/claude", "--dry-run"))
+	h.Require.Contains(h.Stdout.String(), "Primary route     acme/primary (flag)")
 	h.Require.Contains(h.Stdout.String(), "Background route  acme/claude (flag)")
 	h.Require.NotContains(h.Stdout.String(), " default)")
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--route", "acme/primary", "--background-route", "acme/claude", "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--primary-route", "acme/primary", "--background-route", "acme/claude", "--yes"))
 	h.Require.Equal([2]string{"acme/primary", "acme/claude"}, harnessSetupRoutes(t, root)["claude-code"])
 	h.Require.Equal([2]string{"acme/primary", "acme/claude"}, harnessSetupRoutes(t, root)["opencode"])
 	env = readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))["env"].(map[string]any)
 	h.Require.Equal("acme/primary", env["ANTHROPIC_MODEL"], "a refresh updates the pinned primary")
 
 	// A primary flag keeps the background default.
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/primary", "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--primary-route", "acme/primary", "--yes"))
 	h.Require.Equal([2]string{"acme/primary", "acme/fast"}, harnessSetupRoutes(t, root)["claude-code"])
 }
 
@@ -1583,7 +1583,7 @@ func Test_Harness_Setup_DefaultsSetupCannotUse(t *testing.T) {
 	}
 
 	// A flag replaces a default setup can't use, without a warning.
-	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--route", "acme/claude", "--background-route", "acme/fast", "--yes"))
+	h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--primary-route", "acme/claude", "--background-route", "acme/fast", "--yes"))
 	h.Require.NotContains(h.Stderr.String(), "ignoring the")
 }
 
@@ -1597,7 +1597,7 @@ func Test_Harness_Setup_DefaultsUnknownSource(t *testing.T) {
 		},
 	}))
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--dry-run"))
-	h.Require.Contains(h.Stdout.String(), "Default route     acme/claude (default)")
+	h.Require.Contains(h.Stdout.String(), "Primary route     acme/claude (default)")
 	h.Require.NotContains(h.Stderr.String(), "warning")
 	h.Require.NoError(h.Execute("harness", "setup", "--harness", "opencode", "--yes"))
 	openCode := readHarnessSettings(t, "opencode", filepath.Join(root, "opencode", "opencode.json"))
@@ -1608,16 +1608,16 @@ func Test_Harness_Setup_DefaultsSkippedWhenFlagsSetEveryRoute(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api, _ := harnessDefaultsAPI(t, map[string]any{})
 	for _, args := range [][]string{
-		{"--harness", "claude-code", "--harness", "opencode", "--route", "acme/primary", "--background-route", "acme/fast"},
-		// Codex has no background route, so --route sets every route it uses.
-		{"--harness", "codex", "--route", "acme/primary"},
+		{"--harness", "claude-code", "--harness", "opencode", "--primary-route", "acme/primary", "--background-route", "acme/fast"},
+		// Codex has no background route, so --primary-route sets every route it uses.
+		{"--harness", "codex", "--primary-route", "acme/primary"},
 		// Pi also has only a primary route.
-		{"--harness", "pi", "--route", "acme/primary"},
+		{"--harness", "pi", "--primary-route", "acme/primary"},
 	} {
 		h.Require.NoError(h.Execute(append([]string{"harness", "setup", "--dry-run"}, args...)...))
 	}
 	h.Require.Equal(0, countCalls(api, "GET", harnessDefaultsPath))
-	h.Require.NoError(h.Execute("harness", "setup", "--dry-run", "--harness", "claude-code", "--route", "acme/primary"))
+	h.Require.NoError(h.Execute("harness", "setup", "--dry-run", "--harness", "claude-code", "--primary-route", "acme/primary"))
 	h.Require.Equal(1, countCalls(api, "GET", harnessDefaultsPath), "the background route still comes from the defaults")
 }
 
@@ -1654,7 +1654,7 @@ func Test_Harness_Setup_NoDefaults(t *testing.T) {
 			h, api, root := harnessDefaultsAPI(t, map[string]any{})
 			respond(api)
 			h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "codex", "--dry-run"))
-			h.Require.Contains(h.Stdout.String(), "Default route     acme/primary (CLI default)")
+			h.Require.Contains(h.Stdout.String(), "Primary route     acme/primary (CLI default)")
 			h.Require.Contains(h.Stdout.String(), "Background route  deepseek-ai/DeepSeek-V4.1-Flash (CLI default)")
 			h.Require.NoError(h.Execute("harness", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "codex", "--yes"))
 			if name == "failing" {
@@ -1731,7 +1731,7 @@ func Test_Harness_Setup_RecordsSyncOptions(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "No harnesses to sync")
 
 	// A dry run records nothing.
-	args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--team", "team-b", "--key-name", "laptop", "--route", "acme/primary", "--background-route", "acme/second"}
+	args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--team", "team-b", "--key-name", "laptop", "--primary-route", "acme/primary", "--background-route", "acme/second"}
 	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
 	h.Require.Empty(harnessRecordFile(t).Harnesses)
 
@@ -1885,7 +1885,7 @@ func Test_Harness_Sync_ServerDefaults(t *testing.T) {
 			h.Require.Equal(modelID("fast"), primaryModel())
 			h.Require.Empty(harnessRecordFile(t).Harnesses[tc.name].Route)
 
-			setup = append(setup, "--route", "acme/primary")
+			setup = append(setup, "--primary-route", "acme/primary")
 			if tc.background {
 				setup = append(setup, "--background-route", "acme/fast")
 			}
@@ -1900,7 +1900,7 @@ func Test_Harness_Sync_ServerDefaults(t *testing.T) {
 			h.Require.Equal(modelID("primary"), primaryModel())
 			h.Require.NoError(h.Execute("harness", "sync", "--yes"))
 			h.Require.Greater(countCalls(api, "GET", harnessDefaultsPath), calls)
-			h.Require.Contains(h.Stderr.String(), `default route "acme/primary" no longer exists; using "acme/claude"`)
+			h.Require.Contains(h.Stderr.String(), `primary route "acme/primary" no longer exists; using "acme/claude"`)
 			h.Require.Equal(modelID("claude"), primaryModel())
 			record := harnessRecordFile(t).Harnesses[tc.name]
 			h.Require.Empty(record.Route)
