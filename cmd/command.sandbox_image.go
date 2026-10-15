@@ -184,7 +184,7 @@ var commandSandboxImage = Command{
 
 // SandboxImageList is the JSON shape of 'baseten sandbox image list'.
 type SandboxImageList struct {
-	Items []managementapi.SandboxImageSummary `json:"items"`
+	Items []managementapi.SandboxImage `json:"items"`
 }
 
 // SandboxImageTagList is the JSON shape of 'baseten sandbox image list-tags'.
@@ -227,7 +227,7 @@ type SandboxImagePushFlags struct {
 	Dir           string `flag:"dir" desc:"Directory to build the image from, with a Dockerfile at its root." oneof:"image-source"`
 	RegistryImage string `flag:"registry-image" desc:"Registry image reference to import, such as registry.example.com/app:v1." oneof:"image-source"`
 	DockerConfig  string `flag:"docker-config" desc:"Path to a Docker config.json with credentials for pulling --registry-image from a private registry."`
-	Memory        int    `flag:"memory" desc:"Memory in MB, from 1 to 32768, of the temporary environment that builds or imports the image. Defaults to the server's size. Does not change the memory of sandboxes created from the image."`
+	Memory        int    `flag:"memory" desc:"Memory in MB, from 1 to 32768, of the temporary environment that builds or imports the image. 0, the default, uses the server's size. Does not change the memory of sandboxes created from the image."`
 	Volume        int    `flag:"volume" desc:"Scratch disk in MB, from 0 to 131072, for the temporary environment that builds or imports the image. Set it for large images that run out of space while building. 0, the default, builds in memory. Teams with HIPAA compliance enabled accept only 0."`
 	Wait          bool   `flag:"wait" desc:"Wait until the image is built. Exits non-zero if the build fails. Does not stop the build if interrupted."`
 }

@@ -17,7 +17,7 @@ import (
 
 // sandboxTestImage is a control plane image record.
 func sandboxTestImage(status string) map[string]any {
-	return map[string]any{"name": "img", "status": status, "tags": []any{}, "tag_count": 2, "size": 2048, "created_at": sandboxTestTime}
+	return map[string]any{"name": "img", "status": status, "tag_count": 2, "size": 2048, "created_at": sandboxTestTime}
 }
 
 // sandboxTestPushRoutes serves an image push whose upload goes to the mock and
