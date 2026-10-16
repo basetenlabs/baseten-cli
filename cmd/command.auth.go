@@ -98,10 +98,10 @@ var commandAuth = Command{
 			},
 		},
 		{
-			Name:    "list",
-			Summary: "List stored profiles",
+			Name:        "list",
+			Summary:     "List stored profiles",
 			Description: "List stored profiles, marking the one currently in use.",
-			Flags: AuthListFlags{},
+			Flags:       AuthListFlags{},
 			Output: &CommandOutput[AuthListResult]{
 				TextDescription: "Table with columns: current marker (*), PROFILE, REMOTE (only when a profile uses " +
 					"a remote other than https://app.baseten.co), AUTH TYPE. When no profiles exist, prints " +
