@@ -150,16 +150,16 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	}
 	rows := make([]harnessTeam, len(teams))
 	for i, t := range teams {
-		rows[i] = harnessTeam{settings: t, models: slices.SortedFunc(maps.Values(byTeam[t.TeamId]), func(x, y *harnessModel) int {
+		rows[i] = harnessTeam{settings: t, models: harnessFoldModels(slices.SortedFunc(maps.Values(byTeam[t.TeamId]), func(x, y *harnessModel) int {
 			return cmp.Or(cmp.Compare(y.cost, x.cost), strings.Compare(x.name, y.name))
-		})}
+		}), days)}
 	}
 	harnessRender(ctx, start, current, rows)
 	return nil
 }
 
 // harnessTeam is your settings in a team and your spend there by model, most
-// expensive first.
+// expensive first, with all but the top few folded into "other".
 type harnessTeam struct {
 	settings managementapi.RouteTeamUserSettings
 	models   []*harnessModel
@@ -176,6 +176,28 @@ func (t harnessTeam) spent(current bool) float64 {
 		all += m.cost
 	}
 	return all
+}
+
+// harnessTopModels is how many models the chart and list show on their own;
+// the rest are summed into one "other" row so neither grows past a glance.
+const harnessTopModels = 5
+
+// harnessFoldModels folds every model after the top harnessTopModels, which
+// are sorted most expensive first, into one "other" model with their summed
+// spend over the window's days.
+func harnessFoldModels(models []*harnessModel, days int) []*harnessModel {
+	if len(models) <= harnessTopModels {
+		return models
+	}
+	other := &harnessModel{name: "other", priced: true, daily: make([]float64, days)}
+	for _, m := range models[harnessTopModels:] {
+		other.cost += m.cost
+		other.priced = other.priced && m.priced
+		for d, v := range m.daily {
+			other.daily[d] += v
+		}
+	}
+	return append(models[:harnessTopModels:harnessTopModels], other)
 }
 
 // harnessModel is one model's spend in a team this month. Whole dollars don't
