@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 
 	"charm.land/huh/v2"
@@ -21,6 +23,7 @@ func init() {
 	Register("auth logout", commandAuthLogout)
 	Register("auth switch", commandAuthSwitch)
 	Register("auth status", commandAuthStatus)
+	Register("auth list", commandAuthList)
 }
 
 func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
@@ -229,6 +232,69 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 	} else {
 		ctx.Outputf("%s\n  Remote: %s\n  Auth type: %s\n", profileName, hyperlink(ctx.Stdout, profile.RemoteURL), profile.AuthType)
 	}
+	return nil
+}
+
+func commandAuthList(ctx *CommandContext, flags *cmd.AuthListFlags) error {
+	store, err := NewAuthStore(false)
+	if err != nil {
+		return err
+	}
+	af, err := store.Load()
+	if err != nil {
+		return err
+	}
+
+	// Resolve the same way every other command does so the marked profile is
+	// the one that would actually be used.
+	session, err := auth.ResolveSession(flags.Profile, "")
+	if err != nil {
+		return err
+	}
+
+	// Sorted to match the `auth switch` picker order.
+	names := slices.Sorted(maps.Keys(af.Profiles))
+	result := cmd.AuthListResult{Profiles: make([]cmd.AuthListProfile, 0, len(names))}
+	allDefaultRemote := true
+	for _, name := range names {
+		profile := af.Profiles[name]
+		result.Profiles = append(result.Profiles, cmd.AuthListProfile{
+			Profile:   name,
+			RemoteURL: profile.RemoteURL,
+			AuthType:  string(profile.AuthType),
+			Current:   !session.IsEphemeral() && session.ProfileName() == name,
+		})
+		if profile.RemoteURL != "https://app.baseten.co" {
+			allDefaultRemote = false
+		}
+	}
+
+	if ctx.JSON {
+		ctx.OutputJSON(result)
+		return nil
+	}
+	if len(result.Profiles) == 0 {
+		ctx.LogLine("No profiles found.")
+		return nil
+	}
+
+	headers := []string{"", "PROFILE", "REMOTE", "AUTH TYPE"}
+	if allDefaultRemote {
+		headers = []string{"", "PROFILE", "AUTH TYPE"}
+	}
+	rows := make([][]string, 0, len(result.Profiles))
+	for _, p := range result.Profiles {
+		marker := ""
+		if p.Current {
+			marker = "*"
+		}
+		if allDefaultRemote {
+			rows = append(rows, []string{marker, p.Profile, p.AuthType})
+		} else {
+			rows = append(rows, []string{marker, p.Profile, p.RemoteURL, p.AuthType})
+		}
+	}
+	ctx.OutputTable(TableOutput{Headers: headers, Rows: rows})
 	return nil
 }
 

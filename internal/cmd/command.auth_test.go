@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 )
 
@@ -120,6 +122,114 @@ func Test_Auth_Status_ProfileFlagSelects(t *testing.T) {
 	var got map[string]string
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 	h.Require.Equal("bob", got["profile"])
+}
+
+// authListLine returns the text-table line for the named profile.
+func authListLine(h *CommandHarness, name string) string {
+	for line := range strings.Lines(h.Stdout.String()) {
+		if strings.Contains(line, " "+name+" ") {
+			return line
+		}
+	}
+	h.Require.Failf("profile not listed", "no line for %q in:\n%s", name, h.Stdout.String())
+	return ""
+}
+
+// authListCurrent runs `auth list` as JSON and returns the current profile
+// names.
+func authListCurrent(h *CommandHarness, args ...string) []string {
+	h.Require.NoError(h.Execute(append([]string{"auth", "list", "--output", "json"}, args...)...))
+	var got cmd.AuthListResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	var current []string
+	for _, p := range got.Profiles {
+		if p.Current {
+			current = append(current, p.Profile)
+		}
+	}
+	return current
+}
+
+func Test_Auth_List_Empty(t *testing.T) {
+	h := newAuthHarness(t)
+	h.Require.NoError(h.Execute("auth", "list"))
+	h.Require.Equal("", h.Stdout.String())
+	h.Require.Contains(h.Stderr.String(), "No profiles found.")
+}
+
+func Test_Auth_List_DefaultRemote(t *testing.T) {
+	h := newAuthHarness(t)
+
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.baseten.co", "key-b", false, nil))
+	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.baseten.co", "key-a", true, nil))
+
+	h.Require.NoError(h.Execute("auth", "list"))
+	out := h.Stdout.String()
+	h.Require.NotContains(out, "REMOTE")
+	h.Require.Less(strings.Index(out, "alice"), strings.Index(out, "bob"))
+	h.Require.True(strings.HasPrefix(authListLine(h, "alice"), "*"))
+	h.Require.False(strings.HasPrefix(authListLine(h, "bob"), "*"))
+}
+
+func Test_Auth_List_MixedRemotes(t *testing.T) {
+	h := newAuthHarness(t)
+
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.baseten.co", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.example.com", "key-b", false, nil))
+
+	h.Require.NoError(h.Execute("auth", "list"))
+	h.Require.Contains(h.Stdout.String(), "REMOTE")
+	h.Require.Contains(authListLine(h, "bob"), "https://app.example.com")
+}
+
+func Test_Auth_List_JSON(t *testing.T) {
+	h := newAuthHarness(t)
+
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.example.com", "key-a", true, nil))
+
+	h.Require.NoError(h.Execute("auth", "list", "--output", "json"))
+	var got cmd.AuthListResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal([]cmd.AuthListProfile{{
+		Profile:   "alice",
+		RemoteURL: "https://app.example.com",
+		AuthType:  "api_key",
+		Current:   true,
+	}}, got.Profiles)
+}
+
+func Test_Auth_List_EnvProfileMarksCurrent(t *testing.T) {
+	h := newAuthHarness(t)
+
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.baseten.co", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.baseten.co", "key-b", false, nil))
+	t.Setenv("BASETEN_PROFILE", "bob")
+
+	h.Require.Equal([]string{"bob"}, authListCurrent(h))
+}
+
+func Test_Auth_List_ProfileFlagMarksCurrent(t *testing.T) {
+	h := newAuthHarness(t)
+
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.baseten.co", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.baseten.co", "key-b", false, nil))
+
+	h.Require.Equal([]string{"bob"}, authListCurrent(h, "--profile", "bob"))
+}
+
+func Test_Auth_List_EphemeralEnvAPIKey(t *testing.T) {
+	h := newAuthHarness(t)
+
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.baseten.co", "key-a", true, nil))
+	t.Setenv("BASETEN_API_KEY", "env-key")
+
+	h.Require.Empty(authListCurrent(h))
 }
 
 func Test_Auth_Logout_NoCurrentProfile(t *testing.T) {
