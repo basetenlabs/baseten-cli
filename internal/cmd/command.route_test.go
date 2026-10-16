@@ -567,23 +567,34 @@ func Test_Route_List_UnknownTarget(t *testing.T) {
 func Test_Route_ClassifierTarget(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	classifier := routeFixture(map[string]any{
-		"type": "CLASSIFIER_MODEL_BASED", "classifier_model_id": "m123456", "classifier_environment_name": nil,
+	target := map[string]any{
+		"type":           "CLASSIFIER",
+		"classifier":     map[string]any{"id": "c123456", "name": "intent-v2"},
 		"default_route":  map[string]any{"id": "r1", "slug": "acme/fast"},
 		"allowed_routes": []any{map[string]any{"id": "r1", "slug": "acme/fast"}, map[string]any{"id": "r2", "slug": "acme/smart"}},
-	})
+	}
+	classifier := routeFixture(target)
 	classifier["name"] = "acme/auto"
 	m.SetRoute("GET", "/v1/routes/r123456", 200, classifier)
 	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
 	for _, text := range []string{
-		"Target Type:      classifier-model-based",
-		"Classifier Model: m123456",
+		"Target Type:      classifier",
+		"Classifier:       intent-v2",
 		"Default Route:    acme/fast",
 		"Allowed Routes:   acme/fast, acme/smart",
 	} {
 		h.Require.Contains(h.Stdout.String(), text)
 	}
 	h.Require.NotContains(h.Stdout.String(), "Target Model:")
+
+	// A router created before classifiers could be selected has none, but
+	// still has its routes.
+	target["classifier"] = nil
+	m.SetRoute("GET", "/v1/routes/r123456", 200, routeFixture(target))
+	h.Stdout.Reset()
+	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
+	h.Require.NotContains(h.Stdout.String(), "Classifier:")
+	h.Require.Contains(h.Stdout.String(), "Default Route:    acme/fast")
 }
 
 func Test_Route_Describe_UnknownTarget(t *testing.T) {

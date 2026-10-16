@@ -118,7 +118,9 @@ func commandRouteDescribe(ctx *CommandContext, flags *cmd.RouteDescribeFlags) er
 			ctx.Outputf("Target Connection: %s\n", t.connection)
 		}
 		if t.classifier != "" {
-			ctx.Outputf("Classifier Model: %s\n", t.classifier)
+			ctx.Outputf("Classifier:       %s\n", t.classifier)
+		}
+		if t.defaultRoute != "" {
 			ctx.Outputf("Default Route:    %s\n", t.defaultRoute)
 			ctx.Outputf("Allowed Routes:   %s\n", strings.Join(t.allowedRoutes, ", "))
 		}
@@ -261,8 +263,12 @@ func routeTargetFields(value any) (routeTargetInfo, error) {
 		return routeTargetInfo{kind: t.Type, model: t.Model}, nil
 	case managementapi.RouteTargetConnection:
 		return routeTargetInfo{kind: t.Type, model: t.Model, connection: t.ConnectionId}, nil
-	case managementapi.RouteTargetClassifierModelBased:
-		info := routeTargetInfo{kind: t.Type, classifier: t.ClassifierModelId, defaultRoute: t.DefaultRoute.Slug}
+	case managementapi.RouteTargetClassifier:
+		info := routeTargetInfo{kind: t.Type, defaultRoute: t.DefaultRoute.Slug}
+		// Null for routers created before classifiers could be selected.
+		if t.Classifier != nil {
+			info.classifier = t.Classifier.Name
+		}
 		for _, r := range t.AllowedRoutes {
 			info.allowedRoutes = append(info.allowedRoutes, r.Slug)
 		}
