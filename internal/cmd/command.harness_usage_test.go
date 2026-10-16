@@ -181,6 +181,19 @@ func Test_Harness_Usage_JSONStreamsBucketsAsReturned(t *testing.T) {
 	h.Require.Equal("\"2026-09-01\"\n\"2026-09-02\"\n\"2026-09-03\"\n", h.Stdout.String())
 }
 
+func Test_Harness_Usage_FoldsModelsPastTopFiveIntoOther(t *testing.T) {
+	h, _ := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-09-01",
+		harnessUsageModel("m1", "70", 10, 0, 1), harnessUsageModel("m2", "60", 10, 0, 1), harnessUsageModel("m3", "50", 10, 0, 1),
+		harnessUsageModel("m4", "40", 10, 0, 1), harnessUsageModel("m5", "30", 10, 0, 1), harnessUsageModel("m6", "20", 10, 0, 1),
+		harnessUsageModel("m7", "10", 10, 0, 1),
+	)))
+
+	h.Require.NoError(h.Execute("harness", "usage"))
+	out := h.Stdout.String()
+	h.Require.Regexp(`(?m)^  ● m5 +\$30 +\(11%\)\n  ● other +\$30 +\(11%\)\n$`, out, "the sixth model on is summed into a last \"other\" row")
+	h.Require.NotContains(out, "m6")
+}
+
 func Test_Harness_Usage_NullCostIsUnpriced(t *testing.T) {
 	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-09-01",
 		harnessUsageModel("claude-opus-5-5", "0.0012", 10, 0, 1),
