@@ -314,7 +314,7 @@ type SandboxPreviewTokenCreateFlags struct {
 	SandboxPreviewRefFlags
 
 	ExpiresAt   time.Time `flag:"expires-at" desc:"Time the token stops working. ISO 8601, local when no timezone is given." required:"true"`
-	IfNotExists bool      `flag:"if-not-exists" desc:"Return an existing unexpired token of the preview that stays valid at least until --expires-at, instead of creating one."`
+	IfNotExists bool      `flag:"if-not-exists" desc:"Return an existing unexpired token of the preview that stays valid at least until --expires-at, instead of creating one. A token created moments before may not be found yet, so a new one may be created anyway."`
 }
 
 // SandboxPreviewTokenListFlags configures 'baseten sandbox preview token

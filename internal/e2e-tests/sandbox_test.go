@@ -259,13 +259,15 @@ func TestE2ESandbox(t *testing.T) {
 
 		expiresAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 		tokenText := mustCLI(t, append([]string{"sandbox", "preview", "token", "create", "--expires-at", expiresAt}, previewFlags...)...)
-		require.Regexp(t, `URL:\s+`+regexp.QuoteMeta(url)+`\?preview_token=\S+\n`, tokenText)
-		token := cliJSON[map[string]any](t, append([]string{"sandbox", "preview", "token", "create", "--expires-at", expiresAt}, previewFlags...)...)
-		// TODO: Use ?preview_token= once the server accepts it.
-		header := fetchE2EPreview(t, url+"?bl_preview_token="+token["token"].(string))
+		// The printed URL is the one fetched, so it must work as printed.
+		tokenURL := regexp.MustCompile(`URL:\s+(` + regexp.QuoteMeta(url) + `\?preview_token=\S+)\n`).FindStringSubmatch(tokenText)
+		require.NotNil(t, tokenURL, tokenText)
+		header := fetchE2EPreview(t, tokenURL[1])
 		require.Equal(t, "added", header.Get("X-E2E"))
 
-		tokenName := token["name"].(string)
+		tokenNameMatch := regexp.MustCompile(`Name:\s+(\S+)\n`).FindStringSubmatch(tokenText)
+		require.NotNil(t, tokenNameMatch, tokenText)
+		tokenName := tokenNameMatch[1]
 		require.Contains(t, mustCLI(t, append([]string{"sandbox", "preview", "token", "list"}, previewFlags...)...), tokenName)
 		_, errOut, err := cli(t, append([]string{"sandbox", "preview", "token", "delete", "--token-name", tokenName, "--yes"}, previewFlags...)...)
 		require.NoError(t, err, errOut)
