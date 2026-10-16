@@ -100,9 +100,7 @@ var commandAuth = Command{
 		{
 			Name:    "list",
 			Summary: "List stored profiles",
-			Description: "List stored profiles, marking the one currently in use. The current profile is the one " +
-				"selected by --profile, BASETEN_PROFILE, or `auth switch`, in that order; none is marked when " +
-				"BASETEN_API_KEY is set.",
+			Description: "List stored profiles, marking the one currently in use.",
 			Flags: AuthListFlags{},
 			Output: &CommandOutput[AuthListResult]{
 				TextDescription: "Table with columns: current marker (*), PROFILE, REMOTE (only when a profile uses " +
