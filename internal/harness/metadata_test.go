@@ -234,7 +234,7 @@ func TestRouteProviderComesFromConnections(t *testing.T) {
 		{"xai connection", `{"type": "CONNECTION", "connection_id": "conn-x", "model": "grok"}`, "XAI"},
 		{"unknown connection", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, ""},
 		{"baseten model api", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, ProviderBaseten},
-		{"classifier", `{"type": "CLASSIFIER_MODEL_BASED", "classifier_model_id": "m", "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, ""},
+		{"classifier", `{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := managementapi.Route{Name: "acme/route", DisplayName: "Route", Metadata: metadata}

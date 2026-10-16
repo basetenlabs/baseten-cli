@@ -34,7 +34,7 @@ func commandSandboxImageList(ctx *CommandContext, flags *cmd.SandboxImageListFla
 		return err
 	}
 	params := managementapi.ListImagesParams{TeamId: teamID}
-	items, truncated, err := sandboxCollectPages(flags.Limit, func(cursor *string, pageLimit int) ([]managementapi.SandboxImageSummary, managementapi.SandboxApiPagination, error) {
+	items, truncated, err := sandboxCollectPages(flags.Limit, func(cursor *string, pageLimit int) ([]managementapi.SandboxImage, managementapi.SandboxApiPagination, error) {
 		params.Cursor, params.Limit = cursor, &pageLimit
 		page, err := client.API().ListImages(ctx, params)
 		if err != nil {
@@ -134,6 +134,8 @@ func commandSandboxImagePush(ctx *CommandContext, flags *cmd.SandboxImagePushFla
 			options.SourceRegistry.DockerConfig = string(dockerConfig)
 		}
 	}
+	// 0 is not sent, so the server's defaults apply.
+	options.Memory, options.Volume = flags.Memory, flags.Volume
 	client, teamID, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err

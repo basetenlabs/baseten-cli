@@ -4,16 +4,14 @@ import "github.com/basetenlabs/baseten-go/client/managementapi"
 
 var commandVolumeSync = Command{
 	Name:    "sync",
-	Summary: "Materialize remote content into a volume (PRE-RELEASE)",
-	Description: volumePreRelease +
-		"Manage durable asynchronous jobs that copy one supported remote source into one BDN volume. " +
+	Summary: "Materialize remote content into a volume",
+	Description: "Manage durable asynchronous jobs that copy one supported remote source into one BDN volume. " +
 		"A successful sync publishes an immutable volume version only after transfer and verification complete.",
 	Children: []Command{
 		{
 			Name:    "start",
-			Summary: "Start a remote volume sync (PRE-RELEASE)",
-			Description: volumePreRelease +
-				"Starts one durable asynchronous transfer from --source into --dest. The source URI " +
+			Summary: "Start a remote volume sync",
+			Description: "Starts one durable asynchronous transfer from --source into --dest. The source URI " +
 				"scheme selects the provider: hf://, s3://, gs://, azure://, r2://, cw://, or bt://. " +
 				"Repeat --include and --exclude to filter source-relative paths.\n\n" +
 				"Remote credentials must already be stored as a Baseten secret or made available through " +
@@ -80,9 +78,8 @@ var commandVolumeSync = Command{
 		},
 		{
 			Name:    "describe",
-			Summary: "Describe a remote volume sync (PRE-RELEASE)",
-			Description: volumePreRelease +
-				"Retrieves the current state of one sync. A READY sync includes the immutable version ref " +
+			Summary: "Describe a remote volume sync",
+			Description: "Retrieves the current state of one sync. A READY sync includes the immutable version ref " +
 				"produced by the job; a FAILED sync includes a stable error code and redacted message.",
 			Flags: VolumeSyncIDFlags{},
 			Output: &CommandOutput[managementapi.VolumeSync]{
@@ -99,9 +96,8 @@ var commandVolumeSync = Command{
 		},
 		{
 			Name:    "list",
-			Summary: "List remote volume syncs (PRE-RELEASE)",
-			Description: volumePreRelease +
-				"Lists every sync visible in the active workspace, newest first. Pass --dest to " +
+			Summary: "List remote volume syncs",
+			Description: "Lists every sync visible in the active workspace, newest first. Pass --dest to " +
 				"match one exact destination ref. The CLI follows every server page.",
 			Flags: VolumeSyncListFlags{},
 			Output: &CommandOutput[VolumeSyncList]{
@@ -125,9 +121,8 @@ var commandVolumeSync = Command{
 		},
 		{
 			Name:    "cancel",
-			Summary: "Cancel a remote volume sync (PRE-RELEASE)",
-			Description: volumePreRelease +
-				"Requests cancellation of one pending or syncing job. Cancellation is idempotent: a " +
+			Summary: "Cancel a remote volume sync",
+			Description: "Requests cancellation of one pending or syncing job. Cancellation is idempotent: a " +
 				"terminal sync is returned unchanged, and an artifact already published by a READY sync " +
 				"is not removed.",
 			Flags: VolumeSyncIDFlags{},

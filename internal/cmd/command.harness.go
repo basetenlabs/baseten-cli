@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -642,16 +643,6 @@ func forgetHarnessRecords(names []string) error {
 	return harness.SaveRecords(dir, file)
 }
 
-// ensureHarnessToken returns the routes API key for the team, creating one on
-// first use and saving it for later reuse.
-func ensureHarnessToken(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, name string) (string, error) {
-	key, err := loadHarnessKey(ctx, api, team, name)
-	if err != nil {
-		return "", err
-	}
-	return key.ensure(ctx, api)
-}
-
 // harnessSessionAPIKey returns the session's API key to install in harness
 // settings. Never mints a new key, read only.
 func harnessSessionAPIKey(ctx *CommandContext) (string, error) {
@@ -1174,8 +1165,7 @@ func protectedHarnessCredentials(ctx *CommandContext, selected []selectedHarness
 	return protected, sessionKey, nil
 }
 
-// deleteHarnessKeys deletes the routes API keys with these values, and this
-// machine's saved copies of them.
+// deleteHarnessKeys deletes the routes API keys with these values.
 func deleteHarnessKeys(ctx *CommandContext, tokens []string) ([]string, error) {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -1185,7 +1175,6 @@ func deleteHarnessKeys(ctx *CommandContext, tokens []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var deleted []managementapi.APIKeyInfo
 	prefixes := []string{}
 	for _, k := range keys.Keys {
 		if !slices.ContainsFunc(tokens, func(token string) bool { return strings.HasPrefix(token, k.Prefix) }) {
@@ -1194,166 +1183,74 @@ func deleteHarnessKeys(ctx *CommandContext, tokens []string) ([]string, error) {
 		if _, err := cl.API().DeleteApiKeys(ctx, k.Prefix); err != nil {
 			return nil, fmt.Errorf("deleting routes API key %s: %w", k.Prefix, err)
 		}
-		deleted = append(deleted, k)
 		prefixes = append(prefixes, k.Prefix)
 		ctx.Logf("Deleted routes API key %s\n", k.Prefix)
-	}
-	if len(deleted) > 0 {
-		if err := forgetRouteAPIKeys(ctx, cl.API(), deleted); err != nil {
-			return nil, err
-		}
 	}
 	return prefixes, nil
 }
 
-// routesKeyScope identifies where a routes API key is saved on this machine.
-func routesKeyScope(ctx *CommandContext, userID, teamID, name string) (auth.RoutesKeyScope, error) {
-	remote, err := ctx.authInfo.Remote()
-	if err != nil {
-		return auth.RoutesKeyScope{}, err
-	}
-	session, err := ctx.authInfo.Session()
-	if err != nil {
-		return auth.RoutesKeyScope{}, err
-	}
-	return auth.RoutesKeyScope{
-		ManagementURL: remote.ManagementURL(),
-		Profile:       session.ProfileName(),
-		UserID:        userID,
-		TeamID:        teamID,
-		Name:          name,
-	}, nil
-}
-
-// forgetRouteAPIKeys removes this machine's saved copies of deleted keys.
-func forgetRouteAPIKeys(ctx *CommandContext, api *managementapi.Client, deleted []managementapi.APIKeyInfo) error {
-	user, err := api.GetUsersMe(ctx)
-	if err != nil {
-		return fmt.Errorf("getting current user: %w", err)
-	}
-	teams, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
-	if err != nil {
-		return fmt.Errorf("list teams: %w", err)
-	}
-	store, err := NewAuthStore(false)
-	if err != nil {
-		return err
-	}
-	for _, k := range deleted {
-		if k.Name == nil || k.TeamName == nil {
-			continue
-		}
-		for _, team := range teams.Teams {
-			if team.Name != *k.TeamName {
-				continue
-			}
-			scope, err := routesKeyScope(ctx, user.UserId, team.Id, *k.Name)
-			if err != nil {
-				return err
-			}
-			saved, err := store.GetRoutesKey(scope)
-			if err != nil {
-				return err
-			}
-			if saved != "" && strings.HasPrefix(saved, k.Prefix) {
-				if err := store.DeleteRoutesKey(scope); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
 // defaultHarnessKeyName derives a key name from the hostname, which may contain
-// characters API key names don't allow.
+// characters API key names don't allow. Key names are unique per team, so a
+// random suffix keeps it clear of other users' keys and this user's earlier ones.
 func defaultHarnessKeyName(hostname string) string {
 	parts := strings.FieldsFunc(strings.TrimSuffix(strings.ToLower(hostname), ".local"), func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
 	})
-	return "baseten-harness-" + cmp.Or(strings.Join(parts, "-"), "local-machine")
+	return fmt.Sprintf("baseten-harness-%s-%06x", cmp.Or(strings.Join(parts, "-"), "local-machine"), rand.N(1<<24))
 }
 
-// harnessKey is the routes API key setup installs. It is created on first
-// setup and saved so later setups reuse it.
-type harnessKey struct {
-	store *auth.Store
-	scope auth.RoutesKeyScope
-	saved string
-}
-
-func loadHarnessKey(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, name string) (*harnessKey, error) {
-	explicit := name != ""
-	if !explicit {
-		hostname, err := os.Hostname()
-		if err != nil {
-			return nil, err
-		}
-		name = defaultHarnessKeyName(hostname)
+// ensureHarnessToken returns the routes API key setup installs: the one saved
+// on this machine for this profile, user, and team while it still exists, or
+// else a new one.
+func ensureHarnessToken(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, name string) (string, error) {
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return "", err
+	}
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return "", err
 	}
 	user, err := api.GetUsersMe(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting current user: %w", err)
+		return "", fmt.Errorf("getting current user: %w", err)
 	}
 	store, err := NewAuthStore(false)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	keys, err := listRouteAPIKeys(ctx, api)
+	scope := auth.RoutesKeyScope{ManagementURL: remote.ManagementURL(), Profile: session.ProfileName(), UserID: user.UserId, TeamID: team.Id}
+	saved, err := store.GetRoutesKey(scope)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	// Key names are unique per team, and a key made elsewhere, such as under
-	// another profile, can't be reused here. The default name then moves on to
-	// a numbered name saved on this machine, or else the first free one.
-	var free *harnessKey
-	for i := 1; i <= len(keys.Keys)+1; i++ {
-		candidate := name
-		if i > 1 {
-			candidate = fmt.Sprintf("%s-%d", name, i)
-		}
-		scope, err := routesKeyScope(ctx, user.UserId, team.Id, candidate)
+	if saved != "" {
+		keys, err := listRouteAPIKeys(ctx, api)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
-		k := &harnessKey{store: store, scope: scope}
-		if k.saved, err = store.GetRoutesKey(scope); err != nil {
-			return nil, err
-		}
-		// The saved key may have been deleted, here or on another machine; setup
-		// then creates a new one.
-		if !slices.ContainsFunc(keys.Keys, func(key managementapi.APIKeyInfo) bool { return strings.HasPrefix(k.saved, key.Prefix) }) {
-			k.saved = ""
-		}
-		if k.saved != "" || explicit {
-			return k, nil
-		}
-		taken := slices.ContainsFunc(keys.Keys, func(key managementapi.APIKeyInfo) bool {
-			return deref(key.Name) == candidate && deref(key.TeamName) == team.Name
-		})
-		if free == nil && !taken {
-			free = k
+		// The saved key may have been deleted, here or on another machine.
+		if slices.ContainsFunc(keys.Keys, func(k managementapi.APIKeyInfo) bool { return strings.HasPrefix(saved, k.Prefix) }) {
+			return saved, nil
 		}
 	}
-	return free, nil
-}
-
-// ensure returns the saved key, creating and saving one if there is none.
-func (k *harnessKey) ensure(ctx *CommandContext, api *managementapi.Client) (string, error) {
-	if k.saved != "" {
-		return k.saved, nil
+	if name == "" {
+		hostname, err := os.Hostname()
+		if err != nil {
+			return "", err
+		}
+		name = defaultHarnessKeyName(hostname)
 	}
-	created, err := api.PostTeamsApiKeys(ctx, k.scope.TeamID, managementapi.CreateAPIKeyRequest{
+	created, err := api.PostTeamsApiKeys(ctx, team.Id, managementapi.CreateAPIKeyRequest{
 		Type: managementapi.APIKeyCategory_ROUTES,
-		Name: &k.scope.Name,
+		Name: &name,
 	})
 	if err != nil {
 		return "", fmt.Errorf("creating routes API key: %w", err)
 	}
-	if err := k.store.SetRoutesKey(k.scope, created.ApiKey, ctx.Log); err != nil {
+	if err := store.SetRoutesKey(scope, created.ApiKey, ctx.Log); err != nil {
 		return "", err
 	}
-	k.saved = created.ApiKey
-	ctx.Logf("Created routes API key %s\n", k.scope.Name)
-	return k.saved, nil
+	ctx.Logf("Created routes API key %s\n", name)
+	return created.ApiKey, nil
 }

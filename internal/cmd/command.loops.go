@@ -404,8 +404,12 @@ func commandLoopsRunDescribe(ctx *CommandContext, flags *cmd.LoopsRunDescribeFla
 		ctx.Outputf("\nSampler\n")
 		ctx.Outputf("  ID:         %s\n", run.Sampler.Id)
 		ctx.Outputf("  Status:     %s\n", run.Sampler.Status.Name)
-		ctx.Outputf("  Model:      %s\n", run.Sampler.ModelId)
-		ctx.Outputf("  Deployment: %s\n", run.Sampler.DeploymentId)
+		if run.Sampler.ModelId != nil {
+			ctx.Outputf("  Model:      %s\n", *run.Sampler.ModelId)
+		}
+		if run.Sampler.DeploymentId != nil {
+			ctx.Outputf("  Deployment: %s\n", *run.Sampler.DeploymentId)
+		}
 		ctx.Outputf("  Base URL:   %s\n", hyperlink(ctx.Stdout, run.Sampler.BaseUrl))
 	}
 	return nil
@@ -466,11 +470,15 @@ func commandLoopsRunLogs(ctx *CommandContext, flags *cmd.LoopsRunLogsFlags) erro
 		if sampler == nil {
 			return fmt.Errorf("Loops run %s has no paired sampler to fetch logs from; omit --sampler for the run's trainer logs", flags.RunID)
 		}
+		if sampler.ModelId == nil || sampler.DeploymentId == nil {
+			return fmt.Errorf("Loops run %s has a serverless sampler, which has no deployment logs", flags.RunID)
+		}
+		modelID, samplerDeploymentID := *sampler.ModelId, *sampler.DeploymentId
 		fetchLogs := func(q logQuery) (*managementapi.GetLogsResponse, error) {
-			return cl.API().GetModelsDeploymentsLogs(ctx, sampler.ModelId, sampler.DeploymentId, deploymentLogParams(q))
+			return cl.API().GetModelsDeploymentsLogs(ctx, modelID, samplerDeploymentID, deploymentLogParams(q))
 		}
 		fetchStatus := func() (*tailStatus, error) {
-			dep, err := cl.API().GetModelsDeploymentsDeploymentId(ctx, sampler.ModelId, sampler.DeploymentId)
+			dep, err := cl.API().GetModelsDeploymentsDeploymentId(ctx, modelID, samplerDeploymentID)
 			if err != nil {
 				return nil, err
 			}
