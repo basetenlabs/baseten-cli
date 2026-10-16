@@ -436,6 +436,8 @@ func (s *e2eConnectSession) waitFor(want string) string {
 // creates a sandbox from it, and checks what the build context held. It is the
 // run's only image push, since builds are costly.
 func TestE2ESandboxImage(t *testing.T) {
+	// TODO: Remove once sandbox image builds work again platform-side.
+	t.Skip("sandbox image builds are failing platform-side")
 	setupSandboxE2E(t)
 	suffix := randomSuffix(t)[:8]
 	imageName := "cli-e2e-" + suffix
