@@ -261,6 +261,15 @@ func TestHelpFooterMentionsHelpOutput(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "--help-output")
 }
 
+func TestParentWithHoistedRequiredFlagShowsHelp(t *testing.T) {
+	h := NewCommandHarness(t)
+	// replica's only child requires --replica-id, which is hoisted onto replica.
+	h.Require.NoError(h.Execute("model", "deployment", "replica"))
+	h.Require.Contains(h.Stdout.String(), "terminate")
+	h.Require.ErrorContains(h.Execute("model", "deployment", "replica", "terminate",
+		"--model-id", "m", "--deployment-id", "d"), "replica-id")
+}
+
 func TestHelpFlagGroupsHeaders(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.Require.NoError(h.Execute("model", "push", "--help"))

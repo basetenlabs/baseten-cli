@@ -265,6 +265,42 @@ func Test_Model_Environment_UpdatePromotion_OmitsUntouchedRollingDeployConfig(t 
 	h.Require.Equal(true, settings["redeploy_on_promotion"])
 }
 
+// The canary flags are deprecated but still sent, so the API decides; passing
+// one warns, and leaving them out stays silent.
+func Test_Model_Environment_UpdatePromotion_WarnsOnDeprecatedCanaryFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		warns bool
+	}{
+		{name: "ramp up while promoting", args: []string{"--ramp-up-while-promoting", "false"}, warns: true},
+		{name: "ramp up duration", args: []string{"--ramp-up-duration-seconds", "300"}, warns: true},
+		{name: "neither", args: []string{"--rolling-deploy", "true"}, warns: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			h.MockManagementAPI().SetRoute("PATCH", "/v1/models/m-1/environments/production", 200,
+				map[string]any{
+					"environment": envFixture("production", "d-1", "ACTIVE"),
+					"status":      "ACCEPTED",
+					"message":     "Update accepted",
+				})
+
+			args := append([]string{"model", "environment", "update-promotion",
+				"--model-id", "m-1", "--environment", "production"}, tc.args...)
+			h.Require.NoError(h.Execute(args...))
+
+			if tc.warns {
+				h.Require.Contains(h.Stderr.String(), "warning: --ramp-up-while-promoting and --ramp-up-duration-seconds are deprecated")
+			} else {
+				h.Require.NotContains(h.Stderr.String(), "deprecated")
+			}
+			h.Require.Len(h.MockManagementAPI().FindCall("PATCH",
+				"/v1/models/m-1/environments/production").BodyJSON(h.T)["promotion_settings"], 1)
+		})
+	}
+}
+
 func Test_Model_Environment_UpdateRequestBackpressure_NullClearsPolicy(t *testing.T) {
 	h := NewCommandHarness(t)
 	env := envFixture("production", "d-1", "ACTIVE")

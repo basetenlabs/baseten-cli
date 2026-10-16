@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,7 +17,7 @@ import (
 
 // sandboxTestImage is a control plane image record.
 func sandboxTestImage(status string) map[string]any {
-	return map[string]any{"name": "img", "status": status, "tags": []any{}, "tag_count": 2, "size": 2048, "created_at": sandboxTestTime}
+	return map[string]any{"name": "img", "status": status, "tag_count": 2, "size": 2048, "created_at": sandboxTestTime}
 }
 
 // sandboxTestPushRoutes serves an image push whose upload goes to the mock and
@@ -143,6 +144,46 @@ func Test_Sandbox_Image_Push_RegistryWithDockerConfig(t *testing.T) {
 	h.Require.Empty(sandboxTestCalls(m, "PUT", "/upload"))
 
 	h.Require.ErrorContains(h.Execute("sandbox", "image", "push", "--name", "img", "--dir", ".", "--docker-config", config), "--registry-image")
+}
+
+func Test_Sandbox_Image_Push_BuildSizesOnlyWhenSet(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := newSandboxTestAPI(h)
+	sandboxTestPushRoutes(m, "UPLOADING")
+	dir := sandboxTestDir(t, map[string]string{"Dockerfile": "FROM debian\n"})
+	registry := []string{"sandbox", "image", "push", "--name", "img", "--registry-image", "registry.example.com/app:v1"}
+
+	h.Require.NoError(h.Execute(append(registry, "--memory", "2048", "--volume", "8192")...))
+	// 0 is the default, so it is not sent.
+	h.Require.NoError(h.Execute("sandbox", "image", "push", "--name", "img", "--dir", dir, "--volume", "0"))
+	h.Require.NoError(h.Execute(registry...))
+	calls := sandboxTestCalls(m, "POST", "/v1/sandboxes/images")
+	h.Require.Equal(map[string]any{"name": "img", "image": "registry.example.com/app:v1", "memory": float64(2048), "volume": float64(8192)},
+		calls[0].BodyJSON(t))
+	h.Require.Equal(map[string]any{"name": "img"}, calls[1].BodyJSON(t))
+	h.Require.Equal(map[string]any{"name": "img", "image": "registry.example.com/app:v1"}, calls[2].BodyJSON(t))
+}
+
+func Test_Sandbox_Image_Push_UploadSendsReturnedHeaders(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := newSandboxTestAPI(h)
+	sandboxTestPushRoutes(m, "UPLOADING")
+	var uploads []http.Header
+	m.SetRouteFunc("PUT", "/upload", func(w http.ResponseWriter, r *http.Request) {
+		uploads = append(uploads, r.Header.Clone())
+	})
+	dir := sandboxTestDir(t, map[string]string{"Dockerfile": "FROM debian\n"})
+
+	h.Require.NoError(h.Execute("sandbox", "image", "push", "--name", "img", "--dir", dir))
+	m.SetRoute("POST", "/v1/sandboxes/images", 202, map[string]any{
+		"name": "img", "status": "UPLOADING", "upload_url": m.URL + "/upload",
+		"upload_headers": map[string]string{"x-signed-memory": "2048"},
+	})
+	h.Require.NoError(h.Execute("sandbox", "image", "push", "--name", "img", "--dir", dir, "--memory", "2048"))
+	h.Require.Len(uploads, 2)
+	h.Require.Empty(uploads[0].Get("X-Signed-Memory"))
+	h.Require.Equal("2048", uploads[1].Get("X-Signed-Memory"))
+	h.Require.Equal("application/zip", uploads[1].Get("Content-Type"))
 }
 
 func Test_Sandbox_Image_Push_WaitFailedNamesLogs(t *testing.T) {
