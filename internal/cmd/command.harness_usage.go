@@ -34,19 +34,22 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	if err != nil {
 		return fmt.Errorf("getting current user: %w", err)
 	}
-	listing, err := api.GetRoutesSettingsUsersTeams(ctx, "me")
-	if err != nil {
-		// A team or workspace key authenticates as a service account, which
-		// has no teams or routes keys of its own.
+	// A team or workspace key authenticates as a service account, which has
+	// no teams or routes keys of its own.
+	serviceAccountHint := func() {
 		if session, serr := ctx.authInfo.Session(); serr == nil && session.UsesAPIKey() {
 			ctx.LogLine("If you're using a team or workspace API key, run 'baseten auth login' to see your own usage.")
 		}
+	}
+	listing, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
+	if err != nil {
+		serviceAccountHint()
 		return fmt.Errorf("getting your teams: %w", err)
 	}
-	teams := listing.Teams
-	names := make([]string, len(teams))
-	for i, t := range teams {
-		names[i] = strconv.Quote(t.TeamName)
+	mine := listing.Teams
+	names := make([]string, len(mine))
+	for i, t := range mine {
+		names[i] = strconv.Quote(t.Name)
 	}
 	// Opened before any early return, so JSON output is at least [].
 	var jw *JSONArrayWriter
@@ -56,14 +59,25 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	}
 	// --team narrows to one team; otherwise every team you're in.
 	if f.Team != "" {
-		i := slices.IndexFunc(teams, func(t managementapi.RouteTeamUserSettings) bool { return t.TeamId == f.Team || t.TeamName == f.Team })
+		i := slices.IndexFunc(mine, func(t managementapi.Team) bool { return t.Id == f.Team || t.Name == f.Team })
 		if i < 0 {
 			return cmd.NewErrUsagef("no team of yours matched %q; your teams are %s", f.Team, strings.Join(names, ", "))
 		}
-		teams = teams[i : i+1]
-	} else if len(teams) == 0 {
+		mine = mine[i : i+1]
+	} else if len(mine) == 0 {
 		ctx.LogLine("No usage this month.")
 		return nil
+	}
+	// Your settings in each team: your limit there, your spend this month,
+	// and whether you're blocked.
+	teams := make([]managementapi.RouteTeamUserSettings, len(mine))
+	for i, t := range mine {
+		settings, err := api.GetRoutesSettingsTeamsUsersUserId(ctx, t.Id, "me")
+		if err != nil {
+			serviceAccountHint()
+			return fmt.Errorf("getting your settings in %s: %w", t.Name, err)
+		}
+		teams[i] = *settings
 	}
 
 	// This month so far by default, the period spend limits apply to, in
