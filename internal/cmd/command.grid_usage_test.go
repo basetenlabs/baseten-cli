@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -51,8 +52,28 @@ func newGridUsageHarness(t *testing.T, now time.Time, body map[string]any) (*Com
 	api := h.MockManagementAPI()
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
 	api.SetRoute("GET", "/v1/grid/routes/usage", 200, body)
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, gridTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil))
+	gridSetTeams(api, gridTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil))
 	return h, api
+}
+
+// gridSetTeams serves teams as yours, with your settings in each.
+func gridSetTeams(api *MockManagementAPI, teams ...map[string]any) {
+	listing := make([]any, len(teams))
+	settings := make(map[string]map[string]any, len(teams))
+	for i, t := range teams {
+		listing[i] = map[string]any{"id": t["team_id"], "name": t["team_name"], "default": false, "created_at": "2026-01-01T00:00:00Z"}
+		settings[t["team_id"].(string)] = t
+	}
+	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": listing})
+	api.SetRouteFunc("GET", "/v1/grid/team_settings/users/me", func(w http.ResponseWriter, r *http.Request) {
+		team, ok := settings[r.URL.Query().Get("team_id")]
+		if !ok {
+			http.Error(w, "unknown team", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(team)
+	})
 }
 
 // gridUsageLastQuery returns the query of the last usage request.
@@ -102,18 +123,22 @@ func Test_Grid_Usage_DefaultsToMonthToDateForCurrentUser(t *testing.T) {
 	h.Require.Equal([]string{"2026-09-26"}, q["end_date"], "today's usage is included")
 	h.Require.Equal([]string{"user-a"}, q["user_ids"], "admins must not see other users' usage by default")
 	h.Require.Equal([]string{"TEAM", "MODEL"}, q["group_by"])
-	h.Require.Nil(q["team_id"], "your only team without --team")
+	h.Require.Nil(q["team_id"], "every team without --team")
 	h.Require.Equal("September 2026 · resets Oct 1\n", h.Stderr.String())
 }
 
 func Test_Grid_Usage_Teams(t *testing.T) {
 	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
-	// The server resolves the team: your only one, or the --team you name.
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 400, map[string]string{"message": "Team ID is required when you belong to multiple."})
-	h.Require.ErrorContains(h.Execute("grid", "usage"), "Team ID is required when you belong to multiple.")
+	gridSetTeams(api,
+		gridTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil),
+		gridTeamSettings("team-b", "Research", "12.5", "10", "100.00", "member"),
+		gridTeamSettings("team-c", "FDE", "80", "100", "100", "team"),
+		gridTeamSettings("team-d", "Infra", "0", nil, nil, nil),
+	)
 
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, gridTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil))
-	h.Require.NoError(h.Execute("grid", "usage", "--team", "team-a"))
+	h.Require.ErrorContains(h.Execute("grid", "usage", "--team", "Sales"), `no team of yours matched "Sales"; your teams are "Engineering", "Research", "FDE", "Infra"`)
+
+	h.Require.NoError(h.Execute("grid", "usage", "--team", "Engineering"))
 	h.Require.Equal([]string{"team-a"}, gridUsageLastQuery(h, api)["team_id"], "--team also narrows the usage")
 	out := h.Stdout.String()
 	h.Require.Regexp(`(?m)^Engineering +\$2 of \$100\n  ● claude-sonnet-5 +\$1 +\(56%\)\n  ● glm-5.2 +\$1 +\(22%\)\n  ● gpt-5.2 +\$1 +\(22%\)\n$`, out,
@@ -125,16 +150,18 @@ func Test_Grid_Usage_Teams(t *testing.T) {
 	body["items"].([]map[string]any)[0]["results"].([]map[string]any)[1]["team_id"] = "team-b"
 	body["items"].([]map[string]any)[2]["results"].([]map[string]any)[1]["team_id"] = "team-z"
 	api.SetRoute("GET", "/v1/grid/routes/usage", 200, body)
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, gridTeamSettings("team-b", "Research", "12.5", "10", "100.00", "member"))
+	h.Require.NoError(h.Execute("grid", "usage"))
+	h.Require.Nil(gridUsageLastQuery(h, api)["team_id"])
+	h.Require.Regexp(`(?m)^Engineering +\$2 of \$100\n  ● claude-sonnet-5 +\$1 +\(100%\)\n\nResearch +\$13 of \$10 .*\n  ● gpt-5.2 +\$1 +\(100%\)\n\nFDE +\$80 of \$100 .*\n\nInfra +\$0 · no limit\n$`, h.Stdout.String(),
+		"every team without --team, usage split by team, a team you're no longer in left out")
+
 	h.Require.NoError(h.Execute("grid", "usage", "--team", "team-b"))
 	h.Require.Equal([]string{"Research", "$13", "of", "$10", "(team", "default", "$100)", "·", "limit", "reached"},
-		gridUsageRow(h, h.Stdout.String(), "Research"), "the team default only when yours differs")
+		gridUsageRow(h, h.Stdout.String(), "Research"), "--team by ID too; the team default only when yours differs")
 	h.Require.NotContains(h.Stdout.String(), "Engineering", "only the named team's usage")
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, gridTeamSettings("team-c", "FDE", "80", "100", "100", "team"))
-	h.Require.NoError(h.Execute("grid", "usage", "--team", "team-c"))
+	h.Require.NoError(h.Execute("grid", "usage", "--team", "FDE"))
 	h.Require.Equal([]string{"FDE", "$80", "of", "$100", "·", "team", "limit", "reached"}, gridUsageRow(h, h.Stdout.String(), "FDE"))
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, gridTeamSettings("team-d", "Infra", "0", nil, nil, nil))
-	h.Require.NoError(h.Execute("grid", "usage", "--team", "team-d"))
+	h.Require.NoError(h.Execute("grid", "usage", "--team", "Infra"))
 	h.Require.Equal([]string{"Infra", "$0", "·", "no", "limit"}, gridUsageRow(h, h.Stdout.String(), "Infra"))
 }
 
@@ -209,9 +236,17 @@ func Test_Grid_Usage_Empty(t *testing.T) {
 
 	h.Require.NoError(h.Execute("grid", "usage"))
 	h.Require.Equal([]string{"Engineering", "$2", "of", "$100"}, gridUsageRow(h, h.Stdout.String(), "Engineering"), "this month's spend from the settings, not the empty usage")
+	gridSetTeams(api)
 
+	h.Require.NoError(h.Execute("grid", "usage"))
+	h.Require.Empty(h.Stdout.String())
+	h.Require.Equal("No usage this month.\n", h.Stderr.String())
+	h.Require.NoError(h.Execute("grid", "usage", "--output", "json"))
+	h.Require.Equal("[]\n", h.Stdout.String(), "still valid JSON with no teams")
+
+	gridSetTeams(api, gridTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil))
 	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 404, map[string]string{"message": "not found"})
-	h.Require.ErrorContains(h.Execute("grid", "usage"), "getting your settings: ")
+	h.Require.ErrorContains(h.Execute("grid", "usage"), "getting your settings in Engineering: ")
 	h.Require.Contains(h.Stderr.String(), "If you're using a team or workspace API key, run 'baseten auth login'",
 		"a service-account key has no teams or routes usage of its own")
 }

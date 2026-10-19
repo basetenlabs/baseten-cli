@@ -159,22 +159,22 @@ var commandGrid = Command{
 			Flags: GridUsageFlags{},
 			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
 				JSONArrayStreamed: true,
-				TextDescription: "The month and when limits reset go to stderr. Then a line with the team, what you spent " +
+				TextDescription: "The month and when limits reset go to stderr. Then, for each team, a line with the team, what you spent " +
 					"there this month and your limit there, with the team's default when yours differs from it, ending in " +
 					"\"limit reached\" or \"team limit reached\" when your requests there are rejected; on a terminal, a " +
 					"chart of spend per day per model from the first of the month; and a line per model with its spend and " +
-					"share, most expensive first. A cost of \"-\" means some of that usage couldn't be priced. For a " +
-					"window other than this month so far, the " +
+					"share, most expensive first. A cost of \"-\" means some of that usage couldn't be priced. With no " +
+					"teams, prints \"No usage this month.\" to stderr. For a window other than this month so far, the " +
 					"month line is the window instead, and the team line is what you spent there in it, with no limit.",
 				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-team, per-model usage " +
 					"in results, including days with no usage. cost_usd values are exact decimal strings.",
 				Examples: []CommandExample{
 					{
-						Description: "Show your spend this month in your team.",
+						Description: "Show your spend this month in each of your teams.",
 						Command:     "baseten grid usage",
 					},
 					{
-						Description: "Show your spend this month in a team, when you belong to several.",
+						Description: "Show your spend this month in one of your teams.",
 						Command:     "baseten grid usage --team <team>",
 					},
 					{
@@ -291,7 +291,7 @@ type GridStatusList struct {
 type GridUsageFlags struct {
 	CommandFlags
 
-	Team string `flag:"team" desc:"ID of the team to show. Without it, your only team; required when you belong to several."`
+	Team string `flag:"team" desc:"Team name or ID to show. Without it, every team you're in."`
 
 	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the start of the current UTC month."`
 	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`

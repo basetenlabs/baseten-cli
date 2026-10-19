@@ -34,27 +34,52 @@ func commandGridUsage(ctx *CommandContext, f *cmd.GridUsageFlags) error {
 	if err != nil {
 		return fmt.Errorf("getting current user: %w", err)
 	}
-	// The server picks your only team, or asks for --team when you have several.
-	settingsParams := managementapi.GetV1GridTeamSettingsUsersUserIdParams{}
-	if f.Team != "" {
-		settingsParams.TeamId = &f.Team
-	}
-	settings, err := api.GetGridTeamSettingsUsers(ctx, "me", settingsParams)
-	if err != nil {
-		// A team or workspace key authenticates as a service account, which
-		// has no teams or routes keys of its own.
+	// A team or workspace key authenticates as a service account, which has
+	// no teams or routes keys of its own.
+	serviceAccountHint := func() {
 		if session, serr := ctx.authInfo.Session(); serr == nil && session.UsesAPIKey() {
 			ctx.LogLine("If you're using a team or workspace API key, run 'baseten auth login' to see your own usage.")
 		}
-		return fmt.Errorf("getting your settings: %w", err)
 	}
-	teams := []managementapi.RouteTeamUserSettings{*settings}
+	listing, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
+	if err != nil {
+		serviceAccountHint()
+		return fmt.Errorf("getting your teams: %w", err)
+	}
+	mine := listing.Teams
+	names := make([]string, len(mine))
+	for i, t := range mine {
+		names[i] = strconv.Quote(t.Name)
+	}
 	// Opened before any early return, so JSON output is at least [].
 	var jw *JSONArrayWriter
 	if ctx.JSON {
 		jw = ctx.NewJSONArrayWriter()
 		defer jw.Close()
 	}
+	// --team narrows to one team; otherwise every team you're in.
+	if f.Team != "" {
+		i := slices.IndexFunc(mine, func(t managementapi.Team) bool { return t.Id == f.Team || t.Name == f.Team })
+		if i < 0 {
+			return cmd.NewErrUsagef("no team of yours matched %q; your teams are %s", f.Team, strings.Join(names, ", "))
+		}
+		mine = mine[i : i+1]
+	} else if len(mine) == 0 {
+		ctx.LogLine("No usage this month.")
+		return nil
+	}
+	// Your settings in each team: your limit there, your spend this month,
+	// and whether you're blocked.
+	teams := make([]managementapi.RouteTeamUserSettings, len(mine))
+	for i, t := range mine {
+		settings, err := api.GetGridTeamSettingsUsers(ctx, "me", managementapi.GetV1GridTeamSettingsUsersUserIdParams{TeamId: &t.Id})
+		if err != nil {
+			serviceAccountHint()
+			return fmt.Errorf("getting your settings in %s: %w", t.Name, err)
+		}
+		teams[i] = *settings
+	}
+
 	// This month so far by default, the period spend limits apply to, in
 	// whole UTC days like the API.
 	startDate, endDate, err := gridUsageWindow(ctx, gridUsageRequest{start: f.Start, end: f.End, since: f.Since,
