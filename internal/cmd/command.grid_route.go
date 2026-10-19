@@ -11,14 +11,14 @@ import (
 )
 
 func init() {
-	Register("grid route list", commandRouteList)
-	Register("grid route describe", commandRouteDescribe)
-	Register("grid route create", commandRouteCreate)
-	Register("grid route update", commandRouteUpdate)
-	Register("grid route delete", commandRouteDelete)
+	Register("grid route list", commandGridRouteList)
+	Register("grid route describe", commandGridRouteDescribe)
+	Register("grid route create", commandGridRouteCreate)
+	Register("grid route update", commandGridRouteUpdate)
+	Register("grid route delete", commandGridRouteDelete)
 }
 
-func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
+func commandGridRouteList(ctx *CommandContext, flags *cmd.GridRouteListFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -31,12 +31,12 @@ func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
 	if team != "" {
 		params.TeamId = &team
 	}
-	items, err := listRoutes(ctx, cl.API(), params)
+	items, err := listGridRoutes(ctx, cl.API(), params)
 	if err != nil {
 		return err
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.RouteList{Items: normalizeJSONSlice(items)})
+		ctx.OutputJSON(cmd.GridRouteList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {
@@ -56,7 +56,7 @@ func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
 
 // Resolve a name once, then mutate by stable ID. Never retry a mutation by name:
 // deletion and recreation of the name must not redirect it to a different route.
-func resolveRouteID(ctx *CommandContext, api *managementapi.Client, ref cmd.RouteRefFlags) (string, error) {
+func resolveGridRouteID(ctx *CommandContext, api *managementapi.Client, ref cmd.GridRouteRefFlags) (string, error) {
 	if ref.ID != "" {
 		return ref.ID, nil
 	}
@@ -79,12 +79,12 @@ func resolveRouteID(ctx *CommandContext, api *managementapi.Client, ref cmd.Rout
 	return page.Items[0].Id, nil
 }
 
-func commandRouteDescribe(ctx *CommandContext, flags *cmd.RouteDescribeFlags) error {
+func commandGridRouteDescribe(ctx *CommandContext, flags *cmd.GridRouteDescribeFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	id, err := resolveRouteID(ctx, cl.API(), flags.RouteRefFlags)
+	id, err := resolveGridRouteID(ctx, cl.API(), flags.GridRouteRefFlags)
 	if err != nil {
 		return err
 	}
@@ -103,9 +103,9 @@ func commandRouteDescribe(ctx *CommandContext, flags *cmd.RouteDescribeFlags) er
 	ctx.Outputf("Team ID:          %s\n", route.TeamId)
 	ctx.Outputf("Team Name:        %s\n", route.TeamName)
 	value, err := route.Target.ValueByDiscriminator()
-	var t routeTargetInfo
+	var t gridRouteTargetInfo
 	if err == nil {
-		t, err = routeTargetFields(value)
+		t, err = gridRouteTargetFields(value)
 	}
 	if err != nil {
 		ctx.Outputf("Target Type:      <unrecognized type>\n")
@@ -130,7 +130,7 @@ func commandRouteDescribe(ctx *CommandContext, flags *cmd.RouteDescribeFlags) er
 	return nil
 }
 
-func routeTarget(flags cmd.RouteTargetFlags) (*managementapi.CreateRouteRequest_Target, error) {
+func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateRouteRequest_Target, error) {
 	if flags.TargetType == "" || flags.TargetModel == "" {
 		return nil, cmd.NewErrUsagef("--target-type and --target-model are required")
 	}
@@ -160,8 +160,8 @@ func routeTarget(flags cmd.RouteTargetFlags) (*managementapi.CreateRouteRequest_
 	}
 }
 
-func commandRouteCreate(ctx *CommandContext, flags *cmd.RouteCreateFlags) error {
-	target, err := routeTarget(flags.RouteTargetFlags)
+func commandGridRouteCreate(ctx *CommandContext, flags *cmd.GridRouteCreateFlags) error {
+	target, err := gridRouteTarget(flags.GridRouteTargetFlags)
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func commandRouteCreate(ctx *CommandContext, flags *cmd.RouteCreateFlags) error 
 	return nil
 }
 
-func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error {
+func commandGridRouteUpdate(ctx *CommandContext, flags *cmd.GridRouteUpdateFlags) error {
 	if !flags.DisplayName.IsSet() && !flags.Description.IsSet() {
 		return cmd.NewErrUsagef("pass --display-name or --description")
 	}
@@ -201,7 +201,7 @@ func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error 
 	if err != nil {
 		return err
 	}
-	id, err := resolveRouteID(ctx, cl.API(), flags.RouteRefFlags)
+	id, err := resolveGridRouteID(ctx, cl.API(), flags.GridRouteRefFlags)
 	if err != nil {
 		return err
 	}
@@ -221,12 +221,12 @@ func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error 
 	return nil
 }
 
-func commandRouteDelete(ctx *CommandContext, flags *cmd.RouteDeleteFlags) error {
+func commandGridRouteDelete(ctx *CommandContext, flags *cmd.GridRouteDeleteFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	id, err := resolveRouteID(ctx, cl.API(), flags.RouteRefFlags)
+	id, err := resolveGridRouteID(ctx, cl.API(), flags.GridRouteRefFlags)
 	if err != nil {
 		return err
 	}
@@ -247,24 +247,24 @@ func commandRouteDelete(ctx *CommandContext, flags *cmd.RouteDeleteFlags) error 
 	return nil
 }
 
-// routeTargetInfo is the displayable shape of any route target variant.
-type routeTargetInfo struct {
+// gridRouteTargetInfo is the displayable shape of any route target variant.
+type gridRouteTargetInfo struct {
 	kind, model, connection string
 	// Classifier routes pick one of their allowed routes per request.
 	classifier, defaultRoute string
 	allowedRoutes            []string
 }
 
-// routeTargetFields extracts the shared fields from generated target variants,
+// gridRouteTargetFields extracts the shared fields from generated target variants,
 // like autoscalingScheduleFields does for schedule variants.
-func routeTargetFields(value any) (routeTargetInfo, error) {
+func gridRouteTargetFields(value any) (gridRouteTargetInfo, error) {
 	switch t := value.(type) {
 	case managementapi.RouteTargetBasetenModelAPI:
-		return routeTargetInfo{kind: t.Type, model: t.Model}, nil
+		return gridRouteTargetInfo{kind: t.Type, model: t.Model}, nil
 	case managementapi.RouteTargetConnection:
-		return routeTargetInfo{kind: t.Type, model: t.Model, connection: t.ConnectionId}, nil
+		return gridRouteTargetInfo{kind: t.Type, model: t.Model, connection: t.ConnectionId}, nil
 	case managementapi.RouteTargetClassifier:
-		info := routeTargetInfo{kind: t.Type, defaultRoute: t.DefaultRoute.Slug}
+		info := gridRouteTargetInfo{kind: t.Type, defaultRoute: t.DefaultRoute.Slug}
 		// Null for routers created before classifiers could be selected.
 		if t.Classifier != nil {
 			info.classifier = t.Classifier.Name
@@ -274,12 +274,12 @@ func routeTargetFields(value any) (routeTargetInfo, error) {
 		}
 		return info, nil
 	default:
-		return routeTargetInfo{}, fmt.Errorf("unsupported route target %T", value)
+		return gridRouteTargetInfo{}, fmt.Errorf("unsupported route target %T", value)
 	}
 }
 
-// listConnections returns a team's route connections across all pages.
-func listConnections(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridConnectionsParams) ([]managementapi.RouteConnection, error) {
+// listGridConnections returns a team's route connections across all pages.
+func listGridConnections(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridConnectionsParams) ([]managementapi.RouteConnection, error) {
 	var connections []managementapi.RouteConnection
 	for {
 		resp, err := api.GetGridConnections(ctx, params)
@@ -294,8 +294,8 @@ func listConnections(ctx context.Context, api *managementapi.Client, params mana
 	}
 }
 
-// listRoutes returns the routes across all pages.
-func listRoutes(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridRoutesParams) ([]managementapi.Route, error) {
+// listGridRoutes returns the routes across all pages.
+func listGridRoutes(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridRoutesParams) ([]managementapi.Route, error) {
 	var routes []managementapi.Route
 	for {
 		resp, err := api.GetGridRoutes(ctx, params)

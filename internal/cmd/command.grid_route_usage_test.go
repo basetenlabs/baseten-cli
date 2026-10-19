@@ -7,11 +7,11 @@ import (
 	"time"
 )
 
-func Test_Route_Usage_DefaultsMatchAPI(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Route_Usage_DefaultsMatchAPI(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "route", "usage"))
-	q := harnessUsageLastQuery(h, api)
+	q := gridUsageLastQuery(h, api)
 	h.Require.Equal([]string{"2026-09-24"}, q["start_date"], "the previous UTC day")
 	h.Require.Equal([]string{"2026-09-26"}, q["end_date"], "through today")
 	h.Require.Equal([]string{"MODEL"}, q["group_by"])
@@ -19,17 +19,17 @@ func Test_Route_Usage_DefaultsMatchAPI(t *testing.T) {
 	h.Require.Nil(api.FindCall("GET", "/v1/users/me"))
 }
 
-func Test_Route_Usage_EndOnlySpansTheDayBefore(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Route_Usage_EndOnlySpansTheDayBefore(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--end", "2026-09-10T00:00:00Z"))
-	q := harnessUsageLastQuery(h, api)
+	q := gridUsageLastQuery(h, api)
 	h.Require.Equal([]string{"2026-09-09"}, q["start_date"])
 	h.Require.Equal([]string{"2026-09-10"}, q["end_date"])
 }
 
-func Test_Route_Usage_TimeSeriesTable(t *testing.T) {
-	h, _ := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Route_Usage_TimeSeriesTable(t *testing.T) {
+	h, _ := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--since", "7d"))
 	lines := strings.Split(strings.TrimRight(h.Stdout.String(), "\n"), "\n")
@@ -44,30 +44,30 @@ func Test_Route_Usage_TimeSeriesTable(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Window: 2026-09-01 through 2026-09-03 UTC · grouped by model")
 }
 
-func Test_Route_Usage_KeepsRowsWithNoTokens(t *testing.T) {
-	body := harnessUsageBody(harnessUsageBucket("2026-09-24",
-		harnessUsageModel("claude-opus-5-5", "0.14", 10, 0, 1),
-		harnessUsageModel("gpt-6-luna", "0", 0, 0, 0),
+func Test_Grid_Route_Usage_KeepsRowsWithNoTokens(t *testing.T) {
+	body := gridUsageBody(gridUsageBucket("2026-09-24",
+		gridUsageModel("claude-opus-5-5", "0.14", 10, 0, 1),
+		gridUsageModel("gpt-6-luna", "0", 0, 0, 0),
 	))
-	h, _ := newHarnessUsageHarness(t, harnessUsageNow, body)
+	h, _ := newGridUsageHarness(t, gridUsageNow, body)
 
 	h.Require.NoError(h.Execute("grid", "route", "usage"))
-	h.Require.Equal([]string{"gpt-6-luna", "0", "0", "0", "$0.00"}, harnessUsageRow(h, h.Stdout.String(), "gpt-6-luna"), "shows what the API returns")
+	h.Require.Equal([]string{"gpt-6-luna", "0", "0", "0", "$0.00"}, gridUsageRow(h, h.Stdout.String(), "gpt-6-luna"), "shows what the API returns")
 }
 
-func Test_Route_Usage_FiltersPassThrough(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Route_Usage_FiltersPassThrough(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--user-id", "user-b", "--group-by", "user,provider", "--model", "glm-5.2", "--provider", "xai"))
-	q := harnessUsageLastQuery(h, api)
+	q := gridUsageLastQuery(h, api)
 	h.Require.Equal([]string{"user-b"}, q["user_ids"])
 	h.Require.Equal([]string{"USER", "PROVIDER"}, q["group_by"])
 	h.Require.Equal([]string{"glm-5.2"}, q["models"])
 	h.Require.Equal([]string{"XAI"}, q["providers"])
 }
 
-func Test_Route_Usage_JSONStreamsBuckets(t *testing.T) {
-	h, _ := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Route_Usage_JSONStreamsBuckets(t *testing.T) {
+	h, _ := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--output", "json"))
 	var got []struct {
@@ -80,9 +80,9 @@ func Test_Route_Usage_JSONStreamsBuckets(t *testing.T) {
 	h.Require.Empty(got[1].Results)
 }
 
-func Test_Route_Usage_EmptyHasNoAPIKeyHint(t *testing.T) {
-	body := harnessUsageBody(harnessUsageBucket("2026-09-24"))
-	h, _ := newHarnessUsageHarness(t, harnessUsageNow, body)
+func Test_Grid_Route_Usage_EmptyHasNoAPIKeyHint(t *testing.T) {
+	body := gridUsageBody(gridUsageBucket("2026-09-24"))
+	h, _ := newGridUsageHarness(t, gridUsageNow, body)
 
 	h.Require.NoError(h.Execute("grid", "route", "usage"))
 	h.Require.Empty(h.Stdout.String())
@@ -90,19 +90,19 @@ func Test_Route_Usage_EmptyHasNoAPIKeyHint(t *testing.T) {
 	h.Require.NotContains(h.Stderr.String(), "team or workspace API key", "there's no default user filter to explain")
 }
 
-func Test_Route_Usage_PassesUserIDsThrough(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Route_Usage_PassesUserIDsThrough(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--user-id", "me", "--user-id", "user-b"))
-	h.Require.Equal([]string{"me", "user-b"}, harnessUsageLastQuery(h, api)["user_ids"], "sent as given, like the API")
+	h.Require.Equal([]string{"me", "user-b"}, gridUsageLastQuery(h, api)["user_ids"], "sent as given, like the API")
 	h.Require.Nil(api.FindCall("GET", "/v1/users/me"))
 }
 
-func Test_Route_Usage_WindowFlags(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Route_Usage_WindowFlags(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 	window := func(args ...string) []string {
 		h.Require.NoError(h.Execute(append([]string{"grid", "route", "usage"}, args...)...))
-		q := harnessUsageLastQuery(h, api)
+		q := gridUsageLastQuery(h, api)
 		return []string{q["start_date"][0], q["end_date"][0]}
 	}
 
@@ -112,8 +112,8 @@ func Test_Route_Usage_WindowFlags(t *testing.T) {
 	h.Require.Equal([]string{"2026-09-20", "2026-09-26"}, window("--start", "2026-09-20T12:00:00Z"), "start only runs to now")
 }
 
-func Test_Route_Usage_RejectsBadFlags(t *testing.T) {
-	h, _ := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Route_Usage_RejectsBadFlags(t *testing.T) {
+	h, _ := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.ErrorContains(h.Execute("grid", "route", "usage", "--since", "1d", "--start", "2026-09-01T00:00:00Z"), "--since cannot be combined")
 	h.Require.ErrorContains(h.Execute("grid", "route", "usage", "--start", "2026-09-10T00:00:00Z", "--end", "2026-09-01T00:00:00Z"), "--start must be earlier than --end")
@@ -122,11 +122,11 @@ func Test_Route_Usage_RejectsBadFlags(t *testing.T) {
 	h.Require.ErrorContains(h.Execute("grid", "route", "usage", "--page-size", "32"), "--page-size must be between 1 and 31")
 }
 
-func Test_Route_Usage_ClampsToRetention(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC), harnessUsageMonth())
+func Test_Grid_Route_Usage_ClampsToRetention(t *testing.T) {
+	h, api := newGridUsageHarness(t, time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC), gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--start", "2026-06-01T00:00:00Z", "--end", "2026-07-01T00:00:00Z"))
-	h.Require.Equal([]string{"2026-06-29"}, harnessUsageLastQuery(h, api)["start_date"], "92 days including today")
+	h.Require.Equal([]string{"2026-06-29"}, gridUsageLastQuery(h, api)["start_date"], "92 days including today")
 	h.Require.Contains(h.Stderr.String(), "Usage is kept for 92 days, so this only includes usage from 2026-06-29 on.")
 
 	h.Require.ErrorContains(h.Execute("grid", "route", "usage", "--start", "2026-05-01T00:00:00Z", "--end", "2026-06-01T00:00:00Z"),

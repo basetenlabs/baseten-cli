@@ -25,26 +25,26 @@ import (
 )
 
 func init() {
-	Register("grid setup", commandHarnessSetup)
-	Register("grid status", commandHarnessStatus)
-	Register("grid sync", commandHarnessSync)
-	Register("grid teardown", commandHarnessTeardown)
+	Register("grid setup", commandGridSetup)
+	Register("grid status", commandGridStatus)
+	Register("grid sync", commandGridSync)
+	Register("grid teardown", commandGridTeardown)
 }
 
 // harnessPickerLabelWidth caps picker labels so they don't wrap.
 const harnessPickerLabelWidth = 80
 
-func harnessInstalls(d harness.Detection) []cmd.HarnessInstall {
-	installs := make([]cmd.HarnessInstall, 0, len(d.Installs))
+func harnessInstalls(d harness.Detection) []cmd.GridHarnessInstall {
+	installs := make([]cmd.GridHarnessInstall, 0, len(d.Installs))
 	for _, install := range d.Installs {
-		installs = append(installs, cmd.HarnessInstall{Kind: install.Kind, Binary: install.Binary, Version: install.Version})
+		installs = append(installs, cmd.GridHarnessInstall{Kind: install.Kind, Binary: install.Binary, Version: install.Version})
 	}
 	return installs
 }
 
 // harnessInstallsLabel summarizes a harness's installs as "1.2.3" for one
 // CLI, or "1.2.3 (CLI), 2.0.1 (Desktop)" when several were found.
-func harnessInstallsLabel(installs []cmd.HarnessInstall) string {
+func harnessInstallsLabel(installs []cmd.GridHarnessInstall) string {
 	if len(installs) == 0 {
 		return "not found"
 	}
@@ -70,7 +70,7 @@ type selectedHarness struct {
 	selection harnessSelection
 }
 
-type harnessSyncRun struct {
+type gridSyncRun struct {
 	team    *managementapi.Team
 	targets []harnessTarget
 	plans   []*harness.Plan
@@ -81,9 +81,9 @@ type harnessSyncRun struct {
 // selectHarnesses returns the harnesses a command applies to. Setup offers
 // installed harnesses; status and teardown find configured ones, even when
 // the harness is no longer installed.
-func selectHarnesses(ctx *CommandContext, flags cmd.HarnessFlags, setup bool) ([]selectedHarness, error) {
+func selectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup bool) ([]selectedHarness, error) {
 	if !harness.Supported() {
-		return nil, errors.New("harness commands support only macOS and Linux for now")
+		return nil, errors.New("Grid harness integrations support only macOS and Linux for now")
 	}
 	explicit := len(flags.Harness) > 0
 	if flags.ConfigDir != "" && len(flags.Harness) != 1 {
@@ -172,7 +172,7 @@ type harnessTarget struct {
 //  1. If in `setup`, we emit a validation error.
 //  2. If in `sync`, we emit a warning, and clobber with the new server default.
 func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, targets []harnessTarget, forSync bool) ([]*harness.Plan, error) {
-	listed, err := listRoutes(ctx, api, managementapi.GetV1GridRoutesParams{TeamId: &team.Id})
+	listed, err := listGridRoutes(ctx, api, managementapi.GetV1GridRoutesParams{TeamId: &team.Id})
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +181,7 @@ func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *mana
 	}
 	// Routes reach external providers through team connections, and the
 	// provider decides which API a harness calls the route with.
-	connections, err := listConnections(ctx, api, managementapi.GetV1GridConnectionsParams{TeamId: &team.Id})
+	connections, err := listGridConnections(ctx, api, managementapi.GetV1GridConnectionsParams{TeamId: &team.Id})
 	if err != nil {
 		return nil, err
 	}
@@ -286,11 +286,11 @@ func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *mana
 	return plans, nil
 }
 
-func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
+func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if f.UseSessionCredential && f.KeyName != "" {
 		return cmd.NewErrUsagef("--key-name is not used with --use-session-credential; the session's API key already exists")
 	}
-	selected, err := selectHarnesses(ctx, f.HarnessFlags, true)
+	selected, err := selectHarnesses(ctx, f.GridHarnessFlags, true)
 	if err != nil {
 		return err
 	}
@@ -346,7 +346,7 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 	}
 	if f.DryRun {
 		if ctx.JSON {
-			outputHarnessPlansJSON(ctx, plans, nil)
+			outputGridPlansJSON(ctx, plans, nil)
 		} else {
 			ctx.LogLine("Preview only. No files changed and no routes API key created.")
 		}
@@ -386,20 +386,20 @@ func commandHarnessSetup(ctx *CommandContext, f *cmd.HarnessSetupFlags) error {
 		return err
 	}
 	if ctx.JSON {
-		outputHarnessPlansJSON(ctx, plans, nil)
+		outputGridPlansJSON(ctx, plans, nil)
 		return nil
 	}
 	for i := range targets {
-		ctx.Logf("Undo with: %s\n", harnessFollowupCommand("teardown", targets[i].selectedHarness, f.ConfigDir))
+		ctx.Logf("Undo with: %s\n", gridFollowupCommand("teardown", targets[i].selectedHarness, f.ConfigDir))
 	}
 	return nil
 }
 
-// commandHarnessSync refreshes the harnesses configured on this machine with
+// commandGridSync refreshes the harnesses configured on this machine with
 // the team and options recorded by their last setup.
-func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
+func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 	if !harness.Supported() {
-		return errors.New("harness commands support only macOS and Linux for now")
+		return errors.New("Grid harness integrations support only macOS and Linux for now")
 	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -446,7 +446,7 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 	}
 	if len(targets) == 0 {
 		if ctx.JSON {
-			ctx.OutputJSON(cmd.HarnessPlanList{Items: []cmd.HarnessPlan{}})
+			ctx.OutputJSON(cmd.GridPlanList{Items: []cmd.GridPlan{}})
 		} else {
 			ctx.LogLine("No harnesses to sync. Run 'baseten grid setup' first.")
 		}
@@ -461,7 +461,7 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 		groups[key] = append(groups[key], t)
 	}
 
-	var runs []harnessSyncRun
+	var runs []gridSyncRun
 	for _, group := range groups {
 		// Fetching the current session key allows us to inject into plans and detect if rotation has happened.
 		var sessionToken string
@@ -475,7 +475,7 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w; rerun 'baseten grid setup --harness %s' to record a current team", group[0].Name(), err, group[0].Name())
 		}
-		run := harnessSyncRun{team: team, targets: group, token: sessionToken}
+		run := gridSyncRun{team: team, targets: group, token: sessionToken}
 		if run.plans, err = planHarnessSetup(ctx, api, run.team, run.targets, true); err != nil {
 			return err
 		}
@@ -489,7 +489,7 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 
 	// NB(nikhil): Re-extract targets / plans from the runs, because they might have changed due to
 	// route eligibility.
-	targets, plans := extractFromHarnessSyncRuns(runs)
+	targets, plans := extractFromGridSyncRuns(runs)
 	switch {
 	case ctx.JSON:
 	case ctx.verbose || f.DryRun:
@@ -501,7 +501,7 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 	}
 	if f.DryRun {
 		if ctx.JSON {
-			outputHarnessPlansJSON(ctx, plans, nil)
+			outputGridPlansJSON(ctx, plans, nil)
 		} else {
 			ctx.LogLine("Preview only. No files changed and no routes API key created.")
 		}
@@ -517,7 +517,7 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 			return err
 		}
 		if ctx.JSON {
-			outputHarnessPlansJSON(ctx, plans, nil)
+			outputGridPlansJSON(ctx, plans, nil)
 		} else {
 			ctx.LogLine("All configured harnesses are up to date.")
 		}
@@ -558,12 +558,12 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 		return err
 	}
 	if ctx.JSON {
-		outputHarnessPlansJSON(ctx, plans, nil)
+		outputGridPlansJSON(ctx, plans, nil)
 	}
 	return nil
 }
 
-func extractFromHarnessSyncRuns(runs []harnessSyncRun) (targets []harnessTarget, plans []*harness.Plan) {
+func extractFromGridSyncRuns(runs []gridSyncRun) (targets []harnessTarget, plans []*harness.Plan) {
 	for _, run := range runs {
 		targets = append(targets, run.targets...)
 		plans = append(plans, run.plans...)
@@ -853,22 +853,22 @@ func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models m
 	return "", "", false
 }
 
-func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error {
-	selected, err := selectHarnesses(ctx, f.HarnessFlags, false)
+func commandGridStatus(ctx *CommandContext, f *cmd.GridStatusFlags) error {
+	selected, err := selectHarnesses(ctx, f.GridHarnessFlags, false)
 	if err != nil {
 		return err
 	}
-	results := make([]cmd.HarnessStatus, 0, len(selected))
+	results := make([]cmd.GridHarnessStatus, 0, len(selected))
 	for _, choice := range selected {
 		r, err := choice.Inspect(choice.detection)
 		if err != nil {
 			return fmt.Errorf("%s: %w", choice.Name(), err)
 		}
-		routes := make([]cmd.HarnessRoute, 0, len(r.Routes))
+		routes := make([]cmd.GridHarnessRoute, 0, len(r.Routes))
 		for _, route := range r.Routes {
-			routes = append(routes, cmd.HarnessRoute{Name: route.Name, DisplayName: route.DisplayName})
+			routes = append(routes, cmd.GridHarnessRoute{Name: route.Name, DisplayName: route.DisplayName})
 		}
-		results = append(results, cmd.HarnessStatus{
+		results = append(results, cmd.GridHarnessStatus{
 			Harness:         r.Name,
 			Config:          r.Path,
 			Installed:       r.Installed,
@@ -881,7 +881,7 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 		})
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.HarnessStatusList{Items: normalizeJSONSlice(results)})
+		ctx.OutputJSON(cmd.GridStatusList{Items: normalizeJSONSlice(results)})
 		return nil
 	}
 	if len(results) == 0 {
@@ -910,8 +910,8 @@ func commandHarnessStatus(ctx *CommandContext, f *cmd.HarnessStatusFlags) error 
 	return nil
 }
 
-func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) error {
-	selected, err := selectHarnesses(ctx, f.HarnessFlags, false)
+func commandGridTeardown(ctx *CommandContext, f *cmd.GridTeardownFlags) error {
+	selected, err := selectHarnesses(ctx, f.GridHarnessFlags, false)
 	if err != nil {
 		return err
 	}
@@ -946,7 +946,7 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 			}
 		}
 		if ctx.JSON {
-			outputHarnessPlansJSON(ctx, plans, nil)
+			outputGridPlansJSON(ctx, plans, nil)
 		} else {
 			ctx.LogLine("No Baseten settings to remove.")
 		}
@@ -969,7 +969,7 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 	}
 	if f.DryRun {
 		if ctx.JSON {
-			outputHarnessPlansJSON(ctx, plans, nil)
+			outputGridPlansJSON(ctx, plans, nil)
 		} else {
 			ctx.LogLine("Preview only. No files changed and no key deleted.")
 		}
@@ -1005,13 +1005,13 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 		}
 	}
 	if ctx.JSON {
-		outputHarnessPlansJSON(ctx, plans, deleted)
+		outputGridPlansJSON(ctx, plans, deleted)
 	}
 	return nil
 }
 
-// harnessFollowupCommand repeats --config-dir so follow-ups target the same files.
-func harnessFollowupCommand(action string, h selectedHarness, configDir string) string {
+// gridFollowupCommand repeats --config-dir so follow-ups target the same files.
+func gridFollowupCommand(action string, h selectedHarness, configDir string) string {
 	command := "baseten grid " + action + " --harness " + h.Name()
 	if configDir != "" {
 		command += " --config-dir '" + strings.ReplaceAll(configDir, "'", `'\''`) + "'"
@@ -1019,10 +1019,10 @@ func harnessFollowupCommand(action string, h selectedHarness, configDir string) 
 	return command
 }
 
-func outputHarnessPlansJSON(ctx *CommandContext, plans []*harness.Plan, deletedKeys []string) {
-	items := make([]cmd.HarnessPlan, 0, len(plans))
+func outputGridPlansJSON(ctx *CommandContext, plans []*harness.Plan, deletedKeys []string) {
+	items := make([]cmd.GridPlan, 0, len(plans))
 	for _, p := range plans {
-		items = append(items, cmd.HarnessPlan{
+		items = append(items, cmd.GridPlan{
 			Harness:          p.Harness,
 			Config:           p.Path,
 			Settings:         append([]string{}, p.Keys...),
@@ -1031,7 +1031,7 @@ func outputHarnessPlansJSON(ctx *CommandContext, plans []*harness.Plan, deletedK
 			Changed:          p.Changed,
 		})
 	}
-	ctx.OutputJSON(cmd.HarnessPlanList{Items: normalizeJSONSlice(items), DeletedAPIKeys: deletedKeys})
+	ctx.OutputJSON(cmd.GridPlanList{Items: normalizeJSONSlice(items), DeletedAPIKeys: deletedKeys})
 }
 
 func harnessDisplayPath(path string) string {
@@ -1176,7 +1176,7 @@ func deleteHarnessKeys(ctx *CommandContext, tokens []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	keys, err := listRouteAPIKeys(ctx, cl.API())
+	keys, err := listGridRouteAPIKeys(ctx, cl.API())
 	if err != nil {
 		return nil, err
 	}
@@ -1230,7 +1230,7 @@ func ensureHarnessToken(ctx *CommandContext, api *managementapi.Client, team *ma
 		return "", err
 	}
 	if saved != "" {
-		keys, err := listRouteAPIKeys(ctx, api)
+		keys, err := listGridRouteAPIKeys(ctx, api)
 		if err != nil {
 			return "", err
 		}

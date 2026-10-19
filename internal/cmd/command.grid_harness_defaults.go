@@ -10,10 +10,10 @@ import (
 )
 
 func init() {
-	Register("grid harness-defaults", commandHarnessDefaults)
+	Register("grid harness-defaults", commandGridHarnessDefaults)
 }
 
-func commandHarnessDefaults(ctx *CommandContext, flags *cmd.HarnessDefaultsFlags) error {
+func commandGridHarnessDefaults(ctx *CommandContext, flags *cmd.GridHarnessDefaultsFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -29,7 +29,7 @@ func commandHarnessDefaults(ctx *CommandContext, flags *cmd.HarnessDefaultsFlags
 	}
 	items := harnessDefaultItems(settings.HarnessDefaults, flags.Harness)
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.HarnessDefaultsList{
+		ctx.OutputJSON(cmd.GridHarnessDefaultsList{
 			TeamId:   team.Id,
 			TeamName: team.Name,
 			Items:    normalizeJSONSlice(items),
@@ -51,14 +51,14 @@ func commandHarnessDefaults(ctx *CommandContext, flags *cmd.HarnessDefaultsFlags
 	return nil
 }
 
-func harnessDefaultItems(defaults managementapi.RouteHarnessDefaults, selected []string) []cmd.HarnessDefault {
-	items := make([]cmd.HarnessDefault, 0, len(harness.All()))
+func harnessDefaultItems(defaults managementapi.RouteHarnessDefaults, selected []string) []cmd.GridHarnessDefault {
+	items := make([]cmd.GridHarnessDefault, 0, len(harness.All()))
 	for _, h := range harness.All() {
 		if len(selected) > 0 && !slices.Contains(selected, h.Name()) {
 			continue
 		}
 		models := harnessDefaultModels(&defaults, h.Name())
-		items = append(items, cmd.HarnessDefault{
+		items = append(items, cmd.GridHarnessDefault{
 			Harness:    h.Name(),
 			Primary:    models[harnessRolePrimary],
 			Background: models[harnessRoleBackground],

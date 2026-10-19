@@ -12,13 +12,13 @@ import (
 )
 
 func init() {
-	Register("grid route api-key list", commandRouteAPIKeyList)
-	Register("grid route api-key delete", commandRouteAPIKeyDelete)
+	Register("grid route api-key list", commandGridRouteAPIKeyList)
+	Register("grid route api-key delete", commandGridRouteAPIKeyDelete)
 }
 
-// listRouteAPIKeys returns the routes API keys the caller created, across all
+// listGridRouteAPIKeys returns the routes API keys the caller created, across all
 // their machines and teams.
-func listRouteAPIKeys(ctx context.Context, api *managementapi.Client) (*managementapi.APIKeys, error) {
+func listGridRouteAPIKeys(ctx context.Context, api *managementapi.Client) (*managementapi.APIKeys, error) {
 	category, mine := managementapi.APIKeyCategory_ROUTES, true
 	keys, err := api.GetApiKeys(ctx, managementapi.GetV1ApiKeysParams{Type: &category, CreatedByMe: &mine})
 	if err != nil {
@@ -27,12 +27,12 @@ func listRouteAPIKeys(ctx context.Context, api *managementapi.Client) (*manageme
 	return keys, nil
 }
 
-func commandRouteAPIKeyList(ctx *CommandContext, _ *cmd.RouteAPIKeyListFlags) error {
+func commandGridRouteAPIKeyList(ctx *CommandContext, _ *cmd.GridRouteAPIKeyListFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	keys, err := listRouteAPIKeys(ctx, cl.API())
+	keys, err := listGridRouteAPIKeys(ctx, cl.API())
 	if err != nil {
 		return err
 	}
@@ -62,12 +62,12 @@ func commandRouteAPIKeyList(ctx *CommandContext, _ *cmd.RouteAPIKeyListFlags) er
 	return nil
 }
 
-func commandRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.RouteAPIKeyDeleteFlags) error {
+func commandGridRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.GridRouteAPIKeyDeleteFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	keys, err := listRouteAPIKeys(ctx, cl.API())
+	keys, err := listGridRouteAPIKeys(ctx, cl.API())
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func commandRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.RouteAPIKeyDeleteF
 			return fmt.Errorf("no routes API key with prefix %q; run 'baseten grid route api-key list'", flags.Prefix)
 		}
 	}
-	result := cmd.RouteAPIKeyDeleteResult{Deleted: []string{}, Failed: []string{}}
+	result := cmd.GridRouteAPIKeyDeleteResult{Deleted: []string{}, Failed: []string{}}
 	if len(targets) == 0 {
 		if ctx.JSON {
 			ctx.OutputJSON(result)

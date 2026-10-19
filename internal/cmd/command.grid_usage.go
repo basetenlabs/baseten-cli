@@ -19,12 +19,12 @@ import (
 )
 
 func init() {
-	Register("grid usage", commandHarnessUsage)
+	Register("grid usage", commandGridUsage)
 }
 
-// commandHarnessUsage shows your Code spend this month in each of your teams,
+// commandGridUsage shows your Grid spend this month in each of your teams,
 // per day and per model, against your spend limit there.
-func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
+func commandGridUsage(ctx *CommandContext, f *cmd.GridUsageFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -57,7 +57,7 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	}
 	// This month so far by default, the period spend limits apply to, in
 	// whole UTC days like the API.
-	startDate, endDate, err := routesUsageWindow(ctx, routesUsageRequest{start: f.Start, end: f.End, since: f.Since,
+	startDate, endDate, err := gridUsageWindow(ctx, gridUsageRequest{start: f.Start, end: f.End, since: f.Since,
 		defaultStart: func(end time.Time) time.Time {
 			end = end.UTC()
 			return time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -76,16 +76,16 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	// Spend limits are per user, and admins would otherwise see the whole
 	// organization's usage.
 	userIDs := []string{me.UserId}
-	pageSize := routesUsageMaxBuckets
+	pageSize := gridUsageMaxBuckets
 	params := managementapi.GetV1GridRoutesUsageParams{StartDate: &startDate, EndDate: &endDate, GroupBy: &dims, UserIds: &userIDs, Limit: &pageSize}
 	if f.Team != "" {
 		params.TeamId = &teams[0].TeamId
 	}
 	// Usage in a team you're no longer in, or from before usage was attributed
 	// to teams, has no settings to show it against, so it is left out.
-	byTeam := map[string]map[string]*harnessModel{}
+	byTeam := map[string]map[string]*gridUsageModel{}
 	for _, t := range teams {
-		byTeam[t.TeamId] = map[string]*harnessModel{}
+		byTeam[t.TeamId] = map[string]*gridUsageModel{}
 	}
 	for {
 		resp, err := api.GetGridRoutesUsage(ctx, params)
@@ -99,7 +99,7 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 			}
 			date, _ := time.Parse(time.DateOnly, b.Date)
 			for _, r := range b.Results {
-				t, err := routesUsageResultTotal(r)
+				t, err := gridUsageResultTotal(r)
 				if err != nil {
 					return err
 				}
@@ -116,7 +116,7 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 				name := cmp.Or(deref(r.Model), "(unknown)")
 				m := byModel[name]
 				if m == nil {
-					m = &harnessModel{name: name, priced: true, daily: make([]float64, days)}
+					m = &gridUsageModel{name: name, priced: true, daily: make([]float64, days)}
 					byModel[name] = m
 				}
 				m.cost += cost
@@ -137,28 +137,28 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	} else {
 		ctx.LogLine(start.Format("Jan 2") + " to " + end.AddDate(0, 0, -1).Format("Jan 2, 2006"))
 	}
-	rows := make([]harnessTeam, len(teams))
+	rows := make([]gridUsageTeam, len(teams))
 	for i, t := range teams {
-		rows[i] = harnessTeam{settings: t, models: harnessFoldModels(slices.SortedFunc(maps.Values(byTeam[t.TeamId]), func(x, y *harnessModel) int {
+		rows[i] = gridUsageTeam{settings: t, models: gridUsageFoldModels(slices.SortedFunc(maps.Values(byTeam[t.TeamId]), func(x, y *gridUsageModel) int {
 			return cmp.Or(cmp.Compare(y.cost, x.cost), strings.Compare(x.name, y.name))
 		}), days)}
 	}
-	harnessRender(ctx, start, current, rows)
+	renderGridUsage(ctx, start, current, rows)
 	return nil
 }
 
-// harnessTeam is your settings in a team and your spend there by model, most
+// gridUsageTeam is your settings in a team and your spend there by model, most
 // expensive first, with all but the top few folded into "other".
-type harnessTeam struct {
+type gridUsageTeam struct {
 	settings managementapi.RouteTeamUserSettings
-	models   []*harnessModel
+	models   []*gridUsageModel
 }
 
 // spent is what you spent in the team: this month's from the settings when
 // the window is this month so far, otherwise what the usage adds up to.
-func (t harnessTeam) spent(current bool) float64 {
+func (t gridUsageTeam) spent(current bool) float64 {
 	if current {
-		return harnessFloat(t.settings.MonthSpendUsd)
+		return gridUsageFloat(t.settings.MonthSpendUsd)
 	}
 	all := 0.0
 	for _, m := range t.models {
@@ -167,31 +167,31 @@ func (t harnessTeam) spent(current bool) float64 {
 	return all
 }
 
-// harnessTopModels is how many models the chart and list show on their own;
+// gridUsageTopModels is how many models the chart and list show on their own;
 // the rest are summed into one "other" row so neither grows past a glance.
-const harnessTopModels = 5
+const gridUsageTopModels = 5
 
-// harnessFoldModels folds every model after the top harnessTopModels, which
+// gridUsageFoldModels folds every model after the top gridUsageTopModels, which
 // are sorted most expensive first, into one "other" model with their summed
 // spend over the window's days.
-func harnessFoldModels(models []*harnessModel, days int) []*harnessModel {
-	if len(models) <= harnessTopModels {
+func gridUsageFoldModels(models []*gridUsageModel, days int) []*gridUsageModel {
+	if len(models) <= gridUsageTopModels {
 		return models
 	}
-	other := &harnessModel{name: "other", priced: true, daily: make([]float64, days)}
-	for _, m := range models[harnessTopModels:] {
+	other := &gridUsageModel{name: "other", priced: true, daily: make([]float64, days)}
+	for _, m := range models[gridUsageTopModels:] {
 		other.cost += m.cost
 		other.priced = other.priced && m.priced
 		for d, v := range m.daily {
 			other.daily[d] += v
 		}
 	}
-	return append(models[:harnessTopModels:harnessTopModels], other)
+	return append(models[:gridUsageTopModels:gridUsageTopModels], other)
 }
 
-// harnessModel is one model's spend in a team this month. Whole dollars don't
+// gridUsageModel is one model's spend in a team this month. Whole dollars don't
 // need the API's exact decimals.
-type harnessModel struct {
+type gridUsageModel struct {
 	name string
 	cost float64
 	// priced is false once any of the usage came back without a cost.
@@ -200,20 +200,20 @@ type harnessModel struct {
 	daily []float64
 }
 
-// harnessRender prints, for each team, what you spent there over the window
+// renderGridUsage prints, for each team, what you spent there over the window
 // from start of your limit there, a chart of spend per day when stdout is a
 // terminal, and each model's spend and share, most expensive first, all to
 // the nearest dollar. The limit, and the settings' spend and blocked state,
 // are this month's, so any other window shows only what the usage adds up to.
-func harnessRender(ctx *CommandContext, start time.Time, current bool, teams []harnessTeam) {
+func renderGridUsage(ctx *CommandContext, start time.Time, current bool, teams []gridUsageTeam) {
 	// One label and one amount column shared by every team and its models.
 	labelWidth, amountWidth := 0, 0
 	for _, t := range teams {
 		labelWidth = max(labelWidth, ansi.StringWidth(t.settings.TeamName)+2)
-		amountWidth = max(amountWidth, len(harnessDollars(t.spent(current))))
+		amountWidth = max(amountWidth, len(gridUsageDollars(t.spent(current))))
 		for _, m := range t.models {
 			labelWidth = max(labelWidth, 4+ansi.StringWidth(m.name)+2)
-			amountWidth = max(amountWidth, len(harnessMoney(m)))
+			amountWidth = max(amountWidth, len(gridUsageMoney(m)))
 		}
 	}
 	// The writer drops the styling stdout can't show, so there is no need to
@@ -223,7 +223,7 @@ func harnessRender(ctx *CommandContext, start time.Time, current bool, teams []h
 	bold, dim := ansi.Style{}.Bold(), ansi.Style{}.Faint()
 	warn, crit := ansi.Style{}.ForegroundColor(ansi.Yellow), ansi.Style{}.ForegroundColor(ansi.Red).Bold()
 	paint := func(s string, i int) string {
-		return ansi.Style{}.ForegroundColor(usageChartColors[i%len(usageChartColors)]).Styled(s)
+		return ansi.Style{}.ForegroundColor(gridUsageChartColors[i%len(gridUsageChartColors)]).Styled(s)
 	}
 	pad := func(s string, w int) string { return s + strings.Repeat(" ", w-ansi.StringWidth(s)) }
 	right := func(s string, w int) string { return strings.Repeat(" ", w-ansi.StringWidth(s)) + s }
@@ -244,10 +244,10 @@ func harnessRender(ctx *CommandContext, start time.Time, current bool, teams []h
 		}
 		spentUSD, limitUSD, limit := t.spent(current), 0.0, ""
 		if l := s.SpendLimit.Effective.MonthlyLimitUsd; current && l != nil {
-			limitUSD = harnessFloat(*l)
-			limit = harnessDollars(limitUSD)
+			limitUSD = gridUsageFloat(*l)
+			limit = gridUsageDollars(limitUSD)
 		}
-		spent := harnessDollars(spentUSD)
+		spent := gridUsageDollars(spentUSD)
 		styled := spent
 		switch {
 		case current && s.IsBlocked:
@@ -262,7 +262,7 @@ func harnessRender(ctx *CommandContext, start time.Time, current bool, teams []h
 			line += " of " + limit
 			// The team default only when yours differs from it.
 			if d := s.SpendLimit.TeamDefault; d != nil {
-				if td := harnessDollars(harnessFloat(d.PerMemberMonthlyLimitUsd)); td != limit {
+				if td := gridUsageDollars(gridUsageFloat(d.PerMemberMonthlyLimitUsd)); td != limit {
 					line += " " + dim.Styled("(team default "+td+")")
 				}
 			}
@@ -280,12 +280,12 @@ func harnessRender(ctx *CommandContext, start time.Time, current bool, teams []h
 			for i, m := range models {
 				series[i] = m.daily
 			}
-			if c := renderUsageChart(start, series, width-2, paint); c != "" {
+			if c := renderGridUsageChart(start, series, width-2, paint); c != "" {
 				write("\n  " + strings.ReplaceAll(strings.TrimSuffix(c, "\n"), "\n", "\n  ") + "\n")
 			}
 		}
 		for i, m := range models {
-			line := pad("  "+paint("●", i)+" "+m.name, labelWidth) + right(harnessMoney(m), amountWidth)
+			line := pad("  "+paint("●", i)+" "+m.name, labelWidth) + right(gridUsageMoney(m), amountWidth)
 			if priced && all > 0 {
 				line += " " + dim.Styled(right("("+strconv.Itoa(int(m.cost/all*100+0.5))+"%)", 6))
 			}
@@ -294,42 +294,42 @@ func harnessRender(ctx *CommandContext, start time.Time, current bool, teams []h
 	}
 }
 
-// harnessFloat parses an exact decimal amount from the API; whole dollars
+// gridUsageFloat parses an exact decimal amount from the API; whole dollars
 // don't need its precision.
-func harnessFloat(s string) float64 {
+func gridUsageFloat(s string) float64 {
 	f, _ := strconv.ParseFloat(s, 64)
 	return f
 }
 
-// harnessDollars renders an amount to the nearest dollar, like $1,234, keeping
+// gridUsageDollars renders an amount to the nearest dollar, like $1,234, keeping
 // anything under half a dollar visible as <$1.
-func harnessDollars(f float64) string {
+func gridUsageDollars(f float64) string {
 	if f > 0 && f < 0.5 {
 		return "<$1"
 	}
 	return "$" + billingGroupDigits(strconv.FormatFloat(math.Round(f), 'f', 0, 64))
 }
 
-// harnessMoney renders a model's spend, or "-" when some of it has no price.
-func harnessMoney(m *harnessModel) string {
+// gridUsageMoney renders a model's spend, or "-" when some of it has no price.
+func gridUsageMoney(m *gridUsageModel) string {
 	if !m.priced {
 		return "-"
 	}
-	return harnessDollars(m.cost)
+	return gridUsageDollars(m.cost)
 }
 
-// usageChartHeight is the most rows above the chart's zero row. There is at
+// gridUsageChartHeight is the most rows above the chart's zero row. There is at
 // most one per dollar, so the whole-dollar labels never repeat.
-const usageChartHeight = 7
+const gridUsageChartHeight = 7
 
-// usageChartWidth is the columns the plot aims for, so it isn't spread across
+// gridUsageChartWidth is the columns the plot aims for, so it isn't spread across
 // a wide terminal; a full month at two columns a day runs a little past it.
-const usageChartWidth = 48
+const gridUsageChartWidth = 48
 
-// usageChartColors are the colors of the series, in order.
-var usageChartColors = []ansi.BasicColor{ansi.Blue, ansi.Green, ansi.Magenta, ansi.Cyan, ansi.Yellow, ansi.Red}
+// gridUsageChartColors are the colors of the series, in order.
+var gridUsageChartColors = []ansi.BasicColor{ansi.Blue, ansi.Green, ansi.Magenta, ansi.Cyan, ansi.Yellow, ansi.Red}
 
-// renderUsageChart renders series, each with one dollar amount per day from
+// renderGridUsageChart renders series, each with one dollar amount per day from
 // first, as an asciichart-style step chart with a y-axis in whole dollars and
 // date labels below, fitting width columns, or "" when two columns per day
 // don't fit. Each day is a run of equal width with its date centered under
@@ -340,7 +340,7 @@ var usageChartColors = []ansi.BasicColor{ansi.Blue, ansi.Green, ansi.Magenta, an
 // instead of stepping, spaces its date ticks evenly rather than at day
 // starts, and paints with its own escapes rather than the terminal palette;
 // the glue to work around that is most of this code anyway.
-func renderUsageChart(first time.Time, series [][]float64, width int, paint func(s string, i int) string) string {
+func renderGridUsageChart(first time.Time, series [][]float64, width int, paint func(s string, i int) string) string {
 	days := len(series[0])
 	top := 1.0 // At least a dollar, so the top label isn't $0.
 	for _, s := range series {
@@ -348,15 +348,15 @@ func renderUsageChart(first time.Time, series [][]float64, width int, paint func
 			top = max(top, v)
 		}
 	}
-	height := min(usageChartHeight, int(top))
+	height := min(gridUsageChartHeight, int(top))
 	labels := make([]string, height+1)
 	labelWidth := 0
 	for r := range labels {
-		labels[r] = harnessDollars(top * float64(r) / float64(height))
+		labels[r] = gridUsageDollars(top * float64(r) / float64(height))
 		labelWidth = max(labelWidth, len(labels[r]))
 	}
 	// Each day spans step columns, its first one stepping from the day before.
-	step := max(2, min(width-labelWidth-4, usageChartWidth)/days)
+	step := max(2, min(width-labelWidth-4, gridUsageChartWidth)/days)
 	cols := days * step
 	if width < labelWidth+4+cols {
 		return ""

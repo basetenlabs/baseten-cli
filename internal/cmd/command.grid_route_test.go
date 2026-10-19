@@ -11,7 +11,7 @@ import (
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
-type routeCase struct {
+type gridRouteCase struct {
 	Name     string
 	Flags    []string
 	Create   map[string]any
@@ -19,7 +19,7 @@ type routeCase struct {
 	Response map[string]any
 }
 
-func routeCases() []routeCase {
+func gridRouteCases() []gridRouteCase {
 	targets := []struct {
 		name   string
 		flags  []string
@@ -36,20 +36,20 @@ func routeCases() []routeCase {
 			target: map[string]any{"type": "CONNECTION", "model": "test-model", "connection_id": "c123456"},
 		},
 	}
-	cases := make([]routeCase, 0, len(targets))
+	cases := make([]gridRouteCase, 0, len(targets))
 	for _, tc := range targets {
-		cases = append(cases, routeCase{
+		cases = append(cases, gridRouteCase{
 			Name:     tc.name,
 			Flags:    tc.flags,
 			Create:   map[string]any{"team_id": "t123456", "display_name": "Assistant", "target": tc.target},
 			Target:   tc.target,
-			Response: routeFixture(tc.target),
+			Response: gridRouteFixture(tc.target),
 		})
 	}
 	return cases
 }
 
-func routeFixture(target map[string]any) map[string]any {
+func gridRouteFixture(target map[string]any) map[string]any {
 	return map[string]any{
 		"id":           "r123456",
 		"name":         "acme/assistant",
@@ -64,19 +64,19 @@ func routeFixture(target map[string]any) map[string]any {
 	}
 }
 
-func routePage(items []any, cursor any) map[string]any {
+func gridRoutePage(items []any, cursor any) map[string]any {
 	return map[string]any{"items": items, "pagination": map[string]any{"has_more": cursor != nil, "cursor": cursor}}
 }
 
-func routeTeams(h *CommandHarness) {
+func gridRouteTeams(h *CommandHarness) {
 	h.MockManagementAPI().SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []any{teamFixture("t123456", "Engineering", true)}})
 }
 
-func Test_Route_Create_ContractTargets(t *testing.T) {
-	for _, tc := range routeCases() {
+func Test_Grid_Route_Create_ContractTargets(t *testing.T) {
+	for _, tc := range gridRouteCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
-			routeTeams(h)
+			gridRouteTeams(h)
 			m := h.MockManagementAPI()
 			m.SetRouteFunc("POST", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
 				h.Require.Equal("Bearer test-key", r.Header.Get("Authorization"))
@@ -95,8 +95,8 @@ func Test_Route_Create_ContractTargets(t *testing.T) {
 	}
 }
 
-func Test_Route_Update_RejectsTargets(t *testing.T) {
-	for _, tc := range routeCases() {
+func Test_Grid_Route_Update_RejectsTargets(t *testing.T) {
+	for _, tc := range gridRouteCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
@@ -108,11 +108,11 @@ func Test_Route_Update_RejectsTargets(t *testing.T) {
 	}
 }
 
-func Test_Route_Create_DefaultDisplayName(t *testing.T) {
+func Test_Grid_Route_Create_DefaultDisplayName(t *testing.T) {
 	h := NewCommandHarness(t)
-	routeTeams(h)
+	gridRouteTeams(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/grid/routes", 200, routeCases()[0].Response)
+	m.SetRoute("POST", "/v1/grid/routes", 200, gridRouteCases()[0].Response)
 	h.Require.NoError(h.Execute("grid", "route", "create", "--team", "t123456", "--target-type", "baseten-model-api", "--target-model", "test-model-api"))
 	body := m.FindCall("POST", "/v1/grid/routes").BodyJSON(t)
 	h.Require.NotContains(body, "display_name")
@@ -121,23 +121,23 @@ func Test_Route_Create_DefaultDisplayName(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Created route acme/assistant (r123456)")
 }
 
-func Test_Route_Update_DisplayNameAndDescription(t *testing.T) {
+func Test_Grid_Route_Update_DisplayNameAndDescription(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("PATCH", "/v1/grid/routes/r123456", 200, routeCases()[0].Response)
+	m.SetRoute("PATCH", "/v1/grid/routes/r123456", 200, gridRouteCases()[0].Response)
 	h.Require.NoError(h.Execute("grid", "route", "update", "--id", "r123456", "--display-name", "New label", "--description", ""))
 	h.Require.Equal(map[string]any{"display_name": "New label", "description": ""}, m.FindCall("PATCH", "/v1/grid/routes/r123456").BodyJSON(t))
 }
 
-func Test_Route_Addressed_ExactName(t *testing.T) {
+func Test_Grid_Route_Addressed_ExactName(t *testing.T) {
 	for _, verb := range []string{"describe", "update", "delete"} {
 		t.Run(verb, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			fixture := routeCases()[0].Response
+			fixture := gridRouteCases()[0].Response
 			name := "acme/assistant+test:1"
 			fixture["name"] = name
-			m.SetRoute("GET", "/v1/grid/routes", 200, routePage([]any{fixture}, nil))
+			m.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage([]any{fixture}, nil))
 			method := map[string]string{"describe": "GET", "update": "PATCH", "delete": "DELETE"}[verb]
 			m.SetRoute(method, "/v1/grid/routes/r123456", 200, fixture)
 			args := []string{"grid", "route", verb, "--name", name}
@@ -155,7 +155,7 @@ func Test_Route_Addressed_ExactName(t *testing.T) {
 	}
 }
 
-func Test_Route_Addressed_InvalidSelectors(t *testing.T) {
+func Test_Grid_Route_Addressed_InvalidSelectors(t *testing.T) {
 	for _, verb := range []string{"describe", "update", "delete"} {
 		for _, selector := range [][]string{nil, {"--id", ""}, {"--name", ""}, {"--id", "r1", "--name", "acme/a"}} {
 			t.Run(verb+strings.Join(selector, " "), func(t *testing.T) {
@@ -176,17 +176,17 @@ func Test_Route_Addressed_InvalidSelectors(t *testing.T) {
 	}
 }
 
-func Test_Route_Addressed_FailedLookupNeverMutates(t *testing.T) {
-	fixture := routeCases()[0].Response
+func Test_Grid_Route_Addressed_FailedLookupNeverMutates(t *testing.T) {
+	fixture := gridRouteCases()[0].Response
 	for _, tc := range []struct {
 		name string
 		page any
 		code int
 	}{
-		{"missing", routePage([]any{}, nil), 4},
-		{"ambiguous", routePage([]any{fixture, fixture}, nil), 1},
-		{"more", routePage([]any{fixture}, "next"), 1},
-		{"wrong-name", routePage([]any{map[string]any{"id": "r1", "name": "other/name"}}, nil), 1},
+		{"missing", gridRoutePage([]any{}, nil), 4},
+		{"ambiguous", gridRoutePage([]any{fixture, fixture}, nil), 1},
+		{"more", gridRoutePage([]any{fixture}, "next"), 1},
+		{"wrong-name", gridRoutePage([]any{map[string]any{"id": "r1", "name": "other/name"}}, nil), 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -199,7 +199,7 @@ func Test_Route_Addressed_FailedLookupNeverMutates(t *testing.T) {
 	}
 }
 
-func Test_Route_Delete_ConfirmationAndTombstone(t *testing.T) {
+func Test_Grid_Route_Delete_ConfirmationAndTombstone(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	h.Require.ErrorContains(h.Execute("grid", "route", "delete", "--id", "r123456"), "--yes")
@@ -214,11 +214,11 @@ func Test_Route_Delete_ConfirmationAndTombstone(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Deleted route acme/assistant (r123456)")
 }
 
-func Test_Route_List_PaginationAndFilters(t *testing.T) {
+func Test_Grid_Route_List_PaginationAndFilters(t *testing.T) {
 	h := NewCommandHarness(t)
-	routeTeams(h)
+	gridRouteTeams(h)
 	m := h.MockManagementAPI()
-	fixture := routeCases()[0].Response
+	fixture := gridRouteCases()[0].Response
 	m.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
 		h.Require.Equal("t123456", r.URL.Query().Get("team_id"))
 		h.Require.NotContains(r.URL.Query(), "name")
@@ -226,25 +226,25 @@ func Test_Route_List_PaginationAndFilters(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Query().Get("cursor") {
 		case "":
-			_ = json.NewEncoder(w).Encode(routePage([]any{fixture}, "next+/="))
+			_ = json.NewEncoder(w).Encode(gridRoutePage([]any{fixture}, "next+/="))
 		case "next+/=":
-			_ = json.NewEncoder(w).Encode(routePage([]any{fixture}, nil))
+			_ = json.NewEncoder(w).Encode(gridRoutePage([]any{fixture}, nil))
 		default:
 			t.Error("unexpected cursor")
 			w.WriteHeader(400)
 		}
 	})
 	h.Require.NoError(h.Execute("grid", "route", "list", "--team", "Engineering", "--output", "json"))
-	var got publiccmd.RouteList
+	var got publiccmd.GridRouteList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 	h.Require.Len(got.Items, 2)
 	h.Require.NotContains(h.Stdout.String(), "pagination")
 }
 
-func Test_Route_List_WithoutFilters(t *testing.T) {
+func Test_Grid_Route_List_WithoutFilters(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/grid/routes", 200, routePage([]any{}, nil))
+	m.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage([]any{}, nil))
 	h.Require.NoError(h.Execute("grid", "route", "list", "--output", "json"))
 	q := m.FindCall("GET", "/v1/grid/routes").Query()
 	h.Require.NotContains(q, "team_id")
@@ -253,10 +253,10 @@ func Test_Route_List_WithoutFilters(t *testing.T) {
 	h.Require.JSONEq(`{"items":[]}`, h.Stdout.String())
 }
 
-func Test_Route_List_TextAndJQ(t *testing.T) {
+func Test_Grid_Route_List_TextAndJQ(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/grid/routes", 200, routePage([]any{routeCases()[0].Response, routeCases()[1].Response}, nil))
+	m.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage([]any{gridRouteCases()[0].Response, gridRouteCases()[1].Response}, nil))
 	h.Require.NoError(h.Execute("grid", "route", "list"))
 	h.Require.Regexp(`^ID\s+DISPLAY NAME\s+NAME\s+CREATED\s*\n`, h.Stdout.String(), "display name comes before name")
 	for _, text := range []string{"r123456", "Assistant", "acme/assistant", "2026-09-17T10:00:00Z"} {
@@ -268,13 +268,13 @@ func Test_Route_List_TextAndJQ(t *testing.T) {
 	h.Require.Empty(h.Stderr.String())
 	h.Require.NoError(h.Execute("grid", "route", "list", "--jq", ".items[0].name"))
 	h.Require.Equal("\"acme/assistant\"\n", h.Stdout.String())
-	m.SetRoute("GET", "/v1/grid/routes", 200, routePage([]any{}, nil))
+	m.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage([]any{}, nil))
 	h.Require.NoError(h.Execute("grid", "route", "list"))
 	h.Require.Empty(h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "No routes found.")
 }
 
-func Test_Route_Usage_InvalidTargets(t *testing.T) {
+func Test_Grid_Route_Usage_InvalidTargets(t *testing.T) {
 	provider := []string{"--target-type", "connection", "--target-model", "test-model", "--target-connection", "c123456"}
 	cases := [][]string{
 		{}, {"--target-type", "baseten-model-api", "--target-model", ""}, {"--target-type", ""},
@@ -307,7 +307,7 @@ func Test_Route_Usage_InvalidTargets(t *testing.T) {
 	}
 }
 
-func Test_Route_Usage_InvalidValues(t *testing.T) {
+func Test_Grid_Route_Usage_InvalidValues(t *testing.T) {
 	for _, args := range [][]string{
 		{"list", "--limit", "1"}, {"list", "--all"},
 		{"list", "--name", ""}, {"list", "--cursor", ""},
@@ -323,8 +323,8 @@ func Test_Route_Usage_InvalidValues(t *testing.T) {
 	}
 }
 
-func Test_Route_Describe_AllTargetFields(t *testing.T) {
-	for _, tc := range routeCases() {
+func Test_Grid_Route_Describe_AllTargetFields(t *testing.T) {
+	for _, tc := range gridRouteCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
@@ -346,7 +346,7 @@ func Test_Route_Describe_AllTargetFields(t *testing.T) {
 	}
 }
 
-func Test_Route_API_ErrorClassification(t *testing.T) {
+func Test_Grid_Route_API_ErrorClassification(t *testing.T) {
 	for _, tc := range []struct {
 		status, exit int
 		code         string
@@ -369,7 +369,7 @@ func Test_Route_API_ErrorClassification(t *testing.T) {
 	}
 }
 
-func Test_Route_API_MalformedResponse(t *testing.T) {
+func Test_Grid_Route_API_MalformedResponse(t *testing.T) {
 	for _, tc := range []struct{ contentType, body string }{
 		{"text/html", "<html>proxy</html>"}, {"application/json", "{bad"},
 	} {
@@ -386,7 +386,7 @@ func Test_Route_API_MalformedResponse(t *testing.T) {
 	}
 }
 
-func Test_Route_API_ProfileAndOutputModes(t *testing.T) {
+func Test_Grid_Route_API_ProfileAndOutputModes(t *testing.T) {
 	h := newAuthHarness(t)
 	m := h.MockManagementAPI()
 	store := configDirStore(t)
@@ -395,7 +395,7 @@ func Test_Route_API_ProfileAndOutputModes(t *testing.T) {
 		h.Require.Equal("Bearer profile-fixture-key", r.Header.Get("Authorization"))
 		h.Require.Regexp(`^baseten-cli/\S+ \(Go/\S+; [^)]+\)$`, r.Header.Get("User-Agent"))
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(routeCases()[0].Response)
+		_ = json.NewEncoder(w).Encode(gridRouteCases()[0].Response)
 	})
 	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456", "--profile", "route-profile", "--output", "jsonl"))
 	h.Require.Equal(1, strings.Count(h.Stdout.String(), "\n"))
@@ -403,13 +403,13 @@ func Test_Route_API_ProfileAndOutputModes(t *testing.T) {
 	h.Require.Empty(h.Stdout.String())
 }
 
-func Test_Route_List_LaterPageErrorHasNoPartialSuccess(t *testing.T) {
+func Test_Grid_Route_List_LaterPageErrorHasNoPartialSuccess(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("cursor") == "" {
-			_ = json.NewEncoder(w).Encode(routePage([]any{routeCases()[0].Response}, "next"))
+			_ = json.NewEncoder(w).Encode(gridRoutePage([]any{gridRouteCases()[0].Response}, "next"))
 		} else {
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": "PERMISSION_DENIED", "message": "fixture permission changed"})
@@ -424,11 +424,11 @@ func Test_Route_List_LaterPageErrorHasNoPartialSuccess(t *testing.T) {
 	h.Require.NotContains(h.Stdout.String(), `"items"`)
 }
 
-func Test_Route_Metadata_Description(t *testing.T) {
+func Test_Grid_Route_Metadata_Description(t *testing.T) {
 	for _, description := range []string{"", "route used for reviews"} {
 		h := NewCommandHarness(t)
 		m := h.MockManagementAPI()
-		response := routeCases()[0].Response
+		response := gridRouteCases()[0].Response
 		response["description"] = description
 		m.SetRoute("PATCH", "/v1/grid/routes/r123456", 200, response)
 		h.Require.NoError(h.Execute("grid", "route", "update", "--id", "r123456", "--description", description, "--output", "json"))
@@ -439,10 +439,10 @@ func Test_Route_Metadata_Description(t *testing.T) {
 	}
 }
 
-func Test_Route_Describe_TeamName(t *testing.T) {
+func Test_Grid_Route_Describe_TeamName(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, routeCases()[0].Response)
+	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, gridRouteCases()[0].Response)
 	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 	h.Require.Contains(h.Stdout.String(), "Team ID:          t123456")
 	h.Require.Contains(h.Stdout.String(), "Team Name:        Engineering")
@@ -450,16 +450,16 @@ func Test_Route_Describe_TeamName(t *testing.T) {
 	h.Require.Len(m.Calls(), 1, "team name comes directly from the route response")
 }
 
-func Test_Route_Describe_StructuredOutputSkipsTeamLookup(t *testing.T) {
+func Test_Grid_Route_Describe_StructuredOutputSkipsTeamLookup(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, routeCases()[0].Response)
+	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, gridRouteCases()[0].Response)
 	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456", "--output", "json"))
 	h.Require.Len(m.Calls(), 1)
 	h.Require.Contains(h.Stdout.String(), `"team_id": "t123456"`)
 }
 
-func Test_Route_RequiresFlagsWithoutReadingStdin(t *testing.T) {
+func Test_Grid_Route_RequiresFlagsWithoutReadingStdin(t *testing.T) {
 	for _, args := range [][]string{
 		{"create"},
 		{"create", "--team", "Engineering"},
@@ -480,16 +480,16 @@ func Test_Route_RequiresFlagsWithoutReadingStdin(t *testing.T) {
 	}
 }
 
-func Test_Route_TargetNamesAreLiteral(t *testing.T) {
+func Test_Grid_Route_TargetNamesAreLiteral(t *testing.T) {
 	for _, args := range [][]string{
 		{"--target-type", "baseten-model-api", "--target-model", "__manual__"},
 		{"--target-type", "connection", "--target-model", "test-model", "--target-connection", "__create_connection__"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)
-			routeTeams(h)
+			gridRouteTeams(h)
 			m := h.MockManagementAPI()
-			m.SetRoute("POST", "/v1/grid/routes", 200, routeCases()[0].Response)
+			m.SetRoute("POST", "/v1/grid/routes", 200, gridRouteCases()[0].Response)
 			h.Require.NoError(h.Execute(append([]string{"grid", "route", "create", "--team", "t123456", "--output", "json"}, args...)...))
 			body := m.FindCall("POST", "/v1/grid/routes").BodyJSON(t)
 			target := body["target"].(map[string]any)
@@ -504,16 +504,16 @@ func Test_Route_TargetNamesAreLiteral(t *testing.T) {
 	}
 }
 
-func Test_Route_MutationOutputConventions(t *testing.T) {
+func Test_Grid_Route_MutationOutputConventions(t *testing.T) {
 	for _, verb := range []string{"create", "update"} {
 		for _, format := range []string{"text", "json", "jsonl", "none"} {
 			t.Run(verb+"/"+format, func(t *testing.T) {
 				h := NewCommandHarness(t)
-				routeTeams(h)
+				gridRouteTeams(h)
 				m := h.MockManagementAPI()
 				// A successful mutation must not be reported as failed just
 				// because a newer API returns an unfamiliar target variant.
-				fixture := routeFixture(map[string]any{"type": "FUTURE_PROVIDER", "model": "future-model"})
+				fixture := gridRouteFixture(map[string]any{"type": "FUTURE_PROVIDER", "model": "future-model"})
 				args := []string{"grid", "route", verb, "--output", format}
 				message := "Updated route acme/assistant (r123456)"
 				if verb == "create" {
@@ -543,28 +543,28 @@ func Test_Route_MutationOutputConventions(t *testing.T) {
 	}
 }
 
-func Test_Route_List_UnknownTarget(t *testing.T) {
+func Test_Grid_Route_List_UnknownTarget(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	unknown := routeFixture(map[string]any{"type": "FUTURE_PROVIDER", "model": "future-model"})
+	unknown := gridRouteFixture(map[string]any{"type": "FUTURE_PROVIDER", "model": "future-model"})
 	unknown["name"] = "acme/future"
 	items := []any{unknown}
-	for _, tc := range routeCases() {
+	for _, tc := range gridRouteCases() {
 		items = append(items, tc.Response)
 	}
-	m.SetRoute("GET", "/v1/grid/routes", 200, routePage(items, nil))
+	m.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage(items, nil))
 	h.Require.NoError(h.Execute("grid", "route", "list"))
 	h.Require.Empty(h.Stderr.String())
 	h.Require.Contains(h.Stdout.String(), "acme/future", "a route with an unknown target is still listed")
 	h.Require.NoError(h.Execute("grid", "route", "list", "--output", "json"))
-	var result publiccmd.RouteList
+	var result publiccmd.GridRouteList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
 	h.Require.Len(result.Items, len(items))
 	h.Require.Contains(h.Stdout.String(), "FUTURE_PROVIDER")
 	h.Require.Empty(h.Stderr.String())
 }
 
-func Test_Route_ClassifierTarget(t *testing.T) {
+func Test_Grid_Route_ClassifierTarget(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	target := map[string]any{
@@ -573,7 +573,7 @@ func Test_Route_ClassifierTarget(t *testing.T) {
 		"default_route":  map[string]any{"id": "r1", "slug": "acme/fast"},
 		"allowed_routes": []any{map[string]any{"id": "r1", "slug": "acme/fast"}, map[string]any{"id": "r2", "slug": "acme/smart"}},
 	}
-	classifier := routeFixture(target)
+	classifier := gridRouteFixture(target)
 	classifier["name"] = "acme/auto"
 	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, classifier)
 	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
@@ -590,17 +590,17 @@ func Test_Route_ClassifierTarget(t *testing.T) {
 	// A router created before classifiers could be selected has none, but
 	// still has its routes.
 	target["classifier"] = nil
-	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, routeFixture(target))
+	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, gridRouteFixture(target))
 	h.Stdout.Reset()
 	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 	h.Require.NotContains(h.Stdout.String(), "Classifier:")
 	h.Require.Contains(h.Stdout.String(), "Default Route:    acme/fast")
 }
 
-func Test_Route_Describe_UnknownTarget(t *testing.T) {
+func Test_Grid_Route_Describe_UnknownTarget(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, routeFixture(map[string]any{"type": "FUTURE_PROVIDER"}))
+	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, gridRouteFixture(map[string]any{"type": "FUTURE_PROVIDER"}))
 	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 	for _, text := range []string{"r123456", "acme/assistant", "Engineering", "<unrecognized type>", "https://coding.baseten.co", "2026-09-17T10:00:00Z"} {
 		h.Require.Contains(h.Stdout.String(), text)
@@ -612,10 +612,10 @@ func Test_Route_Describe_UnknownTarget(t *testing.T) {
 	h.Require.Empty(h.Stdout.String())
 }
 
-func Test_Route_Delete_ResolvesBeforeConfirmation(t *testing.T) {
+func Test_Grid_Route_Delete_ResolvesBeforeConfirmation(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/grid/routes", 200, routePage([]any{routeCases()[0].Response}, nil))
+	m.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage([]any{gridRouteCases()[0].Response}, nil))
 	devNullStdin(t, h)
 	h.Require.ErrorContains(h.Execute("grid", "route", "delete", "--name", "acme/assistant"), "stdin is not a terminal; pass --yes")
 	h.Require.Equal(2, h.ExitCode)
@@ -624,8 +624,8 @@ func Test_Route_Delete_ResolvesBeforeConfirmation(t *testing.T) {
 	h.Require.Nil(m.FindCall("DELETE", "/v1/grid/routes/r123456"))
 }
 
-func Test_Route_Create_DefaultTeam(t *testing.T) {
-	for _, tc := range routeCases() {
+func Test_Grid_Route_Create_DefaultTeam(t *testing.T) {
+	for _, tc := range gridRouteCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()

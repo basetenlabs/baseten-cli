@@ -9,7 +9,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 )
 
-func harnessUsageModel(model string, cost any, input, cached, output int) map[string]any {
+func gridUsageModel(model string, cost any, input, cached, output int) map[string]any {
 	return map[string]any{
 		"team_id":               "team-a",
 		"model":                 model,
@@ -21,17 +21,17 @@ func harnessUsageModel(model string, cost any, input, cached, output int) map[st
 	}
 }
 
-func harnessUsageBody(buckets ...map[string]any) map[string]any {
+func gridUsageBody(buckets ...map[string]any) map[string]any {
 	return map[string]any{"items": buckets, "pagination": map[string]any{"has_more": false}}
 }
 
-func harnessUsageBucket(date string, results ...map[string]any) map[string]any {
+func gridUsageBucket(date string, results ...map[string]any) map[string]any {
 	return map[string]any{"date": date, "results": append([]map[string]any{}, results...)}
 }
 
-// harnessTeamSettings is your settings in a team: spent of limit, the team's
+// gridTeamSettings is your settings in a team: spent of limit, the team's
 // per-member default (nil for none), and what blocks you (nil for nothing).
-func harnessTeamSettings(id, name, spent string, limit, teamDefault, blockedBy any) map[string]any {
+func gridTeamSettings(id, name, spent string, limit, teamDefault, blockedBy any) map[string]any {
 	var def any
 	if teamDefault != nil {
 		def = map[string]any{"per_member_monthly_limit_usd": teamDefault}
@@ -42,21 +42,21 @@ func harnessTeamSettings(id, name, spent string, limit, teamDefault, blockedBy a
 	}
 }
 
-// harnessUsageNow is the pinned clock for these tests, mid-afternoon UTC.
-var harnessUsageNow = time.Date(2026, 9, 25, 15, 0, 0, 0, time.UTC)
+// gridUsageNow is the pinned clock for these tests, mid-afternoon UTC.
+var gridUsageNow = time.Date(2026, 9, 25, 15, 0, 0, 0, time.UTC)
 
-func newHarnessUsageHarness(t *testing.T, now time.Time, body map[string]any) (*CommandHarness, *MockManagementAPI) {
+func newGridUsageHarness(t *testing.T, now time.Time, body map[string]any) (*CommandHarness, *MockManagementAPI) {
 	h := NewCommandHarness(t)
 	h.Context = cmd.WithNow(h.Context, func() time.Time { return now })
 	api := h.MockManagementAPI()
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
 	api.SetRoute("GET", "/v1/grid/routes/usage", 200, body)
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, harnessTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil))
+	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, gridTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil))
 	return h, api
 }
 
-// harnessUsageLastQuery returns the query of the last usage request.
-func harnessUsageLastQuery(h *CommandHarness, api *MockManagementAPI) map[string][]string {
+// gridUsageLastQuery returns the query of the last usage request.
+func gridUsageLastQuery(h *CommandHarness, api *MockManagementAPI) map[string][]string {
 	calls := api.Calls()
 	for i := len(calls) - 1; i >= 0; i-- {
 		if calls[i].Path == "/v1/grid/routes/usage" {
@@ -67,9 +67,9 @@ func harnessUsageLastQuery(h *CommandHarness, api *MockManagementAPI) map[string
 	return nil
 }
 
-// harnessUsageRow returns the fields of the first output line containing
+// gridUsageRow returns the fields of the first output line containing
 // marker.
-func harnessUsageRow(h *CommandHarness, out, marker string) []string {
+func gridUsageRow(h *CommandHarness, out, marker string) []string {
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, marker) {
 			return strings.Fields(line)
@@ -79,25 +79,25 @@ func harnessUsageRow(h *CommandHarness, out, marker string) []string {
 	return nil
 }
 
-func harnessUsageMonth() map[string]any {
-	return harnessUsageBody(
-		harnessUsageBucket("2026-09-01",
-			harnessUsageModel("claude-sonnet-5", "1.25", 1000, 800, 100),
-			harnessUsageModel("gpt-5.2", "0.50", 400, 0, 40),
+func gridUsageMonth() map[string]any {
+	return gridUsageBody(
+		gridUsageBucket("2026-09-01",
+			gridUsageModel("claude-sonnet-5", "1.25", 1000, 800, 100),
+			gridUsageModel("gpt-5.2", "0.50", 400, 0, 40),
 		),
-		harnessUsageBucket("2026-09-02"),
-		harnessUsageBucket("2026-09-03",
-			harnessUsageModel("claude-sonnet-5", "0.0000000001", 100, 0, 10),
-			harnessUsageModel("glm-5.2", "0.50", 50, 0, 5),
+		gridUsageBucket("2026-09-02"),
+		gridUsageBucket("2026-09-03",
+			gridUsageModel("claude-sonnet-5", "0.0000000001", 100, 0, 10),
+			gridUsageModel("glm-5.2", "0.50", 50, 0, 5),
 		),
 	)
 }
 
-func Test_Harness_Usage_DefaultsToMonthToDateForCurrentUser(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Usage_DefaultsToMonthToDateForCurrentUser(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "usage"))
-	q := harnessUsageLastQuery(h, api)
+	q := gridUsageLastQuery(h, api)
 	h.Require.Equal([]string{"2026-09-01"}, q["start_date"])
 	h.Require.Equal([]string{"2026-09-26"}, q["end_date"], "today's usage is included")
 	h.Require.Equal([]string{"user-a"}, q["user_ids"], "admins must not see other users' usage by default")
@@ -106,58 +106,58 @@ func Test_Harness_Usage_DefaultsToMonthToDateForCurrentUser(t *testing.T) {
 	h.Require.Equal("September 2026 · resets Oct 1\n", h.Stderr.String())
 }
 
-func Test_Harness_Usage_Teams(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Usage_Teams(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 	// The server resolves the team: your only one, or the --team you name.
 	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 400, map[string]string{"message": "Team ID is required when you belong to multiple."})
 	h.Require.ErrorContains(h.Execute("grid", "usage"), "Team ID is required when you belong to multiple.")
 
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, harnessTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil))
+	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, gridTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil))
 	h.Require.NoError(h.Execute("grid", "usage", "--team", "team-a"))
-	h.Require.Equal([]string{"team-a"}, harnessUsageLastQuery(h, api)["team_id"], "--team also narrows the usage")
+	h.Require.Equal([]string{"team-a"}, gridUsageLastQuery(h, api)["team_id"], "--team also narrows the usage")
 	out := h.Stdout.String()
 	h.Require.Regexp(`(?m)^Engineering +\$2 of \$100\n  ● claude-sonnet-5 +\$1 +\(56%\)\n  ● glm-5.2 +\$1 +\(22%\)\n  ● gpt-5.2 +\$1 +\(22%\)\n$`, out,
 		"whole dollars, half a dollar rounds up, days summed, models most expensive first then by name, amounts lined up")
 	h.Require.NotContains(out, "┤", "no chart when stdout isn't a terminal")
 	h.Require.NotContains(out, "\x1b[", "no color when stdout isn't a terminal")
 
-	body := harnessUsageMonth()
+	body := gridUsageMonth()
 	body["items"].([]map[string]any)[0]["results"].([]map[string]any)[1]["team_id"] = "team-b"
 	body["items"].([]map[string]any)[2]["results"].([]map[string]any)[1]["team_id"] = "team-z"
 	api.SetRoute("GET", "/v1/grid/routes/usage", 200, body)
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, harnessTeamSettings("team-b", "Research", "12.5", "10", "100.00", "member"))
+	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, gridTeamSettings("team-b", "Research", "12.5", "10", "100.00", "member"))
 	h.Require.NoError(h.Execute("grid", "usage", "--team", "team-b"))
 	h.Require.Equal([]string{"Research", "$13", "of", "$10", "(team", "default", "$100)", "·", "limit", "reached"},
-		harnessUsageRow(h, h.Stdout.String(), "Research"), "the team default only when yours differs")
+		gridUsageRow(h, h.Stdout.String(), "Research"), "the team default only when yours differs")
 	h.Require.NotContains(h.Stdout.String(), "Engineering", "only the named team's usage")
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, harnessTeamSettings("team-c", "FDE", "80", "100", "100", "team"))
+	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, gridTeamSettings("team-c", "FDE", "80", "100", "100", "team"))
 	h.Require.NoError(h.Execute("grid", "usage", "--team", "team-c"))
-	h.Require.Equal([]string{"FDE", "$80", "of", "$100", "·", "team", "limit", "reached"}, harnessUsageRow(h, h.Stdout.String(), "FDE"))
-	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, harnessTeamSettings("team-d", "Infra", "0", nil, nil, nil))
+	h.Require.Equal([]string{"FDE", "$80", "of", "$100", "·", "team", "limit", "reached"}, gridUsageRow(h, h.Stdout.String(), "FDE"))
+	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, gridTeamSettings("team-d", "Infra", "0", nil, nil, nil))
 	h.Require.NoError(h.Execute("grid", "usage", "--team", "team-d"))
-	h.Require.Equal([]string{"Infra", "$0", "·", "no", "limit"}, harnessUsageRow(h, h.Stdout.String(), "Infra"))
+	h.Require.Equal([]string{"Infra", "$0", "·", "no", "limit"}, gridUsageRow(h, h.Stdout.String(), "Infra"))
 }
 
-func Test_Harness_Usage_Window(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-08-31", harnessUsageModel("gpt-5.2", "40", 400, 0, 40))))
+func Test_Grid_Usage_Window(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageBody(gridUsageBucket("2026-08-31", gridUsageModel("gpt-5.2", "40", 400, 0, 40))))
 
 	h.Require.NoError(h.Execute("grid", "usage", "--start", "2026-08-01T00:00:00Z", "--end", "2026-09-01T00:00:00Z"))
-	q := harnessUsageLastQuery(h, api)
+	q := gridUsageLastQuery(h, api)
 	h.Require.Equal([]string{"2026-08-01"}, q["start_date"])
 	h.Require.Equal([]string{"2026-09-01"}, q["end_date"])
 	h.Require.Equal("Aug 1 to Aug 31, 2026\n", h.Stderr.String(), "the window, with no reset date")
-	h.Require.Equal([]string{"Engineering", "$40"}, harnessUsageRow(h, h.Stdout.String(), "Engineering"),
+	h.Require.Equal([]string{"Engineering", "$40"}, gridUsageRow(h, h.Stdout.String(), "Engineering"),
 		"the usage summed, not this month's spend, and no limit, which is this month's")
 
-	api.SetRoute("GET", "/v1/grid/routes/usage", 200, harnessUsageBody(harnessUsageBucket("2026-09-20", harnessUsageModel("gpt-5.2", "4", 40, 0, 4))))
+	api.SetRoute("GET", "/v1/grid/routes/usage", 200, gridUsageBody(gridUsageBucket("2026-09-20", gridUsageModel("gpt-5.2", "4", 40, 0, 4))))
 	h.Require.NoError(h.Execute("grid", "usage", "--since", "7d"))
-	q = harnessUsageLastQuery(h, api)
+	q = gridUsageLastQuery(h, api)
 	h.Require.Equal([]string{"2026-09-18", "2026-09-26"}, []string{q["start_date"][0], q["end_date"][0]}, "the same window flags as route usage")
 	h.Require.ErrorContains(h.Execute("grid", "usage", "--since", "1d", "--start", "2026-09-01T00:00:00Z"), "--since cannot be combined")
 }
 
-func Test_Harness_Usage_JSONStreamsBucketsAsReturned(t *testing.T) {
-	h, _ := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
+func Test_Grid_Usage_JSONStreamsBucketsAsReturned(t *testing.T) {
+	h, _ := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "usage", "--output", "json"))
 	var got []struct {
@@ -174,11 +174,11 @@ func Test_Harness_Usage_JSONStreamsBucketsAsReturned(t *testing.T) {
 	h.Require.Equal("\"2026-09-01\"\n\"2026-09-02\"\n\"2026-09-03\"\n", h.Stdout.String())
 }
 
-func Test_Harness_Usage_FoldsModelsPastTopFiveIntoOther(t *testing.T) {
-	h, _ := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-09-01",
-		harnessUsageModel("m1", "70", 10, 0, 1), harnessUsageModel("m2", "60", 10, 0, 1), harnessUsageModel("m3", "50", 10, 0, 1),
-		harnessUsageModel("m4", "40", 10, 0, 1), harnessUsageModel("m5", "30", 10, 0, 1), harnessUsageModel("m6", "20", 10, 0, 1),
-		harnessUsageModel("m7", "10", 10, 0, 1),
+func Test_Grid_Usage_FoldsModelsPastTopFiveIntoOther(t *testing.T) {
+	h, _ := newGridUsageHarness(t, gridUsageNow, gridUsageBody(gridUsageBucket("2026-09-01",
+		gridUsageModel("m1", "70", 10, 0, 1), gridUsageModel("m2", "60", 10, 0, 1), gridUsageModel("m3", "50", 10, 0, 1),
+		gridUsageModel("m4", "40", 10, 0, 1), gridUsageModel("m5", "30", 10, 0, 1), gridUsageModel("m6", "20", 10, 0, 1),
+		gridUsageModel("m7", "10", 10, 0, 1),
 	)))
 
 	h.Require.NoError(h.Execute("grid", "usage"))
@@ -187,28 +187,28 @@ func Test_Harness_Usage_FoldsModelsPastTopFiveIntoOther(t *testing.T) {
 	h.Require.NotContains(out, "m6")
 }
 
-func Test_Harness_Usage_NullCostIsUnpriced(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-09-01",
-		harnessUsageModel("claude-opus-5-5", "0.0012", 10, 0, 1),
-		harnessUsageModel("qwen-custom", nil, 50, 0, 5),
-		harnessUsageModel("gpt-6-luna", "0", 0, 0, 0),
+func Test_Grid_Usage_NullCostIsUnpriced(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageBody(gridUsageBucket("2026-09-01",
+		gridUsageModel("claude-opus-5-5", "0.0012", 10, 0, 1),
+		gridUsageModel("qwen-custom", nil, 50, 0, 5),
+		gridUsageModel("gpt-6-luna", "0", 0, 0, 0),
 	)))
 
 	h.Require.NoError(h.Execute("grid", "usage"))
 	out := h.Stdout.String()
-	h.Require.Equal([]string{"●", "claude-opus-5-5", "<$1"}, harnessUsageRow(h, out, "claude-opus-5-5"), "tiny costs stay visible; no share when some usage is unpriced")
-	h.Require.Equal([]string{"●", "qwen-custom", "-"}, harnessUsageRow(h, out, "qwen-custom"))
+	h.Require.Equal([]string{"●", "claude-opus-5-5", "<$1"}, gridUsageRow(h, out, "claude-opus-5-5"), "tiny costs stay visible; no share when some usage is unpriced")
+	h.Require.Equal([]string{"●", "qwen-custom", "-"}, gridUsageRow(h, out, "qwen-custom"))
 	h.Require.NotContains(out, "gpt-6-luna", "usage without tokens or cost is hidden")
 
-	api.SetRoute("GET", "/v1/grid/routes/usage", 200, harnessUsageBody(harnessUsageBucket("2026-09-01", harnessUsageModel("gpt-5.2", "abc", 10, 0, 1))))
+	api.SetRoute("GET", "/v1/grid/routes/usage", 200, gridUsageBody(gridUsageBucket("2026-09-01", gridUsageModel("gpt-5.2", "abc", 10, 0, 1))))
 	h.Require.ErrorContains(h.Execute("grid", "usage"), `invalid cost "abc"`)
 }
 
-func Test_Harness_Usage_Empty(t *testing.T) {
-	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-09-01")))
+func Test_Grid_Usage_Empty(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageBody(gridUsageBucket("2026-09-01")))
 
 	h.Require.NoError(h.Execute("grid", "usage"))
-	h.Require.Equal([]string{"Engineering", "$2", "of", "$100"}, harnessUsageRow(h, h.Stdout.String(), "Engineering"), "this month's spend from the settings, not the empty usage")
+	h.Require.Equal([]string{"Engineering", "$2", "of", "$100"}, gridUsageRow(h, h.Stdout.String(), "Engineering"), "this month's spend from the settings, not the empty usage")
 
 	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 404, map[string]string{"message": "not found"})
 	h.Require.ErrorContains(h.Execute("grid", "usage"), "getting your settings: ")

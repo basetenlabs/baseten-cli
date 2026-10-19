@@ -7,8 +7,8 @@ import (
 	public "github.com/basetenlabs/baseten-cli/cmd"
 )
 
-func Test_Route_APIKey_List(t *testing.T) {
-	h, api := harnessAPI(t, "")
+func Test_Grid_Route_APIKey_List(t *testing.T) {
+	h, api := gridAPI(t, "")
 	h.Require.NoError(h.Execute("grid", "route", "api-key", "list"))
 	for _, want := range []string{"NAME", "PREFIX", "LAST USED", "secret-team-a", "Engineering", "2026-09-01T00:00:00Z", "never"} {
 		h.Require.Contains(h.Stdout.String(), want)
@@ -21,8 +21,8 @@ func Test_Route_APIKey_List(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "No routes API keys found.")
 }
 
-func Test_Route_APIKey_Delete(t *testing.T) {
-	h, api := harnessAPI(t, "")
+func Test_Grid_Route_APIKey_Delete(t *testing.T) {
+	h, api := gridAPI(t, "")
 	api.SetRoute("DELETE", "/v1/api_keys/secret-team-a", 200, map[string]string{"prefix": "secret-team-a"})
 	api.SetRoute("DELETE", "/v1/api_keys/secret-team-b", 200, map[string]string{"prefix": "secret-team-b"})
 
@@ -40,19 +40,19 @@ func Test_Route_APIKey_Delete(t *testing.T) {
 	h.Require.Nil(api.FindCall("DELETE", "/v1/api_keys/secret-team-b"))
 }
 
-func Test_Route_APIKey_DeleteAllReportsPartialFailure(t *testing.T) {
-	h, api := harnessAPI(t, "")
+func Test_Grid_Route_APIKey_DeleteAllReportsPartialFailure(t *testing.T) {
+	h, api := gridAPI(t, "")
 	api.SetRoute("DELETE", "/v1/api_keys/secret-team-a", 500, map[string]string{"message": "unavailable"})
 	api.SetRoute("DELETE", "/v1/api_keys/secret-team-b", 200, map[string]string{"prefix": "secret-team-b"})
 	h.Require.Error(h.Execute("grid", "route", "api-key", "delete", "--all", "--yes", "--output", "json"))
-	var result public.RouteAPIKeyDeleteResult
+	var result public.GridRouteAPIKeyDeleteResult
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
-	h.Require.Equal(public.RouteAPIKeyDeleteResult{Deleted: []string{"secret-team-b"}, Failed: []string{"secret-team-a"}}, result)
+	h.Require.Equal(public.GridRouteAPIKeyDeleteResult{Deleted: []string{"secret-team-b"}, Failed: []string{"secret-team-a"}}, result)
 }
 
-func Test_Harness_Setup_ReplacesDeletedKey(t *testing.T) {
+func Test_Grid_Setup_ReplacesDeletedKey(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	dir := t.TempDir()
 	args := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
 	h.Require.NoError(h.Execute(args...))

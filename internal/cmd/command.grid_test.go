@@ -81,9 +81,9 @@ func (missingHarnessExecer) LookPath(string) (string, error) { return "", exec.E
 
 func (missingHarnessExecer) Exec(*exec.Cmd) error { return errors.New("absent harness executed") }
 
-// harnessAPI serves a user, two teams (team-a is the default), one route whose
+// gridAPI serves a user, two teams (team-a is the default), one route whose
 // invoke URL is invokeURL, and routes API key creation for both teams.
-func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAPI) {
+func gridAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAPI) {
 	t.Helper()
 	h := NewCommandHarness(t)
 	api := h.MockManagementAPI()
@@ -111,17 +111,17 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 	return h, api
 }
 
-// fakeHarnessAPI is harnessAPI with every harness reported as installed.
-// harnessTwoTeams is a GET /v1/teams body for an organization with two teams,
+// fakeGridAPI is gridAPI with every harness reported as installed.
+// gridTwoTeams is a GET /v1/teams body for an organization with two teams,
 // where setup needs --team.
-var harnessTwoTeams = map[string]any{"teams": []map[string]any{
+var gridTwoTeams = map[string]any{"teams": []map[string]any{
 	{"id": "team-a", "name": "Engineering", "default": true},
 	{"id": "team-b", "name": "Research", "default": false},
 }}
 
-func fakeHarnessAPI(t *testing.T) (*CommandHarness, *MockManagementAPI) {
+func fakeGridAPI(t *testing.T) (*CommandHarness, *MockManagementAPI) {
 	t.Helper()
-	h, api := harnessAPI(t, "")
+	h, api := gridAPI(t, "")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	return h, api
 }
@@ -188,30 +188,30 @@ func countCalls(api *MockManagementAPI, method, path string) int {
 	return count
 }
 
-// skipUnlessSupported skips tests of harness commands, which support only macOS and Linux.
+// skipUnlessSupported skips tests of Grid harness integrations, which support only macOS and Linux.
 func skipUnlessSupported(t *testing.T) {
 	t.Helper()
 	if !harness.Supported() {
-		t.Skip("harness commands support only macOS and Linux")
+		t.Skip("Grid harness integrations support only macOS and Linux")
 	}
 }
 
-func Test_HarnessCommands_RejectOtherPlatforms(t *testing.T) {
+func Test_Grid_HarnessIntegrations_RejectOtherPlatforms(t *testing.T) {
 	if harness.Supported() {
-		t.Skip("harness commands support this platform")
+		t.Skip("Grid harness integrations support this platform")
 	}
 	for _, command := range [][]string{{"grid", "setup"}, {"grid", "status"}, {"grid", "teardown"}} {
 		h := NewCommandHarness(t)
 		h.Require.Error(h.Execute(append(command, "--harness", "codex")...))
-		h.Require.Contains(h.Stderr.String(), "harness commands support only macOS and Linux for now")
+		h.Require.Contains(h.Stderr.String(), "Grid harness integrations support only macOS and Linux for now")
 	}
 }
 
-func Test_Harness_Setup_Lifecycle(t *testing.T) {
+func Test_Grid_Setup_Lifecycle(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, name := range []string{"claude-code", "codex", "opencode", "pi"} {
 		t.Run(name, func(t *testing.T) {
-			h, api := fakeHarnessAPI(t)
+			h, api := fakeGridAPI(t)
 			dir := t.TempDir()
 			path := harnessSettingsFile(name, dir)
 			h.Require.NoError(os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o600))
@@ -221,7 +221,7 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 			args := []string{"grid", "setup", "--harness", name, "--config-dir", dir, "--key-name", "laptop", "--output", "json"}
 
 			h.Require.NoError(h.Execute(append(args, "--dry-run")...))
-			var preview public.HarnessPlanList
+			var preview public.GridPlanList
 			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &preview))
 			h.Require.NotEmpty(preview.Items)
 			h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, name, path))
@@ -244,7 +244,7 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 			}
 
 			h.Require.NoError(h.Execute(append(args, "--yes")...))
-			var rerun public.HarnessPlanList
+			var rerun public.GridPlanList
 			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
 			for _, item := range rerun.Items {
 				h.Require.False(item.Changed, "rerunning setup changes nothing")
@@ -259,12 +259,12 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 
 			calls := len(api.Calls())
 			h.Require.NoError(h.Execute("grid", "status", "--harness", name, "--config-dir", dir, "--output", "json"))
-			var statuses public.HarnessStatusList
+			var statuses public.GridStatusList
 			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
 			h.Require.Len(statuses.Items, 1)
 			h.Require.Equal("configured", statuses.Items[0].State)
 			h.Require.Equal("acme/primary", statuses.Items[0].DefaultRoute)
-			h.Require.Equal([]public.HarnessRoute{{Name: "acme/primary", DisplayName: "Primary"}}, statuses.Items[0].Routes)
+			h.Require.Equal([]public.GridHarnessRoute{{Name: "acme/primary", DisplayName: "Primary"}}, statuses.Items[0].Routes)
 			if name == "codex" {
 				h.Require.Contains(statuses.Items[0].ManagedSettings, "forced_login_method")
 			}
@@ -290,7 +290,7 @@ func Test_Harness_Setup_Lifecycle(t *testing.T) {
 	}
 }
 
-func Test_Harness_Setup_CodexDesktopWithoutCLI(t *testing.T) {
+func Test_Grid_Setup_CodexDesktopWithoutCLI(t *testing.T) {
 	skipUnlessSupported(t)
 	binary := "/Applications/ChatGPT.app/Contents/Resources/codex"
 	if runtime.GOOS == "darwin" {
@@ -299,7 +299,7 @@ func Test_Harness_Setup_CodexDesktopWithoutCLI(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		binary = "/usr/lib/chatgpt/resources/codex"
 	}
-	h, _ := harnessAPI(t, "")
+	h, _ := gridAPI(t, "")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{binary: binary})
 	dir := t.TempDir()
 	t.Setenv("CODEX_HOME", dir)
@@ -308,16 +308,16 @@ func Test_Harness_Setup_CodexDesktopWithoutCLI(t *testing.T) {
 	h.Require.Equal("baseten-harness", settings["model_provider"])
 	h.Require.Equal("acme/primary", settings["model"])
 	h.Require.NoError(h.Execute("grid", "status", "--harness", "codex", "--output", "json"))
-	var statuses public.HarnessStatusList
+	var statuses public.GridStatusList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
 	h.Require.Len(statuses.Items, 1)
 	h.Require.True(statuses.Items[0].Installed)
 	h.Require.Equal("configured", statuses.Items[0].State)
 }
 
-func Test_Harness_Setup_TextSummary(t *testing.T) {
+func Test_Grid_Setup_TextSummary(t *testing.T) {
 	skipUnlessSupported(t)
-	h, _ := fakeHarnessAPI(t)
+	h, _ := fakeGridAPI(t)
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
 	h.Require.Empty(h.Stdout.String())
@@ -332,7 +332,7 @@ func Test_Harness_Setup_TextSummary(t *testing.T) {
 	h.Require.NotContains(h.Stderr.String(), "Created routes API key")
 }
 
-func Test_Harness_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
+func Test_Grid_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
 	skipUnlessSupported(t)
 	h := NewCommandHarness(t)
 	h.Require.Error(h.Execute("grid", "setup"))
@@ -340,7 +340,7 @@ func Test_Harness_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "pass --harness")
 }
 
-func Test_Harness_ConfigDirRequiresOneHarness(t *testing.T) {
+func Test_Grid_ConfigDirRequiresOneHarness(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, command := range [][]string{{"grid", "setup"}, {"grid", "status"}, {"grid", "teardown"}} {
 		for _, harnesses := range [][]string{nil, {"--harness", "codex", "--harness", "opencode"}} {
@@ -354,9 +354,9 @@ func Test_Harness_ConfigDirRequiresOneHarness(t *testing.T) {
 	}
 }
 
-func Test_Harness_Setup_NotInstalledFailsBeforeAPI(t *testing.T) {
+func Test_Grid_Setup_NotInstalledFailsBeforeAPI(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	h.Context = internalcmd.WithExecer(h.Context, missingHarnessExecer{})
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "codex", "--dry-run"))
 	want := "codex is not installed or not on PATH"
@@ -381,13 +381,13 @@ func Test_Harness_Setup_NotInstalledFailsBeforeAPI(t *testing.T) {
 	h.Require.Empty(api.Calls())
 }
 
-func Test_Harness_Setup_OpenCodeDesktopWithoutCLI(t *testing.T) {
+func Test_Grid_Setup_OpenCodeDesktopWithoutCLI(t *testing.T) {
 	skipUnlessSupported(t)
 	binary := "/Applications/OpenCode.app/Contents/Resources/opencode-cli"
 	if runtime.GOOS == "linux" {
 		binary = "/opt/OpenCode/resources/opencode-cli"
 	}
-	h, _ := harnessAPI(t, "")
+	h, _ := gridAPI(t, "")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{binary: binary})
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -395,23 +395,23 @@ func Test_Harness_Setup_OpenCodeDesktopWithoutCLI(t *testing.T) {
 	settings := readHarnessSettings(t, "opencode", filepath.Join(dir, "opencode", "opencode.json"))
 	h.Require.Equal("baseten-harness/acme/primary", settings["model"])
 	h.Require.NoError(h.Execute("grid", "status", "--harness", "opencode", "--output", "json"))
-	var statuses public.HarnessStatusList
+	var statuses public.GridStatusList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
 	h.Require.Len(statuses.Items, 1)
 	h.Require.True(statuses.Items[0].Installed)
 	h.Require.Equal("configured", statuses.Items[0].State)
-	h.Require.Equal([]public.HarnessInstall{{Kind: "Desktop", Binary: binary, Version: "1.2.3"}}, statuses.Items[0].Installs)
+	h.Require.Equal([]public.GridHarnessInstall{{Kind: "Desktop", Binary: binary, Version: "1.2.3"}}, statuses.Items[0].Installs)
 	h.Require.NoError(h.Execute("grid", "status", "--harness", "opencode"))
 	h.Require.Contains(h.Stdout.String(), "Version           1.2.3\n")
 }
 
-func Test_Harness_Status_ListsEveryInstall(t *testing.T) {
+func Test_Grid_Status_ListsEveryInstall(t *testing.T) {
 	skipUnlessSupported(t)
 	desktop := "/Applications/OpenCode.app/Contents/Resources/opencode-cli"
 	if runtime.GOOS == "linux" {
 		desktop = "/opt/OpenCode/resources/opencode-cli"
 	}
-	h, _ := fakeHarnessAPI(t)
+	h, _ := fakeGridAPI(t)
 	h.Context = internalcmd.WithExecer(h.Context, versionedHarnessExecer{"opencode": "1.18.34", desktop: "opencode v2.0.27"})
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -419,17 +419,17 @@ func Test_Harness_Status_ListsEveryInstall(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "status", "--harness", "opencode"))
 	h.Require.Contains(h.Stdout.String(), "Version           1.18.34 (CLI), 2.0.27 (Desktop)\n")
 	h.Require.NoError(h.Execute("grid", "status", "--harness", "opencode", "--output", "json"))
-	var statuses public.HarnessStatusList
+	var statuses public.GridStatusList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
-	h.Require.Equal([]public.HarnessInstall{
+	h.Require.Equal([]public.GridHarnessInstall{
 		{Kind: "CLI", Binary: "/fake/opencode", Version: "1.18.34"},
 		{Kind: "Desktop", Binary: desktop, Version: "opencode v2.0.27"},
 	}, statuses.Items[0].Installs)
 }
 
-func Test_Harness_Setup_OpenCodeFormatFollowsTheFile(t *testing.T) {
+func Test_Grid_Setup_OpenCodeFormatFollowsTheFile(t *testing.T) {
 	skipUnlessSupported(t)
-	h, _ := fakeHarnessAPI(t)
+	h, _ := fakeGridAPI(t)
 	dir := t.TempDir()
 	path := harnessSettingsFile("opencode", dir)
 	h.Require.NoError(os.MkdirAll(dir, 0o700))
@@ -442,7 +442,7 @@ func Test_Harness_Setup_OpenCodeFormatFollowsTheFile(t *testing.T) {
 	h.Require.Equal("baseten-harness/deepseek-ai/DeepSeek-V4.1-Flash", settings["agents"].(map[string]any)["title"].(map[string]any)["model"])
 
 	h.Require.NoError(h.Execute("grid", "status", "--harness", "opencode", "--config-dir", dir, "--output", "json"))
-	var statuses public.HarnessStatusList
+	var statuses public.GridStatusList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
 	h.Require.Equal("configured", statuses.Items[0].State)
 	h.Require.Equal("acme/primary", statuses.Items[0].DefaultRoute)
@@ -456,14 +456,14 @@ func Test_Harness_Setup_OpenCodeFormatFollowsTheFile(t *testing.T) {
 	h.Require.Equal(map[string]any{"providers": map[string]any{"other": map[string]any{"name": "Other"}}}, readHarnessSettings(t, "opencode", path))
 }
 
-func Test_Harness_Setup_Teams(t *testing.T) {
+func Test_Grid_Setup_Teams(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, tc := range []struct{ team, want string }{{"", "team-a"}, {"team-b", "team-b"}, {"Research", "team-b"}} {
 		t.Run(tc.team, func(t *testing.T) {
-			h, api := fakeHarnessAPI(t)
+			h, api := fakeGridAPI(t)
 			args := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"}
 			if tc.team != "" {
-				api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
+				api.SetRoute("GET", "/v1/teams", 200, gridTwoTeams)
 				args = append(args, "--team", tc.team)
 			}
 			h.Require.NoError(h.Execute(args...))
@@ -472,17 +472,17 @@ func Test_Harness_Setup_Teams(t *testing.T) {
 		})
 	}
 	// With several teams the CLI never picks one, not even the default.
-	h, api := fakeHarnessAPI(t)
-	api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
+	h, api := fakeGridAPI(t)
+	api.SetRoute("GET", "/v1/teams", 200, gridTwoTeams)
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"))
 	h.Require.Contains(h.Stderr.String(), `pass --team with one of "Engineering", "Research"`)
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
-func Test_Harness_Setup_KeyPerTeamAndUser(t *testing.T) {
+func Test_Grid_Setup_KeyPerTeamAndUser(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
-	api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
+	h, api := fakeGridAPI(t)
+	api.SetRoute("GET", "/v1/teams", 200, gridTwoTeams)
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude-code", dir)
 	for _, team := range []string{"team-a", "team-b", "team-a"} {
@@ -504,9 +504,9 @@ func Test_Harness_Setup_KeyPerTeamAndUser(t *testing.T) {
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
-func Test_Harness_Setup_DefaultKeyName(t *testing.T) {
+func Test_Grid_Setup_DefaultKeyName(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"))
 	name := api.FindCall("POST", "/v1/teams/team-a/api_keys").BodyJSON(t)["name"].(string)
 	h.Require.Regexp(`^baseten-harness-[a-z0-9]+(-[a-z0-9]+)*-[0-9a-f]{6}$`, name)
@@ -517,9 +517,9 @@ func Test_Harness_Setup_DefaultKeyName(t *testing.T) {
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
-func Test_Harness_Setup_KeyCreationFailureCanBeRetried(t *testing.T) {
+func Test_Grid_Setup_KeyCreationFailureCanBeRetried(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	dir := t.TempDir()
 	args := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
 	api.SetRoute("POST", "/v1/teams/team-a/api_keys", 500, map[string]string{"message": "unavailable"})
@@ -531,9 +531,9 @@ func Test_Harness_Setup_KeyCreationFailureCanBeRetried(t *testing.T) {
 	h.Require.FileExists(harnessSettingsFile("claude-code", dir))
 }
 
-func Test_Harness_Setup_KeyringUnavailableStoresPlaintext(t *testing.T) {
+func Test_Grid_Setup_KeyringUnavailableStoresPlaintext(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	keyring.MockInitWithError(errors.New("no keyring"))
 	t.Cleanup(keyring.MockInit)
 	args := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"}
@@ -543,14 +543,14 @@ func Test_Harness_Setup_KeyringUnavailableStoresPlaintext(t *testing.T) {
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
-func Test_Harness_Setup_RouteFlags(t *testing.T) {
+func Test_Grid_Setup_RouteFlags(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, tc := range []struct{ name, flag string }{
 		{"codex", "--background-route"}, {"codex", "--fallback-route"}, {"opencode", "--fallback-route"},
 		{"pi", "--background-route"}, {"pi", "--fallback-route"},
 	} {
 		t.Run(tc.name+tc.flag, func(t *testing.T) {
-			h, api := fakeHarnessAPI(t)
+			h, api := fakeGridAPI(t)
 			dir := t.TempDir()
 			h.Require.Error(h.Execute("grid", "setup", "--harness", tc.name, "--config-dir", dir, tc.flag, "acme/primary", "--yes"))
 			h.Require.Contains(h.Stderr.String(), "supported only")
@@ -558,18 +558,18 @@ func Test_Harness_Setup_RouteFlags(t *testing.T) {
 			h.Require.NoFileExists(harnessSettingsFile(tc.name, dir))
 		})
 	}
-	h, _ := fakeHarnessAPI(t)
+	h, _ := fakeGridAPI(t)
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--background-route", "acme/primary", "--yes"))
 	env := readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["env"].(map[string]any)
 	h.Require.Equal("acme/primary", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
 }
 
-func Test_Harness_Setup_SubagentRouteUnsupportedHarnessWarns(t *testing.T) {
+func Test_Grid_Setup_SubagentRouteUnsupportedHarnessWarns(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, name := range []string{"codex", "pi"} {
 		t.Run(name, func(t *testing.T) {
-			h, api := fakeHarnessAPI(t)
+			h, api := fakeGridAPI(t)
 			dir := t.TempDir()
 			require.NoError(t, h.Execute("grid", "setup", "--harness", name, "--config-dir", dir, "--subagent-route", "acme/primary", "--yes"))
 			require.Contains(t, h.Stderr.String(), "warning: --subagent-route is not supported by "+name+"; it will be ignored")
@@ -594,7 +594,7 @@ func claudeHarnessDefaultsBody(primary, background string) map[string]any {
 	}}
 }
 
-func Test_Harness_Setup_ServerDefaults(t *testing.T) {
+func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, tc := range []struct {
 		name           string
@@ -733,7 +733,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, api := fakeHarnessAPI(t)
+			h, api := fakeGridAPI(t)
 			api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				items := []any{}
@@ -767,15 +767,15 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 	}
 }
 
-func Test_Harness_Setup_ReplacesSettingsAndPicker(t *testing.T) {
+func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	skipUnlessSupported(t)
-	h, _ := fakeHarnessAPI(t)
+	h, _ := fakeGridAPI(t)
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude-code", dir)
 	h.Require.NoError(os.WriteFile(path, []byte(`{"model":"previous","theme":"dark","modelPicker":{"options":[{"model":"my/model","label":"Custom"}]}}`), 0o600))
 	args := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir}
 	h.Require.NoError(h.Execute(append(args, "--dry-run", "--output", "json")...))
-	var preview public.HarnessPlanList
+	var preview public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &preview))
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "model")
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "modelPicker.options")
@@ -790,16 +790,16 @@ func Test_Harness_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, "claude-code", path))
 }
 
-func Test_Harness_DefaultDiscovery(t *testing.T) {
+func Test_Grid_DefaultDiscovery(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	root := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--harness", "codex", "--yes", "--output", "json"))
-	var setup public.HarnessPlanList
+	var setup public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &setup))
 	h.Require.Len(setup.Items, 3) // Two settings files and the Codex model catalog.
 	// A malformed file warns instead of hiding the other harnesses.
@@ -813,7 +813,7 @@ func Test_Harness_DefaultDiscovery(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "status", "--output", "json"))
 	h.Require.Contains(h.Stderr.String(), "warning: skipping opencode: settings at")
 	h.Require.Contains(h.Stderr.String(), "are misconfigured")
-	var statuses public.HarnessStatusList
+	var statuses public.GridStatusList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
 	h.Require.Len(statuses.Items, 2)
 	for _, status := range statuses.Items {
@@ -841,9 +841,9 @@ func Test_Harness_DefaultDiscovery(t *testing.T) {
 	h.Require.JSONEq(`{"items":[]}`, h.Stdout.String())
 }
 
-func Test_Harness_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
+func Test_Grid_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	root := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
@@ -853,7 +853,7 @@ func Test_Harness_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "opencode", "--yes"))
 	h.Require.Equal(0, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"), "Claude Code still uses the key")
 	h.Require.NoError(h.Execute("grid", "teardown", "--yes", "--output", "json"))
-	var result public.HarnessPlanList
+	var result public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
 	h.Require.Equal([]string{"secret-team-a"}, result.DeletedAPIKeys)
 	h.Require.Equal(1, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"))
@@ -913,7 +913,7 @@ func (g *harnessGateway) sentRequestClasses() []string {
 	return slices.Clone(g.requestClasses)
 }
 
-// Test_Harness_Setup_RealHarness configures each installed harness in an
+// Test_Grid_Setup_RealHarness configures each installed harness in an
 // isolated directory, runs it, and checks that it asks the gateway for the
 // configured route. Harnesses not on PATH are skipped.
 //
@@ -921,7 +921,7 @@ func (g *harnessGateway) sentRequestClasses() []string {
 // taken for OpenCode 1 and OpenCode 2 is the binary named by
 // BASETEN_TEST_OPENCODE2, when set. OpenCode 2 reads both settings formats
 // and runs with each; OpenCode 1 reads only the original.
-func Test_Harness_Setup_RealHarness(t *testing.T) {
+func Test_Grid_Setup_RealHarness(t *testing.T) {
 	skipUnlessSupported(t)
 	type harnessCase struct {
 		label, name, binary string
@@ -954,7 +954,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 			gateway := &harnessGateway{}
 			server := httptest.NewServer(gateway)
 			t.Cleanup(server.Close)
-			h, _ := harnessAPI(t, server.URL)
+			h, _ := gridAPI(t, server.URL)
 			root := t.TempDir()
 			configDir := map[string]string{
 				"claude-code": filepath.Join(root, ".claude"),
@@ -1024,9 +1024,9 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 	}
 }
 
-func Test_Harness_Setup_RouterRouteInPickers(t *testing.T) {
+func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
 			map[string]any{"id": "route-a", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
@@ -1096,9 +1096,9 @@ func serveFirstPartyRoutes(api *MockManagementAPI) {
 	})
 }
 
-func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
+func Test_Grid_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	serveFirstPartyRoutes(api)
 	dir := t.TempDir()
 	path := harnessSettingsFile("opencode", dir)
@@ -1115,9 +1115,9 @@ func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	h.Require.Contains(connections.RawQuery, "team_id=team-a")
 }
 
-func Test_Harness_Setup_PiFirstPartyRoutes(t *testing.T) {
+func Test_Grid_Setup_PiFirstPartyRoutes(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	serveFirstPartyRoutes(api)
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", dir, "--yes"))
@@ -1131,9 +1131,9 @@ func Test_Harness_Setup_PiFirstPartyRoutes(t *testing.T) {
 	h.Require.Equal(map[string]any{"defaultProvider": "baseten-harness", "defaultModel": "acme/claude"}, settings)
 }
 
-func Test_Harness_Setup_RouteMetadata(t *testing.T) {
+func Test_Grid_Setup_RouteMetadata(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// The second page holds a route without metadata.
@@ -1174,9 +1174,9 @@ func Test_Harness_Setup_RouteMetadata(t *testing.T) {
 	h.Require.Equal(map[string]any{"input": 0.3, "output": 1.2}, model["cost"])
 }
 
-func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
+func Test_Grid_Setup_RoutesByAPIFormat(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	formats := func(messages, responses bool) map[string]any {
 		m := maps.Clone(harnessRouteMetadata)
 		m["supported_api_formats"] = map[string]any{"messages": messages, "responses": responses}
@@ -1275,7 +1275,7 @@ func (e *codexDaemonHarnessExecer) Exec(command *exec.Cmd) error {
 	return e.fakeHarnessExecer.Exec(command)
 }
 
-func Test_Harness_Setup_RestartsCodexDaemon(t *testing.T) {
+func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 	skipUnlessSupported(t)
 	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
 	if err := os.WriteFile(socket, nil, 0o600); err != nil {
@@ -1299,7 +1299,7 @@ func Test_Harness_Setup_RestartsCodexDaemon(t *testing.T) {
 		"restart fails":    {&codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}, 1, []string{"could not restart the codex app-server daemon", "Run `codex app-server daemon restart` when you're done to pick up the new models."}, []string{"Restarted"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			h, _ := harnessAPI(t, "")
+			h, _ := gridAPI(t, "")
 			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
 			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--yes"))
 			h.Require.Equal(tc.restarts, tc.execer.restarts)
@@ -1314,7 +1314,7 @@ func Test_Harness_Setup_RestartsCodexDaemon(t *testing.T) {
 	}
 }
 
-func Test_Harness_Setup_SignsOutCodex(t *testing.T) {
+func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 	skipUnlessSupported(t)
 	signingOut := "Signing codex out of OpenAI/ChatGPT"
 	signedOut := "Signed codex out of OpenAI/ChatGPT and cleared the cached workspace policy."
@@ -1333,7 +1333,7 @@ func Test_Harness_Setup_SignsOutCodex(t *testing.T) {
 		"logout fails no file": {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, false, false, true, true, 1, []string{"codex logout failed", hint, "cloud-config-bundle-cache.json` to stop the workspace default model from overriding the Baseten route."}, []string{"removed", signedOut}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			h, _ := harnessAPI(t, "")
+			h, _ := gridAPI(t, "")
 			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
 			dir := t.TempDir()
 			auth := filepath.Join(dir, "auth.json")
@@ -1362,7 +1362,7 @@ func Test_Harness_Setup_SignsOutCodex(t *testing.T) {
 	}
 }
 
-func Test_Harness_Teardown_RestartsCodexDaemon(t *testing.T) {
+func Test_Grid_Teardown_RestartsCodexDaemon(t *testing.T) {
 	skipUnlessSupported(t)
 	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
 	if err := os.WriteFile(socket, nil, 0o600); err != nil {
@@ -1385,7 +1385,7 @@ func Test_Harness_Teardown_RestartsCodexDaemon(t *testing.T) {
 		"restart fails": {&codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}, 1, []string{"could not restart the codex app-server daemon", "Run `codex app-server daemon restart` when you're done to pick up the new models."}, []string{"Restarted"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			h, _ := harnessAPI(t, "")
+			h, _ := gridAPI(t, "")
 			h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 			dir := t.TempDir()
 			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--key-name", "laptop", "--yes"))
@@ -1426,11 +1426,11 @@ func harnessDefaultsBody(defaults map[string]any) map[string]any {
 	return map[string]any{"team_id": "team-a", "harness_defaults": defaults}
 }
 
-// harnessDefaultsAPI is fakeHarnessAPI with four team-a routes and the given
+// harnessDefaultsAPI is fakeGridAPI with four team-a routes and the given
 // harness defaults, and harness settings directories under a temporary root.
 func harnessDefaultsAPI(t *testing.T, defaults map[string]any) (*CommandHarness, *MockManagementAPI, string) {
 	t.Helper()
-	h, api := fakeHarnessAPI(t)
+	h, api := fakeGridAPI(t)
 	var routes []any
 	for _, name := range []string{"primary", "claude", "fast", "gpt"} {
 		routes = append(routes, harnessRoute(api, name))
@@ -1477,7 +1477,7 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-func Test_Harness_Setup_Defaults(t *testing.T) {
+func Test_Grid_Setup_Defaults(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api, root := harnessDefaultsAPI(t, nil)
 	route := func(name string) map[string]any { return harnessRoute(api, name) }
@@ -1542,7 +1542,7 @@ func Test_Harness_Setup_Defaults(t *testing.T) {
 	h.Require.Equal([2]string{"acme/primary", "acme/fast"}, harnessSetupRoutes(t, root)["claude-code"])
 }
 
-func Test_Harness_Setup_DefaultsSetupCannotUse(t *testing.T) {
+func Test_Grid_Setup_DefaultsSetupCannotUse(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api, root := harnessDefaultsAPI(t, nil)
 	// The API doesn't check that the harness can call a route, and acme/gpt
@@ -1571,7 +1571,7 @@ func Test_Harness_Setup_DefaultsSetupCannotUse(t *testing.T) {
 	h.Require.NotContains(h.Stderr.String(), "ignoring the")
 }
 
-func Test_Harness_Setup_DefaultsUnknownSource(t *testing.T) {
+func Test_Grid_Setup_DefaultsUnknownSource(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api, root := harnessDefaultsAPI(t, nil)
 	// Not a source the API returns today: it stands in for one added after this CLI was built.
@@ -1588,7 +1588,7 @@ func Test_Harness_Setup_DefaultsUnknownSource(t *testing.T) {
 	h.Require.Equal("baseten-harness/acme/claude", openCode["model"])
 }
 
-func Test_Harness_Setup_DefaultsSkippedWhenFlagsSetEveryRoute(t *testing.T) {
+func Test_Grid_Setup_DefaultsSkippedWhenFlagsSetEveryRoute(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api, _ := harnessDefaultsAPI(t, map[string]any{})
 	for _, args := range [][]string{
@@ -1605,7 +1605,7 @@ func Test_Harness_Setup_DefaultsSkippedWhenFlagsSetEveryRoute(t *testing.T) {
 	h.Require.Equal(1, countCalls(api, "GET", harnessDefaultsPath), "the background route still comes from the defaults")
 }
 
-func Test_Harness_Setup_DefaultsInterrupted(t *testing.T) {
+func Test_Grid_Setup_DefaultsInterrupted(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api, _ := harnessDefaultsAPI(t, nil)
 	ctx, cancel := context.WithCancel(h.Context)
@@ -1620,7 +1620,7 @@ func Test_Harness_Setup_DefaultsInterrupted(t *testing.T) {
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "an interrupted setup creates no key")
 }
 
-func Test_Harness_Setup_NoDefaults(t *testing.T) {
+func Test_Grid_Setup_NoDefaults(t *testing.T) {
 	skipUnlessSupported(t)
 	for name, respond := range map[string]func(*MockManagementAPI){
 		"empty": func(api *MockManagementAPI) {},
@@ -1655,9 +1655,9 @@ func Test_Harness_Setup_NoDefaults(t *testing.T) {
 	}
 }
 
-func Test_Harness_Setup_DryRunSkipsCodexSignOut(t *testing.T) {
+func Test_Grid_Setup_DryRunSkipsCodexSignOut(t *testing.T) {
 	skipUnlessSupported(t)
-	h, _ := harnessAPI(t, "")
+	h, _ := gridAPI(t, "")
 	execer := &codexDaemonHarnessExecer{loggedIn: true, socket: "/tmp/unused.sock"}
 	h.Context = internalcmd.WithExecer(h.Context, execer)
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--dry-run"))
@@ -1704,10 +1704,10 @@ func recordDir(t *testing.T) string {
 	return dir
 }
 
-func Test_Harness_Setup_RecordsSyncOptions(t *testing.T) {
+func Test_Grid_Setup_RecordsSyncOptions(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := harnessAPI(t, "")
-	api.SetRoute("GET", "/v1/teams", 200, harnessTwoTeams)
+	h, api := gridAPI(t, "")
+	api.SetRoute("GET", "/v1/teams", 200, gridTwoTeams)
 	setHarnessRoutes(api, "acme/primary", "acme/second")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
@@ -1754,9 +1754,9 @@ func Test_Harness_Setup_RecordsSyncOptions(t *testing.T) {
 	h.Require.NotContains(harnessRecordFile(t).Harnesses, "claude-code")
 }
 
-func Test_Harness_Sync(t *testing.T) {
+func Test_Grid_Sync(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := harnessAPI(t, "")
+	h, api := gridAPI(t, "")
 	setHarnessRoutes(api, "acme/primary")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
@@ -1782,7 +1782,7 @@ func Test_Harness_Sync(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "pass --yes")
 	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "no key before confirmation")
 	h.Require.NoError(h.Execute("grid", "sync", "--yes", "--output", "json"))
-	var result public.HarnessPlanList
+	var result public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
 	for _, item := range result.Items {
 		h.Require.True(item.Changed)
@@ -1796,9 +1796,9 @@ func Test_Harness_Sync(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
 }
 
-func Test_Harness_Sync_FallsBackWhenRouteVanishes(t *testing.T) {
+func Test_Grid_Sync_FallsBackWhenRouteVanishes(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := harnessAPI(t, "")
+	h, api := gridAPI(t, "")
 	setHarnessRoutes(api, "acme/primary", "acme/bg")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
@@ -1820,7 +1820,7 @@ func Test_Harness_Sync_FallsBackWhenRouteVanishes(t *testing.T) {
 	h.Require.NotContains(h.Stderr.String(), "no longer exists")
 }
 
-func Test_Harness_Sync_ServerDefaults(t *testing.T) {
+func Test_Grid_Sync_ServerDefaults(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, tc := range []struct {
 		name, apiName string
@@ -1899,9 +1899,9 @@ func Test_Harness_Sync_ServerDefaults(t *testing.T) {
 	}
 }
 
-func Test_Harness_Sync_DryRun(t *testing.T) {
+func Test_Grid_Sync_DryRun(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := harnessAPI(t, "")
+	h, api := gridAPI(t, "")
 	setHarnessRoutes(api, "acme/primary")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
@@ -1910,7 +1910,7 @@ func Test_Harness_Sync_DryRun(t *testing.T) {
 
 	setHarnessRoutes(api, "acme/primary", "acme/second")
 	h.Require.NoError(h.Execute("grid", "sync", "--dry-run", "--output", "json"))
-	var preview public.HarnessPlanList
+	var preview public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &preview))
 	for _, item := range preview.Items {
 		h.Require.True(item.Changed)
@@ -1920,7 +1920,7 @@ func Test_Harness_Sync_DryRun(t *testing.T) {
 	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "no key created")
 }
 
-func Test_Harness_Sync_RestartsCodexDaemon(t *testing.T) {
+func Test_Grid_Sync_RestartsCodexDaemon(t *testing.T) {
 	skipUnlessSupported(t)
 	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
 	if err := os.WriteFile(socket, nil, 0o600); err != nil {
@@ -1931,7 +1931,7 @@ func Test_Harness_Sync_RestartsCodexDaemon(t *testing.T) {
 		t.Fatal(err)
 	}
 	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
-	h, api := harnessAPI(t, "")
+	h, api := gridAPI(t, "")
 	setHarnessRoutes(api, "acme/primary")
 	quiet := &codexDaemonHarnessExecer{}
 	h.Context = internalcmd.WithExecer(h.Context, quiet)
@@ -1964,9 +1964,9 @@ func Test_Harness_Sync_RestartsCodexDaemon(t *testing.T) {
 	h.Require.Equal(1, busy.restarts)
 }
 
-func Test_Harness_Setup_UseSessionCredential(t *testing.T) {
+func Test_Grid_Setup_UseSessionCredential(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := harnessAPI(t, "")
+	h, api := gridAPI(t, "")
 	setHarnessRoutes(api, "acme/primary")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
@@ -1987,7 +1987,7 @@ func Test_Harness_Setup_UseSessionCredential(t *testing.T) {
 
 	// A rerun with the same key changes nothing.
 	h.Require.NoError(h.Execute(append(slices.Clone(base), "--use-session-credential", "--output", "json")...))
-	var rerun public.HarnessPlanList
+	var rerun public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
 	for _, item := range rerun.Items {
 		h.Require.False(item.Changed)
@@ -1996,7 +1996,7 @@ func Test_Harness_Setup_UseSessionCredential(t *testing.T) {
 	// A rotated key shows as a change in the preview and is applied.
 	t.Setenv("BASETEN_API_KEY", "rotated-key")
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--dry-run", "--output", "json"))
-	var preview public.HarnessPlanList
+	var preview public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &preview))
 	for _, item := range preview.Items {
 		h.Require.True(item.Changed, "a rotated session key is a change")
@@ -2006,9 +2006,9 @@ func Test_Harness_Setup_UseSessionCredential(t *testing.T) {
 	h.Require.Equal("rotated-key", readHarnessSettings(t, "claude-code", path)["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
 }
 
-func Test_Harness_Setup_UseSessionCredentialRequiresAPIKey(t *testing.T) {
+func Test_Grid_Setup_UseSessionCredentialRequiresAPIKey(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := harnessAPI(t, "")
+	h, api := gridAPI(t, "")
 	setHarnessRoutes(api, "acme/primary")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	t.Setenv("BASETEN_API_KEY", "")
@@ -2028,9 +2028,9 @@ func Test_Harness_Setup_UseSessionCredentialRequiresAPIKey(t *testing.T) {
 	h.Require.NoFileExists(path)
 }
 
-func Test_Harness_Sync_UseSessionCredential(t *testing.T) {
+func Test_Grid_Sync_UseSessionCredential(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := harnessAPI(t, "")
+	h, api := gridAPI(t, "")
 	setHarnessRoutes(api, "acme/primary")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
@@ -2057,9 +2057,9 @@ func Test_Harness_Sync_UseSessionCredential(t *testing.T) {
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
-func Test_Harness_Sync_MixedCredentialSources(t *testing.T) {
+func Test_Grid_Sync_MixedCredentialSources(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := harnessAPI(t, "")
+	h, api := gridAPI(t, "")
 	setHarnessRoutes(api, "acme/primary")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
@@ -2080,9 +2080,9 @@ func Test_Harness_Sync_MixedCredentialSources(t *testing.T) {
 	h.Require.Equal(keys, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "the created key is reused")
 }
 
-func Test_Harness_Teardown_KeepsSessionCredential(t *testing.T) {
+func Test_Grid_Teardown_KeepsSessionCredential(t *testing.T) {
 	skipUnlessSupported(t)
-	h, api := harnessAPI(t, "")
+	h, api := gridAPI(t, "")
 	setHarnessRoutes(api, "acme/primary")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
@@ -2118,5 +2118,45 @@ func Test_Harness_Teardown_KeepsSessionCredential(t *testing.T) {
 	h.Require.NotContains(string(raw), "test-key", "the settings were removed")
 	for _, call := range api.Calls() {
 		h.Require.NotEqual("DELETE", call.Method, "the session's key is never deleted")
+	}
+}
+
+func Test_Grid_Help(t *testing.T) {
+	for _, path := range [][]string{
+		{"grid"},
+		{"grid", "setup"},
+		{"grid", "sync"},
+		{"grid", "status"},
+		{"grid", "teardown"},
+		{"grid", "usage"},
+		{"grid", "harness-defaults"},
+		{"grid", "route"},
+		{"grid", "route", "list"},
+		{"grid", "route", "describe"},
+		{"grid", "route", "create"},
+		{"grid", "route", "update"},
+		{"grid", "route", "delete"},
+		{"grid", "route", "usage"},
+		{"grid", "route", "api-key", "list"},
+		{"grid", "route", "api-key", "delete"},
+	} {
+		t.Run(strings.Join(path, " "), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			for _, helpFlag := range []string{"--help", "--help-output"} {
+				h.Require.NoError(h.Execute(append(path, helpFlag)...))
+				h.Require.Contains(h.Stdout.String(), "baseten "+strings.Join(path, " "))
+				h.Require.NotContains(h.Stdout.String(), "baseten route ")
+				h.Require.NotContains(h.Stdout.String(), "baseten harness ")
+			}
+		})
+	}
+}
+
+func Test_Grid_ReplacesLegacyPaths(t *testing.T) {
+	for _, path := range [][]string{{"harness", "setup"}, {"harness", "sync"}, {"harness", "status"}, {"harness", "teardown"}, {"harness", "usage"}, {"harness", "harness-defaults"}, {"route", "list"}} {
+		t.Run(strings.Join(path, " "), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			h.Require.ErrorContains(h.Execute(path...), "unknown command")
+		})
 	}
 }

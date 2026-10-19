@@ -6,27 +6,27 @@ import (
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
-const routePrereleaseNotice = "PRE-RELEASE: route commands are not GA yet. " +
+const gridRoutePrereleaseNotice = "PRE-RELEASE: grid route commands are not GA yet. " +
 	"Their arguments, flags, and output may change.\n\n"
 
-const routeTargetJSONDescription = "target.type is BASETEN_MODEL_API, ANTHROPIC, OPENAI, or XAI. " +
+const gridRouteTargetJSONDescription = "target.type is BASETEN_MODEL_API, ANTHROPIC, OPENAI, or XAI. " +
 	"Every target includes model. External targets also include secret_name."
 
-var commandRoute = Command{
+var commandGridRoute = Command{
 	Name:    "route",
 	Summary: "Manage routes (PRE-RELEASE)",
-	Description: routePrereleaseNotice +
+	Description: gridRoutePrereleaseNotice +
 		"Manage routes. Baseten derives each route's name from its target. " +
 		"A route's name, team, and target cannot be changed after creation.",
 	Children: []Command{
 		{
 			Name:    "list",
 			Summary: "List routes (PRE-RELEASE)",
-			Flags:   RouteListFlags{},
-			Description: routePrereleaseNotice +
+			Flags:   GridRouteListFlags{},
+			Description: gridRoutePrereleaseNotice +
 				"List all available routes, newest first.",
-			Output: &CommandOutput[RouteList]{
-				JSONDescription: "All matching routes in items. " + routeTargetJSONDescription,
+			Output: &CommandOutput[GridRouteList]{
+				JSONDescription: "All matching routes in items. " + gridRouteTargetJSONDescription,
 				TextDescription: "Table with columns: ID, DISPLAY NAME, NAME, CREATED. " +
 					"Use 'grid route describe' for a route's target and team. When no routes match, prints \"No routes found.\" to stderr.",
 				Examples: []CommandExample{
@@ -48,11 +48,11 @@ var commandRoute = Command{
 		{
 			Name:    "describe",
 			Summary: "Describe a route (PRE-RELEASE)",
-			Flags:   RouteDescribeFlags{},
-			Description: routePrereleaseNotice +
+			Flags:   GridRouteDescribeFlags{},
+			Description: gridRoutePrereleaseNotice +
 				"Describe a route by ID or exact name. Pass exactly one of --id or --name.",
 			Output: &CommandOutput[managementapi.Route]{
-				JSONDescription: routeTargetJSONDescription,
+				JSONDescription: gridRouteTargetJSONDescription,
 				TextDescription: "Field-per-line summary of the route, including its target, invoke URL, and team name. " +
 					"Unrecognized target types are shown as <unrecognized type>.",
 				Examples: []CommandExample{
@@ -70,8 +70,8 @@ var commandRoute = Command{
 		{
 			Name:    "create",
 			Summary: "Create a route (PRE-RELEASE)",
-			Flags:   RouteCreateFlags{},
-			Description: routePrereleaseNotice +
+			Flags:   GridRouteCreateFlags{},
+			Description: gridRoutePrereleaseNotice +
 				"Create a route with --target-type and --target-model. Baseten derives the route's name " +
 				"from its target. Find Model API names with 'baseten model-api list'.\n\n" +
 				"Omit --team to use the organization's default team. External providers are reached through " +
@@ -79,7 +79,7 @@ var commandRoute = Command{
 				"--target-connection. Pass the same --team value if the route uses a specific team.\n\n" +
 				"Set optional metadata with --display-name and --description.",
 			Output: &CommandOutput[managementapi.Route]{
-				JSONDescription: routeTargetJSONDescription,
+				JSONDescription: gridRouteTargetJSONDescription,
 				TextDescription: "On success, prints \"Created route <name> (<id>)\" to stderr; no stdout output.",
 				Examples: []CommandExample{
 					{
@@ -110,14 +110,14 @@ var commandRoute = Command{
 		{
 			Name:    "update",
 			Summary: "Update a route (PRE-RELEASE)",
-			Flags:   RouteUpdateFlags{},
-			Description: routePrereleaseNotice +
+			Flags:   GridRouteUpdateFlags{},
+			Description: gridRoutePrereleaseNotice +
 				"Update a route by ID or exact name. Pass exactly one of --id or --name.\n\n" +
 				"Pass --display-name or --description; omitted fields are unchanged. " +
 				"Pass --description '' to clear the description. Name, team, and target cannot be changed; " +
 				"to change a target, create a new route.",
 			Output: &CommandOutput[managementapi.Route]{
-				JSONDescription: routeTargetJSONDescription,
+				JSONDescription: gridRouteTargetJSONDescription,
 				TextDescription: "On success, prints \"Updated route <name> (<id>)\" to stderr; no stdout output.",
 				Examples: []CommandExample{
 					{
@@ -137,8 +137,8 @@ var commandRoute = Command{
 		{
 			Name:    "delete",
 			Summary: "Delete a route (PRE-RELEASE)",
-			Flags:   RouteDeleteFlags{},
-			Description: routePrereleaseNotice +
+			Flags:   GridRouteDeleteFlags{},
+			Description: gridRoutePrereleaseNotice +
 				"Delete a route by ID or exact name. Pass exactly one of --id or --name.\n\n" +
 				"Prompts for confirmation. Pass --yes to skip the prompt. " +
 				"When stdin is not a terminal, --yes is required.",
@@ -159,7 +159,7 @@ var commandRoute = Command{
 		{
 			Name:    "usage",
 			Summary: "Show daily routes usage and estimated costs (PRE-RELEASE)",
-			Description: routePrereleaseNotice +
+			Description: gridRoutePrereleaseNotice +
 				"Show routes usage and estimated costs as daily UTC buckets, oldest first, broken down by the " +
 				"dimensions passed to --group-by. Defaults match the API: the previous UTC day through today, grouped " +
 				"by model. Organization admins see usage from every routes API key in the organization; other members " +
@@ -171,7 +171,7 @@ var commandRoute = Command{
 				"Baseten charges. Vertex and OpenAI-compatible usage isn't included.\n\n" +
 				"For your own usage this month, see 'baseten grid usage'. For machine-readable streaming, prefer " +
 				"--output jsonl over --output json.",
-			Flags: RouteUsageFlags{},
+			Flags: GridRouteUsageFlags{},
 			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
 				JSONArrayStreamed: true,
 				TextDescription: "Table with a DATE column, one column per --group-by dimension, then INPUT, CACHED, and " +
@@ -200,13 +200,13 @@ var commandRoute = Command{
 		{
 			Name:        "api-key",
 			Summary:     "Manage your routes API keys (PRE-RELEASE)",
-			Description: routePrereleaseNotice + "Manage the routes API keys you created, such as with grid setup, across all your machines and teams.",
+			Description: gridRoutePrereleaseNotice + "Manage the routes API keys you created, such as with grid setup, across all your machines and teams.",
 			Children: []Command{
 				{
 					Name:        "list",
 					Summary:     "List your routes API keys (PRE-RELEASE)",
-					Description: routePrereleaseNotice + "List the routes API keys you created, across all your machines and teams. Key values are never shown.",
-					Flags:       RouteAPIKeyListFlags{},
+					Description: gridRoutePrereleaseNotice + "List the routes API keys you created, across all your machines and teams. Key values are never shown.",
+					Flags:       GridRouteAPIKeyListFlags{},
 					Output: &CommandOutput[managementapi.APIKeys]{
 						TextDescription: "Table with NAME, PREFIX, TEAM, CREATED, and LAST USED columns.",
 						Examples:        []CommandExample{{Description: "List your routes API keys.", Command: "baseten grid route api-key list"}},
@@ -216,10 +216,10 @@ var commandRoute = Command{
 				{
 					Name:    "delete",
 					Summary: "Delete your routes API keys (PRE-RELEASE)",
-					Description: routePrereleaseNotice + "Delete one routes API key by prefix, or all of them with --all. Harnesses using a deleted key lose access " +
+					Description: gridRoutePrereleaseNotice + "Delete one routes API key by prefix, or all of them with --all. Harnesses using a deleted key lose access " +
 						"until you rerun grid setup on that machine, which creates a new key.",
-					Flags: RouteAPIKeyDeleteFlags{},
-					Output: &CommandOutput[RouteAPIKeyDeleteResult]{
+					Flags: GridRouteAPIKeyDeleteFlags{},
+					Output: &CommandOutput[GridRouteAPIKeyDeleteResult]{
 						TextDescription: "Each deleted prefix, on stderr.",
 						JSONDescription: "deleted lists the deleted prefixes and failed the ones that could not be deleted. The command fails if any deletion failed.",
 						Examples: []CommandExample{
@@ -234,73 +234,73 @@ var commandRoute = Command{
 	},
 }
 
-// RouteAPIKeyListFlags are the flags for `baseten grid route api-key list`.
-type RouteAPIKeyListFlags struct{ CommandFlags }
+// GridRouteAPIKeyListFlags are the flags for `baseten grid route api-key list`.
+type GridRouteAPIKeyListFlags struct{ CommandFlags }
 
-// RouteAPIKeyDeleteFlags are the flags for `baseten grid route api-key delete`.
-type RouteAPIKeyDeleteFlags struct {
+// GridRouteAPIKeyDeleteFlags are the flags for `baseten grid route api-key delete`.
+type GridRouteAPIKeyDeleteFlags struct {
 	CommandFlags
 	Prefix string `flag:"prefix" desc:"Prefix of the key to delete, as shown by grid route api-key list." oneof:"key"`
 	All    bool   `flag:"all" desc:"Delete all your routes API keys, on every machine and team." oneof:"key"`
 	Yes    bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
-// RouteAPIKeyDeleteResult is the JSON output of `baseten grid route api-key delete`.
-type RouteAPIKeyDeleteResult struct {
+// GridRouteAPIKeyDeleteResult is the JSON output of `baseten grid route api-key delete`.
+type GridRouteAPIKeyDeleteResult struct {
 	Deleted []string `json:"deleted"`
 	Failed  []string `json:"failed"`
 }
 
-type RouteRefFlags struct {
+type GridRouteRefFlags struct {
 	ID   string `flag:"id" desc:"Stable route ID." oneof:"route-ref"`
 	Name string `flag:"name" desc:"Exact route name, including its organization-owned prefix." oneof:"route-ref"`
 }
 
-type RouteTargetFlags struct {
+type GridRouteTargetFlags struct {
 	TargetType       string `flag:"target-type" desc:"Target type." enum:"baseten-model-api,connection" required:"true"`
 	TargetModel      string `flag:"target-model" desc:"Model API name or external provider model name." required:"true"`
 	TargetConnection string `flag:"target-connection" desc:"ID of a connection in the route's team, whose provider serves the route. Required with --target-type connection."`
 }
 
-// RouteList contains the routes aggregated across all pages.
-type RouteList struct {
+// GridRouteList contains the routes aggregated across all pages.
+type GridRouteList struct {
 	Items []managementapi.Route `json:"items"`
 }
 
-type RouteListFlags struct {
+type GridRouteListFlags struct {
 	CommandFlags
 	Team string `flag:"team" desc:"Team name or ID to list routes of. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
 }
 
-type RouteDescribeFlags struct {
+type GridRouteDescribeFlags struct {
 	CommandFlags
-	RouteRefFlags
+	GridRouteRefFlags
 }
 
-type RouteCreateFlags struct {
+type GridRouteCreateFlags struct {
 	CommandFlags
-	RouteTargetFlags
+	GridRouteTargetFlags
 	Team        string               `flag:"team" desc:"Team name or ID the route belongs to. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
 	DisplayName OptionalFlag[string] `flag:"display-name" desc:"Display name (1 to 255 characters). Defaults to the route name."`
 	Description OptionalFlag[string] `flag:"description" desc:"Optional route description (up to 1000 characters)."`
 }
 
-type RouteUpdateFlags struct {
+type GridRouteUpdateFlags struct {
 	CommandFlags
-	RouteRefFlags
+	GridRouteRefFlags
 	DisplayName OptionalFlag[string] `flag:"display-name" desc:"New display name (1 to 255 characters). Omit to keep it unchanged."`
 	Description OptionalFlag[string] `flag:"description" desc:"New description (up to 1000 characters). Pass an empty string to clear it."`
 }
 
-type RouteDeleteFlags struct {
+type GridRouteDeleteFlags struct {
 	CommandFlags
-	RouteRefFlags
+	GridRouteRefFlags
 	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
-// RouteUsageQueryFlags are the usage filters and paging flags shared by
+// GridRouteUsageQueryFlags are the usage filters and paging flags shared by
 // `baseten grid route usage` and `baseten grid usage`.
-type RouteUsageQueryFlags struct {
+type GridRouteUsageQueryFlags struct {
 	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated." enum:"user,model,provider" default:"model"`
 
 	Models    []string `flag:"model" desc:"Only return usage for these models. May be repeated."`
@@ -313,8 +313,8 @@ type RouteUsageQueryFlags struct {
 	PageSize int `flag:"page-size" hidden:"true" desc:"Daily buckets fetched per backend request while paging."`
 }
 
-// RouteUsageFlags are the flags for `baseten grid route usage`.
-type RouteUsageFlags struct {
+// GridRouteUsageFlags are the flags for `baseten grid route usage`.
+type GridRouteUsageFlags struct {
 	CommandFlags
 
 	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the day before --end."`
@@ -323,5 +323,5 @@ type RouteUsageFlags struct {
 
 	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. 'baseten whoami' shows your own."`
 
-	RouteUsageQueryFlags
+	GridRouteUsageQueryFlags
 }
