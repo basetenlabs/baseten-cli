@@ -45,7 +45,7 @@ Releases are created and published in GitHub, which creates the tag. Never push 
 Only repository admins can publish stable releases.
 
 1. Create a GitHub release with a new `vX.Y.Z` tag on `main`, titled `vX.Y.Z`, with release notes in the format below, and publish it.
-1. Merge the README PR the workflow opens. Until the README links the new release, CI fails on every PR.
+1. Merge the README PR that the workflow automatically opens. Until the README links the new release, CI fails on every PR.
 
 Both the `baseten` and `baseten-rc` Homebrew formulas move to the new release.
 

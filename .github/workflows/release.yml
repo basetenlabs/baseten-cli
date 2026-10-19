@@ -26,15 +26,23 @@ jobs:
           fi
           IS_PRERELEASE=$(jq -r .isPrerelease <<<"$RELEASE")
           NAME=$(jq -r .name <<<"$RELEASE")
-          if [[ "$TAG" == *-* ]]; then
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
             if [[ "$IS_PRERELEASE" != true || "$NAME" != "[UNSTABLE] $TAG"* ]]; then
               echo "$TAG is a prerelease tag, so the release must be marked as a pre-release with a title starting with \"[UNSTABLE] $TAG\"."
               exit 1
             fi
-          elif [[ "$IS_PRERELEASE" == true || "$NAME" != "$TAG" ]]; then
-            echo "$TAG is a stable tag, so the release must not be marked as a pre-release and must be titled \"$TAG\"."
+          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if [[ "$IS_PRERELEASE" == true || "$NAME" != "$TAG" ]]; then
+              echo "$TAG is a stable tag, so the release must not be marked as a pre-release and must be titled \"$TAG\"."
+              exit 1
+            fi
+          else
+            echo "$TAG is not a vX.Y.Z or vX.Y.Z-rc.N tag."
             exit 1
           fi
+          # GoReleaser sets the release title from release.name_template,
+          # which keeps this one.
+          echo "RELEASE_TITLE=$NAME" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
         with:

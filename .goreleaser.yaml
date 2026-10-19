@@ -46,6 +46,9 @@ release:
     name: baseten-cli
   draft: false
   prerelease: auto
+  # Keep the title of the existing release, which the release workflow
+  # validated, instead of overwriting it with the tag.
+  name_template: '{{ envOrDefault "RELEASE_TITLE" .Tag }}'
 
 # Publishes Formula/baseten.rb to the basetenlabs/homebrew-baseten tap on each
 # stable release, and Formula/baseten-rc.rb on every release including RCs.
