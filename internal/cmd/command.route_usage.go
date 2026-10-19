@@ -91,7 +91,7 @@ func runRoutesUsage(ctx *CommandContext, req routesUsageRequest) error {
 		}
 		userIDs = []string{me.UserId}
 	}
-	params := managementapi.GetV1RoutesUsageParams{
+	params := managementapi.GetV1GridRoutesUsageParams{
 		StartDate: &startDate,
 		EndDate:   &endDate,
 		GroupBy:   &dims,
@@ -118,7 +118,7 @@ func runRoutesUsage(ctx *CommandContext, req routesUsageRequest) error {
 buckets:
 	for {
 		params.Limit = &pageSize
-		resp, err := api.GetRoutesUsage(ctx, params)
+		resp, err := api.GetGridRoutesUsage(ctx, params)
 		if err != nil {
 			return fmt.Errorf("getting routes usage: %w", err)
 		}

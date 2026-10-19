@@ -34,38 +34,27 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	if err != nil {
 		return fmt.Errorf("getting current user: %w", err)
 	}
-	listing, err := api.GetRoutesSettingsUsersTeams(ctx, "me")
+	// The server picks your only team, or asks for --team when you have several.
+	settingsParams := managementapi.GetV1GridTeamSettingsUsersUserIdParams{}
+	if f.Team != "" {
+		settingsParams.TeamId = &f.Team
+	}
+	settings, err := api.GetGridTeamSettingsUsers(ctx, "me", settingsParams)
 	if err != nil {
 		// A team or workspace key authenticates as a service account, which
 		// has no teams or routes keys of its own.
 		if session, serr := ctx.authInfo.Session(); serr == nil && session.UsesAPIKey() {
 			ctx.LogLine("If you're using a team or workspace API key, run 'baseten auth login' to see your own usage.")
 		}
-		return fmt.Errorf("getting your teams: %w", err)
+		return fmt.Errorf("getting your settings: %w", err)
 	}
-	teams := listing.Teams
-	names := make([]string, len(teams))
-	for i, t := range teams {
-		names[i] = strconv.Quote(t.TeamName)
-	}
+	teams := []managementapi.RouteTeamUserSettings{*settings}
 	// Opened before any early return, so JSON output is at least [].
 	var jw *JSONArrayWriter
 	if ctx.JSON {
 		jw = ctx.NewJSONArrayWriter()
 		defer jw.Close()
 	}
-	// --team narrows to one team; otherwise every team you're in.
-	if f.Team != "" {
-		i := slices.IndexFunc(teams, func(t managementapi.RouteTeamUserSettings) bool { return t.TeamId == f.Team || t.TeamName == f.Team })
-		if i < 0 {
-			return cmd.NewErrUsagef("no team of yours matched %q; your teams are %s", f.Team, strings.Join(names, ", "))
-		}
-		teams = teams[i : i+1]
-	} else if len(teams) == 0 {
-		ctx.LogLine("No usage this month.")
-		return nil
-	}
-
 	// This month so far by default, the period spend limits apply to, in
 	// whole UTC days like the API.
 	startDate, endDate, err := routesUsageWindow(ctx, routesUsageRequest{start: f.Start, end: f.End, since: f.Since,
@@ -88,7 +77,7 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 	// organization's usage.
 	userIDs := []string{me.UserId}
 	pageSize := routesUsageMaxBuckets
-	params := managementapi.GetV1RoutesUsageParams{StartDate: &startDate, EndDate: &endDate, GroupBy: &dims, UserIds: &userIDs, Limit: &pageSize}
+	params := managementapi.GetV1GridRoutesUsageParams{StartDate: &startDate, EndDate: &endDate, GroupBy: &dims, UserIds: &userIDs, Limit: &pageSize}
 	if f.Team != "" {
 		params.TeamId = &teams[0].TeamId
 	}
@@ -99,7 +88,7 @@ func commandHarnessUsage(ctx *CommandContext, f *cmd.HarnessUsageFlags) error {
 		byTeam[t.TeamId] = map[string]*harnessModel{}
 	}
 	for {
-		resp, err := api.GetRoutesUsage(ctx, params)
+		resp, err := api.GetGridRoutesUsage(ctx, params)
 		if err != nil {
 			return fmt.Errorf("getting routes usage: %w", err)
 		}

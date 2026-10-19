@@ -92,14 +92,14 @@ func harnessAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagemen
 	}
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
 	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []map[string]any{{"id": "team-a", "name": "Engineering", "default": true}}})
-	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+	api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"items":      []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": r.URL.Query().Get("team_id"), "display_name": "Primary", "invoke_url": invokeURL, "metadata": harnessRouteMetadata}},
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
-	api.SetRoute("GET", "/v1/routes/connections", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}})
+	api.SetRoute("GET", "/v1/grid/connections", 200, map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}})
 	for _, team := range []string{"team-a", "team-b"} {
 		api.SetRoute("POST", "/v1/teams/"+team+"/api_keys", 200, map[string]string{"api_key": "secret-" + team})
 		api.SetRoute("DELETE", "/v1/api_keys/secret-"+team, 200, map[string]string{"prefix": "secret-" + team})
@@ -467,7 +467,7 @@ func Test_Harness_Setup_Teams(t *testing.T) {
 				args = append(args, "--team", tc.team)
 			}
 			h.Require.NoError(h.Execute(args...))
-			h.Require.Equal([]string{tc.want}, api.FindCall("GET", "/v1/routes").Query()["team_id"])
+			h.Require.Equal([]string{tc.want}, api.FindCall("GET", "/v1/grid/routes").Query()["team_id"])
 			h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/"+tc.want+"/api_keys"))
 		})
 	}
@@ -609,7 +609,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "server defaults seed primary and background",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/server",
@@ -620,7 +620,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			harnessName: "claude-code",
 			flags:       []string{"--primary-route", "acme/first"},
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
@@ -631,7 +631,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			harnessName: "claude-code",
 			flags:       []string{"--background-route", "acme/first"},
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/server",
@@ -641,7 +641,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "server primary missing from routes falls back to positional",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/missing", "acme/background"))
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/missing", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
@@ -651,7 +651,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "server background missing from routes falls back to the default",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/server",
@@ -661,7 +661,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "server defaults without a primary still seed the background",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, map[string]any{
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, map[string]any{
 					"harness_defaults": map[string]any{
 						"claude_code": map[string]any{"background": harnessDefaultsModel("acme/background")},
 					},
@@ -675,7 +675,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "a response without a claude_code entry is ignored",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, map[string]any{
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, map[string]any{
 					"harness_defaults": map[string]any{
 						"codex": map[string]any{"primary": harnessDefaultsModel("acme/server")},
 					},
@@ -696,7 +696,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "a routes settings error falls back to positional",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 500, map[string]string{"message": "unavailable"})
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 500, map[string]string{"message": "unavailable"})
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
@@ -706,7 +706,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "a malformed routes settings response falls back to positional",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, "not an object")
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, "not an object")
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
@@ -717,7 +717,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			harnessName: "claude-code",
 			flags:       []string{"--primary-route", "acme/first", "--background-route", "acme/background"},
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
 			},
 			wantPrimary:    "acme/first",
 			wantBackground: "acme/background",
@@ -726,7 +726,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 			name:        "codex ignores defaults for other harnesses",
 			harnessName: "codex",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/routes/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:   true,
 			wantPrimary: "acme/first",
@@ -734,7 +734,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, api := fakeHarnessAPI(t)
-			api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+			api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				items := []any{}
 				for _, route := range []struct{ name, display string }{
@@ -757,7 +757,7 @@ func Test_Harness_Setup_ServerDefaults(t *testing.T) {
 				h.Require.Equal(tc.wantBackground, env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
 				h.Require.Equal(settings["model"], env["ANTHROPIC_MODEL"])
 			}
-			call := api.FindCall("GET", "/v1/routes/settings/teams/team-a")
+			call := api.FindCall("GET", "/v1/grid/settings/teams/team-a")
 			if tc.wantFetch {
 				h.Require.NotNil(call, "setup fetches the routes settings endpoint")
 			} else {
@@ -1027,7 +1027,7 @@ func Test_Harness_Setup_RealHarness(t *testing.T) {
 func Test_Harness_Setup_RouterRouteInPickers(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
-	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
 			map[string]any{"id": "route-a", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
@@ -1064,7 +1064,7 @@ func Test_Harness_Setup_RouterRouteInPickers(t *testing.T) {
 // through a team connection, a Baseten-hosted route, and a route whose
 // connection no longer exists.
 func serveFirstPartyRoutes(api *MockManagementAPI) {
-	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
 			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}},
@@ -1078,7 +1078,7 @@ func serveFirstPartyRoutes(api *MockManagementAPI) {
 		"pagination": map[string]any{"has_more": false},
 	})
 	// Connections page, so the join reads every page.
-	api.SetRouteFunc("GET", "/v1/routes/connections", func(w http.ResponseWriter, r *http.Request) {
+	api.SetRouteFunc("GET", "/v1/grid/connections", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("cursor") == "" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1110,7 +1110,7 @@ func Test_Harness_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	h.Require.NotContains(models["acme/open"], "provider")
 	h.Require.NotContains(models["acme/orphan"], "provider", "a route whose connection is unknown is called with Chat Completions")
 	h.Require.Contains(h.Stderr.String(), "warning: routes whose connection is not in the team's connections are called with the Chat Completions API: acme/orphan")
-	connections := api.FindCall("GET", "/v1/routes/connections")
+	connections := api.FindCall("GET", "/v1/grid/connections")
 	h.Require.NotNil(connections)
 	h.Require.Contains(connections.RawQuery, "team_id=team-a")
 }
@@ -1134,7 +1134,7 @@ func Test_Harness_Setup_PiFirstPartyRoutes(t *testing.T) {
 func Test_Harness_Setup_RouteMetadata(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
-	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+	api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// The second page holds a route without metadata.
 		if r.URL.Query().Get("cursor") == "" {
@@ -1163,7 +1163,7 @@ func Test_Harness_Setup_RouteMetadata(t *testing.T) {
 	// A route's cost reaches OpenCode, and needs both input and output prices.
 	priced := maps.Clone(harnessRouteMetadata)
 	priced["cost"] = map[string]any{"input": 0.3, "output": 1.2, "cache_read": nil, "long_context": map[string]any{"input": 0.6}}
-	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items":      []any{map[string]any{"name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": priced}},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -1184,7 +1184,7 @@ func Test_Harness_Setup_RoutesByAPIFormat(t *testing.T) {
 	}
 	unknown := maps.Clone(harnessRouteMetadata)
 	delete(unknown, "supported_api_formats")
-	api.SetRoute("GET", "/v1/routes", 200, map[string]any{
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
 			map[string]any{"name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": formats(true, false)},
 			map[string]any{"name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": formats(false, true)},
@@ -1419,7 +1419,7 @@ func harnessRoute(api *MockManagementAPI, name string) map[string]any {
 }
 
 // harnessDefaultsPath is team-a's route settings, which hold its harness defaults.
-const harnessDefaultsPath = "/v1/routes/settings/teams/team-a"
+const harnessDefaultsPath = "/v1/grid/settings/teams/team-a"
 
 // harnessDefaultsBody is a team settings response with the given harness defaults.
 func harnessDefaultsBody(defaults map[string]any) map[string]any {
@@ -1435,7 +1435,7 @@ func harnessDefaultsAPI(t *testing.T, defaults map[string]any) (*CommandHarness,
 	for _, name := range []string{"primary", "claude", "fast", "gpt"} {
 		routes = append(routes, harnessRoute(api, name))
 	}
-	api.SetRoute("GET", "/v1/routes", 200, map[string]any{"items": routes, "pagination": map[string]any{"has_more": false}})
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{"items": routes, "pagination": map[string]any{"has_more": false}})
 	api.SetRoute("GET", harnessDefaultsPath, 200, harnessDefaultsBody(defaults))
 	root := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
@@ -1686,7 +1686,7 @@ func saveHarnessRecordFile(t *testing.T, file harness.RecordFile) {
 
 // setHarnessRoutes serves a route per name, each with usable metadata.
 func setHarnessRoutes(api *MockManagementAPI, names ...string) {
-	api.SetRouteFunc("GET", "/v1/routes", func(w http.ResponseWriter, r *http.Request) {
+	api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		items := []any{}
 		for _, name := range names {

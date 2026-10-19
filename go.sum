@@ -60,6 +60,8 @@ github.com/bahlo/generic-list-go v0.2.0 h1:5sz/EEAK+ls5wF+NeqDpk5+iNdMDXrh3z3nPn
 github.com/bahlo/generic-list-go v0.2.0/go.mod h1:2KvAjgMlE5NNynlg/5iLrrCCZ2+5xWbdbCW3pNTGyYg=
 github.com/basetenlabs/baseten-go v0.4.1-0.20261016172527-804ff969e83c h1:DXNpXOZhs8zYxGosOuh6Mvhn8yH3oxTdf9SOR5BwKfs=
 github.com/basetenlabs/baseten-go v0.4.1-0.20261016172527-804ff969e83c/go.mod h1:nIvRKKh3Wd+f9QMz13/1vBBqtk/XzpzTyTeOXkD+6Mw=
+github.com/basetenlabs/baseten-go v0.5.1-0.20261019201505-1fc61c15f3a2 h1:QXRpi+lSyScbvXYyyEvhV3RutHmqQYKUdICr4YZaBJA=
+github.com/basetenlabs/baseten-go v0.5.1-0.20261019201505-1fc61c15f3a2/go.mod h1:nIvRKKh3Wd+f9QMz13/1vBBqtk/XzpzTyTeOXkD+6Mw=
 github.com/buger/jsonparser v1.1.2 h1:frqHqw7otoVbk5M8LlE/L7HTnIq2v9RX6EJ48i9AxJk=
 github.com/buger/jsonparser v1.1.2/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
 github.com/catppuccin/go v0.3.0 h1:d+0/YicIq+hSTo5oPuRi5kOpqkVA5tAsU6dNhvRu+aY=

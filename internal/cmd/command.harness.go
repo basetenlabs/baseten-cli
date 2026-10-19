@@ -172,7 +172,7 @@ type harnessTarget struct {
 //  1. If in `setup`, we emit a validation error.
 //  2. If in `sync`, we emit a warning, and clobber with the new server default.
 func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, targets []harnessTarget, forSync bool) ([]*harness.Plan, error) {
-	listed, err := listRoutes(ctx, api, managementapi.GetV1RoutesParams{TeamId: &team.Id})
+	listed, err := listRoutes(ctx, api, managementapi.GetV1GridRoutesParams{TeamId: &team.Id})
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +181,7 @@ func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *mana
 	}
 	// Routes reach external providers through team connections, and the
 	// provider decides which API a harness calls the route with.
-	connections, err := listConnections(ctx, api, managementapi.GetV1RoutesConnectionsParams{TeamId: &team.Id})
+	connections, err := listConnections(ctx, api, managementapi.GetV1GridConnectionsParams{TeamId: &team.Id})
 	if err != nil {
 		return nil, err
 	}
@@ -767,7 +767,7 @@ func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID stri
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, harnessDefaultsTimeout)
 	defer cancel()
-	settings, err := api.GetRoutesSettingsTeams(requestCtx, teamID)
+	settings, err := api.GetGridSettingsTeams(requestCtx, teamID)
 	var re *managementapi.ResponseError
 	switch {
 	case ctx.Err() != nil:

@@ -23,7 +23,7 @@ func commandHarnessDefaults(ctx *CommandContext, flags *cmd.HarnessDefaultsFlags
 	if err != nil {
 		return err
 	}
-	settings, err := api.GetRoutesSettingsTeams(ctx, team.Id)
+	settings, err := api.GetGridSettingsTeams(ctx, team.Id)
 	if err != nil {
 		return fmt.Errorf("getting harness defaults for team %s: %w", team.Name, err)
 	}

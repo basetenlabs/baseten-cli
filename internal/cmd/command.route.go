@@ -27,7 +27,7 @@ func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {
 	if err != nil {
 		return err
 	}
-	params := managementapi.GetV1RoutesParams{}
+	params := managementapi.GetV1GridRoutesParams{}
 	if team != "" {
 		params.TeamId = &team
 	}
@@ -63,7 +63,7 @@ func resolveRouteID(ctx *CommandContext, api *managementapi.Client, ref cmd.Rout
 	if ref.Name == "" {
 		return "", cmd.NewErrUsagef("pass --id or --name")
 	}
-	page, err := api.GetRoutes(ctx, managementapi.GetV1RoutesParams{Name: &ref.Name})
+	page, err := api.GetGridRoutes(ctx, managementapi.GetV1GridRoutesParams{Name: &ref.Name})
 	if err != nil {
 		return "", fmt.Errorf("resolve route %q: %w", ref.Name, err)
 	}
@@ -88,7 +88,7 @@ func commandRouteDescribe(ctx *CommandContext, flags *cmd.RouteDescribeFlags) er
 	if err != nil {
 		return err
 	}
-	route, err := cl.API().GetRoutesRouteId(ctx, id)
+	route, err := cl.API().GetGridRoutesRouteId(ctx, id)
 	if err != nil {
 		return fmt.Errorf("describe route %s: %w", id, err)
 	}
@@ -181,7 +181,7 @@ func commandRouteCreate(ctx *CommandContext, flags *cmd.RouteCreateFlags) error 
 	if team != "" {
 		body.TeamId = &team
 	}
-	route, err := cl.API().PostRoutes(ctx, body)
+	route, err := cl.API().PostGridRoutes(ctx, body)
 	if err != nil {
 		return fmt.Errorf("create route: %w", err)
 	}
@@ -209,7 +209,7 @@ func commandRouteUpdate(ctx *CommandContext, flags *cmd.RouteUpdateFlags) error 
 		DisplayName: flags.DisplayName.Pointer(),
 		Description: flags.Description.Pointer(),
 	}
-	route, err := cl.API().PatchRoutes(ctx, id, body)
+	route, err := cl.API().PatchGridRoutes(ctx, id, body)
 	if err != nil {
 		return fmt.Errorf("update route %s: %w", id, err)
 	}
@@ -235,7 +235,7 @@ func commandRouteDelete(ctx *CommandContext, flags *cmd.RouteDeleteFlags) error 
 			return err
 		}
 	}
-	tombstone, err := cl.API().DeleteRoutes(ctx, id)
+	tombstone, err := cl.API().DeleteGridRoutes(ctx, id)
 	if err != nil {
 		return fmt.Errorf("delete route %s: %w", id, err)
 	}
@@ -279,10 +279,10 @@ func routeTargetFields(value any) (routeTargetInfo, error) {
 }
 
 // listConnections returns a team's route connections across all pages.
-func listConnections(ctx context.Context, api *managementapi.Client, params managementapi.GetV1RoutesConnectionsParams) ([]managementapi.RouteConnection, error) {
+func listConnections(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridConnectionsParams) ([]managementapi.RouteConnection, error) {
 	var connections []managementapi.RouteConnection
 	for {
-		resp, err := api.GetRoutesConnections(ctx, params)
+		resp, err := api.GetGridConnections(ctx, params)
 		if err != nil {
 			return nil, fmt.Errorf("list route connections: %w", err)
 		}
@@ -295,10 +295,10 @@ func listConnections(ctx context.Context, api *managementapi.Client, params mana
 }
 
 // listRoutes returns the routes across all pages.
-func listRoutes(ctx context.Context, api *managementapi.Client, params managementapi.GetV1RoutesParams) ([]managementapi.Route, error) {
+func listRoutes(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridRoutesParams) ([]managementapi.Route, error) {
 	var routes []managementapi.Route
 	for {
-		resp, err := api.GetRoutes(ctx, params)
+		resp, err := api.GetGridRoutes(ctx, params)
 		if err != nil {
 			return nil, fmt.Errorf("list routes: %w", err)
 		}

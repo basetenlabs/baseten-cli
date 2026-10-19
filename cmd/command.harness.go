@@ -79,7 +79,7 @@ type HarnessStatusList struct {
 type HarnessUsageFlags struct {
 	CommandFlags
 
-	Team string `flag:"team" desc:"Team name or ID to show. Without it, every team you're in."`
+	Team string `flag:"team" desc:"ID of the team to show. Without it, your only team; required when you belong to several."`
 
 	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the start of the current UTC month."`
 	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
