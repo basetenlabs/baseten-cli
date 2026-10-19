@@ -188,7 +188,7 @@ func Test_Harness_Usage_FoldsModelsPastTopFiveIntoOther(t *testing.T) {
 		harnessUsageModel("m7", "10", 10, 0, 1),
 	)))
 
-	h.Require.NoError(h.Execute("harness", "usage"))
+	h.Require.NoError(h.Execute("grid", "usage"))
 	out := h.Stdout.String()
 	h.Require.Regexp(`(?m)^  ● m5 +\$30 +\(11%\)\n  ● other +\$30 +\(11%\)\n$`, out, "the sixth model on is summed into a last \"other\" row")
 	h.Require.NotContains(out, "m6")
