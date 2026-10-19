@@ -9,7 +9,7 @@ import (
 
 func Test_Route_APIKey_List(t *testing.T) {
 	h, api := harnessAPI(t, "")
-	h.Require.NoError(h.Execute("route", "api-key", "list"))
+	h.Require.NoError(h.Execute("grid", "route", "api-key", "list"))
 	for _, want := range []string{"NAME", "PREFIX", "LAST USED", "secret-team-a", "Engineering", "2026-09-01T00:00:00Z", "never"} {
 		h.Require.Contains(h.Stdout.String(), want)
 	}
@@ -17,7 +17,7 @@ func Test_Route_APIKey_List(t *testing.T) {
 	h.Require.Equal("true", api.FindCall("GET", "/v1/api_keys").Query().Get("created_by_me"))
 
 	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{}})
-	h.Require.NoError(h.Execute("route", "api-key", "list"))
+	h.Require.NoError(h.Execute("grid", "route", "api-key", "list"))
 	h.Require.Contains(h.Stderr.String(), "No routes API keys found.")
 }
 
@@ -26,15 +26,15 @@ func Test_Route_APIKey_Delete(t *testing.T) {
 	api.SetRoute("DELETE", "/v1/api_keys/secret-team-a", 200, map[string]string{"prefix": "secret-team-a"})
 	api.SetRoute("DELETE", "/v1/api_keys/secret-team-b", 200, map[string]string{"prefix": "secret-team-b"})
 
-	h.Require.Error(h.Execute("route", "api-key", "delete"))
+	h.Require.Error(h.Execute("grid", "route", "api-key", "delete"))
 	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
-	h.Require.Error(h.Execute("route", "api-key", "delete", "--prefix", "secret-team-a"))
+	h.Require.Error(h.Execute("grid", "route", "api-key", "delete", "--prefix", "secret-team-a"))
 	h.Require.Contains(h.Stderr.String(), "pass --yes")
-	h.Require.Error(h.Execute("route", "api-key", "delete", "--prefix", "unknown", "--yes"))
+	h.Require.Error(h.Execute("grid", "route", "api-key", "delete", "--prefix", "unknown", "--yes"))
 	h.Require.Contains(h.Stderr.String(), `no routes API key with prefix "unknown"`)
 	h.Require.Nil(api.FindCall("DELETE", "/v1/api_keys/secret-team-a"))
 
-	h.Require.NoError(h.Execute("route", "api-key", "delete", "--prefix", "secret-team-a", "--yes"))
+	h.Require.NoError(h.Execute("grid", "route", "api-key", "delete", "--prefix", "secret-team-a", "--yes"))
 	h.Require.Contains(h.Stderr.String(), "Deleted routes API key secret-team-a")
 	h.Require.NotNil(api.FindCall("DELETE", "/v1/api_keys/secret-team-a"))
 	h.Require.Nil(api.FindCall("DELETE", "/v1/api_keys/secret-team-b"))
@@ -44,7 +44,7 @@ func Test_Route_APIKey_DeleteAllReportsPartialFailure(t *testing.T) {
 	h, api := harnessAPI(t, "")
 	api.SetRoute("DELETE", "/v1/api_keys/secret-team-a", 500, map[string]string{"message": "unavailable"})
 	api.SetRoute("DELETE", "/v1/api_keys/secret-team-b", 200, map[string]string{"prefix": "secret-team-b"})
-	h.Require.Error(h.Execute("route", "api-key", "delete", "--all", "--yes", "--output", "json"))
+	h.Require.Error(h.Execute("grid", "route", "api-key", "delete", "--all", "--yes", "--output", "json"))
 	var result public.RouteAPIKeyDeleteResult
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
 	h.Require.Equal(public.RouteAPIKeyDeleteResult{Deleted: []string{"secret-team-b"}, Failed: []string{"secret-team-a"}}, result)
@@ -54,7 +54,7 @@ func Test_Harness_Setup_ReplacesDeletedKey(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeHarnessAPI(t)
 	dir := t.TempDir()
-	args := []string{"harness", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+	args := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
 	h.Require.NoError(h.Execute(args...))
 	h.Require.NoError(h.Execute(args...))
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "an active key is reused")

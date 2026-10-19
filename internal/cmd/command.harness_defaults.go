@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	Register("harness harness-defaults", commandHarnessDefaults)
+	Register("grid harness-defaults", commandHarnessDefaults)
 }
 
 func commandHarnessDefaults(ctx *CommandContext, flags *cmd.HarnessDefaultsFlags) error {

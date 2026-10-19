@@ -98,7 +98,7 @@ func harnessUsageMonth() map[string]any {
 func Test_Harness_Usage_DefaultsToMonthToDateForCurrentUser(t *testing.T) {
 	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
 
-	h.Require.NoError(h.Execute("harness", "usage"))
+	h.Require.NoError(h.Execute("grid", "usage"))
 	q := harnessUsageLastQuery(h, api)
 	h.Require.Equal([]string{"2026-09-01"}, q["start_date"])
 	h.Require.Equal([]string{"2026-09-26"}, q["end_date"], "today's usage is included")
@@ -117,9 +117,9 @@ func Test_Harness_Usage_Teams(t *testing.T) {
 		harnessTeamSettings("team-d", "Infra", "0", nil, nil, nil),
 	}})
 
-	h.Require.ErrorContains(h.Execute("harness", "usage", "--team", "Sales"), `no team of yours matched "Sales"; your teams are "Engineering", "Research", "FDE", "Infra"`)
+	h.Require.ErrorContains(h.Execute("grid", "usage", "--team", "Sales"), `no team of yours matched "Sales"; your teams are "Engineering", "Research", "FDE", "Infra"`)
 
-	h.Require.NoError(h.Execute("harness", "usage", "--team", "Engineering"))
+	h.Require.NoError(h.Execute("grid", "usage", "--team", "Engineering"))
 	h.Require.Equal([]string{"team-a"}, harnessUsageLastQuery(h, api)["team_id"], "--team also narrows the usage")
 	out := h.Stdout.String()
 	h.Require.Regexp(`(?m)^Engineering +\$2 of \$100\n  ● claude-sonnet-5 +\$1 +\(56%\)\n  ● glm-5.2 +\$1 +\(22%\)\n  ● gpt-5.2 +\$1 +\(22%\)\n$`, out,
@@ -131,24 +131,24 @@ func Test_Harness_Usage_Teams(t *testing.T) {
 	body["items"].([]map[string]any)[0]["results"].([]map[string]any)[1]["team_id"] = "team-b"
 	body["items"].([]map[string]any)[2]["results"].([]map[string]any)[1]["team_id"] = "team-z"
 	api.SetRoute("GET", "/v1/routes/usage", 200, body)
-	h.Require.NoError(h.Execute("harness", "usage"))
+	h.Require.NoError(h.Execute("grid", "usage"))
 	h.Require.Nil(harnessUsageLastQuery(h, api)["team_id"])
 	h.Require.Regexp(`(?m)^Engineering +\$2 of \$100\n  ● claude-sonnet-5 +\$1 +\(100%\)\n\nResearch +\$13 of \$10 .*\n  ● gpt-5.2 +\$1 +\(100%\)\n\nFDE +\$80 of \$100 .*\n\nInfra +\$0 · no limit\n$`, h.Stdout.String(),
 		"every team without --team, usage split by team, a team you're no longer in left out")
 
-	h.Require.NoError(h.Execute("harness", "usage", "--team", "team-b"))
+	h.Require.NoError(h.Execute("grid", "usage", "--team", "team-b"))
 	h.Require.Equal([]string{"Research", "$13", "of", "$10", "(team", "default", "$100)", "·", "limit", "reached"},
 		harnessUsageRow(h, h.Stdout.String(), "Research"), "--team by ID too; the team default only when yours differs")
-	h.Require.NoError(h.Execute("harness", "usage", "--team", "FDE"))
+	h.Require.NoError(h.Execute("grid", "usage", "--team", "FDE"))
 	h.Require.Equal([]string{"FDE", "$80", "of", "$100", "·", "team", "limit", "reached"}, harnessUsageRow(h, h.Stdout.String(), "FDE"))
-	h.Require.NoError(h.Execute("harness", "usage", "--team", "Infra"))
+	h.Require.NoError(h.Execute("grid", "usage", "--team", "Infra"))
 	h.Require.Equal([]string{"Infra", "$0", "·", "no", "limit"}, harnessUsageRow(h, h.Stdout.String(), "Infra"))
 }
 
 func Test_Harness_Usage_Window(t *testing.T) {
 	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-08-31", harnessUsageModel("gpt-5.2", "40", 400, 0, 40))))
 
-	h.Require.NoError(h.Execute("harness", "usage", "--start", "2026-08-01T00:00:00Z", "--end", "2026-09-01T00:00:00Z"))
+	h.Require.NoError(h.Execute("grid", "usage", "--start", "2026-08-01T00:00:00Z", "--end", "2026-09-01T00:00:00Z"))
 	q := harnessUsageLastQuery(h, api)
 	h.Require.Equal([]string{"2026-08-01"}, q["start_date"])
 	h.Require.Equal([]string{"2026-09-01"}, q["end_date"])
@@ -157,16 +157,16 @@ func Test_Harness_Usage_Window(t *testing.T) {
 		"the usage summed, not this month's spend, and no limit, which is this month's")
 
 	api.SetRoute("GET", "/v1/routes/usage", 200, harnessUsageBody(harnessUsageBucket("2026-09-20", harnessUsageModel("gpt-5.2", "4", 40, 0, 4))))
-	h.Require.NoError(h.Execute("harness", "usage", "--since", "7d"))
+	h.Require.NoError(h.Execute("grid", "usage", "--since", "7d"))
 	q = harnessUsageLastQuery(h, api)
 	h.Require.Equal([]string{"2026-09-18", "2026-09-26"}, []string{q["start_date"][0], q["end_date"][0]}, "the same window flags as route usage")
-	h.Require.ErrorContains(h.Execute("harness", "usage", "--since", "1d", "--start", "2026-09-01T00:00:00Z"), "--since cannot be combined")
+	h.Require.ErrorContains(h.Execute("grid", "usage", "--since", "1d", "--start", "2026-09-01T00:00:00Z"), "--since cannot be combined")
 }
 
 func Test_Harness_Usage_JSONStreamsBucketsAsReturned(t *testing.T) {
 	h, _ := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageMonth())
 
-	h.Require.NoError(h.Execute("harness", "usage", "--output", "json"))
+	h.Require.NoError(h.Execute("grid", "usage", "--output", "json"))
 	var got []struct {
 		Results []struct {
 			CostUSD string `json:"cost_usd"`
@@ -177,7 +177,7 @@ func Test_Harness_Usage_JSONStreamsBucketsAsReturned(t *testing.T) {
 	h.Require.Equal("1.25", got[0].Results[0].CostUSD, "costs pass through as exact decimal strings")
 	h.Require.Empty(h.Stderr.String())
 
-	h.Require.NoError(h.Execute("harness", "usage", "--output", "jsonl", "--jq", ".date"))
+	h.Require.NoError(h.Execute("grid", "usage", "--output", "jsonl", "--jq", ".date"))
 	h.Require.Equal("\"2026-09-01\"\n\"2026-09-02\"\n\"2026-09-03\"\n", h.Stdout.String())
 }
 
@@ -201,28 +201,28 @@ func Test_Harness_Usage_NullCostIsUnpriced(t *testing.T) {
 		harnessUsageModel("gpt-6-luna", "0", 0, 0, 0),
 	)))
 
-	h.Require.NoError(h.Execute("harness", "usage"))
+	h.Require.NoError(h.Execute("grid", "usage"))
 	out := h.Stdout.String()
 	h.Require.Equal([]string{"●", "claude-opus-5-5", "<$1"}, harnessUsageRow(h, out, "claude-opus-5-5"), "tiny costs stay visible; no share when some usage is unpriced")
 	h.Require.Equal([]string{"●", "qwen-custom", "-"}, harnessUsageRow(h, out, "qwen-custom"))
 	h.Require.NotContains(out, "gpt-6-luna", "usage without tokens or cost is hidden")
 
 	api.SetRoute("GET", "/v1/routes/usage", 200, harnessUsageBody(harnessUsageBucket("2026-09-01", harnessUsageModel("gpt-5.2", "abc", 10, 0, 1))))
-	h.Require.ErrorContains(h.Execute("harness", "usage"), `invalid cost "abc"`)
+	h.Require.ErrorContains(h.Execute("grid", "usage"), `invalid cost "abc"`)
 }
 
 func Test_Harness_Usage_Empty(t *testing.T) {
 	h, api := newHarnessUsageHarness(t, harnessUsageNow, harnessUsageBody(harnessUsageBucket("2026-09-01")))
 	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 200, map[string]any{"teams": []any{}})
 
-	h.Require.NoError(h.Execute("harness", "usage"))
+	h.Require.NoError(h.Execute("grid", "usage"))
 	h.Require.Empty(h.Stdout.String())
 	h.Require.Equal("No usage this month.\n", h.Stderr.String())
-	h.Require.NoError(h.Execute("harness", "usage", "--output", "json"))
+	h.Require.NoError(h.Execute("grid", "usage", "--output", "json"))
 	h.Require.Equal("[]\n", h.Stdout.String(), "still valid JSON with no teams")
 
 	api.SetRoute("GET", "/v1/routes/settings/users/me/teams", 404, map[string]string{"message": "not found"})
-	h.Require.ErrorContains(h.Execute("harness", "usage"), "getting your teams: ")
+	h.Require.ErrorContains(h.Execute("grid", "usage"), "getting your teams: ")
 	h.Require.Contains(h.Stderr.String(), "If you're using a team or workspace API key, run 'baseten auth login'",
 		"a service-account key has no teams or routes usage of its own")
 }

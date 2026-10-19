@@ -25,10 +25,10 @@ import (
 )
 
 func init() {
-	Register("harness setup", commandHarnessSetup)
-	Register("harness status", commandHarnessStatus)
-	Register("harness sync", commandHarnessSync)
-	Register("harness teardown", commandHarnessTeardown)
+	Register("grid setup", commandHarnessSetup)
+	Register("grid status", commandHarnessStatus)
+	Register("grid sync", commandHarnessSync)
+	Register("grid teardown", commandHarnessTeardown)
 }
 
 // harnessPickerLabelWidth caps picker labels so they don't wrap.
@@ -177,7 +177,7 @@ func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *mana
 		return nil, err
 	}
 	if len(listed) == 0 {
-		return nil, fmt.Errorf("team %s has no routes; create one with 'baseten route create'", team.Name)
+		return nil, fmt.Errorf("team %s has no routes; create one with 'baseten grid route create'", team.Name)
 	}
 	// Routes reach external providers through team connections, and the
 	// provider decides which API a harness calls the route with.
@@ -448,7 +448,7 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 		if ctx.JSON {
 			ctx.OutputJSON(cmd.HarnessPlanList{Items: []cmd.HarnessPlan{}})
 		} else {
-			ctx.LogLine("No harnesses to sync. Run 'baseten harness setup' first.")
+			ctx.LogLine("No harnesses to sync. Run 'baseten grid setup' first.")
 		}
 		return nil
 	}
@@ -473,7 +473,7 @@ func commandHarnessSync(ctx *CommandContext, f *cmd.HarnessSyncFlags) error {
 		}
 		team, err := resolveTeamOrOnly(ctx, api, group[0].record.TeamID)
 		if err != nil {
-			return fmt.Errorf("%s: %w; rerun 'baseten harness setup --harness %s' to record a current team", group[0].Name(), err, group[0].Name())
+			return fmt.Errorf("%s: %w; rerun 'baseten grid setup --harness %s' to record a current team", group[0].Name(), err, group[0].Name())
 		}
 		run := harnessSyncRun{team: team, targets: group, token: sessionToken}
 		if run.plans, err = planHarnessSetup(ctx, api, run.team, run.targets, true); err != nil {
@@ -1012,7 +1012,7 @@ func commandHarnessTeardown(ctx *CommandContext, f *cmd.HarnessTeardownFlags) er
 
 // harnessFollowupCommand repeats --config-dir so follow-ups target the same files.
 func harnessFollowupCommand(action string, h selectedHarness, configDir string) string {
-	command := "baseten harness " + action + " --harness " + h.Name()
+	command := "baseten grid " + action + " --harness " + h.Name()
 	if configDir != "" {
 		command += " --config-dir '" + strings.ReplaceAll(configDir, "'", `'\''`) + "'"
 	}

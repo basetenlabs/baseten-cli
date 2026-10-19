@@ -28,7 +28,7 @@ func Test_Harness_HarnessDefaults_All(t *testing.T) {
 		},
 	}))
 
-	require.NoError(t, h.Execute("harness", "harness-defaults", "--output", "json"))
+	require.NoError(t, h.Execute("grid", "harness-defaults", "--output", "json"))
 
 	var out public.HarnessDefaultsList
 	require.NoError(t, json.Unmarshal([]byte(h.Stdout.String()), &out))
@@ -63,7 +63,7 @@ func Test_Harness_HarnessDefaults_Filter(t *testing.T) {
 		},
 	}))
 
-	require.NoError(t, h.Execute("harness", "harness-defaults", "--harness", "codex", "--output", "json"))
+	require.NoError(t, h.Execute("grid", "harness-defaults", "--harness", "codex", "--output", "json"))
 
 	var out public.HarnessDefaultsList
 	require.NoError(t, json.Unmarshal([]byte(h.Stdout.String()), &out))
@@ -90,7 +90,7 @@ func Test_Harness_HarnessDefaults_Text(t *testing.T) {
 		"pi": map[string]any{},
 	}))
 
-	require.NoError(t, h.Execute("harness", "harness-defaults"))
+	require.NoError(t, h.Execute("grid", "harness-defaults"))
 	out := h.Stdout.String()
 
 	require.Contains(t, out, "claude-code")

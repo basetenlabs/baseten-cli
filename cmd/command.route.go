@@ -28,20 +28,20 @@ var commandRoute = Command{
 			Output: &CommandOutput[RouteList]{
 				JSONDescription: "All matching routes in items. " + routeTargetJSONDescription,
 				TextDescription: "Table with columns: ID, DISPLAY NAME, NAME, CREATED. " +
-					"Use 'route describe' for a route's target and team. When no routes match, prints \"No routes found.\" to stderr.",
+					"Use 'grid route describe' for a route's target and team. When no routes match, prints \"No routes found.\" to stderr.",
 				Examples: []CommandExample{
 					{
 						Description: "List your only team's routes.",
-						Command:     "baseten route list",
+						Command:     "baseten grid route list",
 					},
 					{
 						Description: "List one team's routes.",
-						Command:     "baseten route list --team Engineering",
+						Command:     "baseten grid route list --team Engineering",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print route names.",
-					Command:     "baseten route list --jq '.items[].name'",
+					Command:     "baseten grid route list --jq '.items[].name'",
 				},
 			},
 		},
@@ -58,12 +58,12 @@ var commandRoute = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Describe a route by name.",
-						Command:     "baseten route describe --name acme/assistant",
+						Command:     "baseten grid route describe --name acme/assistant",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the invoke URL.",
-					Command:     "baseten route describe --id <id> --jq '.invoke_url'",
+					Command:     "baseten grid route describe --id <id> --jq '.invoke_url'",
 				},
 			},
 		},
@@ -85,14 +85,14 @@ var commandRoute = Command{
 					{
 						Description: "Create a Model API route.",
 						CommandLines: []string{
-							"baseten route create",
+							"baseten grid route create",
 							"--target-type baseten-model-api --target-model <model>",
 						},
 					},
 					{
 						Description: "Create an external provider route through a team connection.",
 						CommandLines: []string{
-							"baseten route create",
+							"baseten grid route create",
 							"--target-type connection --target-model <model>",
 							"--target-connection <connection-id>",
 						},
@@ -101,7 +101,7 @@ var commandRoute = Command{
 				JQExample: CommandExample{
 					Description: "Print the created route ID.",
 					CommandLines: []string{
-						"baseten route create",
+						"baseten grid route create",
 						"--target-type baseten-model-api --target-model <model> --jq '.id'",
 					},
 				},
@@ -123,14 +123,14 @@ var commandRoute = Command{
 					{
 						Description: "Change a route's description.",
 						CommandLines: []string{
-							"baseten route update --name acme/assistant",
+							"baseten grid route update --name acme/assistant",
 							"--description 'Team assistant'",
 						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Change the display name and print it.",
-					Command:     "baseten route update --id <id> --display-name Assistant --jq '.display_name'",
+					Command:     "baseten grid route update --id <id> --display-name Assistant --jq '.display_name'",
 				},
 			},
 		},
@@ -147,12 +147,12 @@ var commandRoute = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Delete a route without prompting.",
-						Command:     "baseten route delete --name acme/assistant --yes",
+						Command:     "baseten grid route delete --name acme/assistant --yes",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the deleted route's ID.",
-					Command:     "baseten route delete --id <id> --yes --jq '.id'",
+					Command:     "baseten grid route delete --id <id> --yes --jq '.id'",
 				},
 			},
 		},
@@ -169,7 +169,7 @@ var commandRoute = Command{
 				"Usage can lag by up to 15 minutes and is retained for 92 days. Model API costs use your prices and " +
 				"include tool calls. OpenAI, Anthropic, and xAI costs estimate what those providers charge and are not " +
 				"Baseten charges. Vertex and OpenAI-compatible usage isn't included.\n\n" +
-				"For your own usage this month, see 'baseten harness usage'. For machine-readable streaming, prefer " +
+				"For your own usage this month, see 'baseten grid usage'. For machine-readable streaming, prefer " +
 				"--output jsonl over --output json.",
 			Flags: RouteUsageFlags{},
 			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
@@ -184,23 +184,23 @@ var commandRoute = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Show usage per model since yesterday.",
-						Command:     "baseten route usage",
+						Command:     "baseten grid route usage",
 					},
 					{
 						Description: "Show which users drove usage over the last 7 days (admins).",
-						Command:     "baseten route usage --since 7d --group-by user",
+						Command:     "baseten grid route usage --since 7d --group-by user",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Stream each day's cost per model as a JSONL stream.",
-					Command:     "baseten route usage --output jsonl --jq '.results[] | {model, cost_usd}'",
+					Command:     "baseten grid route usage --output jsonl --jq '.results[] | {model, cost_usd}'",
 				},
 			},
 		},
 		{
 			Name:        "api-key",
 			Summary:     "Manage your routes API keys (PRE-RELEASE)",
-			Description: routePrereleaseNotice + "Manage the routes API keys you created, such as with harness setup, across all your machines and teams.",
+			Description: routePrereleaseNotice + "Manage the routes API keys you created, such as with grid setup, across all your machines and teams.",
 			Children: []Command{
 				{
 					Name:        "list",
@@ -209,24 +209,24 @@ var commandRoute = Command{
 					Flags:       RouteAPIKeyListFlags{},
 					Output: &CommandOutput[managementapi.APIKeys]{
 						TextDescription: "Table with NAME, PREFIX, TEAM, CREATED, and LAST USED columns.",
-						Examples:        []CommandExample{{Description: "List your routes API keys.", Command: "baseten route api-key list"}},
-						JQExample:       CommandExample{Description: "Print key prefixes.", Command: "baseten route api-key list --jq '.keys[].prefix'"},
+						Examples:        []CommandExample{{Description: "List your routes API keys.", Command: "baseten grid route api-key list"}},
+						JQExample:       CommandExample{Description: "Print key prefixes.", Command: "baseten grid route api-key list --jq '.keys[].prefix'"},
 					},
 				},
 				{
 					Name:    "delete",
 					Summary: "Delete your routes API keys (PRE-RELEASE)",
 					Description: routePrereleaseNotice + "Delete one routes API key by prefix, or all of them with --all. Harnesses using a deleted key lose access " +
-						"until you rerun harness setup on that machine, which creates a new key.",
+						"until you rerun grid setup on that machine, which creates a new key.",
 					Flags: RouteAPIKeyDeleteFlags{},
 					Output: &CommandOutput[RouteAPIKeyDeleteResult]{
 						TextDescription: "Each deleted prefix, on stderr.",
 						JSONDescription: "deleted lists the deleted prefixes and failed the ones that could not be deleted. The command fails if any deletion failed.",
 						Examples: []CommandExample{
-							{Description: "Delete a lost machine's key.", Command: "baseten route api-key delete --prefix <prefix>"},
-							{Description: "Delete all your routes API keys without prompting.", Command: "baseten route api-key delete --all --yes"},
+							{Description: "Delete a lost machine's key.", Command: "baseten grid route api-key delete --prefix <prefix>"},
+							{Description: "Delete all your routes API keys without prompting.", Command: "baseten grid route api-key delete --all --yes"},
 						},
-						JQExample: CommandExample{Description: "Print deleted prefixes.", Command: "baseten route api-key delete --prefix <prefix> --yes --jq '.deleted[]'"},
+						JQExample: CommandExample{Description: "Print deleted prefixes.", Command: "baseten grid route api-key delete --prefix <prefix> --yes --jq '.deleted[]'"},
 					},
 				},
 			},
@@ -234,18 +234,18 @@ var commandRoute = Command{
 	},
 }
 
-// RouteAPIKeyListFlags are the flags for `baseten route api-key list`.
+// RouteAPIKeyListFlags are the flags for `baseten grid route api-key list`.
 type RouteAPIKeyListFlags struct{ CommandFlags }
 
-// RouteAPIKeyDeleteFlags are the flags for `baseten route api-key delete`.
+// RouteAPIKeyDeleteFlags are the flags for `baseten grid route api-key delete`.
 type RouteAPIKeyDeleteFlags struct {
 	CommandFlags
-	Prefix string `flag:"prefix" desc:"Prefix of the key to delete, as shown by route api-key list." oneof:"key"`
+	Prefix string `flag:"prefix" desc:"Prefix of the key to delete, as shown by grid route api-key list." oneof:"key"`
 	All    bool   `flag:"all" desc:"Delete all your routes API keys, on every machine and team." oneof:"key"`
 	Yes    bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
-// RouteAPIKeyDeleteResult is the JSON output of `baseten route api-key delete`.
+// RouteAPIKeyDeleteResult is the JSON output of `baseten grid route api-key delete`.
 type RouteAPIKeyDeleteResult struct {
 	Deleted []string `json:"deleted"`
 	Failed  []string `json:"failed"`
@@ -299,7 +299,7 @@ type RouteDeleteFlags struct {
 }
 
 // RouteUsageQueryFlags are the usage filters and paging flags shared by
-// `baseten route usage` and `baseten harness usage`.
+// `baseten grid route usage` and `baseten grid usage`.
 type RouteUsageQueryFlags struct {
 	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated." enum:"user,model,provider" default:"model"`
 
@@ -313,7 +313,7 @@ type RouteUsageQueryFlags struct {
 	PageSize int `flag:"page-size" hidden:"true" desc:"Daily buckets fetched per backend request while paging."`
 }
 
-// RouteUsageFlags are the flags for `baseten route usage`.
+// RouteUsageFlags are the flags for `baseten grid route usage`.
 type RouteUsageFlags struct {
 	CommandFlags
 

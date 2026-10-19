@@ -12,8 +12,8 @@ import (
 )
 
 func init() {
-	Register("route api-key list", commandRouteAPIKeyList)
-	Register("route api-key delete", commandRouteAPIKeyDelete)
+	Register("grid route api-key list", commandRouteAPIKeyList)
+	Register("grid route api-key delete", commandRouteAPIKeyDelete)
 }
 
 // listRouteAPIKeys returns the routes API keys the caller created, across all
@@ -75,7 +75,7 @@ func commandRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.RouteAPIKeyDeleteF
 	if !flags.All {
 		targets = slices.DeleteFunc(targets, func(k managementapi.APIKeyInfo) bool { return k.Prefix != flags.Prefix })
 		if len(targets) == 0 {
-			return fmt.Errorf("no routes API key with prefix %q; run 'baseten route api-key list'", flags.Prefix)
+			return fmt.Errorf("no routes API key with prefix %q; run 'baseten grid route api-key list'", flags.Prefix)
 		}
 	}
 	result := cmd.RouteAPIKeyDeleteResult{Deleted: []string{}, Failed: []string{}}
@@ -116,7 +116,7 @@ func commandRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.RouteAPIKeyDeleteF
 			ctx.SuppressJSONError()
 		}
 	} else if len(result.Deleted) > 0 {
-		ctx.LogLine("Rerun 'baseten harness setup' on affected machines to create new keys.")
+		ctx.LogLine("Rerun 'baseten grid setup' on affected machines to create new keys.")
 	}
 	return errors.Join(errs...)
 }

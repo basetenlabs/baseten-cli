@@ -19,7 +19,7 @@ import (
 )
 
 func init() {
-	Register("harness usage", commandHarnessUsage)
+	Register("grid usage", commandHarnessUsage)
 }
 
 // commandHarnessUsage shows your Code spend this month in each of your teams,

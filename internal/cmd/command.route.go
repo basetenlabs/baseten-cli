@@ -11,11 +11,11 @@ import (
 )
 
 func init() {
-	Register("route list", commandRouteList)
-	Register("route describe", commandRouteDescribe)
-	Register("route create", commandRouteCreate)
-	Register("route update", commandRouteUpdate)
-	Register("route delete", commandRouteDelete)
+	Register("grid route list", commandRouteList)
+	Register("grid route describe", commandRouteDescribe)
+	Register("grid route create", commandRouteCreate)
+	Register("grid route update", commandRouteUpdate)
+	Register("grid route delete", commandRouteDelete)
 }
 
 func commandRouteList(ctx *CommandContext, flags *cmd.RouteListFlags) error {

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -307,4 +308,44 @@ func TestIsInteractiveRegularFileIsNotATerminal(t *testing.T) {
 
 func TestIsInteractiveNonFileIsNotATerminal(t *testing.T) {
 	require.False(t, (&cmd.CommandContext{Stdin: &bytes.Buffer{}}).IsInteractive())
+}
+
+func Test_Grid_Help(t *testing.T) {
+	for _, path := range [][]string{
+		{"grid"},
+		{"grid", "setup"},
+		{"grid", "sync"},
+		{"grid", "status"},
+		{"grid", "teardown"},
+		{"grid", "usage"},
+		{"grid", "harness-defaults"},
+		{"grid", "route"},
+		{"grid", "route", "list"},
+		{"grid", "route", "describe"},
+		{"grid", "route", "create"},
+		{"grid", "route", "update"},
+		{"grid", "route", "delete"},
+		{"grid", "route", "usage"},
+		{"grid", "route", "api-key", "list"},
+		{"grid", "route", "api-key", "delete"},
+	} {
+		t.Run(strings.Join(path, " "), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			for _, helpFlag := range []string{"--help", "--help-output"} {
+				h.Require.NoError(h.Execute(append(path, helpFlag)...))
+				h.Require.Contains(h.Stdout.String(), "baseten "+strings.Join(path, " "))
+				h.Require.NotContains(h.Stdout.String(), "baseten route ")
+				h.Require.NotContains(h.Stdout.String(), "baseten harness ")
+			}
+		})
+	}
+}
+
+func Test_Grid_ReplacesLegacyPaths(t *testing.T) {
+	for _, path := range [][]string{{"harness", "setup"}, {"harness", "sync"}, {"harness", "status"}, {"harness", "teardown"}, {"harness", "usage"}, {"harness", "harness-defaults"}, {"route", "list"}} {
+		t.Run(strings.Join(path, " "), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			h.Require.ErrorContains(h.Execute(path...), "unknown command")
+		})
+	}
 }

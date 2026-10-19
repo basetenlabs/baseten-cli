@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	Register("route usage", commandRouteUsage)
+	Register("grid route usage", commandRouteUsage)
 }
 
 // routesUsageMaxBuckets is the most daily buckets the endpoint returns per

@@ -84,7 +84,7 @@ func Test_Route_Create_ContractTargets(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(tc.Response)
 			})
-			args := append([]string{"route", "create", "--team", "Engineering", "--display-name", "Assistant", "--output", "json"}, tc.Flags...)
+			args := append([]string{"grid", "route", "create", "--team", "Engineering", "--display-name", "Assistant", "--output", "json"}, tc.Flags...)
 			h.Require.NoError(h.Execute(args...))
 			h.Require.Equal(tc.Create, m.FindCall("POST", "/v1/routes").BodyJSON(t))
 			var got managementapi.Route
@@ -100,7 +100,7 @@ func Test_Route_Update_RejectsTargets(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			args := append([]string{"route", "update", "--id", "r123456", "--display-name", "New label"}, tc.Flags...)
+			args := append([]string{"grid", "route", "update", "--id", "r123456", "--display-name", "New label"}, tc.Flags...)
 			h.Require.Error(h.Execute(args...))
 			h.Require.Equal(2, h.ExitCode, "the routes API can't change a route's target")
 			h.Require.Empty(m.Calls())
@@ -113,7 +113,7 @@ func Test_Route_Create_DefaultDisplayName(t *testing.T) {
 	routeTeams(h)
 	m := h.MockManagementAPI()
 	m.SetRoute("POST", "/v1/routes", 200, routeCases()[0].Response)
-	h.Require.NoError(h.Execute("route", "create", "--team", "t123456", "--target-type", "baseten-model-api", "--target-model", "test-model-api"))
+	h.Require.NoError(h.Execute("grid", "route", "create", "--team", "t123456", "--target-type", "baseten-model-api", "--target-model", "test-model-api"))
 	body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
 	h.Require.NotContains(body, "display_name")
 	h.Require.Equal("t123456", body["team_id"])
@@ -125,7 +125,7 @@ func Test_Route_Update_DisplayNameAndDescription(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("PATCH", "/v1/routes/r123456", 200, routeCases()[0].Response)
-	h.Require.NoError(h.Execute("route", "update", "--id", "r123456", "--display-name", "New label", "--description", ""))
+	h.Require.NoError(h.Execute("grid", "route", "update", "--id", "r123456", "--display-name", "New label", "--description", ""))
 	h.Require.Equal(map[string]any{"display_name": "New label", "description": ""}, m.FindCall("PATCH", "/v1/routes/r123456").BodyJSON(t))
 }
 
@@ -140,7 +140,7 @@ func Test_Route_Addressed_ExactName(t *testing.T) {
 			m.SetRoute("GET", "/v1/routes", 200, routePage([]any{fixture}, nil))
 			method := map[string]string{"describe": "GET", "update": "PATCH", "delete": "DELETE"}[verb]
 			m.SetRoute(method, "/v1/routes/r123456", 200, fixture)
-			args := []string{"route", verb, "--name", name}
+			args := []string{"grid", "route", verb, "--name", name}
 			if verb == "update" {
 				args = append(args, "--display-name", "Assistant")
 			}
@@ -161,7 +161,7 @@ func Test_Route_Addressed_InvalidSelectors(t *testing.T) {
 			t.Run(verb+strings.Join(selector, " "), func(t *testing.T) {
 				h := NewCommandHarness(t)
 				m := h.MockManagementAPI()
-				args := append([]string{"route", verb}, selector...)
+				args := append([]string{"grid", "route", verb}, selector...)
 				if verb == "update" {
 					args = append(args, "--display-name", "Label")
 				}
@@ -192,7 +192,7 @@ func Test_Route_Addressed_FailedLookupNeverMutates(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
 			m.SetRoute("GET", "/v1/routes", 200, tc.page)
-			h.Require.Error(h.Execute("route", "delete", "--name", "acme/assistant", "--yes", "--output", "json"))
+			h.Require.Error(h.Execute("grid", "route", "delete", "--name", "acme/assistant", "--yes", "--output", "json"))
 			h.Require.Equal(tc.code, h.ExitCode)
 			h.Require.Len(m.Calls(), 1)
 		})
@@ -202,14 +202,14 @@ func Test_Route_Addressed_FailedLookupNeverMutates(t *testing.T) {
 func Test_Route_Delete_ConfirmationAndTombstone(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	h.Require.ErrorContains(h.Execute("route", "delete", "--id", "r123456"), "--yes")
+	h.Require.ErrorContains(h.Execute("grid", "route", "delete", "--id", "r123456"), "--yes")
 	h.Require.Equal(2, h.ExitCode)
 	h.Require.Empty(m.Calls())
 	tombstone := map[string]any{"id": "r123456", "name": "acme/assistant"}
 	m.SetRoute("DELETE", "/v1/routes/r123456", 200, tombstone)
-	h.Require.NoError(h.Execute("route", "delete", "--id", "r123456", "--yes", "--output", "json"))
+	h.Require.NoError(h.Execute("grid", "route", "delete", "--id", "r123456", "--yes", "--output", "json"))
 	h.Require.JSONEq(`{"id":"r123456","name":"acme/assistant"}`, h.Stdout.String())
-	h.Require.NoError(h.Execute("route", "delete", "--id", "r123456", "--yes"))
+	h.Require.NoError(h.Execute("grid", "route", "delete", "--id", "r123456", "--yes"))
 	h.Require.Empty(h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "Deleted route acme/assistant (r123456)")
 }
@@ -234,7 +234,7 @@ func Test_Route_List_PaginationAndFilters(t *testing.T) {
 			w.WriteHeader(400)
 		}
 	})
-	h.Require.NoError(h.Execute("route", "list", "--team", "Engineering", "--output", "json"))
+	h.Require.NoError(h.Execute("grid", "route", "list", "--team", "Engineering", "--output", "json"))
 	var got publiccmd.RouteList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 	h.Require.Len(got.Items, 2)
@@ -245,7 +245,7 @@ func Test_Route_List_WithoutFilters(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{}, nil))
-	h.Require.NoError(h.Execute("route", "list", "--output", "json"))
+	h.Require.NoError(h.Execute("grid", "route", "list", "--output", "json"))
 	q := m.FindCall("GET", "/v1/routes").Query()
 	h.Require.NotContains(q, "team_id")
 	h.Require.NotContains(q, "name")
@@ -257,7 +257,7 @@ func Test_Route_List_TextAndJQ(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases()[0].Response, routeCases()[1].Response}, nil))
-	h.Require.NoError(h.Execute("route", "list"))
+	h.Require.NoError(h.Execute("grid", "route", "list"))
 	h.Require.Regexp(`^ID\s+DISPLAY NAME\s+NAME\s+CREATED\s*\n`, h.Stdout.String(), "display name comes before name")
 	for _, text := range []string{"r123456", "Assistant", "acme/assistant", "2026-09-17T10:00:00Z"} {
 		h.Require.Contains(h.Stdout.String(), text)
@@ -266,10 +266,10 @@ func Test_Route_List_TextAndJQ(t *testing.T) {
 		h.Require.NotContains(h.Stdout.String(), text, "the team is the listing's scope, and targets are for describe")
 	}
 	h.Require.Empty(h.Stderr.String())
-	h.Require.NoError(h.Execute("route", "list", "--jq", ".items[0].name"))
+	h.Require.NoError(h.Execute("grid", "route", "list", "--jq", ".items[0].name"))
 	h.Require.Equal("\"acme/assistant\"\n", h.Stdout.String())
 	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{}, nil))
-	h.Require.NoError(h.Execute("route", "list"))
+	h.Require.NoError(h.Execute("grid", "route", "list"))
 	h.Require.Empty(h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "No routes found.")
 }
@@ -300,7 +300,7 @@ func Test_Route_Usage_InvalidTargets(t *testing.T) {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			h.Require.Error(h.Execute(append([]string{"route", "create", "--team", "Engineering"}, flags...)...))
+			h.Require.Error(h.Execute(append([]string{"grid", "route", "create", "--team", "Engineering"}, flags...)...))
 			h.Require.Equal(2, h.ExitCode)
 			h.Require.Empty(m.Calls())
 		})
@@ -316,7 +316,7 @@ func Test_Route_Usage_InvalidValues(t *testing.T) {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			h.Require.Error(h.Execute(append([]string{"route"}, args...)...))
+			h.Require.Error(h.Execute(append([]string{"grid", "route"}, args...)...))
 			h.Require.Equal(2, h.ExitCode)
 			h.Require.Empty(m.Calls())
 		})
@@ -329,7 +329,7 @@ func Test_Route_Describe_AllTargetFields(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
 			m.SetRoute("GET", "/v1/routes/r123456", 200, tc.Response)
-			h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
+			h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 			for _, field := range []string{"ID:", "Name:", "Display Name:", "Team ID:", "Target Type:", "Target Model:", "Invoke URL:", "Created:"} {
 				h.Require.Contains(h.Stdout.String(), field)
 			}
@@ -357,7 +357,7 @@ func Test_Route_API_ErrorClassification(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
 			m.SetRoute("PATCH", "/v1/routes/r1", tc.status, map[string]any{"code": tc.code, "message": "fixture failure", "details": map[string]any{"field": "target"}})
-			h.Require.Error(h.Execute("route", "update", "--id", "r1", "--display-name", "New", "--output", "json"))
+			h.Require.Error(h.Execute("grid", "route", "update", "--id", "r1", "--display-name", "New", "--output", "json"))
 			h.Require.Equal(tc.exit, h.ExitCode)
 			var envelope publiccmd.JSONErrorEnvelope
 			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &envelope))
@@ -380,7 +380,7 @@ func Test_Route_API_MalformedResponse(t *testing.T) {
 				w.Header().Set("Content-Type", tc.contentType)
 				_, _ = w.Write([]byte(tc.body))
 			})
-			h.Require.Error(h.Execute("route", "describe", "--id", "r1", "--output", "json"))
+			h.Require.Error(h.Execute("grid", "route", "describe", "--id", "r1", "--output", "json"))
 			h.Require.NotContains(h.Stdout.String(), `"invoke_url"`)
 		})
 	}
@@ -397,9 +397,9 @@ func Test_Route_API_ProfileAndOutputModes(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(routeCases()[0].Response)
 	})
-	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456", "--profile", "route-profile", "--output", "jsonl"))
+	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456", "--profile", "route-profile", "--output", "jsonl"))
 	h.Require.Equal(1, strings.Count(h.Stdout.String(), "\n"))
-	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456", "--profile", "route-profile", "--output", "none"))
+	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456", "--profile", "route-profile", "--output", "none"))
 	h.Require.Empty(h.Stdout.String())
 }
 
@@ -415,7 +415,7 @@ func Test_Route_List_LaterPageErrorHasNoPartialSuccess(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": "PERMISSION_DENIED", "message": "fixture permission changed"})
 		}
 	})
-	h.Require.Error(h.Execute("route", "list", "--output", "json"))
+	h.Require.Error(h.Execute("grid", "route", "list", "--output", "json"))
 	h.Require.Equal(3, h.ExitCode)
 	h.Require.Len(m.Calls(), 2)
 	var envelope publiccmd.JSONErrorEnvelope
@@ -431,7 +431,7 @@ func Test_Route_Metadata_Description(t *testing.T) {
 		response := routeCases()[0].Response
 		response["description"] = description
 		m.SetRoute("PATCH", "/v1/routes/r123456", 200, response)
-		h.Require.NoError(h.Execute("route", "update", "--id", "r123456", "--description", description, "--output", "json"))
+		h.Require.NoError(h.Execute("grid", "route", "update", "--id", "r123456", "--description", description, "--output", "json"))
 		h.Require.Equal(map[string]any{"description": description}, m.FindCall("PATCH", "/v1/routes/r123456").BodyJSON(t))
 		var got managementapi.Route
 		h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
@@ -443,7 +443,7 @@ func Test_Route_Describe_TeamName(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/routes/r123456", 200, routeCases()[0].Response)
-	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
+	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 	h.Require.Contains(h.Stdout.String(), "Team ID:          t123456")
 	h.Require.Contains(h.Stdout.String(), "Team Name:        Engineering")
 	h.Require.Contains(h.Stdout.String(), "Target Type:      baseten-model-api")
@@ -454,7 +454,7 @@ func Test_Route_Describe_StructuredOutputSkipsTeamLookup(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/routes/r123456", 200, routeCases()[0].Response)
-	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456", "--output", "json"))
+	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456", "--output", "json"))
 	h.Require.Len(m.Calls(), 1)
 	h.Require.Contains(h.Stdout.String(), `"team_id": "t123456"`)
 }
@@ -472,7 +472,7 @@ func Test_Route_RequiresFlagsWithoutReadingStdin(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
 			h.Stdin.WriteString("acme/assistant\nyes\n")
-			h.Require.Error(h.Execute(append([]string{"route"}, args...)...))
+			h.Require.Error(h.Execute(append([]string{"grid", "route"}, args...)...))
 			h.Require.Equal(2, h.ExitCode)
 			h.Require.Equal("acme/assistant\nyes\n", h.Stdin.String())
 			h.Require.Empty(m.Calls())
@@ -490,7 +490,7 @@ func Test_Route_TargetNamesAreLiteral(t *testing.T) {
 			routeTeams(h)
 			m := h.MockManagementAPI()
 			m.SetRoute("POST", "/v1/routes", 200, routeCases()[0].Response)
-			h.Require.NoError(h.Execute(append([]string{"route", "create", "--team", "t123456", "--output", "json"}, args...)...))
+			h.Require.NoError(h.Execute(append([]string{"grid", "route", "create", "--team", "t123456", "--output", "json"}, args...)...))
 			body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
 			target := body["target"].(map[string]any)
 			if args[1] == "baseten-model-api" {
@@ -514,7 +514,7 @@ func Test_Route_MutationOutputConventions(t *testing.T) {
 				// A successful mutation must not be reported as failed just
 				// because a newer API returns an unfamiliar target variant.
 				fixture := routeFixture(map[string]any{"type": "FUTURE_PROVIDER", "model": "future-model"})
-				args := []string{"route", verb, "--output", format}
+				args := []string{"grid", "route", verb, "--output", format}
 				message := "Updated route acme/assistant (r123456)"
 				if verb == "create" {
 					m.SetRoute("POST", "/v1/routes", 200, fixture)
@@ -553,10 +553,10 @@ func Test_Route_List_UnknownTarget(t *testing.T) {
 		items = append(items, tc.Response)
 	}
 	m.SetRoute("GET", "/v1/routes", 200, routePage(items, nil))
-	h.Require.NoError(h.Execute("route", "list"))
+	h.Require.NoError(h.Execute("grid", "route", "list"))
 	h.Require.Empty(h.Stderr.String())
 	h.Require.Contains(h.Stdout.String(), "acme/future", "a route with an unknown target is still listed")
-	h.Require.NoError(h.Execute("route", "list", "--output", "json"))
+	h.Require.NoError(h.Execute("grid", "route", "list", "--output", "json"))
 	var result publiccmd.RouteList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
 	h.Require.Len(result.Items, len(items))
@@ -576,7 +576,7 @@ func Test_Route_ClassifierTarget(t *testing.T) {
 	classifier := routeFixture(target)
 	classifier["name"] = "acme/auto"
 	m.SetRoute("GET", "/v1/routes/r123456", 200, classifier)
-	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
+	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 	for _, text := range []string{
 		"Target Type:      classifier",
 		"Classifier:       intent-v2",
@@ -592,7 +592,7 @@ func Test_Route_ClassifierTarget(t *testing.T) {
 	target["classifier"] = nil
 	m.SetRoute("GET", "/v1/routes/r123456", 200, routeFixture(target))
 	h.Stdout.Reset()
-	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
+	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 	h.Require.NotContains(h.Stdout.String(), "Classifier:")
 	h.Require.Contains(h.Stdout.String(), "Default Route:    acme/fast")
 }
@@ -601,14 +601,14 @@ func Test_Route_Describe_UnknownTarget(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/routes/r123456", 200, routeFixture(map[string]any{"type": "FUTURE_PROVIDER"}))
-	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456"))
+	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 	for _, text := range []string{"r123456", "acme/assistant", "Engineering", "<unrecognized type>", "https://coding.baseten.co", "2026-09-17T10:00:00Z"} {
 		h.Require.Contains(h.Stdout.String(), text)
 	}
 	h.Require.Empty(h.Stderr.String())
-	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456", "--output", "json"))
+	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456", "--output", "json"))
 	h.Require.Contains(h.Stdout.String(), "FUTURE_PROVIDER")
-	h.Require.NoError(h.Execute("route", "describe", "--id", "r123456", "--output", "none"))
+	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456", "--output", "none"))
 	h.Require.Empty(h.Stdout.String())
 }
 
@@ -617,7 +617,7 @@ func Test_Route_Delete_ResolvesBeforeConfirmation(t *testing.T) {
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/routes", 200, routePage([]any{routeCases()[0].Response}, nil))
 	devNullStdin(t, h)
-	h.Require.ErrorContains(h.Execute("route", "delete", "--name", "acme/assistant"), "stdin is not a terminal; pass --yes")
+	h.Require.ErrorContains(h.Execute("grid", "route", "delete", "--name", "acme/assistant"), "stdin is not a terminal; pass --yes")
 	h.Require.Equal(2, h.ExitCode)
 	h.Require.Len(m.Calls(), 1)
 	h.Require.NotNil(m.FindCall("GET", "/v1/routes"))
@@ -630,7 +630,7 @@ func Test_Route_Create_DefaultTeam(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
 			m.SetRoute("POST", "/v1/routes", 200, tc.Response)
-			args := append([]string{"route", "create", "--output", "json"}, tc.Flags...)
+			args := append([]string{"grid", "route", "create", "--output", "json"}, tc.Flags...)
 			h.Require.NoError(h.Execute(args...))
 			body := m.FindCall("POST", "/v1/routes").BodyJSON(t)
 			h.Require.NotContains(body, "team_id", "the server selects the default team")
