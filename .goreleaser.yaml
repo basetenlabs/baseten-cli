@@ -46,10 +46,15 @@ release:
     name: baseten-cli
   draft: false
   prerelease: auto
+  # Keep the title of the existing release, which the release workflow
+  # validated, instead of overwriting it with the tag.
+  name_template: '{{ envOrDefault "RELEASE_TITLE" .Tag }}'
 
 # Publishes Formula/baseten.rb to the basetenlabs/homebrew-baseten tap on each
-# release. Uses the deprecated `brews` (formula) rather than `homebrew_casks`
-# because the formula installs on both macOS and Linuxbrew.
+# stable release, and Formula/baseten-rc.rb on every release including RCs.
+# Both install the `baseten` binary, so they conflict. Uses the deprecated
+# `brews` (formula) rather than `homebrew_casks` because the formula installs
+# on both macOS and Linuxbrew.
 brews:
   - name: baseten
     repository:
@@ -62,6 +67,23 @@ brews:
     description: "CLI for Baseten"
     license: MIT
     skip_upload: auto
+    conflicts:
+      - baseten-rc
+    test: |
+      system "#{bin}/baseten", "--version"
+  - name: baseten-rc
+    repository:
+      owner: basetenlabs
+      name: homebrew-baseten
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/basetenlabs/baseten-cli"
+    description: "CLI for Baseten, including unstable release candidates"
+    license: MIT
+    skip_upload: false
+    conflicts:
+      - baseten
     test: |
       system "#{bin}/baseten", "--version"
 

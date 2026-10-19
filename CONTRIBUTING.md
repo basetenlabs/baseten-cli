@@ -35,3 +35,47 @@ BASETEN_E2E_TEST_API_KEY=... \
 BASETEN_E2E_TEST_REMOTE_URL=... \
     go test -v -tags=e2e ./internal/e2e-tests/...
 ```
+
+## Releasing
+
+Releases are created and published in GitHub, which creates the tag. Never push a release tag directly. Publishing runs the [release workflow](.github/workflows/release.yml) in the background, which fails unless the tag, the pre-release checkbox, and the title agree. It then adds the binaries to the release a few minutes later and updates the [Homebrew tap](https://github.com/basetenlabs/homebrew-baseten).
+
+#### Stable releases
+
+Only repository admins can publish stable releases.
+
+1. Create a GitHub release with a new `vX.Y.Z` tag on `main`, titled `vX.Y.Z`, with release notes in the format below, and publish it.
+1. Merge the README PR that the workflow automatically opens. Until the README links the new release, CI fails on every PR.
+
+Both the `baseten` and `baseten-rc` Homebrew formulas move to the new release.
+
+Release notes start with hand-written highlights, followed by GitHub's "Generate release notes" output (What's Changed and Full Changelog). Delete the generated New Contributors section entirely.
+
+```markdown
+Download binaries below or see [README](https://github.com/basetenlabs/baseten-cli) for install
+
+## Highlights
+
+#### New commands
+
+- `baseten <command>` to <what it does>.
+
+#### Command updates
+
+- `baseten <command>` <what changed>.
+
+## What's Changed
+...
+```
+
+Highlights describe user-visible changes per command, briefly. Leave out internal changes such as tests and CI, and omit an empty subsection. Notable changes that deserve more than a bullet, such as a new feature area or a breaking change, can get their own `####` subsection above New commands.
+
+#### Release candidates
+
+Anyone with write access can publish a release candidate for teams that need a build before the next stable release.
+
+1. Create a GitHub release with a new `vX.Y.Z-rc.N` tag on any branch, marked as a pre-release, titled starting with `[UNSTABLE] vX.Y.Z-rc.N`, and publish it.
+
+Release candidate notes have no required format, but must state the purpose of the candidate, such as which team needs it and for what.
+
+Only the `baseten-rc` Homebrew formula moves (`brew install baseten-rc`, which conflicts with `baseten`). Repository admins may contact RC builders and confirm RCs can be removed once they are no longer needed.
