@@ -12,6 +12,30 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
+      # Fail before building anything unless the tag, the prerelease checkbox,
+      # and the title agree, so an RC never becomes "Latest" or updates the
+      # stable formula.
+      - name: Check the release matches the tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if ! RELEASE=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease,name); then
+            echo "No GitHub release for $TAG. Create the release in GitHub, which creates the tag, instead of pushing a tag."
+            exit 1
+          fi
+          IS_PRERELEASE=$(jq -r .isPrerelease <<<"$RELEASE")
+          NAME=$(jq -r .name <<<"$RELEASE")
+          if [[ "$TAG" == *-* ]]; then
+            if [[ "$IS_PRERELEASE" != true || "$NAME" != "[UNSTABLE] $TAG"* ]]; then
+              echo "$TAG is a prerelease tag, so the release must be marked as a pre-release with a title starting with \"[UNSTABLE] $TAG\"."
+              exit 1
+            fi
+          elif [[ "$IS_PRERELEASE" == true || "$NAME" != "$TAG" ]]; then
+            echo "$TAG is a stable tag, so the release must not be marked as a pre-release and must be titled \"$TAG\"."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -35,6 +59,7 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Open a README version-bump pull request
+        if: ${{ !contains(github.ref_name, '-') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
