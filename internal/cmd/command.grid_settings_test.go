@@ -99,10 +99,10 @@ func Test_Grid_TeamSettings_Update_PatchSemantics(t *testing.T) {
 		{"exact", []string{"--team-wide-monthly-limit-usd", "123456789.12"}, map[string]any{"spend_limit": map[string]any{"team_wide_monthly_limit_usd": "123456789.12"}}},
 		{"clear-limits", []string{"--per-member-monthly-limit-usd", "null", "--team-wide-monthly-limit-usd", "null"}, map[string]any{"spend_limit": map[string]any{"per_member_monthly_limit_usd": nil, "team_wide_monthly_limit_usd": nil}}},
 		{"clear-spend-limit", []string{"--clear-spend-limit"}, map[string]any{"spend_limit": nil}},
-		{"claude", []string{"--harness", "claude-code", "--primary-route", "r123456", "--background-route", "null"}, map[string]any{"harness_defaults": map[string]any{"claude_code": map[string]any{"primary": "r123456", "background": nil}}}},
-		{"opencode", []string{"--harness", "opencode", "--background-route", "r123456"}, map[string]any{"harness_defaults": map[string]any{"opencode": map[string]any{"background": "r123456"}}}},
-		{"codex", []string{"--harness", "codex", "--primary-route", "null"}, map[string]any{"harness_defaults": map[string]any{"codex": map[string]any{"primary": nil}}}},
-		{"pi", []string{"--harness", "pi", "--primary-route", "r123456"}, map[string]any{"harness_defaults": map[string]any{"pi": map[string]any{"primary": "r123456"}}}},
+		{"claude", []string{"--harness", "claude-code", "--primary-route-id", "r123456", "--background-route-id", "null"}, map[string]any{"harness_defaults": map[string]any{"claude_code": map[string]any{"primary": "r123456", "background": nil}}}},
+		{"opencode", []string{"--harness", "opencode", "--background-route-id", "r123456"}, map[string]any{"harness_defaults": map[string]any{"opencode": map[string]any{"background": "r123456"}}}},
+		{"codex", []string{"--harness", "codex", "--primary-route-id", "null"}, map[string]any{"harness_defaults": map[string]any{"codex": map[string]any{"primary": nil}}}},
+		{"pi", []string{"--harness", "pi", "--primary-route-id", "r123456"}, map[string]any{"harness_defaults": map[string]any{"pi": map[string]any{"primary": "r123456"}}}},
 		{"clear-all", []string{"--clear-harness-defaults"}, map[string]any{"harness_defaults": nil}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -167,8 +167,8 @@ func Test_Grid_Settings_RejectsEmptyOrConflictingUpdates(t *testing.T) {
 	for _, args := range [][]string{
 		{"team-settings", "update"}, {"team-settings", "update", "--team", "t123456"},
 		{"team-settings", "update", "--harness", "codex"},
-		{"team-settings", "update", "--primary-route", "r123456"},
-		{"team-settings", "update", "--harness", "pi", "--background-route", "null"},
+		{"team-settings", "update", "--primary-route-id", "r123456"},
+		{"team-settings", "update", "--harness", "pi", "--background-route-id", "null"},
 		{"team-settings", "update", "--clear-harness-defaults", "--harness", "codex"},
 		{"team-settings", "update", "--clear-spend-limit", "--per-member-monthly-limit-usd", "100"},
 		{"team-settings", "update", "--clear-spend-limit", "--team-wide-monthly-limit-usd", "100"},

@@ -279,7 +279,7 @@ var commandGridTeamSettings = Command{
 		{
 			Name:    "update",
 			Summary: "Update team harness defaults and spend limits (PRE-RELEASE)",
-			Description: gridPrereleaseNotice + "Changes only supplied fields. Use --harness with --primary-route or --background-route to set route IDs; pass null to clear a role. " +
+			Description: gridPrereleaseNotice + "Changes only supplied fields. Use --harness with --primary-route-id or --background-route-id to set route IDs; pass null to clear a role. " +
 				"--clear-harness-defaults clears every harness's configured defaults. Spend limits are exact USD amounts; null removes a limit, and --clear-spend-limit removes both. " +
 				"Requires team admin; changing the team-wide limit requires organization admin. " + gridTeamDescription,
 			Flags: GridTeamSettingsUpdateFlags{},
@@ -294,7 +294,7 @@ var commandGridTeamSettings = Command{
 						Description: "Set Codex's primary route.",
 						CommandLines: []string{
 							"baseten grid team-settings update",
-							"--harness codex --primary-route <route-id>",
+							"--harness codex --primary-route-id <route-id>",
 						},
 					},
 				},
@@ -392,8 +392,8 @@ type GridTeamSettingsUpdateFlags struct {
 	CommandFlags
 	GridTeamFlags
 	Harness                  string               `flag:"harness" desc:"Harness whose default route IDs to update." enum:"claude-code,codex,opencode,pi"`
-	PrimaryRoute             OptionalFlag[string] `flag:"primary-route" desc:"Primary route ID; null clears the configured default. Requires --harness." nullable:"true"`
-	BackgroundRoute          OptionalFlag[string] `flag:"background-route" desc:"Background route ID for Claude Code or OpenCode; null clears it. Requires --harness." nullable:"true"`
+	PrimaryRouteID           OptionalFlag[string] `flag:"primary-route-id" desc:"Primary route ID; null clears the configured default. Requires --harness." nullable:"true"`
+	BackgroundRouteID        OptionalFlag[string] `flag:"background-route-id" desc:"Background route ID for Claude Code or OpenCode; null clears it. Requires --harness." nullable:"true"`
 	ClearHarnessDefaults     bool                 `flag:"clear-harness-defaults" desc:"Clear all configured harness defaults. Cannot be combined with --harness or route flags."`
 	ClearSpendLimit          bool                 `flag:"clear-spend-limit" desc:"Clear both team spend limits. Requires organization admin. Cannot be combined with --per-member-monthly-limit-usd or --team-wide-monthly-limit-usd."`
 	PerMemberMonthlyLimitUSD OptionalFlag[string] `flag:"per-member-monthly-limit-usd" desc:"Default monthly USD limit per member; null removes it." nullable:"true"`

@@ -49,12 +49,12 @@ func gridOptional[T any](flag cmd.OptionalFlag[T]) managementapi.Optional[T] {
 
 func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.UpdateGridTeamSettingsRequest, error) {
 	body := managementapi.UpdateGridTeamSettingsRequest{}
-	roles := f.PrimaryRoute.IsSet() || f.BackgroundRoute.IsSet()
+	roles := f.PrimaryRouteID.IsSet() || f.BackgroundRouteID.IsSet()
 	if f.ClearHarnessDefaults && (f.Harness != "" || roles) {
 		return body, cmd.NewErrUsagef("--clear-harness-defaults cannot be combined with --harness or route flags")
 	}
 	if roles != (f.Harness != "") {
-		return body, cmd.NewErrUsagef("pass --harness together with --primary-route or --background-route")
+		return body, cmd.NewErrUsagef("pass --harness together with --primary-route-id or --background-route-id")
 	}
 	if f.ClearSpendLimit && (f.PerMemberMonthlyLimitUSD.IsSet() || f.TeamWideMonthlyLimitUSD.IsSet()) {
 		return body, cmd.NewErrUsagef("--clear-spend-limit cannot be combined with --per-member-monthly-limit-usd or --team-wide-monthly-limit-usd")
@@ -66,16 +66,16 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 		body.HarnessDefaults = managementapi.NewOptional[managementapi.UpdateGridHarnessDefaults](nil)
 	} else if roles {
 		defaults := managementapi.UpdateGridHarnessDefaults{}
-		primary := managementapi.UpdateGridPrimaryHarnessModels{Primary: gridOptional(f.PrimaryRoute)}
-		background := managementapi.UpdateGridBackgroundHarnessModels{Primary: gridOptional(f.PrimaryRoute), Background: gridOptional(f.BackgroundRoute)}
+		primary := managementapi.UpdateGridPrimaryHarnessModels{Primary: gridOptional(f.PrimaryRouteID)}
+		background := managementapi.UpdateGridBackgroundHarnessModels{Primary: gridOptional(f.PrimaryRouteID), Background: gridOptional(f.BackgroundRouteID)}
 		switch f.Harness {
 		case "claude-code":
 			defaults.ClaudeCode = managementapi.NewOptional(&background)
 		case "opencode":
 			defaults.Opencode = managementapi.NewOptional(&background)
 		case "codex", "pi":
-			if f.BackgroundRoute.IsSet() {
-				return body, cmd.NewErrUsagef("%s does not support --background-route", f.Harness)
+			if f.BackgroundRouteID.IsSet() {
+				return body, cmd.NewErrUsagef("%s does not support --background-route-id", f.Harness)
 			}
 			if f.Harness == "codex" {
 				defaults.Codex = managementapi.NewOptional(&primary)
