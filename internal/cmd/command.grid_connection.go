@@ -79,7 +79,8 @@ func commandGridConnectionCreate(ctx *CommandContext, f *cmd.GridConnectionCreat
 		ctx.OutputJSON(connection)
 		return nil
 	}
-	return outputGridConnections(ctx, []managementapi.GridConnection{*connection})
+	ctx.Logf("Created connection %s\n", connection.Id)
+	return nil
 }
 
 func commandGridConnectionUpdate(ctx *CommandContext, f *cmd.GridConnectionUpdateFlags) error {
@@ -102,7 +103,8 @@ func commandGridConnectionUpdate(ctx *CommandContext, f *cmd.GridConnectionUpdat
 		ctx.OutputJSON(connection)
 		return nil
 	}
-	return outputGridConnections(ctx, []managementapi.GridConnection{*connection})
+	ctx.Logf("Updated connection %s\n", connection.Id)
+	return nil
 }
 
 func commandGridConnectionDelete(ctx *CommandContext, f *cmd.GridConnectionDeleteFlags) error {

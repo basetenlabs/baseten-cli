@@ -33,8 +33,12 @@ func Test_Grid_Connection_CreateUpdate_Contracts(t *testing.T) {
 						h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 						h.Require.Equal(gridConnectionFixture(provider), got)
 					} else {
-						h.Require.Contains(h.Stdout.String(), "provider-key")
-						h.Require.Contains(h.Stdout.String(), "Engineering")
+						h.Require.Empty(h.Stdout.String())
+						if verb == "create" {
+							h.Require.Contains(h.Stderr.String(), "Created connection c123456")
+						} else {
+							h.Require.Contains(h.Stderr.String(), "Updated connection c123456")
+						}
 					}
 				})
 			}

@@ -454,7 +454,7 @@ var commandGridConnection = Command{
 			Description: gridPrereleaseNotice + "The secret must belong to the connection's team. Requires team admin. " + gridTeamDescription,
 			Flags:       GridConnectionCreateFlags{},
 			Output: &CommandOutput[managementapi.GridConnection]{
-				TextDescription: "The created connection's ID, team, provider, and secret metadata.",
+				TextDescription: "Confirmation on stderr; JSON contains the created connection.",
 				Examples: []CommandExample{{
 					Description: "Connect Anthropic using a team secret.",
 					Command:     "baseten grid connection create --provider anthropic --secret-name <name>",
@@ -474,7 +474,7 @@ var commandGridConnection = Command{
 			Description: gridPrereleaseNotice + "Requires team admin. The provider must match the existing connection; provider and owning team cannot change.",
 			Flags:       GridConnectionUpdateFlags{},
 			Output: &CommandOutput[managementapi.GridConnection]{
-				TextDescription: "The updated connection's ID, team, provider, and secret metadata.",
+				TextDescription: "Confirmation on stderr; JSON contains the updated connection.",
 				Examples: []CommandExample{{
 					Description: "Change the secret used by a connection.",
 					CommandLines: []string{
