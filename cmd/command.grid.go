@@ -230,7 +230,7 @@ var commandGridClassifier = Command{
 	Summary: "Discover managed classifiers (PRE-RELEASE)",
 	Children: []Command{{
 		Name:        "list",
-		Summary:     "List classifiers available to your organization",
+		Summary:     "List classifiers available to your organization (PRE-RELEASE)",
 		Description: gridPrereleaseNotice + "Classifiers are managed by Baseten. Use their IDs when creating or updating classifier-backed routes.",
 		Flags:       GridClassifierListFlags{},
 		Output: &CommandOutput[managementapi.GridClassifiersResponse]{
@@ -257,7 +257,7 @@ var commandGridTeamSettings = Command{
 	Children: []Command{
 		{
 			Name:        "describe",
-			Summary:     "Show a team's harness defaults and spend limits",
+			Summary:     "Show a team's harness defaults and spend limits (PRE-RELEASE)",
 			Description: gridPrereleaseNotice + gridTeamDescription,
 			Flags:       GridTeamSettingsDescribeFlags{},
 			Output: &CommandOutput[managementapi.GridTeamSettings]{
@@ -274,7 +274,7 @@ var commandGridTeamSettings = Command{
 		},
 		{
 			Name:    "update",
-			Summary: "Update team harness defaults and spend limits",
+			Summary: "Update team harness defaults and spend limits (PRE-RELEASE)",
 			Description: gridPrereleaseNotice + "Changes only supplied fields. Use --harness with --primary-route or --background-route to set route IDs; pass null to clear a role. " +
 				"--clear-harness-defaults clears every harness's configured defaults. Spend limits are exact USD amounts; null removes a limit, and --clear-spend-limit removes both. " +
 				"Requires team admin; changing the team-wide limit requires organization admin. " + gridTeamDescription,
@@ -312,7 +312,7 @@ var commandGridUserSettings = Command{
 	Children: []Command{
 		{
 			Name:        "list",
-			Summary:     "List team members' spend settings",
+			Summary:     "List team members' spend settings (PRE-RELEASE)",
 			Description: gridPrereleaseNotice + "Requires team admin or organization admin. " + gridTeamDescription,
 			Flags:       GridUserSettingsListFlags{},
 			Output: &CommandOutput[managementapi.GridTeamUserSettingsList]{
@@ -329,7 +329,7 @@ var commandGridUserSettings = Command{
 		},
 		{
 			Name:        "describe",
-			Summary:     "Show a user's spend settings in a team",
+			Summary:     "Show a user's spend settings in a team (PRE-RELEASE)",
 			Description: gridPrereleaseNotice + "Defaults to your own settings (--user-id me). Reading other users requires team admin or organization admin. " + gridTeamDescription,
 			Flags:       GridUserSettingsDescribeFlags{},
 			Output: &CommandOutput[managementapi.GridTeamUserSettings]{
@@ -346,7 +346,7 @@ var commandGridUserSettings = Command{
 		},
 		{
 			Name:    "update",
-			Summary: "Update a user's spend limits in a team",
+			Summary: "Update a user's spend limits in a team (PRE-RELEASE)",
 			Description: gridPrereleaseNotice + "Defaults to --user-id me. Requires team admin or organization admin, even when changing your own limits. " +
 				"Omitted limits are unchanged; pass null to clear a limit. Amounts are exact USD strings. " + gridTeamDescription,
 			Flags: GridUserSettingsUpdateFlags{},
@@ -421,7 +421,7 @@ var commandGridConnection = Command{
 	Children: []Command{
 		{
 			Name:        "list",
-			Summary:     "List a team's provider connections",
+			Summary:     "List a team's provider connections (PRE-RELEASE)",
 			Description: gridPrereleaseNotice + gridTeamDescription,
 			Flags:       GridConnectionListFlags{},
 			Output: &CommandOutput[GridConnectionList]{
@@ -438,7 +438,7 @@ var commandGridConnection = Command{
 		},
 		{
 			Name:        "create",
-			Summary:     "Create a provider connection using an existing team secret",
+			Summary:     "Create a provider connection using an existing team secret (PRE-RELEASE)",
 			Description: gridPrereleaseNotice + "The secret must belong to the connection's team. Requires team admin. " + gridTeamDescription,
 			Flags:       GridConnectionCreateFlags{},
 			Output: &CommandOutput[managementapi.GridConnection]{
@@ -458,7 +458,7 @@ var commandGridConnection = Command{
 		},
 		{
 			Name:        "update",
-			Summary:     "Point a connection at another team secret",
+			Summary:     "Point a connection at another team secret (PRE-RELEASE)",
 			Description: gridPrereleaseNotice + "Requires team admin. The provider must match the existing connection; provider and owning team cannot change.",
 			Flags:       GridConnectionUpdateFlags{},
 			Output: &CommandOutput[managementapi.GridConnection]{
@@ -481,7 +481,7 @@ var commandGridConnection = Command{
 		},
 		{
 			Name:        "delete",
-			Summary:     "Delete a provider connection",
+			Summary:     "Delete a provider connection (PRE-RELEASE)",
 			Description: gridPrereleaseNotice + "Requires team admin. Leaves the referenced secret in place. Pass --yes to skip confirmation.",
 			Flags:       GridConnectionDeleteFlags{},
 			Output: &CommandOutput[managementapi.GridConnectionTombstone]{
