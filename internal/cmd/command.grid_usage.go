@@ -70,9 +70,9 @@ func commandGridUsage(ctx *CommandContext, f *cmd.GridUsageFlags) error {
 	}
 	// Your settings in each team: your limit there, your spend this month,
 	// and whether you're blocked.
-	teams := make([]managementapi.RouteTeamUserSettings, len(mine))
+	teams := make([]managementapi.GridTeamUserSettings, len(mine))
 	for i, t := range mine {
-		settings, err := api.GetGridTeamSettingsUsers(ctx, "me", managementapi.GetV1GridTeamSettingsUsersUserIdParams{TeamId: &t.Id})
+		settings, err := api.GetGridTeamSettingsUsersUserId(ctx, "me", managementapi.GetV1GridTeamSettingsUsersUserIdParams{TeamId: &t.Id})
 		if err != nil {
 			serviceAccountHint()
 			return fmt.Errorf("getting your settings in %s: %w", t.Name, err)
@@ -97,7 +97,7 @@ func commandGridUsage(ctx *CommandContext, f *cmd.GridUsageFlags) error {
 	today := ctx.Now().UTC()
 	current := startDate == time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, time.UTC).Format(time.DateOnly) &&
 		endDate == today.AddDate(0, 0, 1).Format(time.DateOnly)
-	dims := []managementapi.RouteUsageDimension{managementapi.RouteUsageDimension_TEAM, managementapi.RouteUsageDimension_MODEL}
+	dims := []managementapi.GridUsageDimension{managementapi.GridUsageDimension_TEAM, managementapi.GridUsageDimension_MODEL}
 	// Spend limits are per user, and admins would otherwise see the whole
 	// organization's usage.
 	userIDs := []string{me.UserId}
@@ -175,7 +175,7 @@ func commandGridUsage(ctx *CommandContext, f *cmd.GridUsageFlags) error {
 // gridUsageTeam is your settings in a team and your spend there by model, most
 // expensive first, with all but the top few folded into "other".
 type gridUsageTeam struct {
-	settings managementapi.RouteTeamUserSettings
+	settings managementapi.GridTeamUserSettings
 	models   []*gridUsageModel
 }
 
@@ -294,7 +294,7 @@ func renderGridUsage(ctx *CommandContext, start time.Time, current bool, teams [
 		}
 		if current && s.IsBlocked {
 			what := "limit reached"
-			if s.BlockedBy != nil && *s.BlockedBy == managementapi.RouteSpendBlockedBy_team {
+			if s.BlockedBy != nil && *s.BlockedBy == managementapi.GridSpendBlockedBy_team {
 				what = "team limit reached"
 			}
 			line += " · " + crit.Styled(what)

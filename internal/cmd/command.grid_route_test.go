@@ -87,7 +87,7 @@ func Test_Grid_Route_Create_ContractTargets(t *testing.T) {
 			args := append([]string{"grid", "route", "create", "--team", "Engineering", "--display-name", "Assistant", "--output", "json"}, tc.Flags...)
 			h.Require.NoError(h.Execute(args...))
 			h.Require.Equal(tc.Create, m.FindCall("POST", "/v1/grid/routes").BodyJSON(t))
-			var got managementapi.Route
+			var got managementapi.GridRoute
 			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 			h.Require.Equal("r123456", got.Id)
 			h.Require.Equal("https://coding.baseten.co", got.InvokeUrl)
@@ -102,7 +102,7 @@ func Test_Grid_Route_Update_RejectsTargets(t *testing.T) {
 			m := h.MockManagementAPI()
 			args := append([]string{"grid", "route", "update", "--id", "r123456", "--display-name", "New label"}, tc.Flags...)
 			h.Require.Error(h.Execute(args...))
-			h.Require.Equal(2, h.ExitCode, "the routes API can't change a route's target")
+			h.Require.Equal(2, h.ExitCode, "non-classifier targets cannot be updated")
 			h.Require.Empty(m.Calls())
 		})
 	}
@@ -433,7 +433,7 @@ func Test_Grid_Route_Metadata_Description(t *testing.T) {
 		m.SetRoute("PATCH", "/v1/grid/routes/r123456", 200, response)
 		h.Require.NoError(h.Execute("grid", "route", "update", "--id", "r123456", "--description", description, "--output", "json"))
 		h.Require.Equal(map[string]any{"description": description}, m.FindCall("PATCH", "/v1/grid/routes/r123456").BodyJSON(t))
-		var got managementapi.Route
+		var got managementapi.GridRoute
 		h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 		h.Require.Equal(description, got.Description)
 	}
@@ -637,6 +637,48 @@ func Test_Grid_Route_Create_DefaultTeam(t *testing.T) {
 			h.Require.Equal(tc.Target, body["target"])
 			h.Require.Len(m.Calls(), 1, "default team selection must not require a team-list request")
 			h.Require.Contains(h.Stdout.String(), `"team_name": "Engineering"`)
+		})
+	}
+}
+
+func Test_Grid_Route_Classifier_CreateAndUpdate(t *testing.T) {
+	target := map[string]any{"type": "CLASSIFIER", "classifier_id": "general-v1", "allowed_route_ids": []any{"r123456", "r234567"}, "default_route_id": "r123456"}
+	response := gridRouteFixture(map[string]any{"type": "CLASSIFIER", "classifier": map[string]any{"id": "general-v1", "name": "General"}, "allowed_routes": []any{map[string]any{"id": "r123456", "slug": "acme/a"}, map[string]any{"id": "r234567", "slug": "acme/b"}}, "default_route": map[string]any{"id": "r123456", "slug": "acme/a"}})
+	for _, verb := range []string{"create", "update"} {
+		t.Run(verb, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			method, path := "POST", "/v1/grid/routes"
+			args := []string{"grid", "route", verb, "--classifier-id", "general-v1", "--allowed-route-id", "r123456", "--allowed-route-id", "r234567", "--default-route-id", "r123456", "--output", "json"}
+			if verb == "create" {
+				args = append(args, "--target-type", "classifier")
+			} else {
+				method, path = "PATCH", path+"/r345678"
+				args = append(args, "--id", "r345678")
+			}
+			m.SetRoute(method, path, 200, response)
+			h.Require.NoError(h.Execute(args...))
+			h.Require.Len(m.Calls(), 1)
+			h.Require.Equal(map[string]any{"target": target}, m.FindCall(method, path).BodyJSON(t))
+		})
+	}
+}
+
+func Test_Grid_Route_Classifier_InvalidFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"create", "--target-type", "classifier"},
+		{"create", "--target-type", "classifier", "--target-model", "model"},
+		{"create", "--target-type", "connection", "--target-model", "model", "--target-connection", "c123456", "--classifier-id", "general-v1"},
+		{"update", "--id", "r123456", "--classifier-id", "general-v1"},
+		{"update", "--id", "r123456", "--display-name", "Name", "--classifier-id", ""},
+		{"update", "--id", "r123456", "--classifier-id", "general-v1", "--allowed-route-id", "", "--default-route-id", "r234567"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			h.Require.Error(h.Execute(append([]string{"grid", "route"}, args...)...))
+			h.Require.Equal(2, h.ExitCode)
+			h.Require.Empty(m.Calls())
 		})
 	}
 }

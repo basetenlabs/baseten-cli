@@ -132,7 +132,7 @@ type Cost struct {
 type Providers map[string]string
 
 // NewProviders indexes a team's connections by ID.
-func NewProviders(connections []managementapi.RouteConnection) Providers {
+func NewProviders(connections []managementapi.GridConnection) Providers {
 	providers := Providers{}
 	for _, c := range connections {
 		if provider, err := c.Config.Discriminator(); err == nil {
@@ -145,7 +145,7 @@ func NewProviders(connections []managementapi.RouteConnection) Providers {
 // NewRoute converts a route from the routes API, resolving the provider of a
 // route that reaches one through a team connection. It fails if the route's
 // model metadata is missing or is not enough to configure a harness.
-func NewRoute(api managementapi.Route, providers Providers) (Route, error) {
+func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	r := Route{Name: api.Name, DisplayName: api.DisplayName, Provider: routeProvider(api, providers)}
 	m := api.Metadata
 	if m == nil {
@@ -264,12 +264,12 @@ const (
 )
 
 // routeProvider is the provider behind a route's target, or "" if unknown.
-func routeProvider(api managementapi.Route, providers Providers) string {
+func routeProvider(api managementapi.GridRoute, providers Providers) string {
 	switch kind, _ := api.Target.Discriminator(); kind {
 	case ProviderBaseten:
 		return ProviderBaseten
 	case "CONNECTION":
-		if t, err := api.Target.AsRouteTargetConnection(); err == nil {
+		if t, err := api.Target.AsGridRouteTargetConnection(); err == nil {
 			return providers[t.ConnectionId]
 		}
 	}

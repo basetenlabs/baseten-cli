@@ -157,7 +157,7 @@ var commandGrid = Command{
 			// which providers are included (Vertex and OpenAI-compatible aren't
 			// yet), whether costs are always present, and the 15-minute lag.
 			Flags: GridUsageFlags{},
-			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
+			Output: &CommandOutput[managementapi.GridUsageBucket]{
 				JSONArrayStreamed: true,
 				TextDescription: "The month and when limits reset go to stderr. Then, for each team, a line with the team, what you spent " +
 					"there this month and your limit there, with the team's default when yours differs from it, ending in " +
@@ -218,6 +218,10 @@ var commandGrid = Command{
 			},
 		},
 		commandGridRoute,
+		commandGridTeamSettings,
+		commandGridUserSettings,
+		commandGridConnection,
+		commandGridClassifier,
 	},
 }
 
@@ -241,9 +245,9 @@ type GridPlanList struct {
 
 // GridHarnessDefault is one harness's default routes.
 type GridHarnessDefault struct {
-	Harness    string                           `json:"harness"`
-	Primary    *managementapi.RouteHarnessModel `json:"primary"`
-	Background *managementapi.RouteHarnessModel `json:"background"`
+	Harness    string                          `json:"harness"`
+	Primary    *managementapi.GridHarnessModel `json:"primary"`
+	Background *managementapi.GridHarnessModel `json:"background"`
 }
 
 // GridHarnessDefaultsList is the JSON output of `baseten grid harness-defaults`.
@@ -314,7 +318,7 @@ type GridStatusFlags struct {
 type GridSetupFlags struct {
 	CommandFlags
 	GridHarnessFlags
-	Team                 string `flag:"team" desc:"Team name or ID whose routes to use. Needed unless there is only one team. Run 'baseten org team list' to see teams."`
+	Team                 string `flag:"team" desc:"Team name or ID whose routes to use. Omit to let the API select your only team. Run 'baseten org team list' to see teams."`
 	KeyName              string `flag:"key-name" desc:"Name of the routes API key, if setup creates one. Defaults to baseten-harness-<hostname>-<random suffix>."`
 	PrimaryRoute         string `flag:"primary-route" desc:"Primary route. Defaults to the team's default for the harness, else the first route the harness lists."`
 	BackgroundRoute      string `flag:"background-route" desc:"Route for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`

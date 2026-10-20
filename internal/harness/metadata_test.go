@@ -199,12 +199,12 @@ func TestPiCarriesCompleteRouteCost(t *testing.T) {
 }
 
 func TestNewRoute(t *testing.T) {
-	_, err := NewRoute(managementapi.Route{Name: "acme/bare"}, nil)
+	_, err := NewRoute(managementapi.GridRoute{Name: "acme/bare"}, nil)
 	require.ErrorContains(t, err, `route "acme/bare" has no model metadata`)
 
 	ptr := func(v float32) *float32 { return &v }
 	tools, ctx, out := true, 128000, 4096
-	r, err := NewRoute(managementapi.Route{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.ExploreMetadata{
+	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.ExploreMetadata{
 		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools,
 		Cost: &managementapi.ExploreCost{Input: ptr(0.3), Output: ptr(1.2), LongContext: &managementapi.ExploreCostValues{Input: ptr(0.6)}},
 	}}, nil)
@@ -214,12 +214,12 @@ func TestNewRoute(t *testing.T) {
 }
 
 func TestRouteProviderComesFromConnections(t *testing.T) {
-	connection := func(id, provider string) managementapi.RouteConnection {
-		c := managementapi.RouteConnection{Id: id}
+	connection := func(id, provider string) managementapi.GridConnection {
+		c := managementapi.GridConnection{Id: id}
 		require.NoError(t, json.Unmarshal([]byte(`{"provider": "`+provider+`", "secret_id": "s", "secret_name": "key"}`), &c.Config))
 		return c
 	}
-	providers := NewProviders([]managementapi.RouteConnection{connection("conn-a", "ANTHROPIC"), connection("conn-o", "OPENAI"), connection("conn-x", "XAI")})
+	providers := NewProviders([]managementapi.GridConnection{connection("conn-a", "ANTHROPIC"), connection("conn-o", "OPENAI"), connection("conn-x", "XAI")})
 	require.Equal(t, Providers{"conn-a": ProviderAnthropic, "conn-o": ProviderOpenAI, "conn-x": "XAI"}, providers)
 
 	tools, ctx, out := true, 128000, 4096
@@ -237,7 +237,7 @@ func TestRouteProviderComesFromConnections(t *testing.T) {
 		{"classifier", `{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			api := managementapi.Route{Name: "acme/route", DisplayName: "Route", Metadata: metadata}
+			api := managementapi.GridRoute{Name: "acme/route", DisplayName: "Route", Metadata: metadata}
 			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 			r, err := NewRoute(api, providers)
 			require.NoError(t, err)

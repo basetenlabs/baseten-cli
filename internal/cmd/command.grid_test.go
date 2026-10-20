@@ -81,7 +81,14 @@ func (missingHarnessExecer) LookPath(string) (string, error) { return "", exec.E
 
 func (missingHarnessExecer) Exec(*exec.Cmd) error { return errors.New("absent harness executed") }
 
-// gridAPI serves a user, two teams (team-a is the default), one route whose
+func gridRouteTeam(r *http.Request) (string, string) {
+	if r.URL.Query().Get("team_id") == "team-b" {
+		return "team-b", "Research"
+	}
+	return "team-a", "Engineering"
+}
+
+// gridAPI serves a user, one team, one route whose
 // invoke URL is invokeURL, and routes API key creation for both teams.
 func gridAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAPI) {
 	t.Helper()
@@ -93,9 +100,10 @@ func gridAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAP
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
 	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []map[string]any{{"id": "team-a", "name": "Engineering", "default": true}}})
 	api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
+		teamID, teamName := gridRouteTeam(r)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"items":      []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": r.URL.Query().Get("team_id"), "display_name": "Primary", "invoke_url": invokeURL, "metadata": harnessRouteMetadata}},
+			"items":      []any{map[string]any{"id": "route-a", "name": "acme/primary", "team_id": teamID, "team_name": teamName, "display_name": "Primary", "invoke_url": invokeURL, "metadata": harnessRouteMetadata}},
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
@@ -200,7 +208,9 @@ func Test_Grid_HarnessIntegrations_RejectOtherPlatforms(t *testing.T) {
 	if harness.Supported() {
 		t.Skip("Grid harness integrations support this platform")
 	}
-	for _, command := range [][]string{{"grid", "setup"}, {"grid", "status"}, {"grid", "teardown"}} {
+	for _, command := range [][]string{{"grid", "setup"},
+		{"grid", "status"},
+		{"grid", "teardown"}} {
 		h := NewCommandHarness(t)
 		h.Require.Error(h.Execute(append(command, "--harness", "codex")...))
 		h.Require.Contains(h.Stderr.String(), "Grid harness integrations support only macOS and Linux for now")
@@ -342,7 +352,9 @@ func Test_Grid_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
 
 func Test_Grid_ConfigDirRequiresOneHarness(t *testing.T) {
 	skipUnlessSupported(t)
-	for _, command := range [][]string{{"grid", "setup"}, {"grid", "status"}, {"grid", "teardown"}} {
+	for _, command := range [][]string{{"grid", "setup"},
+		{"grid", "status"},
+		{"grid", "teardown"}} {
 		for _, harnesses := range [][]string{nil, {"--harness", "codex", "--harness", "opencode"}} {
 			t.Run(fmt.Sprint(command, len(harnesses)), func(t *testing.T) {
 				h := NewCommandHarness(t)
@@ -467,16 +479,29 @@ func Test_Grid_Setup_Teams(t *testing.T) {
 				args = append(args, "--team", tc.team)
 			}
 			h.Require.NoError(h.Execute(args...))
-			h.Require.Equal([]string{tc.want}, api.FindCall("GET", "/v1/grid/routes").Query()["team_id"])
+			query := api.FindCall("GET", "/v1/grid/routes").Query()
+			if tc.team == "" {
+				h.Require.NotContains(query, "team_id")
+				h.Require.Nil(api.FindCall("GET", "/v1/teams"))
+			} else {
+				h.Require.Equal([]string{tc.want}, query["team_id"])
+			}
+			h.Require.Equal(tc.want, api.FindCall("GET", "/v1/grid/connections").Query().Get("team_id"))
+			h.Require.Equal(tc.want, harnessRecordFile(t).Harnesses["claude-code"].TeamID)
 			h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/"+tc.want+"/api_keys"))
 		})
 	}
-	// With several teams the CLI never picks one, not even the default.
+	// Ambiguity is reported by the routes API, without a client-side team lookup.
 	h, api := fakeGridAPI(t)
-	api.SetRoute("GET", "/v1/teams", 200, gridTwoTeams)
-	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"))
-	h.Require.Contains(h.Stderr.String(), `pass --team with one of "Engineering", "Research"`)
-	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	api.SetRoute("GET", "/v1/grid/routes", 400, map[string]any{"error": "Team ID is required when you belong to multiple."})
+	dir := t.TempDir()
+	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--output", "json"))
+	h.Require.Contains(h.Stderr.String(), "Team ID is required")
+	h.Require.Equal(400, decodeJSONErrorEnvelope(h).APIStatusCode)
+	h.Require.Len(api.Calls(), 1)
+	h.Require.Nil(api.FindCall("GET", "/v1/teams"))
+	h.Require.NoFileExists(harnessSettingsFile("claude-code", dir))
+	h.Require.Empty(harnessRecordFile(t).Harnesses)
 }
 
 func Test_Grid_Setup_KeyPerTeamAndUser(t *testing.T) {
@@ -609,7 +634,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			name:        "server defaults seed primary and background",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/grid/team_settings", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/server",
@@ -620,7 +645,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			harnessName: "claude-code",
 			flags:       []string{"--primary-route", "acme/first"},
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/grid/team_settings", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
@@ -631,7 +656,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			harnessName: "claude-code",
 			flags:       []string{"--background-route", "acme/first"},
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/grid/team_settings", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/server",
@@ -641,7 +666,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			name:        "server primary missing from routes falls back to positional",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/missing", "acme/background"))
+				api.SetRoute("GET", "/v1/grid/team_settings", 200, claudeHarnessDefaultsBody("acme/missing", "acme/background"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
@@ -651,7 +676,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			name:        "server background missing from routes falls back to the default",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
+				api.SetRoute("GET", "/v1/grid/team_settings", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/server",
@@ -661,7 +686,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			name:        "server defaults without a primary still seed the background",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, map[string]any{
+				api.SetRoute("GET", "/v1/grid/team_settings", 200, map[string]any{
 					"harness_defaults": map[string]any{
 						"claude_code": map[string]any{"background": harnessDefaultsModel("acme/background")},
 					},
@@ -675,7 +700,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			name:        "a response without a claude_code entry is ignored",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, map[string]any{
+				api.SetRoute("GET", "/v1/grid/team_settings", 200, map[string]any{
 					"harness_defaults": map[string]any{
 						"codex": map[string]any{"primary": harnessDefaultsModel("acme/server")},
 					},
@@ -696,7 +721,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			name:        "a routes settings error falls back to positional",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 500, map[string]string{"message": "unavailable"})
+				api.SetRoute("GET", "/v1/grid/team_settings", 500, map[string]string{"message": "unavailable"})
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
@@ -706,7 +731,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			name:        "a malformed routes settings response falls back to positional",
 			harnessName: "claude-code",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, "not an object")
+				api.SetRoute("GET", "/v1/grid/team_settings", 200, "not an object")
 			},
 			wantFetch:      true,
 			wantPrimary:    "acme/first",
@@ -717,7 +742,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			harnessName: "claude-code",
 			flags:       []string{"--primary-route", "acme/first", "--background-route", "acme/background"},
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
+				api.SetRoute("GET", "/v1/grid/team_settings", 200, claudeHarnessDefaultsBody("acme/server", "acme/missing"))
 			},
 			wantPrimary:    "acme/first",
 			wantBackground: "acme/background",
@@ -726,7 +751,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			name:        "codex ignores defaults for other harnesses",
 			harnessName: "codex",
 			endpoint: func(api *MockManagementAPI) {
-				api.SetRoute("GET", "/v1/grid/settings/teams/team-a", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
+				api.SetRoute("GET", "/v1/grid/team_settings", 200, claudeHarnessDefaultsBody("acme/server", "acme/background"))
 			},
 			wantFetch:   true,
 			wantPrimary: "acme/first",
@@ -735,12 +760,13 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, api := fakeGridAPI(t)
 			api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
+				teamID, teamName := gridRouteTeam(r)
 				w.Header().Set("Content-Type", "application/json")
 				items := []any{}
 				for _, route := range []struct{ name, display string }{
 					{"acme/first", "First"}, {"acme/server", "Server"}, {"acme/background", "Background"},
 				} {
-					items = append(items, map[string]any{"name": route.name, "display_name": route.display, "invoke_url": api.URL, "team_id": r.URL.Query().Get("team_id"), "metadata": harnessRouteMetadata})
+					items = append(items, map[string]any{"name": route.name, "display_name": route.display, "invoke_url": api.URL, "team_id": teamID, "team_name": teamName, "metadata": harnessRouteMetadata})
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
 			})
@@ -757,9 +783,10 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 				h.Require.Equal(tc.wantBackground, env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
 				h.Require.Equal(settings["model"], env["ANTHROPIC_MODEL"])
 			}
-			call := api.FindCall("GET", "/v1/grid/settings/teams/team-a")
+			call := api.FindCall("GET", "/v1/grid/team_settings")
 			if tc.wantFetch {
 				h.Require.NotNil(call, "setup fetches the routes settings endpoint")
+				h.Require.Equal("team-a", call.Query().Get("team_id"))
 			} else {
 				h.Require.Nil(call, "setup does not fetch the routes settings endpoint")
 			}
@@ -1029,9 +1056,9 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 	h, api := fakeGridAPI(t)
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			map[string]any{"id": "route-a", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
-			map[string]any{"id": "route-b", "name": "acme/auto", "display_name": "Auto", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-b", "name": "acme/auto", "display_name": "Auto", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "ROUTER"}},
 		},
 		"pagination": map[string]any{"has_more": false},
@@ -1066,13 +1093,13 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 func serveFirstPartyRoutes(api *MockManagementAPI) {
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			map[string]any{"id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}},
-			map[string]any{"id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-openai"}},
-			map[string]any{"id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
-			map[string]any{"id": "route-d", "name": "acme/orphan", "display_name": "Orphan", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-d", "name": "acme/orphan", "display_name": "Orphan", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-deleted"}},
 		},
 		"pagination": map[string]any{"has_more": false},
@@ -1135,18 +1162,19 @@ func Test_Grid_Setup_RouteMetadata(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
+		teamID, teamName := gridRouteTeam(r)
 		w.Header().Set("Content-Type", "application/json")
 		// The second page holds a route without metadata.
 		if r.URL.Query().Get("cursor") == "" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items":      []any{map[string]any{"name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata}},
+				"items":      []any{map[string]any{"team_id": teamID, "team_name": teamName, "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata}},
 				"pagination": map[string]any{"has_more": true, "cursor": "page-two"},
 			})
 			return
 		}
 		// A skipped route's invoke URL doesn't have to match.
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"items":      []any{map[string]any{"name": "acme/bare", "display_name": "Bare", "invoke_url": "https://elsewhere.example.com", "metadata": nil}},
+			"items":      []any{map[string]any{"team_id": teamID, "team_name": teamName, "name": "acme/bare", "display_name": "Bare", "invoke_url": "https://elsewhere.example.com", "metadata": nil}},
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
@@ -1164,7 +1192,7 @@ func Test_Grid_Setup_RouteMetadata(t *testing.T) {
 	priced := maps.Clone(harnessRouteMetadata)
 	priced["cost"] = map[string]any{"input": 0.3, "output": 1.2, "cache_read": nil, "long_context": map[string]any{"input": 0.6}}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
-		"items":      []any{map[string]any{"name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": priced}},
+		"items":      []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": priced}},
 		"pagination": map[string]any{"has_more": false},
 	})
 	opencode := t.TempDir()
@@ -1186,10 +1214,10 @@ func Test_Grid_Setup_RoutesByAPIFormat(t *testing.T) {
 	delete(unknown, "supported_api_formats")
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			map[string]any{"name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": formats(true, false)},
-			map[string]any{"name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": formats(false, true)},
-			map[string]any{"name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": formats(true, true)},
-			map[string]any{"name": "acme/new", "display_name": "New", "invoke_url": api.URL, "metadata": unknown},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": formats(true, false)},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": formats(false, true)},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": formats(true, true)},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "name": "acme/new", "display_name": "New", "invoke_url": api.URL, "metadata": unknown},
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -1419,7 +1447,7 @@ func harnessRoute(api *MockManagementAPI, name string) map[string]any {
 }
 
 // harnessDefaultsPath is team-a's route settings, which hold its harness defaults.
-const harnessDefaultsPath = "/v1/grid/settings/teams/team-a"
+const harnessDefaultsPath = "/v1/grid/team_settings"
 
 // harnessDefaultsBody is a team settings response with the given harness defaults.
 func harnessDefaultsBody(defaults map[string]any) map[string]any {
@@ -1687,10 +1715,11 @@ func saveHarnessRecordFile(t *testing.T, file harness.RecordFile) {
 // setHarnessRoutes serves a route per name, each with usable metadata.
 func setHarnessRoutes(api *MockManagementAPI, names ...string) {
 	api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
+		teamID, teamName := gridRouteTeam(r)
 		w.Header().Set("Content-Type", "application/json")
 		items := []any{}
 		for _, name := range names {
-			items = append(items, map[string]any{"id": name, "name": name, "team_id": r.URL.Query().Get("team_id"), "display_name": name, "invoke_url": api.URL, "metadata": harnessRouteMetadata})
+			items = append(items, map[string]any{"id": name, "name": name, "team_id": teamID, "team_name": teamName, "display_name": name, "invoke_url": api.URL, "metadata": harnessRouteMetadata})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
 	})
@@ -2139,6 +2168,16 @@ func Test_Grid_Help(t *testing.T) {
 		{"grid", "route", "usage"},
 		{"grid", "route", "api-key", "list"},
 		{"grid", "route", "api-key", "delete"},
+		{"grid", "team-settings", "describe"},
+		{"grid", "team-settings", "update"},
+		{"grid", "user-settings", "list"},
+		{"grid", "user-settings", "describe"},
+		{"grid", "user-settings", "update"},
+		{"grid", "connection", "list"},
+		{"grid", "connection", "create"},
+		{"grid", "connection", "update"},
+		{"grid", "connection", "delete"},
+		{"grid", "classifier", "list"},
 	} {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -2157,6 +2196,107 @@ func Test_Grid_ReplacesLegacyPaths(t *testing.T) {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)
 			h.Require.ErrorContains(h.Execute(path...), "unknown command")
+		})
+	}
+}
+
+func Test_Grid_Setup_ServerResolvedTeamAcrossPagesAndSync(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	// A team-directory outage must not affect server-side resolution during setup.
+	api.SetRoute("GET", "/v1/teams", 500, map[string]string{"message": "team directory unavailable"})
+	api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
+		if team := r.URL.Query().Get("team_id"); team != "" {
+			h.Require.Equal("team-b", team)
+		}
+		route := harnessRoute(api, "primary")
+		route["team_id"], route["team_name"] = "team-b", "Research"
+		var cursor any = "page-two"
+		if r.URL.Query().Get("cursor") == "page-two" {
+			route["id"], route["name"] = "route-second", "acme/second"
+			cursor = nil
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gridRoutePage([]any{route}, cursor))
+	})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--verbose"))
+	h.Require.Nil(api.FindCall("GET", "/v1/teams"))
+	h.Require.Equal(2, countCalls(api, "GET", "/v1/grid/routes"))
+	for _, call := range api.Calls() {
+		if call.Path == "/v1/grid/routes" {
+			h.Require.NotContains(call.Query(), "team_id")
+		}
+	}
+	h.Require.Contains(h.Stdout.String(), "Team: Research")
+	h.Require.Equal("team-b", api.FindCall("GET", "/v1/grid/connections").Query().Get("team_id"))
+	h.Require.Equal("team-b", api.FindCall("GET", "/v1/grid/team_settings").Query().Get("team_id"))
+	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-b/api_keys"))
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	h.Require.Equal("team-b", harnessRecordFile(t).Harnesses["claude-code"].TeamID)
+
+	// Sync stays with the saved team even after the caller joins another team.
+	api.SetRoute("GET", "/v1/teams", 200, gridTwoTeams)
+	start := len(api.Calls())
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	for _, call := range api.Calls()[start:] {
+		if call.Path == "/v1/grid/routes" {
+			h.Require.Equal("team-b", call.Query().Get("team_id"))
+		}
+	}
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date")
+	h.Require.Equal("team-b", harnessRecordFile(t).Harnesses["claude-code"].TeamID)
+}
+
+func Test_Grid_Setup_ServerTeamResolutionFailureHasNoSideEffects(t *testing.T) {
+	skipUnlessSupported(t)
+	for _, status := range []int{400, 401, 403, 500} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			api.SetRoute("GET", "/v1/grid/routes", status, map[string]string{"message": "server rejected team resolution"})
+			dir := t.TempDir()
+			h.Require.Error(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--output", "json"))
+			h.Require.Equal(status, decodeJSONErrorEnvelope(h).APIStatusCode)
+			h.Require.Len(api.Calls(), 1)
+			h.Require.NoFileExists(harnessSettingsFile("claude-code", dir))
+			h.Require.Empty(harnessRecordFile(t).Harnesses)
+		})
+	}
+}
+
+func Test_Grid_Setup_RejectsEmptyOrInvalidTeamScope(t *testing.T) {
+	skipUnlessSupported(t)
+	for _, tc := range []struct {
+		name, selected, want string
+		teamIDs              []string
+	}{
+		{"no-routes", "", "no routes available", nil},
+		// These responses deliberately violate the single-team Grid routes contract.
+		{"missing-team", "", "without a team ID", []string{""}},
+		{"mixed-teams", "", "different teams", []string{"team-a", "team-b"}},
+		{"wrong-team", "team-a", "requested", []string{"team-b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			items := []any{}
+			for _, id := range tc.teamIDs {
+				route := harnessRoute(api, "primary")
+				route["team_id"] = id
+				items = append(items, route)
+			}
+			api.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage(items, nil))
+			dir := t.TempDir()
+			args := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+			if tc.selected != "" {
+				args = append(args, "--team", tc.selected)
+			}
+			h.Require.ErrorContains(h.Execute(args...), tc.want)
+			h.Require.Nil(api.FindCall("GET", "/v1/grid/connections"))
+			for _, call := range api.Calls() {
+				h.Require.Equal("GET", call.Method)
+			}
+			h.Require.NoFileExists(harnessSettingsFile("claude-code", dir))
+			h.Require.Empty(harnessRecordFile(t).Harnesses)
 		})
 	}
 }
