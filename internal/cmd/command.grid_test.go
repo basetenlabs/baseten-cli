@@ -204,7 +204,7 @@ func skipUnlessSupported(t *testing.T) {
 	}
 }
 
-func Test_Grid_HarnessIntegrations_RejectOtherPlatforms(t *testing.T) {
+func Test_Grid_Setup_Status_Teardown_RejectOtherPlatforms(t *testing.T) {
 	if harness.Supported() {
 		t.Skip("Grid harness integrations support this platform")
 	}
@@ -350,7 +350,7 @@ func Test_Grid_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "pass --harness")
 }
 
-func Test_Grid_ConfigDirRequiresOneHarness(t *testing.T) {
+func Test_Grid_Setup_Status_Teardown_ConfigDirRequiresOneHarness(t *testing.T) {
 	skipUnlessSupported(t)
 	for _, command := range [][]string{{"grid", "setup"},
 		{"grid", "status"},
@@ -817,7 +817,7 @@ func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, "claude-code", path))
 }
 
-func Test_Grid_DefaultDiscovery(t *testing.T) {
+func Test_Grid_Setup_Status_Teardown_DefaultDiscovery(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	root := t.TempDir()

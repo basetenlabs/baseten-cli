@@ -34,7 +34,7 @@ func gridUserSettingsFixture() map[string]any {
 	}
 }
 
-func Test_Grid_Settings_ReadContracts(t *testing.T) {
+func Test_Grid_TeamSettings_UserSettings_ReadContracts(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -138,7 +138,7 @@ func Test_Grid_UserSettings_Update_PatchSemantics(t *testing.T) {
 	}
 }
 
-func Test_Grid_Settings_Update_ExplicitTeamAndUser(t *testing.T) {
+func Test_Grid_TeamSettings_UserSettings_Update_ExplicitTeamAndUser(t *testing.T) {
 	for _, tc := range []struct {
 		group, path string
 		flags       []string
@@ -163,7 +163,7 @@ func Test_Grid_Settings_Update_ExplicitTeamAndUser(t *testing.T) {
 	}
 }
 
-func Test_Grid_Settings_RejectsEmptyOrConflictingUpdates(t *testing.T) {
+func Test_Grid_TeamSettings_UserSettings_RejectsEmptyOrConflictingUpdates(t *testing.T) {
 	for _, args := range [][]string{
 		{"team-settings", "update"}, {"team-settings", "update", "--team", "t123456"},
 		{"team-settings", "update", "--harness", "codex"},
@@ -185,7 +185,7 @@ func Test_Grid_Settings_RejectsEmptyOrConflictingUpdates(t *testing.T) {
 	}
 }
 
-func Test_Grid_Settings_ServerErrorsPropagate(t *testing.T) {
+func Test_Grid_TeamSettings_UserSettings_ServerErrorsPropagate(t *testing.T) {
 	for _, tc := range []struct {
 		method, path string
 		args         []string

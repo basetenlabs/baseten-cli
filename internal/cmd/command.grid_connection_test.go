@@ -11,7 +11,7 @@ func gridConnectionFixture(provider string) map[string]any {
 	return map[string]any{"id": "c123456", "team_id": "t123456", "team_name": "Engineering", "config": map[string]any{"provider": strings.ToUpper(provider), "secret_id": "s123456", "secret_name": "provider-key"}, "created_at": "2026-10-19T10:00:00Z", "updated_at": "2026-10-19T10:00:00Z"}
 }
 
-func Test_Grid_Connection_CreateUpdate_Contracts(t *testing.T) {
+func Test_Grid_Connection_Create_Update_Contracts(t *testing.T) {
 	for _, provider := range []string{"anthropic", "openai", "xai"} {
 		for _, verb := range []string{"create", "update"} {
 			for _, output := range []string{"json", "text"} {

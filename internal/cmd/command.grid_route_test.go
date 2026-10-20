@@ -129,7 +129,7 @@ func Test_Grid_Route_Update_DisplayNameAndDescription(t *testing.T) {
 	h.Require.Equal(map[string]any{"display_name": "New label", "description": ""}, m.FindCall("PATCH", "/v1/grid/routes/r123456").BodyJSON(t))
 }
 
-func Test_Grid_Route_Addressed_ExactName(t *testing.T) {
+func Test_Grid_Route_Describe_Update_Delete_ExactName(t *testing.T) {
 	for _, verb := range []string{"describe", "update", "delete"} {
 		t.Run(verb, func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -155,7 +155,7 @@ func Test_Grid_Route_Addressed_ExactName(t *testing.T) {
 	}
 }
 
-func Test_Grid_Route_Addressed_InvalidSelectors(t *testing.T) {
+func Test_Grid_Route_Describe_Update_Delete_InvalidSelectors(t *testing.T) {
 	for _, verb := range []string{"describe", "update", "delete"} {
 		for _, selector := range [][]string{nil, {"--id", ""}, {"--name", ""}, {"--id", "r1", "--name", "acme/a"}} {
 			t.Run(verb+strings.Join(selector, " "), func(t *testing.T) {
@@ -176,7 +176,7 @@ func Test_Grid_Route_Addressed_InvalidSelectors(t *testing.T) {
 	}
 }
 
-func Test_Grid_Route_Addressed_FailedLookupNeverMutates(t *testing.T) {
+func Test_Grid_Route_Delete_FailedLookupNeverMutates(t *testing.T) {
 	fixture := gridRouteCases()[0].Response
 	for _, tc := range []struct {
 		name string
@@ -276,7 +276,7 @@ func Test_Grid_Route_List_TextAndJQ(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "No routes found.")
 }
 
-func Test_Grid_Route_Usage_InvalidTargets(t *testing.T) {
+func Test_Grid_Route_Create_InvalidTargets(t *testing.T) {
 	provider := []string{"--target-type", "connection", "--target-model", "test-model", "--target-connection", "c123456"}
 	cases := [][]string{
 		{}, {"--target-type", "baseten-model-api", "--target-model", ""}, {"--target-type", ""},
@@ -309,7 +309,7 @@ func Test_Grid_Route_Usage_InvalidTargets(t *testing.T) {
 	}
 }
 
-func Test_Grid_Route_Usage_InvalidValues(t *testing.T) {
+func Test_Grid_Route_List_Update_InvalidValues(t *testing.T) {
 	for _, args := range [][]string{
 		{"list", "--limit", "1"}, {"list", "--all"},
 		{"list", "--name", ""}, {"list", "--cursor", ""},
@@ -348,7 +348,7 @@ func Test_Grid_Route_Describe_AllTargetFields(t *testing.T) {
 	}
 }
 
-func Test_Grid_Route_API_ErrorClassification(t *testing.T) {
+func Test_Grid_Route_Update_APIErrorClassification(t *testing.T) {
 	for _, tc := range []struct {
 		status, exit int
 		code         string
@@ -371,7 +371,7 @@ func Test_Grid_Route_API_ErrorClassification(t *testing.T) {
 	}
 }
 
-func Test_Grid_Route_API_MalformedResponse(t *testing.T) {
+func Test_Grid_Route_Describe_MalformedAPIResponse(t *testing.T) {
 	for _, tc := range []struct{ contentType, body string }{
 		{"text/html", "<html>proxy</html>"}, {"application/json", "{bad"},
 	} {
@@ -388,7 +388,7 @@ func Test_Grid_Route_API_MalformedResponse(t *testing.T) {
 	}
 }
 
-func Test_Grid_Route_API_ProfileAndOutputModes(t *testing.T) {
+func Test_Grid_Route_Describe_ProfileAndOutputModes(t *testing.T) {
 	h := newAuthHarness(t)
 	m := h.MockManagementAPI()
 	store := configDirStore(t)
@@ -426,7 +426,7 @@ func Test_Grid_Route_List_LaterPageErrorHasNoPartialSuccess(t *testing.T) {
 	h.Require.NotContains(h.Stdout.String(), `"items"`)
 }
 
-func Test_Grid_Route_Metadata_Description(t *testing.T) {
+func Test_Grid_Route_Update_DescriptionRoundTrip(t *testing.T) {
 	for _, description := range []string{"", "route used for reviews"} {
 		h := NewCommandHarness(t)
 		m := h.MockManagementAPI()
@@ -482,7 +482,7 @@ func Test_Grid_Route_RequiresFlagsWithoutReadingStdin(t *testing.T) {
 	}
 }
 
-func Test_Grid_Route_TargetNamesAreLiteral(t *testing.T) {
+func Test_Grid_Route_Create_TargetNamesAreLiteral(t *testing.T) {
 	for _, args := range [][]string{
 		{"--target-type", "baseten-model-api", "--target-model", "__manual__"},
 		{"--target-type", "connection", "--target-model", "test-model", "--target-connection", "__create_connection__"},
@@ -506,7 +506,7 @@ func Test_Grid_Route_TargetNamesAreLiteral(t *testing.T) {
 	}
 }
 
-func Test_Grid_Route_MutationOutputConventions(t *testing.T) {
+func Test_Grid_Route_Create_Update_OutputConventions(t *testing.T) {
 	for _, verb := range []string{"create", "update"} {
 		for _, format := range []string{"text", "json", "jsonl", "none"} {
 			t.Run(verb+"/"+format, func(t *testing.T) {
@@ -566,7 +566,7 @@ func Test_Grid_Route_List_UnknownTarget(t *testing.T) {
 	h.Require.Empty(h.Stderr.String())
 }
 
-func Test_Grid_Route_ClassifierTarget(t *testing.T) {
+func Test_Grid_Route_Describe_ClassifierTarget(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	target := map[string]any{
@@ -643,7 +643,7 @@ func Test_Grid_Route_Create_DefaultTeam(t *testing.T) {
 	}
 }
 
-func Test_Grid_Route_Classifier_CreateAndUpdate(t *testing.T) {
+func Test_Grid_Route_Create_Update_ClassifierTarget(t *testing.T) {
 	target := map[string]any{"type": "CLASSIFIER", "classifier_id": "general-v1", "allowed_route_ids": []any{"r123456", "r234567"}, "default_route_id": "r123456"}
 	response := gridRouteFixture(map[string]any{"type": "CLASSIFIER", "classifier": map[string]any{"id": "general-v1", "name": "General"}, "allowed_routes": []any{map[string]any{"id": "r123456", "slug": "acme/a"}, map[string]any{"id": "r234567", "slug": "acme/b"}}, "default_route": map[string]any{"id": "r123456", "slug": "acme/a"}})
 	for _, verb := range []string{"create", "update"} {
@@ -666,7 +666,7 @@ func Test_Grid_Route_Classifier_CreateAndUpdate(t *testing.T) {
 	}
 }
 
-func Test_Grid_Route_Classifier_InvalidFlags(t *testing.T) {
+func Test_Grid_Route_Create_Update_InvalidClassifierFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"create", "--target-type", "classifier"},
 		{"create", "--target-type", "classifier", "--target-model", "model"},
