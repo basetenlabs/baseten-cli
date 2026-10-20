@@ -29,6 +29,7 @@ func init() {
 	Register("grid status", commandGridStatus)
 	Register("grid sync", commandGridSync)
 	Register("grid teardown", commandGridTeardown)
+	Register("grid classifier list", commandGridClassifierList)
 }
 
 // harnessPickerLabelWidth caps picker labels so they don't wrap.
@@ -369,7 +370,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		if ctx.JSON {
 			outputGridPlansJSON(ctx, plans, nil)
 		} else {
-			ctx.LogLine("Preview only. No files changed and no routes API key created.")
+			ctx.LogLine("Preview only. No files changed and no Grid API key created.")
 		}
 		return nil
 	}
@@ -378,7 +379,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 			return err
 		}
 	}
-	// The routes API key is only read or created once the user has confirmed.
+	// The Grid API key is only read or created once the user has confirmed.
 	token := sessionToken
 	if token == "" {
 		if token, err = ensureHarnessToken(ctx, api, team, f.KeyName); err != nil {
@@ -474,7 +475,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		return nil
 	}
 
-	// NB(nikhil): Group targets that share a team and routes API key, so each group is
+	// NB(nikhil): Group targets that share a team and Grid API key, so each group is
 	// planned and applied together.
 	groups := map[string][]harnessTarget{}
 	for _, t := range targets {
@@ -524,7 +525,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		if ctx.JSON {
 			outputGridPlansJSON(ctx, plans, nil)
 		} else {
-			ctx.LogLine("Preview only. No files changed and no routes API key created.")
+			ctx.LogLine("Preview only. No files changed and no Grid API key created.")
 		}
 		return nil
 	}
@@ -551,7 +552,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 	}
 	for i := range runs {
 		run := &runs[i]
-		// The routes API key is only read or created once the user has confirmed.
+		// The Grid API key is only read or created once the user has confirmed.
 		token := run.token
 		if token == "" {
 			if token, err = ensureHarnessToken(ctx, api, run.team, run.targets[0].record.KeyName); err != nil {
@@ -604,7 +605,7 @@ func harnessSyncCodexDaemon(ctx *CommandContext, target *harnessTarget, changed,
 }
 
 // harnessRecordScope returns the profile and management URL that scope harness
-// records, matching the scope of saved routes API keys.
+// records, matching the scope of saved Grid API keys.
 func harnessRecordScope(ctx *CommandContext) (profile, managementURL string, err error) {
 	remote, err := ctx.authInfo.Remote()
 	if err != nil {
@@ -983,9 +984,9 @@ func commandGridTeardown(ctx *CommandContext, f *cmd.GridTeardownFlags) error {
 		ctx.Outputf("Remove Baseten settings from %s. Native defaults will apply and unrelated settings are kept.\n", list)
 	}
 	if len(unused) > 0 {
-		question = "Remove Baseten settings from " + list + " and delete the routes API key they use?"
+		question = "Remove Baseten settings from " + list + " and delete the Grid API key they use?"
 		if !ctx.JSON {
-			ctx.OutputLine("Also delete the routes API key they use, since no other harness on this machine uses it.")
+			ctx.OutputLine("Also delete the Grid API key they use, since no other harness on this machine uses it.")
 		}
 	}
 	if f.DryRun {
@@ -1121,7 +1122,7 @@ func harnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, s
 	ctx.OutputLine("")
 }
 
-// unusedHarnessKeys returns the routes API keys the selected harnesses use that
+// unusedHarnessKeys returns the Grid API keys the selected harnesses use that
 // no other harness on this machine still uses. Credentials this CLI does not
 // own are never candidates.
 func unusedHarnessKeys(ctx *CommandContext, selected []selectedHarness) ([]string, error) {
@@ -1155,7 +1156,7 @@ func unusedHarnessKeys(ctx *CommandContext, selected []selectedHarness) ([]strin
 		}
 		token, err := h.Credential(d.Path)
 		if err != nil {
-			ctx.Logf("warning: keeping the routes API key, since %s settings at %s can't be read: %v\n", h.Name(), harnessDisplayPath(d.Path), err)
+			ctx.Logf("warning: keeping the Grid API key, since %s settings at %s can't be read: %v\n", h.Name(), harnessDisplayPath(d.Path), err)
 			return nil, nil
 		}
 		delete(keys, token)
@@ -1191,7 +1192,7 @@ func protectedHarnessCredentials(ctx *CommandContext, selected []selectedHarness
 	return protected, sessionKey, nil
 }
 
-// deleteHarnessKeys deletes the routes API keys with these values.
+// deleteHarnessKeys deletes the Grid API keys with these values.
 func deleteHarnessKeys(ctx *CommandContext, tokens []string) ([]string, error) {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -1207,10 +1208,10 @@ func deleteHarnessKeys(ctx *CommandContext, tokens []string) ([]string, error) {
 			continue
 		}
 		if _, err := cl.API().DeleteApiKeys(ctx, k.Prefix); err != nil {
-			return nil, fmt.Errorf("deleting routes API key %s: %w", k.Prefix, err)
+			return nil, fmt.Errorf("deleting Grid API key %s: %w", k.Prefix, err)
 		}
 		prefixes = append(prefixes, k.Prefix)
-		ctx.Logf("Deleted routes API key %s\n", k.Prefix)
+		ctx.Logf("Deleted Grid API key %s\n", k.Prefix)
 	}
 	return prefixes, nil
 }
@@ -1225,7 +1226,7 @@ func defaultHarnessKeyName(hostname string) string {
 	return fmt.Sprintf("baseten-harness-%s-%06x", cmp.Or(strings.Join(parts, "-"), "local-machine"), rand.N(1<<24))
 }
 
-// ensureHarnessToken returns the routes API key setup installs: the one saved
+// ensureHarnessToken returns the Grid API key setup installs: the one saved
 // on this machine for this profile, user, and team while it still exists, or
 // else a new one.
 func ensureHarnessToken(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, name string) (string, error) {
@@ -1272,11 +1273,36 @@ func ensureHarnessToken(ctx *CommandContext, api *managementapi.Client, team *ma
 		Name: &name,
 	})
 	if err != nil {
-		return "", fmt.Errorf("creating routes API key: %w", err)
+		return "", fmt.Errorf("creating Grid API key: %w", err)
 	}
 	if err := store.SetRoutesKey(scope, created.ApiKey, ctx.Log); err != nil {
 		return "", err
 	}
-	ctx.Logf("Created routes API key %s\n", name)
+	ctx.Logf("Created Grid API key %s\n", name)
 	return created.ApiKey, nil
+}
+
+func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	classifiers, err := cl.API().GetGridClassifiers(ctx)
+	if err != nil {
+		return fmt.Errorf("listing classifiers: %w", err)
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(classifiers)
+		return nil
+	}
+	if len(classifiers.Classifiers) == 0 {
+		ctx.LogLine("No classifiers found.")
+		return nil
+	}
+	var rows [][]string
+	for _, classifier := range classifiers.Classifiers {
+		rows = append(rows, []string{classifier.Id, classifier.DisplayName})
+	}
+	ctx.OutputTable(TableOutput{Headers: []string{"ID", "DISPLAY NAME"}, Rows: rows})
+	return nil
 }

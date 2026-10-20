@@ -18,12 +18,12 @@ var commandGrid = Command{
 			Name:    "setup",
 			Summary: "Set up harness authentication and configuration (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
-				"Configure installed harnesses with your team's routes and a routes API key.\n\n" +
+				"Configure installed harnesses with your team's routes and a Grid API key.\n\n" +
 				"Setup offers a picker of installed harnesses when --harness is omitted. Repeat --harness to select several. " +
 				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code lists the routes that serve " +
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the primary route unless --primary-route is set.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
-				"The routes API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
+				"The Grid API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.",
@@ -194,7 +194,7 @@ var commandGrid = Command{
 			Description: gridPrereleaseNotice +
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
 				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path.\n\n" +
-				"Teardown also deletes the routes API key the removed harnesses use, once no other harness on this machine uses it, " +
+				"Teardown also deletes the Grid API key the removed harnesses use, once no other harness on this machine uses it, " +
 				"except a key installed with --use-session-credential, whose lifecycle this CLI does not own. " +
 				"It forgets the recorded setup so 'grid sync' no longer refreshes the removed harnesses. " +
 				"It works after the harness is uninstalled. For Codex, teardown re-enables ChatGPT login and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. Run 'codex login' to sign back in.",
@@ -225,6 +225,300 @@ var commandGrid = Command{
 	},
 }
 
+var commandGridClassifier = Command{
+	Name:    "classifier",
+	Summary: "Discover managed classifiers (PRE-RELEASE)",
+	Children: []Command{{
+		Name:        "list",
+		Summary:     "List classifiers available to your organization",
+		Description: gridPrereleaseNotice + "Classifiers are managed by Baseten. Use their IDs when creating or updating classifier-backed routes.",
+		Flags:       GridClassifierListFlags{},
+		Output: &CommandOutput[managementapi.GridClassifiersResponse]{
+			TextDescription: "Table with ID and DISPLAY NAME columns. An empty catalog prints a message to stderr.",
+			Examples: []CommandExample{{
+				Description: "List available classifiers.",
+				Command:     "baseten grid classifier list",
+			}},
+			JQExample: CommandExample{
+				Description: "Print classifier IDs.",
+				Command:     "baseten grid classifier list --jq '.classifiers[].id'",
+			},
+		},
+	}},
+}
+
+type GridClassifierListFlags struct{ CommandFlags }
+
+const gridTeamDescription = "Omit --team to let the API select your only team; specify a team when you belong to several."
+
+var commandGridTeamSettings = Command{
+	Name:    "team-settings",
+	Summary: "Read and manage team Grid settings (PRE-RELEASE)",
+	Children: []Command{
+		{
+			Name:        "describe",
+			Summary:     "Show a team's harness defaults and spend limits",
+			Description: gridPrereleaseNotice + gridTeamDescription,
+			Flags:       GridTeamSettingsDescribeFlags{},
+			Output: &CommandOutput[managementapi.GridTeamSettings]{
+				TextDescription: "Team ID, monthly spend limits, and a table of harness default routes and their sources.",
+				Examples: []CommandExample{{
+					Description: "Show your only team's settings.",
+					Command:     "baseten grid team-settings describe",
+				}},
+				JQExample: CommandExample{
+					Description: "Print the harness defaults.",
+					Command:     "baseten grid team-settings describe --jq '.harness_defaults'",
+				},
+			},
+		},
+		{
+			Name:    "update",
+			Summary: "Update team harness defaults and spend limits",
+			Description: gridPrereleaseNotice + "Changes only supplied fields. Use --harness with --primary-route or --background-route to set route IDs; pass null to clear a role. " +
+				"--clear-harness-defaults clears every harness's configured defaults. Spend limits are exact USD amounts; null removes a limit. " +
+				"Requires team admin; changing the team-wide limit requires organization admin. " + gridTeamDescription,
+			Flags: GridTeamSettingsUpdateFlags{},
+			Output: &CommandOutput[managementapi.GridTeamSettings]{
+				TextDescription: "The updated team settings, in the same format as describe.",
+				Examples: []CommandExample{
+					{
+						Description: "Set the default monthly limit per member.",
+						Command:     "baseten grid team-settings update --per-member-monthly-limit-usd 100",
+					},
+					{
+						Description: "Set Codex's primary route.",
+						CommandLines: []string{
+							"baseten grid team-settings update",
+							"--harness codex --primary-route <route-id>",
+						},
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Clear and print the team-wide limit.",
+					CommandLines: []string{
+						"baseten grid team-settings update --team-wide-monthly-limit-usd null",
+						"--jq '.spend_limit'",
+					},
+				},
+			},
+		},
+	},
+}
+
+var commandGridUserSettings = Command{
+	Name:    "user-settings",
+	Summary: "Read and manage team members' Grid spend settings (PRE-RELEASE)",
+	Children: []Command{
+		{
+			Name:        "list",
+			Summary:     "List team members' spend settings",
+			Description: gridPrereleaseNotice + "Requires team admin or organization admin. " + gridTeamDescription,
+			Flags:       GridUserSettingsListFlags{},
+			Output: &CommandOutput[managementapi.GridTeamUserSettingsList]{
+				TextDescription: "Table with USER, EMAIL, MONTH SPEND, EFFECTIVE LIMIT, and BLOCKED BY columns. Empty teams print a message to stderr.",
+				Examples: []CommandExample{{
+					Description: "List members' settings in a team.",
+					Command:     "baseten grid user-settings list --team <id>",
+				}},
+				JQExample: CommandExample{
+					Description: "Print each member's limits.",
+					Command:     "baseten grid user-settings list --jq '.users[].spend_limit'",
+				},
+			},
+		},
+		{
+			Name:        "describe",
+			Summary:     "Show a user's spend settings in a team",
+			Description: gridPrereleaseNotice + "Defaults to your own settings (--user me). Reading other users requires team admin or organization admin. " + gridTeamDescription,
+			Flags:       GridUserSettingsDescribeFlags{},
+			Output: &CommandOutput[managementapi.GridTeamUserSettings]{
+				TextDescription: "User and team identifiers, monthly spend, standing and override limits, effective limit, and blocked status.",
+				Examples: []CommandExample{{
+					Description: "Show your own settings.",
+					Command:     "baseten grid user-settings describe",
+				}},
+				JQExample: CommandExample{
+					Description: "Print your effective monthly limit.",
+					Command:     "baseten grid user-settings describe --jq '.spend_limit.effective'",
+				},
+			},
+		},
+		{
+			Name:    "update",
+			Summary: "Update a user's spend limits in a team",
+			Description: gridPrereleaseNotice + "Defaults to --user me. Requires team admin or organization admin, even when changing your own limits. " +
+				"Omitted limits are unchanged; pass null to clear a limit. Amounts are exact USD strings. " + gridTeamDescription,
+			Flags: GridUserSettingsUpdateFlags{},
+			Output: &CommandOutput[managementapi.GridTeamUserSettings]{
+				TextDescription: "The updated user settings, in the same format as describe.",
+				Examples: []CommandExample{{
+					Description: "Set a member's standing monthly limit.",
+					CommandLines: []string{
+						"baseten grid user-settings update --team <id> --user <id>",
+						"--user-monthly-limit-usd 100",
+					},
+				}},
+				JQExample: CommandExample{
+					Description: "Clear and print your current-month override.",
+					CommandLines: []string{
+						"baseten grid user-settings update --month-override-usd null",
+						"--jq '.spend_limit'",
+					},
+				},
+			},
+		},
+	},
+}
+
+type GridTeamFlags struct {
+	Team string `flag:"team" desc:"Team name or ID. Omit to use your only team; required when you belong to several."`
+}
+type GridTeamSettingsDescribeFlags struct {
+	CommandFlags
+	GridTeamFlags
+}
+type GridTeamSettingsUpdateFlags struct {
+	CommandFlags
+	GridTeamFlags
+	Harness                  string               `flag:"harness" desc:"Harness whose default route IDs to update." enum:"claude-code,codex,opencode,pi"`
+	PrimaryRoute             OptionalFlag[string] `flag:"primary-route" desc:"Primary route ID; null clears the configured default. Requires --harness." nullable:"true"`
+	BackgroundRoute          OptionalFlag[string] `flag:"background-route" desc:"Background route ID for Claude Code or OpenCode; null clears it. Requires --harness." nullable:"true"`
+	ClearHarnessDefaults     bool                 `flag:"clear-harness-defaults" desc:"Clear all configured harness defaults. Cannot be combined with --harness or route flags."`
+	PerMemberMonthlyLimitUSD OptionalFlag[string] `flag:"per-member-monthly-limit-usd" desc:"Default monthly USD limit per member; null removes it." nullable:"true"`
+	TeamWideMonthlyLimitUSD  OptionalFlag[string] `flag:"team-wide-monthly-limit-usd" desc:"Team-wide monthly USD limit; null removes it. Requires organization admin." nullable:"true"`
+}
+type GridUserSettingsListFlags struct {
+	CommandFlags
+	GridTeamFlags
+}
+type GridUserSettingsUserFlags struct {
+	User string `flag:"user" desc:"User ID, or me for yourself." default:"me"`
+}
+type GridUserSettingsDescribeFlags struct {
+	CommandFlags
+	GridTeamFlags
+	GridUserSettingsUserFlags
+}
+type GridUserSettingsUpdateFlags struct {
+	CommandFlags
+	GridTeamFlags
+	GridUserSettingsUserFlags
+	UserMonthlyLimitUSD OptionalFlag[string] `flag:"user-monthly-limit-usd" desc:"Standing monthly USD limit for this user in the team; null removes it." nullable:"true"`
+	MonthOverrideUSD    OptionalFlag[string] `flag:"month-override-usd" desc:"USD limit for the current UTC month; null removes the override." nullable:"true"`
+}
+
+var commandGridConnection = Command{
+	Name:    "connection",
+	Summary: "Manage provider connections (PRE-RELEASE)",
+	Children: []Command{
+		{
+			Name:        "list",
+			Summary:     "List a team's provider connections",
+			Description: gridPrereleaseNotice + gridTeamDescription,
+			Flags:       GridConnectionListFlags{},
+			Output: &CommandOutput[GridConnectionList]{
+				TextDescription: "Table with ID, TEAM, PROVIDER, SECRET ID, and SECRET NAME columns. Lists all pages; secret values are never returned.",
+				Examples: []CommandExample{{
+					Description: "List your only team's connections.",
+					Command:     "baseten grid connection list",
+				}},
+				JQExample: CommandExample{
+					Description: "Print connection IDs.",
+					Command:     "baseten grid connection list --jq '.items[].id'",
+				},
+			},
+		},
+		{
+			Name:        "create",
+			Summary:     "Create a provider connection using an existing team secret",
+			Description: gridPrereleaseNotice + "The secret must belong to the connection's team. Requires team admin. " + gridTeamDescription,
+			Flags:       GridConnectionCreateFlags{},
+			Output: &CommandOutput[managementapi.GridConnection]{
+				TextDescription: "The created connection's ID, team, provider, and secret metadata.",
+				Examples: []CommandExample{{
+					Description: "Connect Anthropic using a team secret.",
+					Command:     "baseten grid connection create --provider anthropic --secret-id <id>",
+				}},
+				JQExample: CommandExample{
+					Description: "Print the new connection ID.",
+					CommandLines: []string{
+						"baseten grid connection create --provider openai --secret-id <id>",
+						"--jq '.id'",
+					},
+				},
+			},
+		},
+		{
+			Name:        "update",
+			Summary:     "Point a connection at another team secret",
+			Description: gridPrereleaseNotice + "Requires team admin. The provider must match the existing connection; provider and owning team cannot change.",
+			Flags:       GridConnectionUpdateFlags{},
+			Output: &CommandOutput[managementapi.GridConnection]{
+				TextDescription: "The updated connection's ID, team, provider, and secret metadata.",
+				Examples: []CommandExample{{
+					Description: "Change the secret used by a connection.",
+					CommandLines: []string{
+						"baseten grid connection update --id <id>",
+						"--provider anthropic --secret-id <secret-id>",
+					},
+				}},
+				JQExample: CommandExample{
+					Description: "Print the updated secret metadata.",
+					CommandLines: []string{
+						"baseten grid connection update --id <id>",
+						"--provider anthropic --secret-id <secret-id> --jq '.config'",
+					},
+				},
+			},
+		},
+		{
+			Name:        "delete",
+			Summary:     "Delete a provider connection",
+			Description: gridPrereleaseNotice + "Requires team admin. Leaves the referenced secret in place. Pass --yes to skip confirmation.",
+			Flags:       GridConnectionDeleteFlags{},
+			Output: &CommandOutput[managementapi.GridConnectionTombstone]{
+				TextDescription: "Confirmation on stderr; JSON contains the deleted connection ID.",
+				Examples: []CommandExample{{
+					Description: "Delete a connection.",
+					Command:     "baseten grid connection delete --id <id> --yes",
+				}},
+				JQExample: CommandExample{
+					Description: "Print the deleted ID.",
+					Command:     "baseten grid connection delete --id <id> --yes --jq '.id'",
+				},
+			},
+		},
+	},
+}
+
+type GridConnectionList struct {
+	Items []managementapi.GridConnection `json:"items"`
+}
+type GridConnectionListFlags struct {
+	CommandFlags
+	GridTeamFlags
+}
+type GridConnectionConfigFlags struct {
+	Provider string `flag:"provider" desc:"Upstream provider." enum:"anthropic,openai,xai" required:"true"`
+	SecretID string `flag:"secret-id" desc:"ID of an existing secret in the connection's team." required:"true"`
+}
+type GridConnectionCreateFlags struct {
+	CommandFlags
+	GridTeamFlags
+	GridConnectionConfigFlags
+}
+type GridConnectionUpdateFlags struct {
+	CommandFlags
+	GridConnectionConfigFlags
+	ID string `flag:"id" desc:"Connection ID." required:"true"`
+}
+type GridConnectionDeleteFlags struct {
+	CommandFlags
+	ID  string `flag:"id" desc:"Connection ID." required:"true"`
+	Yes bool   `flag:"yes" desc:"Skip confirmation; required when stdin is not a terminal."`
+}
+
 // GridPlan is one configuration file that setup or teardown changes.
 // Credentials are never included.
 type GridPlan struct {
@@ -239,7 +533,7 @@ type GridPlan struct {
 // GridPlanList is the JSON output of `baseten grid setup` and `baseten grid teardown`.
 type GridPlanList struct {
 	Items []GridPlan `json:"items"`
-	// DeletedAPIKeys lists the prefixes of routes API keys teardown deleted.
+	// DeletedAPIKeys lists the prefixes of Grid API keys teardown deleted.
 	DeletedAPIKeys []string `json:"deleted_api_keys,omitempty"`
 }
 
@@ -319,12 +613,12 @@ type GridSetupFlags struct {
 	CommandFlags
 	GridHarnessFlags
 	Team                 string `flag:"team" desc:"Team name or ID whose routes to use. Omit to let the API select your only team. Run 'baseten org team list' to see teams."`
-	KeyName              string `flag:"key-name" desc:"Name of the routes API key, if setup creates one. Defaults to baseten-harness-<hostname>-<random suffix>."`
+	KeyName              string `flag:"key-name" desc:"Name of the Grid API key, if setup creates one. Defaults to baseten-harness-<hostname>-<random suffix>."`
 	PrimaryRoute         string `flag:"primary-route" desc:"Primary route. Defaults to the team's default for the harness, else the first route the harness lists."`
 	BackgroundRoute      string `flag:"background-route" desc:"Route for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
 	SubagentRoute        string `flag:"subagent-route" desc:"Route for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
 	FallbackRoute        string `flag:"fallback-route" desc:"Route to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
-	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a routes API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
+	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
 	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }

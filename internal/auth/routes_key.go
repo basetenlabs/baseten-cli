@@ -9,11 +9,11 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-// routesKeyService namespaces routes API keys in the system keyring, keyed by
+// routesKeyService namespaces Grid API keys in the system keyring, keyed by
 // [RoutesKeyScope].
 const routesKeyService = "baseten-harness-routes"
 
-// RoutesKeyScope identifies a saved routes API key by issuing endpoint,
+// RoutesKeyScope identifies a saved Grid API key by issuing endpoint,
 // profile, user, and team: each profile keeps one key per user and team on
 // this machine.
 type RoutesKeyScope struct {
@@ -29,7 +29,7 @@ func (s RoutesKeyScope) account() string {
 	return hex.EncodeToString(sum[:])
 }
 
-// GetRoutesKey returns the routes API key saved for scope, or "" if there is
+// GetRoutesKey returns the Grid API key saved for scope, or "" if there is
 // none. Tries the keyring first, then falls back to the auth.json plaintext
 // field.
 func (s *Store) GetRoutesKey(scope RoutesKeyScope) (string, error) {
@@ -43,7 +43,7 @@ func (s *Store) GetRoutesKey(scope RoutesKeyScope) (string, error) {
 	return af.InsecureRoutesKeys[scope.account()], nil
 }
 
-// SetRoutesKey saves a routes API key for scope. Tries the keyring first;
+// SetRoutesKey saves a Grid API key for scope. Tries the keyring first;
 // falls back to plaintext in auth.json with a warning written to warnWriter
 // (if non-nil).
 func (s *Store) SetRoutesKey(scope RoutesKeyScope, key string, warnWriter func(string)) error {
@@ -56,7 +56,7 @@ func (s *Store) SetRoutesKey(scope RoutesKeyScope, key string, warnWriter func(s
 			return nil
 		}
 		if warnWriter != nil {
-			warnWriter(fmt.Sprintf("warning: could not store routes API key in system keyring, storing in plain text: %v\n", err))
+			warnWriter(fmt.Sprintf("warning: could not store Grid API key in system keyring, storing in plain text: %v\n", err))
 		}
 	}
 	af, err := s.loadLocked()

@@ -19,7 +19,7 @@ var commandOrg = Command{
 					Name:    "list",
 					Summary: "List API keys",
 					Description: "List API keys (metadata only; key values are never returned). " +
-						"Routes API keys, which grid setup creates and manages, are listed only with --type routes.",
+						"Grid API keys, which grid setup creates and manages for harness inference, are listed only with --type routes.",
 					Flags: OrgAPIKeyListFlags{},
 					Output: &CommandOutput[managementapi.APIKeys]{
 						TextDescription: "Table with columns: NAME, KEY (prefix + ****), TYPE, TEAM. When no " +

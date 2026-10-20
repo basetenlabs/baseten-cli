@@ -207,24 +207,24 @@ var commandGridRoute = Command{
 		},
 		{
 			Name:        "api-key",
-			Summary:     "Manage your routes API keys (PRE-RELEASE)",
-			Description: gridRoutePrereleaseNotice + "Manage the routes API keys you created, such as with grid setup, across all your machines and teams.",
+			Summary:     "Manage your Grid API keys (PRE-RELEASE)",
+			Description: gridRoutePrereleaseNotice + "Manage the Grid API keys you created, such as with grid setup, across all your machines and teams.",
 			Children: []Command{
 				{
 					Name:        "list",
-					Summary:     "List your routes API keys (PRE-RELEASE)",
-					Description: gridRoutePrereleaseNotice + "List the routes API keys you created, across all your machines and teams. Key values are never shown.",
+					Summary:     "List your Grid API keys (PRE-RELEASE)",
+					Description: gridRoutePrereleaseNotice + "List the Grid API keys you created, across all your machines and teams. Key values are never shown.",
 					Flags:       GridRouteAPIKeyListFlags{},
 					Output: &CommandOutput[managementapi.APIKeys]{
 						TextDescription: "Table with NAME, PREFIX, TEAM, CREATED, and LAST USED columns.",
-						Examples:        []CommandExample{{Description: "List your routes API keys.", Command: "baseten grid route api-key list"}},
+						Examples:        []CommandExample{{Description: "List your Grid API keys.", Command: "baseten grid route api-key list"}},
 						JQExample:       CommandExample{Description: "Print key prefixes.", Command: "baseten grid route api-key list --jq '.keys[].prefix'"},
 					},
 				},
 				{
 					Name:    "delete",
-					Summary: "Delete your routes API keys (PRE-RELEASE)",
-					Description: gridRoutePrereleaseNotice + "Delete one routes API key by prefix, or all of them with --all. Harnesses using a deleted key lose access " +
+					Summary: "Delete your Grid API keys (PRE-RELEASE)",
+					Description: gridRoutePrereleaseNotice + "Delete one Grid API key by prefix, or all of them with --all. Harnesses using a deleted key lose access " +
 						"until you rerun grid setup on that machine, which creates a new key.",
 					Flags: GridRouteAPIKeyDeleteFlags{},
 					Output: &CommandOutput[GridRouteAPIKeyDeleteResult]{
@@ -232,7 +232,7 @@ var commandGridRoute = Command{
 						JSONDescription: "deleted lists the deleted prefixes and failed the ones that could not be deleted. The command fails if any deletion failed.",
 						Examples: []CommandExample{
 							{Description: "Delete a lost machine's key.", Command: "baseten grid route api-key delete --prefix <prefix>"},
-							{Description: "Delete all your routes API keys without prompting.", Command: "baseten grid route api-key delete --all --yes"},
+							{Description: "Delete all your Grid API keys without prompting.", Command: "baseten grid route api-key delete --all --yes"},
 						},
 						JQExample: CommandExample{Description: "Print deleted prefixes.", Command: "baseten grid route api-key delete --prefix <prefix> --yes --jq '.deleted[]'"},
 					},
@@ -249,7 +249,7 @@ type GridRouteAPIKeyListFlags struct{ CommandFlags }
 type GridRouteAPIKeyDeleteFlags struct {
 	CommandFlags
 	Prefix string `flag:"prefix" desc:"Prefix of the key to delete, as shown by grid route api-key list." oneof:"key"`
-	All    bool   `flag:"all" desc:"Delete all your routes API keys, on every machine and team." oneof:"key"`
+	All    bool   `flag:"all" desc:"Delete all your Grid API keys, on every machine and team." oneof:"key"`
 	Yes    bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
@@ -338,7 +338,7 @@ type GridRouteUsageFlags struct {
 	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
 	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
 
-	UserIDs []string `flag:"user-id" desc:"Only return usage from routes API keys created by these user IDs. May be repeated. 'baseten whoami' shows your own."`
+	UserIDs []string `flag:"user-id" desc:"Only return usage from Grid API keys created by these user IDs. May be repeated. 'baseten whoami' shows your own."`
 
 	GridRouteUsageQueryFlags
 }

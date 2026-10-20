@@ -89,7 +89,7 @@ func gridRouteTeam(r *http.Request) (string, string) {
 }
 
 // gridAPI serves a user, one team, one route whose
-// invoke URL is invokeURL, and routes API key creation for both teams.
+// invoke URL is invokeURL, and Grid API key creation for both teams.
 func gridAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAPI) {
 	t.Helper()
 	h := NewCommandHarness(t)
@@ -236,7 +236,7 @@ func Test_Grid_Setup_Lifecycle(t *testing.T) {
 			h.Require.NotEmpty(preview.Items)
 			h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, name, path))
 			h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
-			h.Require.Nil(api.FindCall("GET", "/v1/users/me"), "dry run skips the routes API key")
+			h.Require.Nil(api.FindCall("GET", "/v1/users/me"), "dry run skips the Grid API key")
 
 			h.Require.Error(h.Execute(args...))
 			h.Require.Contains(h.Stderr.String(), "pass --yes")
@@ -282,7 +282,7 @@ func Test_Grid_Setup_Lifecycle(t *testing.T) {
 
 			h.Require.NoError(h.Execute("grid", "teardown", "--harness", name, "--config-dir", dir, "--dry-run"))
 			h.Require.Contains(h.Stdout.String(), "Remove Baseten settings from "+name)
-			h.Require.Contains(h.Stdout.String(), "Also delete the routes API key")
+			h.Require.Contains(h.Stdout.String(), "Also delete the Grid API key")
 			h.Require.Equal(calls, len(api.Calls()), "status and teardown previews are local")
 			unchanged, err := os.ReadFile(path)
 			h.Require.NoError(err)
@@ -331,7 +331,7 @@ func Test_Grid_Setup_TextSummary(t *testing.T) {
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
 	h.Require.Empty(h.Stdout.String())
-	h.Require.Contains(h.Stderr.String(), "Created routes API key baseten-harness-")
+	h.Require.Contains(h.Stderr.String(), "Created Grid API key baseten-harness-")
 	h.Require.Contains(h.Stderr.String(), "Configuration saved.")
 	h.Require.Contains(h.Stderr.String(), "Undo with: baseten grid teardown --harness claude-code --config-dir '"+dir+"'")
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--verbose"))
@@ -339,7 +339,7 @@ func Test_Grid_Setup_TextSummary(t *testing.T) {
 		h.Require.Contains(h.Stdout.String(), want)
 	}
 	h.Require.NotContains(h.Stdout.String(), "Available routes")
-	h.Require.NotContains(h.Stderr.String(), "Created routes API key")
+	h.Require.NotContains(h.Stderr.String(), "Created Grid API key")
 }
 
 func Test_Grid_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
@@ -549,7 +549,7 @@ func Test_Grid_Setup_KeyCreationFailureCanBeRetried(t *testing.T) {
 	args := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
 	api.SetRoute("POST", "/v1/teams/team-a/api_keys", 500, map[string]string{"message": "unavailable"})
 	h.Require.Error(h.Execute(args...))
-	h.Require.Contains(h.Stderr.String(), "creating routes API key")
+	h.Require.Contains(h.Stderr.String(), "creating Grid API key")
 	h.Require.NoFileExists(harnessSettingsFile("claude-code", dir))
 	api.SetRoute("POST", "/v1/teams/team-a/api_keys", 200, map[string]string{"api_key": "secret-team-a"})
 	h.Require.NoError(h.Execute(args...))
@@ -563,7 +563,7 @@ func Test_Grid_Setup_KeyringUnavailableStoresPlaintext(t *testing.T) {
 	t.Cleanup(keyring.MockInit)
 	args := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", t.TempDir(), "--yes"}
 	h.Require.NoError(h.Execute(args...))
-	h.Require.Contains(h.Stderr.String(), "warning: could not store routes API key in system keyring")
+	h.Require.Contains(h.Stderr.String(), "warning: could not store Grid API key in system keyring")
 	h.Require.NoError(h.Execute(args...))
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
@@ -860,7 +860,7 @@ func Test_Grid_DefaultDiscovery(t *testing.T) {
 	h.Require.Len(statuses.Items, 1)
 	// An unreadable file might still use the key, so teardown keeps it.
 	h.Require.NoError(h.Execute("grid", "teardown", "--yes"))
-	h.Require.Contains(h.Stderr.String(), "warning: keeping the routes API key")
+	h.Require.Contains(h.Stderr.String(), "warning: keeping the Grid API key")
 	h.Require.Equal(0, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"))
 	h.Require.NoError(h.Execute("grid", "status"))
 	h.Require.Contains(h.Stderr.String(), "No configured Baseten harnesses found.")
@@ -889,7 +889,7 @@ func Test_Grid_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--yes"))
 	api.SetRoute("DELETE", "/v1/api_keys/secret-team-a", 500, map[string]string{"message": "unavailable"})
 	h.Require.Error(h.Execute("grid", "teardown", "--yes"))
-	h.Require.Contains(h.Stderr.String(), "deleting routes API key secret-team-a")
+	h.Require.Contains(h.Stderr.String(), "deleting Grid API key secret-team-a")
 	h.Require.NoError(h.Execute("grid", "status", "--harness", "codex", "--output", "json"))
 	h.Require.Contains(h.Stdout.String(), `"state": "configured"`)
 }
@@ -2007,7 +2007,7 @@ func Test_Grid_Setup_UseSessionCredential(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "--key-name is not used with --use-session-credential")
 
 	h.Require.NoError(h.Execute(append(slices.Clone(base), "--use-session-credential")...))
-	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "no routes API key is created")
+	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "no Grid API key is created")
 	h.Require.Nil(api.FindCall("GET", "/v1/users/me"), "the session key needs no user-scoped save")
 	h.Require.Equal("test-key", readHarnessSettings(t, "claude-code", path)["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
 	record := harnessRecordFile(t).Harnesses["claude-code"]
@@ -2129,7 +2129,7 @@ func Test_Grid_Teardown_KeepsSessionCredential(t *testing.T) {
 	// The settings are removed, but the key is never offered for deletion.
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--dry-run"))
 	h.Require.Contains(h.Stderr.String(), "Keeping the API key installed with --use-session-credential")
-	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also delete the routes API key")
+	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also delete the Grid API key")
 	h.Require.NoError(h.Execute(teardown...))
 	raw, err := os.ReadFile(path)
 	h.Require.NoError(err)
@@ -2141,7 +2141,7 @@ func Test_Grid_Teardown_KeepsSessionCredential(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	h.Require.NoError(os.Remove(filepath.Join(recordDir(t), "harness.json")))
 	h.Require.NoError(h.Execute(teardown...))
-	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also delete the routes API key")
+	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also delete the Grid API key")
 	raw, err = os.ReadFile(path)
 	h.Require.NoError(err)
 	h.Require.NotContains(string(raw), "test-key", "the settings were removed")
@@ -2297,6 +2297,72 @@ func Test_Grid_Setup_RejectsEmptyOrInvalidTeamScope(t *testing.T) {
 			}
 			h.Require.NoFileExists(harnessSettingsFile("claude-code", dir))
 			h.Require.Empty(harnessRecordFile(t).Harnesses)
+		})
+	}
+}
+
+func Test_Grid_Classifier_List(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		for _, output := range []string{"text", "json", "jsonl"} {
+			t.Run(fmt.Sprintf("%t/%s", empty, output), func(t *testing.T) {
+				h := NewCommandHarness(t)
+				m := h.MockManagementAPI()
+				items := []any{}
+				if !empty {
+					items = append(items, map[string]any{"id": "general-v1", "display_name": "General"})
+				}
+				body := map[string]any{"classifiers": items}
+				m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+					h.Require.Equal("Bearer test-key", r.Header.Get("Authorization"))
+					h.Require.Empty(r.URL.RawQuery)
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(body)
+				})
+				h.Require.NoError(h.Execute("grid", "classifier", "list", "--output", output))
+				h.Require.Len(m.Calls(), 1)
+				if output == "text" {
+					if empty {
+						h.Require.Contains(h.Stderr.String(), "No classifiers found")
+					} else {
+						h.Require.Contains(h.Stdout.String(), "general-v1")
+						h.Require.Contains(h.Stdout.String(), "General")
+					}
+				} else {
+					var got any
+					h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+					h.Require.Equal(body, got)
+				}
+			})
+		}
+	}
+}
+
+func Test_Grid_Classifier_List_Errors(t *testing.T) {
+	for _, status := range []int{401, 403, 500} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			m.SetRoute("GET", "/v1/grid/classifiers", status, map[string]string{"error": "unavailable"})
+			h.Require.Error(h.Execute("grid", "classifier", "list", "--output", "json"))
+			h.Require.Equal(status, decodeJSONErrorEnvelope(h).APIStatusCode)
+		})
+	}
+	t.Run("malformed", func(t *testing.T) {
+		h := NewCommandHarness(t)
+		m := h.MockManagementAPI()
+		m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"classifiers":`))
+		})
+		h.Require.ErrorContains(h.Execute("grid", "classifier", "list"), "unexpected end of JSON input")
+	})
+}
+
+func Test_Grid_UnavailableDescribeCommandsAreNotExposed(t *testing.T) {
+	for _, resource := range []string{"classifier", "connection"} {
+		t.Run(resource, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			h.Require.ErrorContains(h.Execute("grid", resource, "describe"), "unknown command")
 		})
 	}
 }

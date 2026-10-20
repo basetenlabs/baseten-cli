@@ -18,7 +18,7 @@ func Test_Grid_Route_APIKey_List(t *testing.T) {
 
 	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{}})
 	h.Require.NoError(h.Execute("grid", "route", "api-key", "list"))
-	h.Require.Contains(h.Stderr.String(), "No routes API keys found.")
+	h.Require.Contains(h.Stderr.String(), "No Grid API keys found.")
 }
 
 func Test_Grid_Route_APIKey_Delete(t *testing.T) {
@@ -31,11 +31,11 @@ func Test_Grid_Route_APIKey_Delete(t *testing.T) {
 	h.Require.Error(h.Execute("grid", "route", "api-key", "delete", "--prefix", "secret-team-a"))
 	h.Require.Contains(h.Stderr.String(), "pass --yes")
 	h.Require.Error(h.Execute("grid", "route", "api-key", "delete", "--prefix", "unknown", "--yes"))
-	h.Require.Contains(h.Stderr.String(), `no routes API key with prefix "unknown"`)
+	h.Require.Contains(h.Stderr.String(), `no Grid API key with prefix "unknown"`)
 	h.Require.Nil(api.FindCall("DELETE", "/v1/api_keys/secret-team-a"))
 
 	h.Require.NoError(h.Execute("grid", "route", "api-key", "delete", "--prefix", "secret-team-a", "--yes"))
-	h.Require.Contains(h.Stderr.String(), "Deleted routes API key secret-team-a")
+	h.Require.Contains(h.Stderr.String(), "Deleted Grid API key secret-team-a")
 	h.Require.NotNil(api.FindCall("DELETE", "/v1/api_keys/secret-team-a"))
 	h.Require.Nil(api.FindCall("DELETE", "/v1/api_keys/secret-team-b"))
 }
@@ -63,13 +63,13 @@ func Test_Grid_Setup_ReplacesDeletedKey(t *testing.T) {
 	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{}})
 	api.SetRoute("POST", "/v1/teams/team-a/api_keys", 200, map[string]string{"api_key": "secret-team-a-2"})
 	h.Require.NoError(h.Execute(args...))
-	h.Require.Contains(h.Stderr.String(), "Created routes API key")
+	h.Require.Contains(h.Stderr.String(), "Created Grid API key")
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 	h.Require.Equal("secret-team-a-2", readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
 
 	// A failed check leaves the saved key and configuration alone.
 	api.SetRoute("GET", "/v1/api_keys", 500, map[string]string{"message": "unavailable"})
 	h.Require.Error(h.Execute(args...))
-	h.Require.Contains(h.Stderr.String(), "listing routes API keys")
+	h.Require.Contains(h.Stderr.String(), "listing Grid API keys")
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }

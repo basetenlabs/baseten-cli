@@ -16,13 +16,13 @@ func init() {
 	Register("grid route api-key delete", commandGridRouteAPIKeyDelete)
 }
 
-// listGridRouteAPIKeys returns the routes API keys the caller created, across all
+// listGridRouteAPIKeys returns the Grid API keys the caller created, across all
 // their machines and teams.
 func listGridRouteAPIKeys(ctx context.Context, api *managementapi.Client) (*managementapi.APIKeys, error) {
 	category, mine := managementapi.APIKeyCategory_ROUTES, true
 	keys, err := api.GetApiKeys(ctx, managementapi.GetV1ApiKeysParams{Type: &category, CreatedByMe: &mine})
 	if err != nil {
-		return nil, fmt.Errorf("listing routes API keys: %w", err)
+		return nil, fmt.Errorf("listing Grid API keys: %w", err)
 	}
 	return keys, nil
 }
@@ -41,7 +41,7 @@ func commandGridRouteAPIKeyList(ctx *CommandContext, _ *cmd.GridRouteAPIKeyListF
 		return nil
 	}
 	if len(keys.Keys) == 0 {
-		ctx.LogLine("No routes API keys found.")
+		ctx.LogLine("No Grid API keys found.")
 		return nil
 	}
 	rows := make([][]string, 0, len(keys.Keys))
@@ -75,7 +75,7 @@ func commandGridRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.GridRouteAPIKe
 	if !flags.All {
 		targets = slices.DeleteFunc(targets, func(k managementapi.APIKeyInfo) bool { return k.Prefix != flags.Prefix })
 		if len(targets) == 0 {
-			return fmt.Errorf("no routes API key with prefix %q; run 'baseten grid route api-key list'", flags.Prefix)
+			return fmt.Errorf("no Grid API key with prefix %q; run 'baseten grid route api-key list'", flags.Prefix)
 		}
 	}
 	result := cmd.GridRouteAPIKeyDeleteResult{Deleted: []string{}, Failed: []string{}}
@@ -83,12 +83,12 @@ func commandGridRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.GridRouteAPIKe
 		if ctx.JSON {
 			ctx.OutputJSON(result)
 		} else {
-			ctx.LogLine("No routes API keys found.")
+			ctx.LogLine("No Grid API keys found.")
 		}
 		return nil
 	}
 	if !flags.Yes {
-		ctx.LogLine("Routes API keys to delete:")
+		ctx.LogLine("Grid API keys to delete:")
 		for _, k := range targets {
 			name := ""
 			if k.Name != nil {
@@ -96,7 +96,7 @@ func commandGridRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.GridRouteAPIKe
 			}
 			ctx.Logf("  %s  %s\n", k.Prefix, name)
 		}
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete %d routes API keys? Harnesses using them lose access.", len(targets))); err != nil {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete %d Grid API keys? Harnesses using them lose access.", len(targets))); err != nil {
 			return err
 		}
 	}
@@ -104,11 +104,11 @@ func commandGridRouteAPIKeyDelete(ctx *CommandContext, flags *cmd.GridRouteAPIKe
 	for _, k := range targets {
 		if _, err := cl.API().DeleteApiKeys(ctx, k.Prefix); err != nil {
 			result.Failed = append(result.Failed, k.Prefix)
-			errs = append(errs, fmt.Errorf("deleting routes API key %s: %w", k.Prefix, err))
+			errs = append(errs, fmt.Errorf("deleting Grid API key %s: %w", k.Prefix, err))
 			continue
 		}
 		result.Deleted = append(result.Deleted, k.Prefix)
-		ctx.Logf("Deleted routes API key %s\n", k.Prefix)
+		ctx.Logf("Deleted Grid API key %s\n", k.Prefix)
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(result)
