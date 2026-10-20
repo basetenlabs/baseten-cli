@@ -9,15 +9,15 @@ import (
 const gridRoutePrereleaseNotice = "PRE-RELEASE: grid route commands are not GA yet. " +
 	"Their arguments, flags, and output may change.\n\n"
 
-const gridRouteTargetJSONDescription = "target.type is BASETEN_MODEL_API, ANTHROPIC, OPENAI, or XAI. " +
-	"Every target includes model. External targets also include secret_name."
+const gridRouteTargetJSONDescription = "target.type is BASETEN_MODEL_API, CONNECTION, or CLASSIFIER. " +
+	"Model targets include model; CONNECTION targets also include connection_id. CLASSIFIER targets include classifier, allowed_routes, and default_route."
 
 var commandGridRoute = Command{
 	Name:    "route",
 	Summary: "Manage routes (PRE-RELEASE)",
 	Description: gridRoutePrereleaseNotice +
 		"Manage routes. Baseten derives each route's name from its target. " +
-		"A route's name, team, and target cannot be changed after creation.",
+		"A route's name, team, and target type cannot be changed after creation. Classifier configurations can be updated.",
 	Children: []Command{
 		{
 			Name:    "list",
@@ -51,7 +51,7 @@ var commandGridRoute = Command{
 			Flags:   GridRouteDescribeFlags{},
 			Description: gridRoutePrereleaseNotice +
 				"Describe a route by ID or exact name. Pass exactly one of --id or --name.",
-			Output: &CommandOutput[managementapi.Route]{
+			Output: &CommandOutput[managementapi.GridRoute]{
 				JSONDescription: gridRouteTargetJSONDescription,
 				TextDescription: "Field-per-line summary of the route, including its target, invoke URL, and team name. " +
 					"Unrecognized target types are shown as <unrecognized type>.",
@@ -72,13 +72,13 @@ var commandGridRoute = Command{
 			Summary: "Create a route (PRE-RELEASE)",
 			Flags:   GridRouteCreateFlags{},
 			Description: gridRoutePrereleaseNotice +
-				"Create a route with --target-type and --target-model. Baseten derives the route's name " +
+				"Create a model route with --target-type and --target-model, or a classifier route with --target-type classifier, --classifier-id, repeated --allowed-route-id, and --default-route-id. Baseten derives the route's name " +
 				"from its target. Find Model API names with 'baseten model-api list'.\n\n" +
-				"Omit --team to use the organization's default team. External providers are reached through " +
+				"Omit --team to use your only team; specify it when you belong to several. External providers are reached through " +
 				"a connection owned by the route's team, which holds the provider's API key; pass its ID with " +
 				"--target-connection. Pass the same --team value if the route uses a specific team.\n\n" +
 				"Set optional metadata with --display-name and --description.",
-			Output: &CommandOutput[managementapi.Route]{
+			Output: &CommandOutput[managementapi.GridRoute]{
 				JSONDescription: gridRouteTargetJSONDescription,
 				TextDescription: "On success, prints \"Created route <name> (<id>)\" to stderr; no stdout output.",
 				Examples: []CommandExample{
@@ -97,6 +97,14 @@ var commandGridRoute = Command{
 							"--target-connection <connection-id>",
 						},
 					},
+					{
+						Description: "Create a classifier-backed route.",
+						CommandLines: []string{
+							"baseten grid route create --target-type classifier",
+							"--classifier-id <id> --allowed-route-id <route-id>",
+							"--default-route-id <route-id>",
+						},
+					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the created route ID.",
@@ -113,10 +121,9 @@ var commandGridRoute = Command{
 			Flags:   GridRouteUpdateFlags{},
 			Description: gridRoutePrereleaseNotice +
 				"Update a route by ID or exact name. Pass exactly one of --id or --name.\n\n" +
-				"Pass --display-name or --description; omitted fields are unchanged. " +
-				"Pass --description '' to clear the description. Name, team, and target cannot be changed; " +
-				"to change a target, create a new route.",
-			Output: &CommandOutput[managementapi.Route]{
+				"Pass --display-name or --description; omitted fields are unchanged. To replace a classifier configuration, supply --classifier-id, --allowed-route-id, and --default-route-id together. " +
+				"Pass --description '' to clear the description. Name, team, target type, and non-classifier targets cannot be changed.",
+			Output: &CommandOutput[managementapi.GridRoute]{
 				JSONDescription: gridRouteTargetJSONDescription,
 				TextDescription: "On success, prints \"Updated route <name> (<id>)\" to stderr; no stdout output.",
 				Examples: []CommandExample{
@@ -142,7 +149,7 @@ var commandGridRoute = Command{
 				"Delete a route by ID or exact name. Pass exactly one of --id or --name.\n\n" +
 				"Prompts for confirmation. Pass --yes to skip the prompt. " +
 				"When stdin is not a terminal, --yes is required.",
-			Output: &CommandOutput[managementapi.RouteTombstone]{
+			Output: &CommandOutput[managementapi.GridRouteTombstone]{
 				TextDescription: "On success, prints \"Deleted route <name> (<id>)\" to stderr; no stdout output.",
 				Examples: []CommandExample{
 					{
@@ -162,8 +169,8 @@ var commandGridRoute = Command{
 			Description: gridRoutePrereleaseNotice +
 				"Show routes usage and estimated costs as daily UTC buckets, oldest first, broken down by the " +
 				"dimensions passed to --group-by. Defaults match the API: the previous UTC day through today, grouped " +
-				"by model. Organization admins see usage from every routes API key in the organization; other members " +
-				"see only usage from keys they created.\n\n" +
+				"by model. Organization admins see organization usage, team admins see teams they manage, and other members see usage from their own keys. --team narrows the scope. " +
+				"Grouping by router includes only routed usage; do not add these totals to totals from other groupings.\n\n" +
 				"Usage comes in whole UTC days: --start is snapped down to its day and --end is rounded up to the end of " +
 				"its day. Every bucket in the window is fetched, paging as needed, until --limit buckets are collected. " +
 				"Usage can lag by up to 15 minutes and is retained for 92 days. Model API costs use your prices and " +
@@ -172,7 +179,7 @@ var commandGridRoute = Command{
 				"For your own usage this month, see 'baseten grid usage'. For machine-readable streaming, prefer " +
 				"--output jsonl over --output json.",
 			Flags: GridRouteUsageFlags{},
-			Output: &CommandOutput[managementapi.RoutesUsageBucket]{
+			Output: &CommandOutput[managementapi.GridUsageBucket]{
 				JSONArrayStreamed: true,
 				TextDescription: "Table with a DATE column, one column per --group-by dimension, then INPUT, CACHED, and " +
 					"OUTPUT token counts and COST, followed by an ALL totals row. A day with no usage renders as a single " +
@@ -190,6 +197,7 @@ var commandGridRoute = Command{
 						Description: "Show which users drove usage over the last 7 days (admins).",
 						Command:     "baseten grid route usage --since 7d --group-by user",
 					},
+					{Description: "Break routed usage down by team and router.", Command: "baseten grid route usage --group-by team,router"},
 				},
 				JQExample: CommandExample{
 					Description: "Stream each day's cost per model as a JSONL stream.",
@@ -256,15 +264,22 @@ type GridRouteRefFlags struct {
 	Name string `flag:"name" desc:"Exact route name, including its organization-owned prefix." oneof:"route-ref"`
 }
 
+type GridRouteClassifierFlags struct {
+	ClassifierID    string   `flag:"classifier-id" desc:"Classifier ID from grid classifier list. Requires allowed and default route IDs."`
+	AllowedRouteIDs []string `flag:"allowed-route-id" desc:"ID of a route the classifier may select. Repeat for each allowed route."`
+	DefaultRouteID  string   `flag:"default-route-id" desc:"ID of the allowed route used when the classifier picks none."`
+}
+
 type GridRouteTargetFlags struct {
-	TargetType       string `flag:"target-type" desc:"Target type." enum:"baseten-model-api,connection" required:"true"`
-	TargetModel      string `flag:"target-model" desc:"Model API name or external provider model name." required:"true"`
+	GridRouteClassifierFlags
+	TargetType       string `flag:"target-type" desc:"Target type." enum:"baseten-model-api,connection,classifier" required:"true"`
+	TargetModel      string `flag:"target-model" desc:"Model API name or external provider model name. Required for non-classifier targets."`
 	TargetConnection string `flag:"target-connection" desc:"ID of a connection in the route's team, whose provider serves the route. Required with --target-type connection."`
 }
 
 // GridRouteList contains the routes aggregated across all pages.
 type GridRouteList struct {
-	Items []managementapi.Route `json:"items"`
+	Items []managementapi.GridRoute `json:"items"`
 }
 
 type GridRouteListFlags struct {
@@ -280,13 +295,14 @@ type GridRouteDescribeFlags struct {
 type GridRouteCreateFlags struct {
 	CommandFlags
 	GridRouteTargetFlags
-	Team        string               `flag:"team" desc:"Team name or ID the route belongs to. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
+	Team        string               `flag:"team" desc:"Team name or ID the route belongs to. Defaults to your only team; required when you belong to several. Run 'baseten org team list' to see teams."`
 	DisplayName OptionalFlag[string] `flag:"display-name" desc:"Display name (1 to 255 characters). Defaults to the route name."`
 	Description OptionalFlag[string] `flag:"description" desc:"Optional route description (up to 1000 characters)."`
 }
 
 type GridRouteUpdateFlags struct {
 	CommandFlags
+	GridRouteClassifierFlags
 	GridRouteRefFlags
 	DisplayName OptionalFlag[string] `flag:"display-name" desc:"New display name (1 to 255 characters). Omit to keep it unchanged."`
 	Description OptionalFlag[string] `flag:"description" desc:"New description (up to 1000 characters). Pass an empty string to clear it."`
@@ -301,7 +317,7 @@ type GridRouteDeleteFlags struct {
 // GridRouteUsageQueryFlags are the usage filters and paging flags shared by
 // `baseten grid route usage` and `baseten grid usage`.
 type GridRouteUsageQueryFlags struct {
-	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated." enum:"user,model,provider" default:"model"`
+	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated." enum:"user,team,model,provider,router" default:"model"`
 
 	Models    []string `flag:"model" desc:"Only return usage for these models. May be repeated."`
 	Providers []string `flag:"provider" desc:"Only return usage for these providers. May be repeated." enum:"baseten-model-api,openai,anthropic,xai,vertex,openai-compatible"`
@@ -316,6 +332,7 @@ type GridRouteUsageQueryFlags struct {
 // GridRouteUsageFlags are the flags for `baseten grid route usage`.
 type GridRouteUsageFlags struct {
 	CommandFlags
+	Team string `flag:"team" desc:"Team name or ID to filter usage by. Without it, returns your authorized usage across teams."`
 
 	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the day before --end."`
 	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`

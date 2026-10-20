@@ -250,3 +250,22 @@ func Test_Grid_Usage_Empty(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "If you're using a team or workspace API key, run 'baseten auth login'",
 		"a service-account key has no teams or routes usage of its own")
 }
+
+func Test_Grid_Usage_UsesPerTeamUserSettings(t *testing.T) {
+	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
+	gridSetTeams(api,
+		gridTeamSettings("team-a", "Engineering", "1.75", "100", "100", nil),
+		gridTeamSettings("team-b", "Research", "0", nil, nil, nil),
+	)
+	h.Require.NoError(h.Execute("grid", "usage", "--output", "json"))
+	h.Require.Equal(1, countCalls(api, "GET", "/v1/teams"))
+	var teams []string
+	for _, call := range api.Calls() {
+		if call.Path == "/v1/grid/team_settings/users/me" {
+			teams = append(teams, call.Query().Get("team_id"))
+		}
+		h.Require.NotContains(call.Path, "/settings/users/")
+	}
+	h.Require.Equal([]string{"team-a", "team-b"}, teams)
+	h.Require.Nil(api.FindCall("GET", "/v1/grid/team_settings/users"))
+}
