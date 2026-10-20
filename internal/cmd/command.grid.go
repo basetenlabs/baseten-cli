@@ -167,18 +167,39 @@ type harnessTarget struct {
 	record harness.Record
 }
 
+func loadHarnessSetupRoutes(ctx *CommandContext, api *managementapi.Client, selectedTeam string) (*managementapi.Team, []managementapi.GridRoute, error) {
+	teamID, err := gridTeamID(ctx, api, selectedTeam)
+	if err != nil {
+		return nil, nil, err
+	}
+	listed, err := listGridRoutes(ctx, api, managementapi.GetV1GridRoutesParams{TeamId: teamID})
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(listed) == 0 {
+		return nil, nil, errors.New("no routes available for this team; create one with 'baseten grid route create'")
+	}
+	// The routes API resolves an omitted team and scopes every page to that team.
+	team := &managementapi.Team{Id: listed[0].TeamId, Name: listed[0].TeamName}
+	if team.Id == "" {
+		return nil, nil, errors.New("routes API returned a route without a team ID")
+	}
+	if teamID != nil && team.Id != *teamID {
+		return nil, nil, fmt.Errorf("routes API returned team %q, requested %q", team.Id, *teamID)
+	}
+	for _, route := range listed {
+		if route.TeamId != team.Id {
+			return nil, nil, errors.New("routes API returned routes from different teams")
+		}
+	}
+	return team, listed, nil
+}
+
 // planHarnessSetup builds the setup plans for targets that share one team. The
 // behavior differs slightly on ineligible Route selection:
 //  1. If in `setup`, we emit a validation error.
 //  2. If in `sync`, we emit a warning, and clobber with the new server default.
-func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, targets []harnessTarget, forSync bool) ([]*harness.Plan, error) {
-	listed, err := listGridRoutes(ctx, api, managementapi.GetV1GridRoutesParams{TeamId: &team.Id})
-	if err != nil {
-		return nil, err
-	}
-	if len(listed) == 0 {
-		return nil, fmt.Errorf("team %s has no routes; create one with 'baseten grid route create'", team.Name)
-	}
+func planHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, listed []managementapi.GridRoute, targets []harnessTarget, forSync bool) ([]*harness.Plan, error) {
 	// Routes reach external providers through team connections, and the
 	// provider decides which API a harness calls the route with.
 	connections, err := listGridConnections(ctx, api, managementapi.GetV1GridConnectionsParams{TeamId: &team.Id})
@@ -299,7 +320,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		return err
 	}
 	api := cl.API()
-	team, err := resolveTeamOrOnly(ctx, api, f.Team)
+	team, listed, err := loadHarnessSetupRoutes(ctx, api, f.Team)
 	if err != nil {
 		return err
 	}
@@ -324,7 +345,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		}
 		targets[i] = harnessTarget{selectedHarness: selected[i], record: targetRecord}
 	}
-	plans, err := planHarnessSetup(ctx, api, team, targets, false)
+	plans, err := planHarnessSetup(ctx, api, team, listed, targets, false)
 	if err != nil {
 		return err
 	}
@@ -471,12 +492,12 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 				return fmt.Errorf("%s: %w; these harnesses were set up with --use-session-credential", group[0].Name(), err)
 			}
 		}
-		team, err := resolveTeamOrOnly(ctx, api, group[0].record.TeamID)
+		team, listed, err := loadHarnessSetupRoutes(ctx, api, group[0].record.TeamID)
 		if err != nil {
-			return fmt.Errorf("%s: %w; rerun 'baseten grid setup --harness %s' to record a current team", group[0].Name(), err, group[0].Name())
+			return fmt.Errorf("%s: loading routes for recorded team %s: %w", group[0].Name(), group[0].record.TeamID, err)
 		}
 		run := gridSyncRun{team: team, targets: group, token: sessionToken}
-		if run.plans, err = planHarnessSetup(ctx, api, run.team, run.targets, true); err != nil {
+		if run.plans, err = planHarnessSetup(ctx, api, run.team, listed, run.targets, true); err != nil {
 			return err
 		}
 		if sessionToken != "" {
@@ -758,7 +779,7 @@ type harnessSelection struct {
 const harnessDefaultsTimeout = 5 * time.Second
 
 // Defaults are optional; only cancellation of setup is fatal.
-func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID string, targets []harnessTarget) (*managementapi.RouteHarnessDefaults, error) {
+func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID string, targets []harnessTarget) (*managementapi.GridHarnessDefaults, error) {
 	needed := slices.ContainsFunc(targets, func(target harnessTarget) bool {
 		return target.record.Route == "" || (target.record.BackgroundRoute == "" && target.BackgroundRoute(harness.Selection{}) != "")
 	})
@@ -767,7 +788,7 @@ func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID stri
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, harnessDefaultsTimeout)
 	defer cancel()
-	settings, err := api.GetGridSettingsTeams(requestCtx, teamID)
+	settings, err := api.GetGridTeamSettings(requestCtx, managementapi.GetV1GridTeamSettingsParams{TeamId: &teamID})
 	var re *managementapi.ResponseError
 	switch {
 	case ctx.Err() != nil:
@@ -782,32 +803,32 @@ func harnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID stri
 	return &settings.HarnessDefaults, nil
 }
 
-func harnessDefaultModels(defaults *managementapi.RouteHarnessDefaults, harnessName string) map[string]*managementapi.RouteHarnessModel {
+func harnessDefaultModels(defaults *managementapi.GridHarnessDefaults, harnessName string) map[string]*managementapi.GridHarnessModel {
 	if defaults == nil {
 		return nil
 	}
 	switch harnessName {
 	case harness.ClaudeCode:
-		return map[string]*managementapi.RouteHarnessModel{
+		return map[string]*managementapi.GridHarnessModel{
 			harnessRolePrimary:    defaults.ClaudeCode.Primary,
 			harnessRoleBackground: defaults.ClaudeCode.Background,
 		}
 	case harness.OpenCode:
-		return map[string]*managementapi.RouteHarnessModel{
+		return map[string]*managementapi.GridHarnessModel{
 			harnessRolePrimary:    defaults.Opencode.Primary,
 			harnessRoleBackground: defaults.Opencode.Background,
 		}
 	case harness.Codex:
-		return map[string]*managementapi.RouteHarnessModel{harnessRolePrimary: defaults.Codex.Primary}
+		return map[string]*managementapi.GridHarnessModel{harnessRolePrimary: defaults.Codex.Primary}
 	case harness.Pi:
-		return map[string]*managementapi.RouteHarnessModel{harnessRolePrimary: defaults.Pi.Primary}
+		return map[string]*managementapi.GridHarnessModel{harnessRolePrimary: defaults.Pi.Primary}
 	default:
 		panic(fmt.Sprintf("no harness defaults for harness %q", harnessName))
 	}
 }
 
 // Explicit flags take precedence over server defaults, then CLI defaults.
-func harnessRouteSelection(ctx *CommandContext, record harness.Record, choice selectedHarness, defaults *managementapi.RouteHarnessDefaults, callable []harness.Route) harnessSelection {
+func harnessRouteSelection(ctx *CommandContext, record harness.Record, choice selectedHarness, defaults *managementapi.GridHarnessDefaults, callable []harness.Route) harnessSelection {
 	s := harnessSelection{
 		Selection: harness.Selection{
 			Primary:    record.Route,
@@ -834,13 +855,13 @@ func harnessRouteSelection(ctx *CommandContext, record harness.Record, choice se
 	return s
 }
 
-func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models map[string]*managementapi.RouteHarnessModel, callable []harness.Route) (string, string, bool) {
+func harnessDefaultRoute(ctx *CommandContext, harnessName, role string, models map[string]*managementapi.GridHarnessModel, callable []harness.Route) (string, string, bool) {
 	model := models[role]
 	if model == nil {
 		return "", "", false
 	}
 	source := harnessRouteFromTeam
-	if model.Source != managementapi.RouteSettingSource_team {
+	if model.Source != managementapi.GridSettingSource_team {
 		ctx.VerboseLogf("Unknown source %q for the %s %s default\n", model.Source, harnessName, role)
 		source = harnessRouteFromDefault
 	}

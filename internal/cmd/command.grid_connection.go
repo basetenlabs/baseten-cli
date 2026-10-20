@@ -1,0 +1,155 @@
+package cmd
+
+import (
+	"fmt"
+
+	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
+)
+
+func init() {
+	Register("grid connection list", commandGridConnectionList)
+	Register("grid connection create", commandGridConnectionCreate)
+	Register("grid connection update", commandGridConnectionUpdate)
+	Register("grid connection delete", commandGridConnectionDelete)
+}
+
+func commandGridConnectionList(ctx *CommandContext, f *cmd.GridConnectionListFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	team, err := gridTeamID(ctx, cl.API(), f.Team)
+	if err != nil {
+		return err
+	}
+	items, err := listGridConnections(ctx, cl.API(), managementapi.GetV1GridConnectionsParams{TeamId: team})
+	if err != nil {
+		return fmt.Errorf("listing connections: %w", err)
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(cmd.GridConnectionList{Items: normalizeJSONSlice(items)})
+		return nil
+	}
+	if len(items) == 0 {
+		ctx.LogLine("No connections found.")
+		return nil
+	}
+	return outputGridConnections(ctx, items)
+}
+
+func setGridConnectionConfig(config interface {
+	FromUpsertGridConnectionConfigAnthropic(managementapi.UpsertGridConnectionConfigAnthropic) error
+	FromUpsertGridConnectionConfigOpenAI(managementapi.UpsertGridConnectionConfigOpenAI) error
+	FromUpsertGridConnectionConfigXAI(managementapi.UpsertGridConnectionConfigXAI) error
+}, f cmd.GridConnectionConfigFlags) error {
+	if f.SecretID == "" {
+		return cmd.NewErrUsagef("--secret-id must not be empty")
+	}
+	switch f.Provider {
+	case "anthropic":
+		return config.FromUpsertGridConnectionConfigAnthropic(managementapi.UpsertGridConnectionConfigAnthropic{Provider: "ANTHROPIC", SecretId: f.SecretID})
+	case "openai":
+		return config.FromUpsertGridConnectionConfigOpenAI(managementapi.UpsertGridConnectionConfigOpenAI{Provider: "OPENAI", SecretId: f.SecretID})
+	case "xai":
+		return config.FromUpsertGridConnectionConfigXAI(managementapi.UpsertGridConnectionConfigXAI{Provider: "XAI", SecretId: f.SecretID})
+	default:
+		return cmd.NewErrUsagef("unsupported provider %q", f.Provider)
+	}
+}
+
+func commandGridConnectionCreate(ctx *CommandContext, f *cmd.GridConnectionCreateFlags) error {
+	body := managementapi.CreateGridConnectionRequest{}
+	if err := setGridConnectionConfig(&body.Config, f.GridConnectionConfigFlags); err != nil {
+		return err
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	body.TeamId, err = gridTeamID(ctx, cl.API(), f.Team)
+	if err != nil {
+		return err
+	}
+	connection, err := cl.API().PostGridConnections(ctx, body)
+	if err != nil {
+		return fmt.Errorf("creating connection: %w", err)
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(connection)
+		return nil
+	}
+	return outputGridConnections(ctx, []managementapi.GridConnection{*connection})
+}
+
+func commandGridConnectionUpdate(ctx *CommandContext, f *cmd.GridConnectionUpdateFlags) error {
+	if f.ID == "" {
+		return cmd.NewErrUsagef("--id must not be empty")
+	}
+	body := managementapi.UpdateGridConnectionRequest{}
+	if err := setGridConnectionConfig(&body.Config, f.GridConnectionConfigFlags); err != nil {
+		return err
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	connection, err := cl.API().PatchGridConnections(ctx, f.ID, body)
+	if err != nil {
+		return fmt.Errorf("updating connection: %w", err)
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(connection)
+		return nil
+	}
+	return outputGridConnections(ctx, []managementapi.GridConnection{*connection})
+}
+
+func commandGridConnectionDelete(ctx *CommandContext, f *cmd.GridConnectionDeleteFlags) error {
+	if f.ID == "" {
+		return cmd.NewErrUsagef("--id must not be empty")
+	}
+	if !f.Yes {
+		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete connection %s?", f.ID)); err != nil {
+			return err
+		}
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	result, err := cl.API().DeleteGridConnections(ctx, f.ID)
+	if err != nil {
+		return fmt.Errorf("deleting connection: %w", err)
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(result)
+	} else {
+		ctx.Logf("Deleted connection %s\n", result.Id)
+	}
+	return nil
+}
+
+func outputGridConnections(ctx *CommandContext, connections []managementapi.GridConnection) error {
+	var rows [][]string
+	for _, connection := range connections {
+		value, err := connection.Config.ValueByDiscriminator()
+		if err != nil {
+			return fmt.Errorf("reading connection %s config: %w", connection.Id, err)
+		}
+		var provider, secretID, secretName string
+		switch config := value.(type) {
+		case managementapi.GridConnectionConfigAnthropic:
+			provider, secretID, secretName = config.Provider, config.SecretId, config.SecretName
+		case managementapi.GridConnectionConfigOpenAI:
+			provider, secretID, secretName = config.Provider, config.SecretId, config.SecretName
+		case managementapi.GridConnectionConfigXAI:
+			provider, secretID, secretName = config.Provider, config.SecretId, config.SecretName
+		default:
+			return fmt.Errorf("unsupported connection config %T", value)
+		}
+		rows = append(rows, []string{connection.Id, connection.TeamId, enumFromAPIValue(provider), secretID, secretName})
+	}
+	ctx.OutputTable(TableOutput{Headers: []string{"ID", "TEAM", "PROVIDER", "SECRET ID", "SECRET NAME"}, Rows: rows})
+	return nil
+}

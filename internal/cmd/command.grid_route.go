@@ -130,17 +130,30 @@ func commandGridRouteDescribe(ctx *CommandContext, flags *cmd.GridRouteDescribeF
 	return nil
 }
 
-func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateRouteRequest_Target, error) {
-	if flags.TargetType == "" || flags.TargetModel == "" {
+func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateGridRouteRequest_Target, error) {
+	if flags.TargetType == "" || (flags.TargetType != "classifier" && flags.TargetModel == "") {
 		return nil, cmd.NewErrUsagef("--target-type and --target-model are required")
 	}
-	target := &managementapi.CreateRouteRequest_Target{}
+	target := &managementapi.CreateGridRouteRequest_Target{}
+	if flags.TargetType != "classifier" && hasGridRouteClassifier(flags.GridRouteClassifierFlags) {
+		return nil, cmd.NewErrUsagef("classifier flags require --target-type classifier")
+	}
 	switch flags.TargetType {
+	case "classifier":
+		if flags.TargetModel != "" || flags.TargetConnection != "" {
+			return nil, cmd.NewErrUsagef("classifier targets do not accept --target-model or --target-connection")
+		}
+		classifier, err := gridRouteClassifierTarget(flags.GridRouteClassifierFlags)
+		if err != nil {
+			return nil, err
+		}
+		err = target.FromUpsertGridRouteTargetClassifier(classifier)
+		return target, err
 	case "baseten-model-api":
 		if flags.TargetConnection != "" {
 			return nil, cmd.NewErrUsagef("--target-connection is not valid with --target-type baseten-model-api")
 		}
-		err := target.FromUpsertRouteTargetBasetenModelAPI(managementapi.UpsertRouteTargetBasetenModelAPI{
+		err := target.FromUpsertGridRouteTargetBasetenModelAPI(managementapi.UpsertGridRouteTargetBasetenModelAPI{
 			Type:  "BASETEN_MODEL_API",
 			Model: flags.TargetModel,
 		})
@@ -149,7 +162,7 @@ func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateRoute
 		if flags.TargetConnection == "" {
 			return nil, cmd.NewErrUsagef("--target-connection is required with --target-type connection")
 		}
-		err := target.FromUpsertRouteTargetConnection(managementapi.UpsertRouteTargetConnection{
+		err := target.FromUpsertGridRouteTargetConnection(managementapi.UpsertGridRouteTargetConnection{
 			Type:         "CONNECTION",
 			Model:        flags.TargetModel,
 			ConnectionId: flags.TargetConnection,
@@ -158,6 +171,22 @@ func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateRoute
 	default:
 		return nil, cmd.NewErrUsagef("unsupported target type %q", flags.TargetType)
 	}
+}
+
+func hasGridRouteClassifier(f cmd.GridRouteClassifierFlags) bool {
+	return f.ClassifierID != "" || len(f.AllowedRouteIDs) > 0 || f.DefaultRouteID != ""
+}
+
+func gridRouteClassifierTarget(f cmd.GridRouteClassifierFlags) (managementapi.UpsertGridRouteTargetClassifier, error) {
+	if f.ClassifierID == "" || len(f.AllowedRouteIDs) == 0 || f.DefaultRouteID == "" {
+		return managementapi.UpsertGridRouteTargetClassifier{}, cmd.NewErrUsagef("pass --classifier-id, --allowed-route-id, and --default-route-id together")
+	}
+	for _, id := range f.AllowedRouteIDs {
+		if id == "" {
+			return managementapi.UpsertGridRouteTargetClassifier{}, cmd.NewErrUsagef("--allowed-route-id must not be empty")
+		}
+	}
+	return managementapi.UpsertGridRouteTargetClassifier{Type: "CLASSIFIER", ClassifierId: f.ClassifierID, AllowedRouteIds: f.AllowedRouteIDs, DefaultRouteId: f.DefaultRouteID}, nil
 }
 
 func commandGridRouteCreate(ctx *CommandContext, flags *cmd.GridRouteCreateFlags) error {
@@ -173,7 +202,7 @@ func commandGridRouteCreate(ctx *CommandContext, flags *cmd.GridRouteCreateFlags
 	if err != nil {
 		return err
 	}
-	body := managementapi.CreateRouteRequest{
+	body := managementapi.CreateGridRouteRequest{
 		DisplayName: flags.DisplayName.Pointer(),
 		Description: flags.Description.Pointer(),
 		Target:      *target,
@@ -194,8 +223,21 @@ func commandGridRouteCreate(ctx *CommandContext, flags *cmd.GridRouteCreateFlags
 }
 
 func commandGridRouteUpdate(ctx *CommandContext, flags *cmd.GridRouteUpdateFlags) error {
-	if !flags.DisplayName.IsSet() && !flags.Description.IsSet() {
-		return cmd.NewErrUsagef("pass --display-name or --description")
+	hasClassifier := ctx.Command.Flags().Changed("classifier-id") || ctx.Command.Flags().Changed("allowed-route-id") || ctx.Command.Flags().Changed("default-route-id")
+	if !flags.DisplayName.IsSet() && !flags.Description.IsSet() && !hasClassifier {
+		return cmd.NewErrUsagef("pass --display-name, --description, or a complete classifier configuration")
+	}
+	body := managementapi.UpdateGridRouteRequest{DisplayName: flags.DisplayName.Pointer(), Description: flags.Description.Pointer()}
+	if hasClassifier {
+		classifier, err := gridRouteClassifierTarget(flags.GridRouteClassifierFlags)
+		if err != nil {
+			return err
+		}
+		target := managementapi.UpdateGridRouteRequest_Target{}
+		if err := target.FromUpsertGridRouteTargetClassifier(classifier); err != nil {
+			return err
+		}
+		body.Target = managementapi.NewOptional(&target)
 	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -204,10 +246,6 @@ func commandGridRouteUpdate(ctx *CommandContext, flags *cmd.GridRouteUpdateFlags
 	id, err := resolveGridRouteID(ctx, cl.API(), flags.GridRouteRefFlags)
 	if err != nil {
 		return err
-	}
-	body := managementapi.UpdateRouteRequest{
-		DisplayName: flags.DisplayName.Pointer(),
-		Description: flags.Description.Pointer(),
 	}
 	route, err := cl.API().PatchGridRoutes(ctx, id, body)
 	if err != nil {
@@ -259,11 +297,11 @@ type gridRouteTargetInfo struct {
 // like autoscalingScheduleFields does for schedule variants.
 func gridRouteTargetFields(value any) (gridRouteTargetInfo, error) {
 	switch t := value.(type) {
-	case managementapi.RouteTargetBasetenModelAPI:
+	case managementapi.GridRouteTargetBasetenModelAPI:
 		return gridRouteTargetInfo{kind: t.Type, model: t.Model}, nil
-	case managementapi.RouteTargetConnection:
+	case managementapi.GridRouteTargetConnection:
 		return gridRouteTargetInfo{kind: t.Type, model: t.Model, connection: t.ConnectionId}, nil
-	case managementapi.RouteTargetClassifier:
+	case managementapi.GridRouteTargetClassifier:
 		info := gridRouteTargetInfo{kind: t.Type, defaultRoute: t.DefaultRoute.Slug}
 		// Null for routers created before classifiers could be selected.
 		if t.Classifier != nil {
@@ -279,8 +317,8 @@ func gridRouteTargetFields(value any) (gridRouteTargetInfo, error) {
 }
 
 // listGridConnections returns a team's route connections across all pages.
-func listGridConnections(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridConnectionsParams) ([]managementapi.RouteConnection, error) {
-	var connections []managementapi.RouteConnection
+func listGridConnections(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridConnectionsParams) ([]managementapi.GridConnection, error) {
+	var connections []managementapi.GridConnection
 	for {
 		resp, err := api.GetGridConnections(ctx, params)
 		if err != nil {
@@ -295,8 +333,8 @@ func listGridConnections(ctx context.Context, api *managementapi.Client, params 
 }
 
 // listGridRoutes returns the routes across all pages.
-func listGridRoutes(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridRoutesParams) ([]managementapi.Route, error) {
-	var routes []managementapi.Route
+func listGridRoutes(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridRoutesParams) ([]managementapi.GridRoute, error) {
+	var routes []managementapi.GridRoute
 	for {
 		resp, err := api.GetGridRoutes(ctx, params)
 		if err != nil {

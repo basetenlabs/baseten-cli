@@ -23,7 +23,7 @@ func commandGridHarnessDefaults(ctx *CommandContext, flags *cmd.GridHarnessDefau
 	if err != nil {
 		return err
 	}
-	settings, err := api.GetGridSettingsTeams(ctx, team.Id)
+	settings, err := api.GetGridTeamSettings(ctx, managementapi.GetV1GridTeamSettingsParams{TeamId: &team.Id})
 	if err != nil {
 		return fmt.Errorf("getting harness defaults for team %s: %w", team.Name, err)
 	}
@@ -51,7 +51,7 @@ func commandGridHarnessDefaults(ctx *CommandContext, flags *cmd.GridHarnessDefau
 	return nil
 }
 
-func harnessDefaultItems(defaults managementapi.RouteHarnessDefaults, selected []string) []cmd.GridHarnessDefault {
+func harnessDefaultItems(defaults managementapi.GridHarnessDefaults, selected []string) []cmd.GridHarnessDefault {
 	items := make([]cmd.GridHarnessDefault, 0, len(harness.All()))
 	for _, h := range harness.All() {
 		if len(selected) > 0 && !slices.Contains(selected, h.Name()) {
@@ -76,7 +76,7 @@ func harnessSupportsBackground(name string) bool {
 	return false
 }
 
-func harnessDefaultLabel(model *managementapi.RouteHarnessModel, supported bool) string {
+func harnessDefaultLabel(model *managementapi.GridHarnessModel, supported bool) string {
 	if !supported {
 		return "n/a"
 	}

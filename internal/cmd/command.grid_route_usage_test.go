@@ -132,3 +132,32 @@ func Test_Grid_Route_Usage_ClampsToRetention(t *testing.T) {
 	h.Require.ErrorContains(h.Execute("grid", "route", "usage", "--start", "2026-05-01T00:00:00Z", "--end", "2026-06-01T00:00:00Z"),
 		"older than the 92 days of usage Baseten keeps")
 }
+
+func Test_Grid_Route_Usage_TeamAndRouterDimensions(t *testing.T) {
+	row := gridUsageModel("test-model-api", "0.25", 100, 50, 20)
+	row["team_id"] = "team-a"
+	row["router_id"] = "acme/router"
+	body := gridUsageBody(gridUsageBucket("2026-09-24", row))
+	for _, output := range []string{"text", "json", "jsonl"} {
+		t.Run(output, func(t *testing.T) {
+			h, m := newGridUsageHarness(t, gridUsageNow, body)
+			h.Require.NoError(h.Execute("grid", "route", "usage", "--team", "Engineering", "--group-by", "team,router,model", "--output", output))
+			query := gridUsageLastQuery(h, m)
+			h.Require.Equal([]string{"TEAM", "ROUTER", "MODEL"}, query["group_by"])
+			h.Require.Equal([]string{"team-a"}, query["team_id"])
+			h.Require.Contains(h.Stdout.String(), "team-a")
+			h.Require.Contains(h.Stdout.String(), "acme/router")
+			if output == "text" {
+				h.Require.Contains(h.Stdout.String(), "TEAM")
+				h.Require.Contains(h.Stdout.String(), "ROUTER")
+			}
+		})
+	}
+}
+
+func Test_Grid_Route_Usage_OmittedTeamIsNotResolved(t *testing.T) {
+	h, m := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
+	h.Require.NoError(h.Execute("grid", "route", "usage", "--group-by", "team"))
+	h.Require.NotContains(gridUsageLastQuery(h, m), "team_id")
+	h.Require.Nil(m.FindCall("GET", "/v1/teams"))
+}

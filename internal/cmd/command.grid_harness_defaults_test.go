@@ -101,3 +101,12 @@ func Test_Grid_HarnessDefaults_Text(t *testing.T) {
 	require.Contains(t, out, "n/a")
 	require.Contains(t, out, "-")
 }
+
+func Test_Grid_HarnessDefaults_UsesResolvedTeamSettingsEndpoint(t *testing.T) {
+	h, api, _ := harnessDefaultsAPI(t, nil)
+	h.Require.NoError(h.Execute("grid", "harness-defaults", "--output", "json"))
+	call := api.FindCall("GET", "/v1/grid/team_settings")
+	h.Require.NotNil(call)
+	h.Require.Equal("team-a", call.Query().Get("team_id"))
+	h.Require.Nil(api.FindCall("GET", "/v1/grid/settings/teams/team-a"))
+}
