@@ -45,10 +45,10 @@ func commandGridRouteList(ctx *CommandContext, flags *cmd.GridRouteListFlags) er
 	}
 	rows := make([][]string, 0, len(items))
 	for _, r := range items {
-		rows = append(rows, []string{r.Id, r.DisplayName, r.Name, r.CreatedAt.UTC().Format(time.RFC3339)})
+		rows = append(rows, []string{r.Id, r.TeamName, r.DisplayName, r.Name, r.CreatedAt.UTC().Format(time.RFC3339)})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers: []string{"ID", "DISPLAY NAME", "NAME", "CREATED"},
+		Headers: []string{"ID", "TEAM", "DISPLAY NAME", "NAME", "CREATED"},
 		Rows:    rows,
 	})
 	return nil

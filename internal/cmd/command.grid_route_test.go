@@ -274,12 +274,12 @@ func Test_Grid_Route_List_TextAndJQ(t *testing.T) {
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage([]any{gridRouteCases()[0].Response, gridRouteCases()[1].Response}, nil))
 	h.Require.NoError(h.Execute("grid", "route", "list"))
-	h.Require.Regexp(`^ID\s+DISPLAY NAME\s+NAME\s+CREATED\s*\n`, h.Stdout.String(), "display name comes before name")
-	for _, text := range []string{"r123456", "Assistant", "acme/assistant", "2026-09-17T10:00:00Z"} {
+	h.Require.Regexp(`^ID\s+TEAM\s+DISPLAY NAME\s+NAME\s+CREATED\s*\n`, h.Stdout.String(), "team before the names, which come before the slug")
+	for _, text := range []string{"r123456", "Engineering", "Assistant", "acme/assistant", "2026-09-17T10:00:00Z"} {
 		h.Require.Contains(h.Stdout.String(), text)
 	}
-	for _, text := range []string{"TEAM", "Engineering", "TARGET", "test-model-api", "c123456"} {
-		h.Require.NotContains(h.Stdout.String(), text, "team details and targets are shown by describe")
+	for _, text := range []string{"TARGET", "test-model-api", "c123456"} {
+		h.Require.NotContains(h.Stdout.String(), text, "targets are shown by describe")
 	}
 	h.Require.Empty(h.Stderr.String())
 	h.Require.NoError(h.Execute("grid", "route", "list", "--jq", ".items[0].name"))
