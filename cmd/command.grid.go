@@ -276,7 +276,7 @@ var commandGridTeamSettings = Command{
 			Name:    "update",
 			Summary: "Update team harness defaults and spend limits",
 			Description: gridPrereleaseNotice + "Changes only supplied fields. Use --harness with --primary-route or --background-route to set route IDs; pass null to clear a role. " +
-				"--clear-harness-defaults clears every harness's configured defaults. Spend limits are exact USD amounts; null removes a limit. " +
+				"--clear-harness-defaults clears every harness's configured defaults. Spend limits are exact USD amounts; null removes a limit, and --clear-spend-limit removes both. " +
 				"Requires team admin; changing the team-wide limit requires organization admin. " + gridTeamDescription,
 			Flags: GridTeamSettingsUpdateFlags{},
 			Output: &CommandOutput[managementapi.GridTeamSettings]{
@@ -330,7 +330,7 @@ var commandGridUserSettings = Command{
 		{
 			Name:        "describe",
 			Summary:     "Show a user's spend settings in a team",
-			Description: gridPrereleaseNotice + "Defaults to your own settings (--user me). Reading other users requires team admin or organization admin. " + gridTeamDescription,
+			Description: gridPrereleaseNotice + "Defaults to your own settings (--user-id me). Reading other users requires team admin or organization admin. " + gridTeamDescription,
 			Flags:       GridUserSettingsDescribeFlags{},
 			Output: &CommandOutput[managementapi.GridTeamUserSettings]{
 				TextDescription: "User and team identifiers, monthly spend, standing and override limits, effective limit, and blocked status.",
@@ -347,7 +347,7 @@ var commandGridUserSettings = Command{
 		{
 			Name:    "update",
 			Summary: "Update a user's spend limits in a team",
-			Description: gridPrereleaseNotice + "Defaults to --user me. Requires team admin or organization admin, even when changing your own limits. " +
+			Description: gridPrereleaseNotice + "Defaults to --user-id me. Requires team admin or organization admin, even when changing your own limits. " +
 				"Omitted limits are unchanged; pass null to clear a limit. Amounts are exact USD strings. " + gridTeamDescription,
 			Flags: GridUserSettingsUpdateFlags{},
 			Output: &CommandOutput[managementapi.GridTeamUserSettings]{
@@ -355,7 +355,7 @@ var commandGridUserSettings = Command{
 				Examples: []CommandExample{{
 					Description: "Set a member's standing monthly limit.",
 					CommandLines: []string{
-						"baseten grid user-settings update --team <id> --user <id>",
+						"baseten grid user-settings update --team <id> --user-id <id>",
 						"--user-monthly-limit-usd 100",
 					},
 				}},
@@ -374,10 +374,12 @@ var commandGridUserSettings = Command{
 type GridTeamFlags struct {
 	Team string `flag:"team" desc:"Team name or ID. Omit to use your only team; required when you belong to several."`
 }
+
 type GridTeamSettingsDescribeFlags struct {
 	CommandFlags
 	GridTeamFlags
 }
+
 type GridTeamSettingsUpdateFlags struct {
 	CommandFlags
 	GridTeamFlags
@@ -385,21 +387,26 @@ type GridTeamSettingsUpdateFlags struct {
 	PrimaryRoute             OptionalFlag[string] `flag:"primary-route" desc:"Primary route ID; null clears the configured default. Requires --harness." nullable:"true"`
 	BackgroundRoute          OptionalFlag[string] `flag:"background-route" desc:"Background route ID for Claude Code or OpenCode; null clears it. Requires --harness." nullable:"true"`
 	ClearHarnessDefaults     bool                 `flag:"clear-harness-defaults" desc:"Clear all configured harness defaults. Cannot be combined with --harness or route flags."`
+	ClearSpendLimit          bool                 `flag:"clear-spend-limit" desc:"Clear both team spend limits. Requires organization admin. Cannot be combined with --per-member-monthly-limit-usd or --team-wide-monthly-limit-usd."`
 	PerMemberMonthlyLimitUSD OptionalFlag[string] `flag:"per-member-monthly-limit-usd" desc:"Default monthly USD limit per member; null removes it." nullable:"true"`
 	TeamWideMonthlyLimitUSD  OptionalFlag[string] `flag:"team-wide-monthly-limit-usd" desc:"Team-wide monthly USD limit; null removes it. Requires organization admin." nullable:"true"`
 }
+
 type GridUserSettingsListFlags struct {
 	CommandFlags
 	GridTeamFlags
 }
+
 type GridUserSettingsUserFlags struct {
-	User string `flag:"user" desc:"User ID, or me for yourself." default:"me"`
+	User string `flag:"user-id" desc:"User ID, or me for yourself." default:"me"`
 }
+
 type GridUserSettingsDescribeFlags struct {
 	CommandFlags
 	GridTeamFlags
 	GridUserSettingsUserFlags
 }
+
 type GridUserSettingsUpdateFlags struct {
 	CommandFlags
 	GridTeamFlags
@@ -495,24 +502,29 @@ var commandGridConnection = Command{
 type GridConnectionList struct {
 	Items []managementapi.GridConnection `json:"items"`
 }
+
 type GridConnectionListFlags struct {
 	CommandFlags
 	GridTeamFlags
 }
+
 type GridConnectionConfigFlags struct {
 	Provider string `flag:"provider" desc:"Upstream provider." enum:"anthropic,openai,xai" required:"true"`
 	SecretID string `flag:"secret-id" desc:"ID of an existing secret in the connection's team." required:"true"`
 }
+
 type GridConnectionCreateFlags struct {
 	CommandFlags
 	GridTeamFlags
 	GridConnectionConfigFlags
 }
+
 type GridConnectionUpdateFlags struct {
 	CommandFlags
 	GridConnectionConfigFlags
 	ID string `flag:"id" desc:"Connection ID." required:"true"`
 }
+
 type GridConnectionDeleteFlags struct {
 	CommandFlags
 	ID  string `flag:"id" desc:"Connection ID." required:"true"`

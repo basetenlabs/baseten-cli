@@ -92,6 +92,7 @@ func Test_Grid_TeamSettings_Update_PatchSemantics(t *testing.T) {
 		{"zero", []string{"--per-member-monthly-limit-usd", "0"}, map[string]any{"spend_limit": map[string]any{"per_member_monthly_limit_usd": "0"}}},
 		{"exact", []string{"--team-wide-monthly-limit-usd", "123456789.12"}, map[string]any{"spend_limit": map[string]any{"team_wide_monthly_limit_usd": "123456789.12"}}},
 		{"clear-limits", []string{"--per-member-monthly-limit-usd", "null", "--team-wide-monthly-limit-usd", "null"}, map[string]any{"spend_limit": map[string]any{"per_member_monthly_limit_usd": nil, "team_wide_monthly_limit_usd": nil}}},
+		{"clear-spend-limit", []string{"--clear-spend-limit"}, map[string]any{"spend_limit": nil}},
 		{"claude", []string{"--harness", "claude-code", "--primary-route", "r123456", "--background-route", "null"}, map[string]any{"harness_defaults": map[string]any{"claude_code": map[string]any{"primary": "r123456", "background": nil}}}},
 		{"opencode", []string{"--harness", "opencode", "--background-route", "r123456"}, map[string]any{"harness_defaults": map[string]any{"opencode": map[string]any{"background": "r123456"}}}},
 		{"codex", []string{"--harness", "codex", "--primary-route", "null"}, map[string]any{"harness_defaults": map[string]any{"codex": map[string]any{"primary": nil}}}},
@@ -137,7 +138,7 @@ func Test_Grid_Settings_Update_ExplicitTeamAndUser(t *testing.T) {
 		flags       []string
 	}{
 		{"team-settings", "/v1/grid/team_settings", []string{"--per-member-monthly-limit-usd", "100"}},
-		{"user-settings", "/v1/grid/team_settings/users/u123456", []string{"--user", "u123456", "--month-override-usd", "100"}},
+		{"user-settings", "/v1/grid/team_settings/users/u123456", []string{"--user-id", "u123456", "--month-override-usd", "100"}},
 	} {
 		t.Run(tc.group, func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -163,8 +164,10 @@ func Test_Grid_Settings_RejectsEmptyOrConflictingUpdates(t *testing.T) {
 		{"team-settings", "update", "--primary-route", "r123456"},
 		{"team-settings", "update", "--harness", "pi", "--background-route", "null"},
 		{"team-settings", "update", "--clear-harness-defaults", "--harness", "codex"},
-		{"user-settings", "update"}, {"user-settings", "update", "--user", "", "--month-override-usd", "0"},
-		{"user-settings", "describe", "--user", ""},
+		{"team-settings", "update", "--clear-spend-limit", "--per-member-monthly-limit-usd", "100"},
+		{"team-settings", "update", "--clear-spend-limit", "--team-wide-monthly-limit-usd", "100"},
+		{"user-settings", "update"}, {"user-settings", "update", "--user-id", "", "--month-override-usd", "0"},
+		{"user-settings", "describe", "--user-id", ""},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)

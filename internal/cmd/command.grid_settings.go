@@ -56,7 +56,10 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 	if roles != (f.Harness != "") {
 		return body, cmd.NewErrUsagef("pass --harness together with --primary-route or --background-route")
 	}
-	if !roles && !f.ClearHarnessDefaults && !f.PerMemberMonthlyLimitUSD.IsSet() && !f.TeamWideMonthlyLimitUSD.IsSet() {
+	if f.ClearSpendLimit && (f.PerMemberMonthlyLimitUSD.IsSet() || f.TeamWideMonthlyLimitUSD.IsSet()) {
+		return body, cmd.NewErrUsagef("--clear-spend-limit cannot be combined with --per-member-monthly-limit-usd or --team-wide-monthly-limit-usd")
+	}
+	if !roles && !f.ClearHarnessDefaults && !f.ClearSpendLimit && !f.PerMemberMonthlyLimitUSD.IsSet() && !f.TeamWideMonthlyLimitUSD.IsSet() {
 		return body, cmd.NewErrUsagef("pass a harness default or spend limit to update")
 	}
 	if f.ClearHarnessDefaults {
@@ -84,7 +87,9 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 		}
 		body.HarnessDefaults = managementapi.NewOptional(&defaults)
 	}
-	if f.PerMemberMonthlyLimitUSD.IsSet() || f.TeamWideMonthlyLimitUSD.IsSet() {
+	if f.ClearSpendLimit {
+		body.SpendLimit = managementapi.NewOptional[managementapi.UpdateGridTeamSpendLimitSetting](nil)
+	} else if f.PerMemberMonthlyLimitUSD.IsSet() || f.TeamWideMonthlyLimitUSD.IsSet() {
 		body.SpendLimit = managementapi.NewOptional(&managementapi.UpdateGridTeamSpendLimitSetting{
 			PerMemberMonthlyLimitUsd: gridOptional(f.PerMemberMonthlyLimitUSD),
 			TeamWideMonthlyLimitUsd:  gridOptional(f.TeamWideMonthlyLimitUSD),
@@ -161,7 +166,7 @@ func commandGridUserSettingsList(ctx *CommandContext, f *cmd.GridUserSettingsLis
 
 func commandGridUserSettingsDescribe(ctx *CommandContext, f *cmd.GridUserSettingsDescribeFlags) error {
 	if f.User == "" {
-		return cmd.NewErrUsagef("--user must be a user ID or me")
+		return cmd.NewErrUsagef("--user-id must be a user ID or me")
 	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -181,7 +186,7 @@ func commandGridUserSettingsDescribe(ctx *CommandContext, f *cmd.GridUserSetting
 
 func commandGridUserSettingsUpdate(ctx *CommandContext, f *cmd.GridUserSettingsUpdateFlags) error {
 	if f.User == "" {
-		return cmd.NewErrUsagef("--user must be a user ID or me")
+		return cmd.NewErrUsagef("--user-id must be a user ID or me")
 	}
 	if !f.UserMonthlyLimitUSD.IsSet() && !f.MonthOverrideUSD.IsSet() {
 		return cmd.NewErrUsagef("pass --user-monthly-limit-usd or --month-override-usd")
