@@ -10,7 +10,8 @@ import (
 
 func gridSettingsFixture() map[string]any {
 	return map[string]any{
-		"team_id": "t123456",
+		"team_id":   "t123456",
+		"team_name": "Engineering",
 		"harness_defaults": map[string]any{
 			"claude_code": map[string]any{"primary": nil, "background": nil},
 			"opencode":    map[string]any{"primary": nil, "background": nil},
@@ -26,7 +27,7 @@ func gridUserSettingsFixture() map[string]any {
 		"month_spend_usd": "12.5", "is_blocked": false, "blocked_by": nil,
 		"spend_limit": map[string]any{
 			"user_monthly_limit_usd": nil, "month_override_usd": nil,
-			"team_default":                map[string]any{"team_id": "t123456", "per_member_monthly_limit_usd": "100"},
+			"team_default":                map[string]any{"team_id": "t123456", "team_name": "Engineering", "per_member_monthly_limit_usd": "100"},
 			"effective":                   map[string]any{"monthly_limit_usd": "100", "source": "team"},
 			"team_wide_monthly_limit_usd": nil,
 		},
@@ -43,7 +44,7 @@ func Test_Grid_Settings_ReadContracts(t *testing.T) {
 	}{
 		{"team", []string{"team-settings", "describe"}, "/v1/grid/team_settings", gridSettingsFixture(), "Per-member monthly limit"},
 		{"user", []string{"user-settings", "describe"}, "/v1/grid/team_settings/users/me", gridUserSettingsFixture(), "member@example.com"},
-		{"users", []string{"user-settings", "list"}, "/v1/grid/team_settings/users", map[string]any{"users": []any{gridUserSettingsFixture()}}, "member@example.com"},
+		{"users", []string{"user-settings", "list"}, "/v1/grid/team_settings/users", gridRoutePage([]any{gridUserSettingsFixture()}, nil), "member@example.com"},
 	} {
 		for _, team := range []string{"", "t123456", "Engineering"} {
 			for _, output := range []string{"text", "json", "jsonl"} {
@@ -72,10 +73,15 @@ func Test_Grid_Settings_ReadContracts(t *testing.T) {
 					}
 					if output == "text" {
 						h.Require.Contains(h.Stdout.String(), tc.text)
+						h.Require.Contains(h.Stdout.String(), "Engineering")
 					} else {
 						var got any
 						h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
-						h.Require.Equal(tc.body, got)
+						want := tc.body
+						if tc.name == "users" {
+							want = map[string]any{"items": []any{gridUserSettingsFixture()}}
+						}
+						h.Require.Equal(want, got)
 					}
 				})
 			}
@@ -208,11 +214,11 @@ func Test_Grid_Settings_ServerErrorsPropagate(t *testing.T) {
 func Test_Grid_UserSettings_List_Empty(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/grid/team_settings/users", 200, map[string]any{"users": []any{}})
+	m.SetRoute("GET", "/v1/grid/team_settings/users", 200, gridRoutePage([]any{}, nil))
 	h.Require.NoError(h.Execute("grid", "user-settings", "list"))
 	h.Require.Contains(h.Stderr.String(), "No user settings")
 	h.Require.NoError(h.Execute("grid", "user-settings", "list", "--output", "json"))
-	h.Require.JSONEq(`{"users":[]}`, h.Stdout.String())
+	h.Require.JSONEq(`{"items":[]}`, h.Stdout.String())
 }
 
 func Test_Grid_UserSettings_List_MalformedResponse(t *testing.T) {
@@ -220,8 +226,78 @@ func Test_Grid_UserSettings_List_MalformedResponse(t *testing.T) {
 	m := h.MockManagementAPI()
 	m.SetRouteFunc("GET", "/v1/grid/team_settings/users", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"users":`))
+		_, _ = w.Write([]byte(`{"items":`))
 	})
 	h.Require.ErrorContains(h.Execute("grid", "user-settings", "list"), "unexpected end of JSON input")
 	h.Require.Len(m.Calls(), 1)
+}
+
+func Test_Grid_UserSettings_List_Pagination(t *testing.T) {
+	for _, team := range []string{"", "t123456", "Engineering"} {
+		for _, output := range []string{"text", "json", "jsonl"} {
+			t.Run(team+"/"+output, func(t *testing.T) {
+				h := NewCommandHarness(t)
+				m := h.MockManagementAPI()
+				gridRouteTeams(h)
+				first, second := gridUserSettingsFixture(), gridUserSettingsFixture()
+				if team == "" {
+					// The same user can have a membership in more than one team.
+					second["team_id"], second["team_name"] = "t765432", "Research"
+					limit := second["spend_limit"].(map[string]any)
+					limit["team_default"] = map[string]any{"team_id": "t765432", "team_name": "Research", "per_member_monthly_limit_usd": "100"}
+				} else {
+					second["user_id"], second["email"] = "u765432", "another@example.com"
+				}
+				m.SetRouteFunc("GET", "/v1/grid/team_settings/users", func(w http.ResponseWriter, r *http.Request) {
+					want := ""
+					if team != "" {
+						want = "t123456"
+					}
+					h.Require.Equal(want, r.URL.Query().Get("team_id"))
+					body := gridRoutePage([]any{first}, "next")
+					if r.URL.Query().Get("cursor") == "next" {
+						body = gridRoutePage([]any{second}, nil)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(body)
+				})
+				args := []string{"grid", "user-settings", "list", "--output", output}
+				if team != "" {
+					args = append(args, "--team", team)
+				}
+				h.Require.NoError(h.Execute(args...))
+				h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/team_settings/users"))
+				if team == "" {
+					h.Require.Nil(m.FindCall("GET", "/v1/teams"))
+				}
+				if output == "text" {
+					h.Require.Contains(h.Stdout.String(), "Engineering")
+					h.Require.Contains(h.Stdout.String(), second["team_name"])
+					h.Require.Contains(h.Stdout.String(), second["user_id"])
+				} else {
+					var got any
+					h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+					h.Require.Equal(map[string]any{"items": []any{first, second}}, got)
+				}
+			})
+		}
+	}
+}
+
+func Test_Grid_UserSettings_List_PageError(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRouteFunc("GET", "/v1/grid/team_settings/users", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("cursor") != "" {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "forbidden"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(gridRoutePage([]any{gridUserSettingsFixture()}, "next"))
+	})
+	h.Require.Error(h.Execute("grid", "user-settings", "list", "--output", "json"))
+	h.Require.Equal(403, decodeJSONErrorEnvelope(h).APIStatusCode)
+	h.Require.NotContains(h.Stdout.String(), "member@example.com")
+	h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/team_settings/users"))
 }

@@ -173,14 +173,15 @@ func gridLoadHarnessSetupRoutes(ctx *CommandContext, api *managementapi.Client, 
 	if err != nil {
 		return nil, nil, err
 	}
-	listed, err := listGridRoutes(ctx, api, managementapi.GetV1GridRoutesParams{TeamId: teamID})
+	forHarnesses := true
+	listed, err := listGridRoutes(ctx, api, managementapi.GetV1GridRoutesParams{TeamId: teamID, ForHarnesses: &forHarnesses})
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(listed) == 0 {
 		return nil, nil, errors.New("no routes available for this team; create one with 'baseten grid route create'")
 	}
-	// The routes API resolves an omitted team and scopes every page to that team.
+	// Harness-scoped routes resolve an omitted team and keep every page in that team.
 	team := &managementapi.Team{Id: listed[0].TeamId, Name: listed[0].TeamName}
 	if team.Id == "" {
 		return nil, nil, errors.New("routes API returned a route without a team ID")
@@ -1298,22 +1299,31 @@ func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFla
 	if err != nil {
 		return err
 	}
-	classifiers, err := cl.API().GetGridClassifiers(ctx)
-	if err != nil {
-		return fmt.Errorf("listing classifiers: %w", err)
+	params := managementapi.GetV1GridClassifiersParams{}
+	var items []managementapi.GridClassifier
+	for {
+		page, err := cl.API().GetGridClassifiers(ctx, params)
+		if err != nil {
+			return fmt.Errorf("listing classifiers: %w", err)
+		}
+		items = append(items, page.Items...)
+		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
+			break
+		}
+		params.Cursor = page.Pagination.Cursor
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(classifiers)
+		ctx.OutputJSON(cmd.GridClassifierList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
-	if len(classifiers.Classifiers) == 0 {
+	if len(items) == 0 {
 		ctx.LogLine("No classifiers found.")
 		return nil
 	}
 	var rows [][]string
-	for _, classifier := range classifiers.Classifiers {
-		rows = append(rows, []string{classifier.Id, classifier.DisplayName})
+	for _, classifier := range items {
+		rows = append(rows, []string{classifier.Id, classifier.Name})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"ID", "DISPLAY NAME"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME"}, Rows: rows})
 	return nil
 }

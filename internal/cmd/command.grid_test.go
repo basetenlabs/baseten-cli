@@ -1451,7 +1451,7 @@ const harnessDefaultsPath = "/v1/grid/team_settings"
 
 // harnessDefaultsBody is a team settings response with the given harness defaults.
 func harnessDefaultsBody(defaults map[string]any) map[string]any {
-	return map[string]any{"team_id": "team-a", "harness_defaults": defaults}
+	return map[string]any{"team_id": "team-a", "team_name": "Engineering", "harness_defaults": defaults}
 }
 
 // harnessDefaultsAPI is fakeGridAPI with four team-a routes and the given
@@ -2204,6 +2204,7 @@ func Test_Grid_Setup_ServerResolvedTeamAcrossPagesAndSync(t *testing.T) {
 	// A team-directory outage must not affect server-side resolution during setup.
 	api.SetRoute("GET", "/v1/teams", 500, map[string]string{"message": "team directory unavailable"})
 	api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
+		h.Require.Equal("true", r.URL.Query().Get("for_harnesses"))
 		if team := r.URL.Query().Get("team_id"); team != "" {
 			h.Require.Equal("team-b", team)
 		}
@@ -2269,7 +2270,7 @@ func Test_Grid_Setup_RejectsEmptyOrInvalidTeamScope(t *testing.T) {
 		teamIDs              []string
 	}{
 		{"no-routes", "", "no routes available", nil},
-		// These responses deliberately violate the single-team Grid routes contract.
+		// These responses deliberately violate the harness-scoped single-team contract.
 		{"missing-team", "", "without a team ID", []string{""}},
 		{"mixed-teams", "", "different teams", []string{"team-a", "team-b"}},
 		{"wrong-team", "team-a", "requested", []string{"team-b"}},
@@ -2307,9 +2308,9 @@ func Test_Grid_Classifier_List(t *testing.T) {
 				m := h.MockManagementAPI()
 				items := []any{}
 				if !empty {
-					items = append(items, map[string]any{"id": "general-v1", "display_name": "General"})
+					items = append(items, map[string]any{"id": "general-v1", "name": "General"})
 				}
-				body := map[string]any{"classifiers": items}
+				body := gridRoutePage(items, nil)
 				m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
 					h.Require.Equal("Bearer test-key", r.Header.Get("Authorization"))
 					h.Require.Empty(r.URL.RawQuery)
@@ -2328,7 +2329,7 @@ func Test_Grid_Classifier_List(t *testing.T) {
 				} else {
 					var got any
 					h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
-					h.Require.Equal(body, got)
+					h.Require.Equal(map[string]any{"items": items}, got)
 				}
 			})
 		}
@@ -2350,7 +2351,7 @@ func Test_Grid_Classifier_List_Errors(t *testing.T) {
 		m := h.MockManagementAPI()
 		m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"classifiers":`))
+			_, _ = w.Write([]byte(`{"items":`))
 		})
 		h.Require.ErrorContains(h.Execute("grid", "classifier", "list"), "unexpected end of JSON input")
 	})
@@ -2387,4 +2388,52 @@ func Test_Grid_Setup_ReplacesDeletedKey(t *testing.T) {
 	h.Require.Error(h.Execute(args...))
 	h.Require.Contains(h.Stderr.String(), "listing Grid API keys")
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+}
+
+func Test_Grid_Classifier_List_Pagination(t *testing.T) {
+	for _, output := range []string{"text", "json", "jsonl"} {
+		t.Run(output, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			first := map[string]any{"id": "general-v1", "name": "General"}
+			second := map[string]any{"id": "coding-v1", "name": "Coding"}
+			m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+				h.Require.NotContains(r.URL.Query(), "team_id")
+				body := gridRoutePage([]any{first}, "next")
+				if r.URL.Query().Get("cursor") == "next" {
+					body = gridRoutePage([]any{second}, nil)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(body)
+			})
+			h.Require.NoError(h.Execute("grid", "classifier", "list", "--output", output))
+			h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/classifiers"))
+			if output == "text" {
+				h.Require.Contains(h.Stdout.String(), "General")
+				h.Require.Contains(h.Stdout.String(), "Coding")
+			} else {
+				var got any
+				h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+				h.Require.Equal(map[string]any{"items": []any{first, second}}, got)
+			}
+		})
+	}
+}
+
+func Test_Grid_Classifier_List_PageError(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("cursor") != "" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "unavailable"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(gridRoutePage([]any{map[string]any{"id": "general-v1", "name": "General"}}, "next"))
+	})
+	h.Require.Error(h.Execute("grid", "classifier", "list", "--output", "json"))
+	h.Require.Equal(500, decodeJSONErrorEnvelope(h).APIStatusCode)
+	h.Require.NotContains(h.Stdout.String(), "general-v1")
+	h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/classifiers"))
 }

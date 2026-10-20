@@ -43,16 +43,16 @@ func setGridConnectionConfig(config interface {
 	FromUpsertGridConnectionConfigOpenAI(managementapi.UpsertGridConnectionConfigOpenAI) error
 	FromUpsertGridConnectionConfigXAI(managementapi.UpsertGridConnectionConfigXAI) error
 }, f cmd.GridConnectionConfigFlags) error {
-	if f.SecretID == "" {
-		return cmd.NewErrUsagef("--secret-id must not be empty")
+	if f.SecretName == "" {
+		return cmd.NewErrUsagef("--secret-name must not be empty")
 	}
 	switch f.Provider {
 	case "anthropic":
-		return config.FromUpsertGridConnectionConfigAnthropic(managementapi.UpsertGridConnectionConfigAnthropic{Provider: "ANTHROPIC", SecretId: f.SecretID})
+		return config.FromUpsertGridConnectionConfigAnthropic(managementapi.UpsertGridConnectionConfigAnthropic{Provider: "ANTHROPIC", SecretName: f.SecretName})
 	case "openai":
-		return config.FromUpsertGridConnectionConfigOpenAI(managementapi.UpsertGridConnectionConfigOpenAI{Provider: "OPENAI", SecretId: f.SecretID})
+		return config.FromUpsertGridConnectionConfigOpenAI(managementapi.UpsertGridConnectionConfigOpenAI{Provider: "OPENAI", SecretName: f.SecretName})
 	case "xai":
-		return config.FromUpsertGridConnectionConfigXAI(managementapi.UpsertGridConnectionConfigXAI{Provider: "XAI", SecretId: f.SecretID})
+		return config.FromUpsertGridConnectionConfigXAI(managementapi.UpsertGridConnectionConfigXAI{Provider: "XAI", SecretName: f.SecretName})
 	default:
 		return cmd.NewErrUsagef("unsupported provider %q", f.Provider)
 	}
@@ -148,8 +148,8 @@ func outputGridConnections(ctx *CommandContext, connections []managementapi.Grid
 		default:
 			return fmt.Errorf("unsupported connection config %T", value)
 		}
-		rows = append(rows, []string{connection.Id, connection.TeamId, enumFromAPIValue(provider), secretID, secretName})
+		rows = append(rows, []string{connection.Id, connection.TeamId, connection.TeamName, enumFromAPIValue(provider), secretID, secretName})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"ID", "TEAM", "PROVIDER", "SECRET ID", "SECRET NAME"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"ID", "TEAM ID", "TEAM NAME", "PROVIDER", "SECRET ID", "SECRET NAME"}, Rows: rows})
 	return nil
 }

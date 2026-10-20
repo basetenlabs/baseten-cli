@@ -31,7 +31,7 @@ var commandGridRoute = Command{
 					"Use 'grid route describe' for a route's target and team. When no routes match, prints \"No routes found.\" to stderr.",
 				Examples: []CommandExample{
 					{
-						Description: "List your only team's routes.",
+						Description: "List routes across your teams.",
 						Command:     "baseten grid route list",
 					},
 					{
@@ -179,7 +179,7 @@ var commandGridRoute = Command{
 				"For your own usage this month, see 'baseten grid usage'. For machine-readable streaming, prefer " +
 				"--output jsonl over --output json.",
 			Flags: GridRouteUsageFlags{},
-			Output: &CommandOutput[managementapi.GridUsageBucket]{
+			Output: &CommandOutput[managementapi.GridRouteUsageBucket]{
 				JSONArrayStreamed: true,
 				TextDescription: "Table with a DATE column, one column per --group-by dimension, then INPUT, CACHED, and " +
 					"OUTPUT token counts and COST, followed by an ALL totals row. A day with no usage renders as a single " +
@@ -233,7 +233,7 @@ type GridRouteList struct {
 
 type GridRouteListFlags struct {
 	CommandFlags
-	Team string `flag:"team" desc:"Team name or ID to list routes of. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
+	Team string `flag:"team" desc:"Team name or ID to list routes of. Omit to list across all accessible teams. Run 'baseten org team list' to see teams."`
 }
 
 type GridRouteDescribeFlags struct {

@@ -97,7 +97,7 @@ func commandGridUsage(ctx *CommandContext, f *cmd.GridUsageFlags) error {
 	today := ctx.Now().UTC()
 	current := startDate == time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, time.UTC).Format(time.DateOnly) &&
 		endDate == today.AddDate(0, 0, 1).Format(time.DateOnly)
-	dims := []managementapi.GridUsageDimension{managementapi.GridUsageDimension_TEAM, managementapi.GridUsageDimension_MODEL}
+	dims := []managementapi.GridRouteUsageDimension{managementapi.GridRouteUsageDimension_TEAM, managementapi.GridRouteUsageDimension_MODEL}
 	// Spend limits are per user, and admins would otherwise see the whole
 	// organization's usage.
 	userIDs := []string{me.UserId}

@@ -222,6 +222,7 @@ func Test_Grid_Route_List_PaginationAndFilters(t *testing.T) {
 	m.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
 		h.Require.Equal("t123456", r.URL.Query().Get("team_id"))
 		h.Require.NotContains(r.URL.Query(), "name")
+		h.Require.NotContains(r.URL.Query(), "for_harnesses")
 		h.Require.NotContains(r.URL.Query(), "limit")
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Query().Get("cursor") {
@@ -249,6 +250,7 @@ func Test_Grid_Route_List_WithoutFilters(t *testing.T) {
 	q := m.FindCall("GET", "/v1/grid/routes").Query()
 	h.Require.NotContains(q, "team_id")
 	h.Require.NotContains(q, "name")
+	h.Require.NotContains(q, "for_harnesses")
 	h.Require.NotContains(q, "limit")
 	h.Require.JSONEq(`{"items":[]}`, h.Stdout.String())
 }
@@ -263,7 +265,7 @@ func Test_Grid_Route_List_TextAndJQ(t *testing.T) {
 		h.Require.Contains(h.Stdout.String(), text)
 	}
 	for _, text := range []string{"TEAM", "Engineering", "TARGET", "test-model-api", "c123456"} {
-		h.Require.NotContains(h.Stdout.String(), text, "the team is the listing's scope, and targets are for describe")
+		h.Require.NotContains(h.Stdout.String(), text, "team details and targets are shown by describe")
 	}
 	h.Require.Empty(h.Stderr.String())
 	h.Require.NoError(h.Execute("grid", "route", "list", "--jq", ".items[0].name"))
@@ -681,4 +683,21 @@ func Test_Grid_Route_Classifier_InvalidFlags(t *testing.T) {
 			h.Require.Empty(m.Calls())
 		})
 	}
+}
+
+func Test_Grid_Route_List_AcrossTeams(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	first, second := gridRouteCases()[0].Response, gridRouteCases()[1].Response
+	second["id"], second["name"] = "r765432", "acme/other"
+	second["team_id"], second["team_name"] = "t765432", "Research"
+	m.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage([]any{first, second}, nil))
+	h.Require.NoError(h.Execute("grid", "route", "list", "--output", "json"))
+	h.Require.Len(m.Calls(), 1)
+	h.Require.Empty(m.FindCall("GET", "/v1/grid/routes").Query())
+	var got publiccmd.GridRouteList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Len(got.Items, 2)
+	h.Require.Equal("Engineering", got.Items[0].TeamName)
+	h.Require.Equal("Research", got.Items[1].TeamName)
 }

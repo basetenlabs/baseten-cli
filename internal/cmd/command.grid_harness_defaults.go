@@ -19,19 +19,19 @@ func commandGridHarnessDefaults(ctx *CommandContext, flags *cmd.GridHarnessDefau
 		return err
 	}
 	api := cl.API()
-	team, err := resolveTeamOrOnly(ctx, api, flags.Team)
+	team, err := gridTeamID(ctx, api, flags.Team)
 	if err != nil {
 		return err
 	}
-	settings, err := api.GetGridTeamSettings(ctx, managementapi.GetV1GridTeamSettingsParams{TeamId: &team.Id})
+	settings, err := api.GetGridTeamSettings(ctx, managementapi.GetV1GridTeamSettingsParams{TeamId: team})
 	if err != nil {
-		return fmt.Errorf("getting harness defaults for team %s: %w", team.Name, err)
+		return fmt.Errorf("getting harness defaults: %w", err)
 	}
 	items := gridHarnessDefaultItems(settings.HarnessDefaults, flags.Harness)
 	if ctx.JSON {
 		ctx.OutputJSON(cmd.GridHarnessDefaultsList{
-			TeamId:   team.Id,
-			TeamName: team.Name,
+			TeamId:   settings.TeamId,
+			TeamName: settings.TeamName,
 			Items:    normalizeJSONSlice(items),
 		})
 		return nil

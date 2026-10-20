@@ -136,6 +136,7 @@ func Test_Grid_Route_Usage_ClampsToRetention(t *testing.T) {
 func Test_Grid_Route_Usage_TeamAndRouterDimensions(t *testing.T) {
 	row := gridUsageModel("test-model-api", "0.25", 100, 50, 20)
 	row["team_id"] = "team-a"
+	row["team_name"] = "Engineering"
 	row["router_id"] = "acme/router"
 	body := gridUsageBody(gridUsageBucket("2026-09-24", row))
 	for _, output := range []string{"text", "json", "jsonl"} {
@@ -150,6 +151,8 @@ func Test_Grid_Route_Usage_TeamAndRouterDimensions(t *testing.T) {
 			if output == "text" {
 				h.Require.Contains(h.Stdout.String(), "TEAM")
 				h.Require.Contains(h.Stdout.String(), "ROUTER")
+			} else {
+				h.Require.Contains(h.Stdout.String(), "Engineering")
 			}
 		})
 	}

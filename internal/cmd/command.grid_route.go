@@ -316,7 +316,7 @@ func gridRouteTargetFields(value any) (gridRouteTargetInfo, error) {
 	}
 }
 
-// listGridConnections returns a team's route connections across all pages.
+// listGridConnections returns matching connections across all pages.
 func listGridConnections(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridConnectionsParams) ([]managementapi.GridConnection, error) {
 	var connections []managementapi.GridConnection
 	for {

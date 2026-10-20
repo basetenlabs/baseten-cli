@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	public "github.com/basetenlabs/baseten-cli/cmd"
@@ -107,6 +108,47 @@ func Test_Grid_HarnessDefaults_UsesResolvedTeamSettingsEndpoint(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "harness-defaults", "--output", "json"))
 	call := api.FindCall("GET", "/v1/grid/team_settings")
 	h.Require.NotNil(call)
-	h.Require.Equal("team-a", call.Query().Get("team_id"))
+	h.Require.NotContains(call.Query(), "team_id")
+	h.Require.Nil(api.FindCall("GET", "/v1/teams"))
 	h.Require.Nil(api.FindCall("GET", "/v1/grid/settings/teams/team-a"))
+}
+
+func Test_Grid_HarnessDefaults_ExplicitTeam(t *testing.T) {
+	for _, team := range []string{"team-a", "Engineering"} {
+		t.Run(team, func(t *testing.T) {
+			h, api, _ := harnessDefaultsAPI(t, nil)
+			h.Require.NoError(h.Execute("grid", "harness-defaults", "--team", team, "--output", "json"))
+			h.Require.Equal("team-a", api.FindCall("GET", harnessDefaultsPath).Query().Get("team_id"))
+			var got public.GridHarnessDefaultsList
+			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+			h.Require.Equal("team-a", got.TeamId)
+			h.Require.Equal("Engineering", got.TeamName)
+		})
+	}
+}
+
+func Test_Grid_HarnessDefaults_ServerResolvesTeam(t *testing.T) {
+	h, api, _ := harnessDefaultsAPI(t, nil)
+	api.SetRoute("GET", "/v1/teams", 500, map[string]string{"message": "unavailable"})
+	body := harnessDefaultsBody(nil)
+	body["team_id"], body["team_name"] = "team-b", "Research"
+	api.SetRoute("GET", harnessDefaultsPath, 200, body)
+	h.Require.NoError(h.Execute("grid", "harness-defaults", "--output", "json"))
+	var got public.GridHarnessDefaultsList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal("team-b", got.TeamId)
+	h.Require.Equal("Research", got.TeamName)
+	h.Require.Len(api.Calls(), 1)
+}
+
+func Test_Grid_HarnessDefaults_ServerErrors(t *testing.T) {
+	for _, status := range []int{400, 403, 500} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			h, api, _ := harnessDefaultsAPI(t, nil)
+			api.SetRoute("GET", harnessDefaultsPath, status, map[string]string{"message": "server rejected team resolution"})
+			h.Require.Error(h.Execute("grid", "harness-defaults", "--output", "json"))
+			h.Require.Equal(status, decodeJSONErrorEnvelope(h).APIStatusCode)
+			h.Require.Len(api.Calls(), 1)
+		})
+	}
 }

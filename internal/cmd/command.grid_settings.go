@@ -47,8 +47,8 @@ func gridOptional[T any](flag cmd.OptionalFlag[T]) managementapi.Optional[T] {
 	return managementapi.NewOptional(flag.Pointer())
 }
 
-func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.UpdateResolvedGridTeamSettingsRequest, error) {
-	body := managementapi.UpdateResolvedGridTeamSettingsRequest{}
+func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.UpdateGridTeamSettingsRequest, error) {
+	body := managementapi.UpdateGridTeamSettingsRequest{}
 	roles := f.PrimaryRoute.IsSet() || f.BackgroundRoute.IsSet()
 	if f.ClearHarnessDefaults && (f.Harness != "" || roles) {
 		return body, cmd.NewErrUsagef("--clear-harness-defaults cannot be combined with --harness or route flags")
@@ -125,6 +125,7 @@ func outputGridTeamSettings(ctx *CommandContext, settings *managementapi.GridTea
 		return
 	}
 	ctx.Outputf("Team ID:                       %s\n", settings.TeamId)
+	ctx.Outputf("Team name:                     %s\n", settings.TeamName)
 	ctx.Outputf("Per-member monthly limit USD:  %s\n", gridSettingText(settings.SpendLimit.PerMemberMonthlyLimitUsd))
 	ctx.Outputf("Team-wide monthly limit USD:   %s\n", gridSettingText(settings.SpendLimit.TeamWideMonthlyLimitUsd))
 	var rows [][]string
@@ -143,24 +144,33 @@ func commandGridUserSettingsList(ctx *CommandContext, f *cmd.GridUserSettingsLis
 	if err != nil {
 		return err
 	}
-	settings, err := cl.API().GetGridTeamSettingsUsers(ctx, managementapi.GetV1GridTeamSettingsUsersParams{TeamId: team})
-	if err != nil {
-		return fmt.Errorf("listing user settings: %w", err)
+	params := managementapi.GetV1GridTeamSettingsUsersParams{TeamId: team}
+	var items []managementapi.GridTeamUserSettings
+	for {
+		page, err := cl.API().GetGridTeamSettingsUsers(ctx, params)
+		if err != nil {
+			return fmt.Errorf("listing user settings: %w", err)
+		}
+		items = append(items, page.Items...)
+		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
+			break
+		}
+		params.Cursor = page.Pagination.Cursor
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(settings)
+		ctx.OutputJSON(cmd.GridUserSettingsList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
-	if len(settings.Users) == 0 {
+	if len(items) == 0 {
 		ctx.LogLine("No user settings found.")
 		return nil
 	}
 	var rows [][]string
-	for _, user := range settings.Users {
-		rows = append(rows, []string{user.UserId, gridSettingText(user.Email), user.MonthSpendUsd,
+	for _, user := range items {
+		rows = append(rows, []string{user.UserId, gridSettingText(user.Email), user.TeamId, user.TeamName, user.MonthSpendUsd,
 			gridSettingText(user.SpendLimit.Effective.MonthlyLimitUsd), gridSettingText(user.BlockedBy)})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"USER", "EMAIL", "MONTH SPEND", "EFFECTIVE LIMIT", "BLOCKED BY"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"USER", "EMAIL", "TEAM ID", "TEAM NAME", "MONTH SPEND", "EFFECTIVE LIMIT", "BLOCKED BY"}, Rows: rows})
 	return nil
 }
 
@@ -199,7 +209,7 @@ func commandGridUserSettingsUpdate(ctx *CommandContext, f *cmd.GridUserSettingsU
 	if err != nil {
 		return err
 	}
-	settings, err := cl.API().PatchGridTeamSettingsUsers(ctx, f.User, managementapi.UpdateResolvedGridUserSettingsRequest{
+	settings, err := cl.API().PatchGridTeamSettingsUsers(ctx, f.User, managementapi.UpdateGridUserSettingsRequest{
 		TeamId: team,
 		SpendLimit: managementapi.NewOptional(&managementapi.UpdateGridSpendLimitSetting{
 			UserMonthlyLimitUsd: gridOptional(f.UserMonthlyLimitUSD), MonthOverrideUsd: gridOptional(f.MonthOverrideUSD),

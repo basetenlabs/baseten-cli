@@ -35,7 +35,7 @@ func commandGridRouteUsage(ctx *CommandContext, f *cmd.GridRouteUsageFlags) erro
 		query:   f.GridRouteUsageQueryFlags,
 		// Like the API: the previous UTC day through today.
 		defaultStart: func(end time.Time) time.Time { return end.AddDate(0, 0, -1) },
-		newTable: func(dims []managementapi.GridUsageDimension) gridUsageTable {
+		newTable: func(dims []managementapi.GridRouteUsageDimension) gridUsageTable {
 			return &gridRouteUsageSeries{dims: dims, all: newGridUsageTotal()}
 		},
 	})
@@ -52,12 +52,12 @@ type gridUsageRequest struct {
 	defaultStart func(end time.Time) time.Time
 	// defaultToCaller narrows usage to the caller when --user-id is omitted.
 	defaultToCaller bool
-	newTable        func(dims []managementapi.GridUsageDimension) gridUsageTable
+	newTable        func(dims []managementapi.GridRouteUsageDimension) gridUsageTable
 }
 
 // gridUsageTable renders the text output from daily buckets.
 type gridUsageTable interface {
-	addBucket(managementapi.GridUsageBucket) error
+	addBucket(managementapi.GridRouteUsageBucket) error
 	// empty reports whether no bucket had usage.
 	empty() bool
 	// unpriced reports whether any usage came back without a cost.
@@ -185,10 +185,10 @@ buckets:
 
 // gridUsageGroupBy maps the --group-by values, already validated by the
 // flag's enum, onto the backend dimension enum, dropping repeats.
-func gridUsageGroupBy(values []string) []managementapi.GridUsageDimension {
-	dims := make([]managementapi.GridUsageDimension, 0, len(values))
+func gridUsageGroupBy(values []string) []managementapi.GridRouteUsageDimension {
+	dims := make([]managementapi.GridRouteUsageDimension, 0, len(values))
 	for _, v := range values {
-		dim := managementapi.GridUsageDimension(strings.ToUpper(v))
+		dim := managementapi.GridRouteUsageDimension(strings.ToUpper(v))
 		if !slices.Contains(dims, dim) {
 			dims = append(dims, dim)
 		}
@@ -244,7 +244,7 @@ func newGridUsageTotal() *gridUsageTotal {
 
 // gridUsageResultTotal converts one result, rejecting a cost that doesn't
 // parse.
-func gridUsageResultTotal(r managementapi.GridUsageResult) (*gridUsageTotal, error) {
+func gridUsageResultTotal(r managementapi.GridRouteUsageResult) (*gridUsageTotal, error) {
 	t := newGridUsageTotal()
 	t.input = int64(r.InputTokens)
 	t.cached = int64(r.CachedInputTokens)
@@ -290,18 +290,18 @@ func (t *gridUsageTotal) money() string {
 	return billingFormatMoney(f)
 }
 
-func gridUsageDimensionCell(d managementapi.GridUsageDimension, r managementapi.GridUsageResult) string {
+func gridUsageDimensionCell(d managementapi.GridRouteUsageDimension, r managementapi.GridRouteUsageResult) string {
 	var v string
 	switch d {
-	case managementapi.GridUsageDimension_USER:
+	case managementapi.GridRouteUsageDimension_USER:
 		v = deref(r.UserId)
-	case managementapi.GridUsageDimension_TEAM:
+	case managementapi.GridRouteUsageDimension_TEAM:
 		v = deref(r.TeamId)
-	case managementapi.GridUsageDimension_ROUTER:
+	case managementapi.GridRouteUsageDimension_ROUTER:
 		v = deref(r.RouterId)
-	case managementapi.GridUsageDimension_MODEL:
+	case managementapi.GridRouteUsageDimension_MODEL:
 		v = deref(r.Model)
-	case managementapi.GridUsageDimension_PROVIDER:
+	case managementapi.GridRouteUsageDimension_PROVIDER:
 		if r.Provider != nil {
 			v = strings.ToLower(strings.ReplaceAll(string(*r.Provider), "_", "-"))
 		}
@@ -311,7 +311,7 @@ func gridUsageDimensionCell(d managementapi.GridUsageDimension, r managementapi.
 
 // gridUsageHeaders are the table headers for the given leading columns and
 // dimensions, with the numeric columns right-aligned.
-func gridUsageHeaders(leading []string, dims []managementapi.GridUsageDimension) (headers []string, rightAligned []int) {
+func gridUsageHeaders(leading []string, dims []managementapi.GridRouteUsageDimension) (headers []string, rightAligned []int) {
 	headers = slices.Clone(leading)
 	for _, d := range dims {
 		headers = append(headers, string(d))
@@ -326,7 +326,7 @@ func gridUsageHeaders(leading []string, dims []managementapi.GridUsageDimension)
 // gridRouteUsageSeries renders one row per day and --group-by combination, like
 // model-api usage, with a trailing ALL row.
 type gridRouteUsageSeries struct {
-	dims     []managementapi.GridUsageDimension
+	dims     []managementapi.GridRouteUsageDimension
 	rows     [][]string
 	dataRows int
 	all      *gridUsageTotal
@@ -334,7 +334,7 @@ type gridRouteUsageSeries struct {
 
 // addBucket appends this day's rows. A day with no usage still gets a row so
 // gaps in the series stay visible.
-func (s *gridRouteUsageSeries) addBucket(b managementapi.GridUsageBucket) error {
+func (s *gridRouteUsageSeries) addBucket(b managementapi.GridRouteUsageBucket) error {
 	stamp := b.Date
 	if len(b.Results) == 0 {
 		row := make([]string, 1+len(s.dims)+4)

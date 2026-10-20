@@ -157,7 +157,7 @@ var commandGrid = Command{
 			// which providers are included (Vertex and OpenAI-compatible aren't
 			// yet), whether costs are always present, and the 15-minute lag.
 			Flags: GridUsageFlags{},
-			Output: &CommandOutput[managementapi.GridUsageBucket]{
+			Output: &CommandOutput[managementapi.GridRouteUsageBucket]{
 				JSONArrayStreamed: true,
 				TextDescription: "The month and when limits reset go to stderr. Then, for each team, a line with the team, what you spent " +
 					"there this month and your limit there, with the team's default when yours differs from it, ending in " +
@@ -233,18 +233,22 @@ var commandGridClassifier = Command{
 		Summary:     "List classifiers available to your organization (PRE-RELEASE)",
 		Description: gridPrereleaseNotice + "Classifiers are managed by Baseten. Use their IDs when creating or updating classifier-backed routes.",
 		Flags:       GridClassifierListFlags{},
-		Output: &CommandOutput[managementapi.GridClassifiersResponse]{
-			TextDescription: "Table with ID and DISPLAY NAME columns. An empty catalog prints a message to stderr.",
+		Output: &CommandOutput[GridClassifierList]{
+			TextDescription: "Table with ID and NAME columns. Lists all pages; an empty catalog prints a message to stderr.",
 			Examples: []CommandExample{{
 				Description: "List available classifiers.",
 				Command:     "baseten grid classifier list",
 			}},
 			JQExample: CommandExample{
 				Description: "Print classifier IDs.",
-				Command:     "baseten grid classifier list --jq '.classifiers[].id'",
+				Command:     "baseten grid classifier list --jq '.items[].id'",
 			},
 		},
 	}},
+}
+
+type GridClassifierList struct {
+	Items []managementapi.GridClassifier `json:"items"`
 }
 
 type GridClassifierListFlags struct{ CommandFlags }
@@ -261,7 +265,7 @@ var commandGridTeamSettings = Command{
 			Description: gridPrereleaseNotice + gridTeamDescription,
 			Flags:       GridTeamSettingsDescribeFlags{},
 			Output: &CommandOutput[managementapi.GridTeamSettings]{
-				TextDescription: "Team ID, monthly spend limits, and a table of harness default routes and their sources.",
+				TextDescription: "Team ID and name, monthly spend limits, and a table of harness default routes and their sources.",
 				Examples: []CommandExample{{
 					Description: "Show your only team's settings.",
 					Command:     "baseten grid team-settings describe",
@@ -313,17 +317,17 @@ var commandGridUserSettings = Command{
 		{
 			Name:        "list",
 			Summary:     "List team members' spend settings (PRE-RELEASE)",
-			Description: gridPrereleaseNotice + "Requires team admin or organization admin. " + gridTeamDescription,
+			Description: gridPrereleaseNotice + "Lists members across teams you administer; use --team to select one. Requires team admin or organization admin.",
 			Flags:       GridUserSettingsListFlags{},
-			Output: &CommandOutput[managementapi.GridTeamUserSettingsList]{
-				TextDescription: "Table with USER, EMAIL, MONTH SPEND, EFFECTIVE LIMIT, and BLOCKED BY columns. Empty teams print a message to stderr.",
+			Output: &CommandOutput[GridUserSettingsList]{
+				TextDescription: "Table with USER, EMAIL, TEAM ID, TEAM NAME, MONTH SPEND, EFFECTIVE LIMIT, and BLOCKED BY columns. Lists all pages; empty results print a message to stderr.",
 				Examples: []CommandExample{{
 					Description: "List members' settings in a team.",
 					Command:     "baseten grid user-settings list --team <id>",
 				}},
 				JQExample: CommandExample{
 					Description: "Print each member's limits.",
-					Command:     "baseten grid user-settings list --jq '.users[].spend_limit'",
+					Command:     "baseten grid user-settings list --jq '.items[].spend_limit'",
 				},
 			},
 		},
@@ -375,6 +379,10 @@ type GridTeamFlags struct {
 	Team string `flag:"team" desc:"Team name or ID. Omit to use your only team; required when you belong to several."`
 }
 
+type GridTeamListFlags struct {
+	Team string `flag:"team" desc:"Team name or ID. Omit to list across all accessible teams."`
+}
+
 type GridTeamSettingsDescribeFlags struct {
 	CommandFlags
 	GridTeamFlags
@@ -392,9 +400,13 @@ type GridTeamSettingsUpdateFlags struct {
 	TeamWideMonthlyLimitUSD  OptionalFlag[string] `flag:"team-wide-monthly-limit-usd" desc:"Team-wide monthly USD limit; null removes it. Requires organization admin." nullable:"true"`
 }
 
+type GridUserSettingsList struct {
+	Items []managementapi.GridTeamUserSettings `json:"items"`
+}
+
 type GridUserSettingsListFlags struct {
 	CommandFlags
-	GridTeamFlags
+	GridTeamListFlags
 }
 
 type GridUserSettingsUserFlags struct {
@@ -421,13 +433,13 @@ var commandGridConnection = Command{
 	Children: []Command{
 		{
 			Name:        "list",
-			Summary:     "List a team's provider connections (PRE-RELEASE)",
-			Description: gridPrereleaseNotice + gridTeamDescription,
+			Summary:     "List provider connections (PRE-RELEASE)",
+			Description: gridPrereleaseNotice + "List connections across your teams; use --team to select one.",
 			Flags:       GridConnectionListFlags{},
 			Output: &CommandOutput[GridConnectionList]{
-				TextDescription: "Table with ID, TEAM, PROVIDER, SECRET ID, and SECRET NAME columns. Lists all pages; secret values are never returned.",
+				TextDescription: "Table with ID, TEAM ID, TEAM NAME, PROVIDER, SECRET ID, and SECRET NAME columns. Lists all pages; secret values are never returned.",
 				Examples: []CommandExample{{
-					Description: "List your only team's connections.",
+					Description: "List connections across your teams.",
 					Command:     "baseten grid connection list",
 				}},
 				JQExample: CommandExample{
@@ -445,12 +457,12 @@ var commandGridConnection = Command{
 				TextDescription: "The created connection's ID, team, provider, and secret metadata.",
 				Examples: []CommandExample{{
 					Description: "Connect Anthropic using a team secret.",
-					Command:     "baseten grid connection create --provider anthropic --secret-id <id>",
+					Command:     "baseten grid connection create --provider anthropic --secret-name <name>",
 				}},
 				JQExample: CommandExample{
 					Description: "Print the new connection ID.",
 					CommandLines: []string{
-						"baseten grid connection create --provider openai --secret-id <id>",
+						"baseten grid connection create --provider openai --secret-name <name>",
 						"--jq '.id'",
 					},
 				},
@@ -467,14 +479,14 @@ var commandGridConnection = Command{
 					Description: "Change the secret used by a connection.",
 					CommandLines: []string{
 						"baseten grid connection update --id <id>",
-						"--provider anthropic --secret-id <secret-id>",
+						"--provider anthropic --secret-name <name>",
 					},
 				}},
 				JQExample: CommandExample{
 					Description: "Print the updated secret metadata.",
 					CommandLines: []string{
 						"baseten grid connection update --id <id>",
-						"--provider anthropic --secret-id <secret-id> --jq '.config'",
+						"--provider anthropic --secret-name <name> --jq '.config'",
 					},
 				},
 			},
@@ -505,12 +517,12 @@ type GridConnectionList struct {
 
 type GridConnectionListFlags struct {
 	CommandFlags
-	GridTeamFlags
+	GridTeamListFlags
 }
 
 type GridConnectionConfigFlags struct {
-	Provider string `flag:"provider" desc:"Upstream provider." enum:"anthropic,openai,xai" required:"true"`
-	SecretID string `flag:"secret-id" desc:"ID of an existing secret in the connection's team." required:"true"`
+	Provider   string `flag:"provider" desc:"Upstream provider." enum:"anthropic,openai,xai" required:"true"`
+	SecretName string `flag:"secret-name" desc:"Name of an existing secret in the connection's team." required:"true"`
 }
 
 type GridConnectionCreateFlags struct {
