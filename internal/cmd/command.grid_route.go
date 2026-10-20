@@ -223,7 +223,7 @@ func commandGridRouteCreate(ctx *CommandContext, flags *cmd.GridRouteCreateFlags
 }
 
 func commandGridRouteUpdate(ctx *CommandContext, flags *cmd.GridRouteUpdateFlags) error {
-	hasClassifier := ctx.Command.Flags().Changed("classifier-id") || ctx.Command.Flags().Changed("allowed-route-id") || ctx.Command.Flags().Changed("default-route-id")
+	hasClassifier := hasGridRouteClassifier(flags.GridRouteClassifierFlags)
 	if !flags.DisplayName.IsSet() && !flags.Description.IsSet() && !hasClassifier {
 		return cmd.NewErrUsagef("pass --display-name, --description, or a complete classifier configuration")
 	}

@@ -122,11 +122,25 @@ func Test_Grid_Route_Create_DefaultDisplayName(t *testing.T) {
 }
 
 func Test_Grid_Route_Update_DisplayNameAndDescription(t *testing.T) {
-	h := NewCommandHarness(t)
-	m := h.MockManagementAPI()
-	m.SetRoute("PATCH", "/v1/grid/routes/r123456", 200, gridRouteCases()[0].Response)
-	h.Require.NoError(h.Execute("grid", "route", "update", "--id", "r123456", "--display-name", "New label", "--description", ""))
-	h.Require.Equal(map[string]any{"display_name": "New label", "description": ""}, m.FindCall("PATCH", "/v1/grid/routes/r123456").BodyJSON(t))
+	for _, tc := range []struct {
+		name  string
+		flags []string
+	}{
+		{"omitted", nil},
+		{"empty-classifier-id", []string{"--classifier-id", ""}},
+		{"empty-default-route-id", []string{"--default-route-id", ""}},
+		{"both-empty", []string{"--classifier-id", "", "--default-route-id", ""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			m.SetRoute("PATCH", "/v1/grid/routes/r123456", 200, gridRouteCases()[0].Response)
+			args := append([]string{"grid", "route", "update", "--id", "r123456", "--display-name", "New label", "--description", ""}, tc.flags...)
+			h.Require.NoError(h.Execute(args...))
+			h.Require.Equal(map[string]any{"display_name": "New label", "description": ""}, m.FindCall("PATCH", "/v1/grid/routes/r123456").BodyJSON(t))
+			h.Require.Len(m.Calls(), 1)
+		})
+	}
 }
 
 func Test_Grid_Route_Describe_Update_Delete_ExactName(t *testing.T) {
@@ -672,7 +686,8 @@ func Test_Grid_Route_Create_Update_InvalidClassifierFlags(t *testing.T) {
 		{"create", "--target-type", "classifier", "--target-model", "model"},
 		{"create", "--target-type", "connection", "--target-model", "model", "--target-connection", "c123456", "--classifier-id", "general-v1"},
 		{"update", "--id", "r123456", "--classifier-id", "general-v1"},
-		{"update", "--id", "r123456", "--display-name", "Name", "--classifier-id", ""},
+		{"update", "--id", "r123456", "--classifier-id", ""},
+		{"update", "--id", "r123456", "--display-name", "Name", "--classifier-id", "general-v1"},
 		{"update", "--id", "r123456", "--classifier-id", "general-v1", "--allowed-route-id", "", "--default-route-id", "r234567"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
