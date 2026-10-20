@@ -176,7 +176,8 @@ var commandGridRoute = Command{
 				"Usage can lag by up to 15 minutes and is retained for 92 days. Model API costs use your prices and " +
 				"include tool calls. OpenAI, Anthropic, and xAI costs estimate what those providers charge and are not " +
 				"Baseten charges. Vertex and OpenAI-compatible usage isn't included.\n\n" +
-				"For your own usage this month, see 'baseten grid usage'. For machine-readable streaming, prefer " +
+				"For your spend this month against your limit, see 'baseten grid user-settings describe'. For " +
+				"machine-readable streaming, prefer " +
 				"--output jsonl over --output json.",
 			Flags: GridRouteUsageFlags{},
 			Output: &CommandOutput[managementapi.GridRouteUsageBucket]{
@@ -263,8 +264,8 @@ type GridRouteDeleteFlags struct {
 	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
-// GridRouteUsageQueryFlags are the usage filters and paging flags shared by
-// `baseten grid route usage` and `baseten grid usage`.
+// GridRouteUsageQueryFlags are the usage filters and paging flags of
+// `baseten grid route usage`.
 type GridRouteUsageQueryFlags struct {
 	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated." enum:"user,team,model,provider,router" default:"model"`
 
