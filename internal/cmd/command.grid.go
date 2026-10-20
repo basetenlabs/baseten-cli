@@ -1192,6 +1192,17 @@ func gridProtectedHarnessCredentials(ctx *CommandContext, selected []gridSelecte
 	return protected, sessionKey, nil
 }
 
+// listGridRouteAPIKeys returns the Grid API keys the caller created, across all
+// their machines and teams.
+func listGridRouteAPIKeys(ctx context.Context, api *managementapi.Client) (*managementapi.APIKeys, error) {
+	category, mine := managementapi.APIKeyCategory_ROUTES, true
+	keys, err := api.GetApiKeys(ctx, managementapi.GetV1ApiKeysParams{Type: &category, CreatedByMe: &mine})
+	if err != nil {
+		return nil, fmt.Errorf("listing Grid API keys: %w", err)
+	}
+	return keys, nil
+}
+
 // gridDeleteHarnessKeys deletes the Grid API keys with these values.
 func gridDeleteHarnessKeys(ctx *CommandContext, tokens []string) ([]string, error) {
 	cl, err := ctx.NewManagementClient()

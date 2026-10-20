@@ -2166,8 +2166,6 @@ func Test_Grid_Help(t *testing.T) {
 		{"grid", "route", "update"},
 		{"grid", "route", "delete"},
 		{"grid", "route", "usage"},
-		{"grid", "route", "api-key", "list"},
-		{"grid", "route", "api-key", "delete"},
 		{"grid", "team-settings", "describe"},
 		{"grid", "team-settings", "update"},
 		{"grid", "user-settings", "list"},
@@ -2365,4 +2363,28 @@ func Test_Grid_UnavailableDescribeCommandsAreNotExposed(t *testing.T) {
 			h.Require.ErrorContains(h.Execute("grid", resource, "describe"), "unknown command")
 		})
 	}
+}
+
+func Test_Grid_Setup_ReplacesDeletedKey(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	dir := t.TempDir()
+	args := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+	h.Require.NoError(h.Execute(args...))
+	h.Require.NoError(h.Execute(args...))
+	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "an active key is reused")
+
+	// The key was deleted on another machine.
+	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{}})
+	api.SetRoute("POST", "/v1/teams/team-a/api_keys", 200, map[string]string{"api_key": "secret-team-a-2"})
+	h.Require.NoError(h.Execute(args...))
+	h.Require.Contains(h.Stderr.String(), "Created Grid API key")
+	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	h.Require.Equal("secret-team-a-2", readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
+
+	// A failed check leaves the saved key and configuration alone.
+	api.SetRoute("GET", "/v1/api_keys", 500, map[string]string{"message": "unavailable"})
+	h.Require.Error(h.Execute(args...))
+	h.Require.Contains(h.Stderr.String(), "listing Grid API keys")
+	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
