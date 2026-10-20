@@ -53,6 +53,19 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	if (flags.WatchHotReload || flags.WatchNoKeepalive) && !flags.Watch {
 		return cmd.NewErrUsagef("--watch-hot-reload and --watch-no-keepalive require --watch")
 	}
+	// --file pushes the config alone, so there is no directory to combine it
+	// with or for --watch to patch from. Without either, the current directory
+	// is pushed.
+	if flags.File != "" {
+		switch {
+		case flags.Dir != "":
+			return cmd.NewErrUsagef("--file cannot be combined with --dir")
+		case flags.Watch:
+			return cmd.NewErrUsagef("--file cannot be combined with --watch")
+		}
+	} else if flags.Dir == "" {
+		flags.Dir = "."
+	}
 
 	pushOpts, err := buildModelPushOptions(ctx, flags)
 	if err != nil {
@@ -191,18 +204,20 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 		IsDevelopment:              flags.Develop || flags.Watch,
 		PreserveEnvInstanceType:    flags.PreserveEnvInstanceType,
 		CreateEnvironmentIfMissing: flags.CreateEnvironmentIfMissing,
-		Archive: modelarchive.BuildModelArchiveOptions{
-			Dir: flags.Dir,
-			IgnoreFileProcessor: func(_ context.Context, opts modelarchive.IgnoreFileProcessorOptions) (modelarchive.IgnoreFileFunc, error) {
-				return deploymentpatch.CompileTrussIgnore(opts.Contents), nil
-			},
-		},
 		ModelUploader: func(uploadCtx context.Context, upload client.ModelUpload) error {
 			return uploadModelPushArchive(ctx, uploadCtx, upload)
 		},
 	}
+	if flags.File == "" {
+		opts.Archive = modelarchive.BuildModelArchiveOptions{
+			Dir: flags.Dir,
+			IgnoreFileProcessor: func(_ context.Context, opts modelarchive.IgnoreFileProcessorOptions) (modelarchive.IgnoreFileFunc, error) {
+				return deploymentpatch.CompileTrussIgnore(opts.Contents), nil
+			},
+		}
+	}
 
-	if err := readModelConfigYAML(flags.Dir, &opts); err != nil {
+	if err := readModelConfigYAML(ctx, flags, &opts); err != nil {
 		return opts, err
 	}
 
@@ -224,20 +239,37 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 	return opts, nil
 }
 
-// readModelConfigYAML loads config.yaml from dir into opts: the parsed Config,
-// the verbatim RawConfig, and the archive's package-dir options. A missing
-// config.yaml is treated as a usage error since the user is most likely
-// pointing at the wrong directory.
-func readModelConfigYAML(dir string, opts *client.PushModelOptions) error {
-	path := filepath.Join(dir, modelPushConfigFileName)
-	raw, err := os.ReadFile(path)
+// readModelConfigYAML loads the model config from --file (or stdin), or else
+// from config.yaml in --dir, into opts: the parsed Config, the verbatim
+// RawConfig, and what the archive is built from. A missing config.yaml is
+// treated as a usage error since the user is most likely pointing at the wrong
+// directory.
+func readModelConfigYAML(ctx *CommandContext, flags *cmd.ModelPushFlags, opts *client.PushModelOptions) error {
+	var raw []byte
+	var path string
+	var err error
 	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return cmd.NewErrUsagef(
-			"%s not found in %q: is this a model directory? Pass --dir to point to one",
-			modelPushConfigFileName, dir)
-	case err != nil:
-		return fmt.Errorf("read %s: %w", path, err)
+	case flags.File == "-":
+		path = "stdin"
+		if raw, err = io.ReadAll(ctx.Stdin); err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+	case flags.File != "":
+		path = flags.File
+		if raw, err = os.ReadFile(path); err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+	default:
+		path = filepath.Join(flags.Dir, modelPushConfigFileName)
+		raw, err = os.ReadFile(path)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return cmd.NewErrUsagef(
+				"%s not found in %q: is this a model directory? Pass --dir to point to one, or --file for a config file",
+				modelPushConfigFileName, flags.Dir)
+		case err != nil:
+			return fmt.Errorf("read %s: %w", path, err)
+		}
 	}
 
 	if err := yaml.Unmarshal(raw, &opts.Config); err != nil {
@@ -250,6 +282,20 @@ func readModelConfigYAML(dir string, opts *client.PushModelOptions) error {
 	// the server never parses it into the build, so it keeps the original bytes
 	// (comments and all), including external_package_dirs.
 	opts.RawConfig = string(raw)
+
+	// A config pushed on its own is the whole archive. Its external package
+	// dirs would have to resolve against some directory and be uploaded with
+	// it, which is what --dir is for.
+	if flags.File != "" {
+		if len(raw) == 0 {
+			return cmd.NewErrUsagef("%s is empty", path)
+		}
+		if extDirs, _ := opts.Config["external_package_dirs"].([]any); len(extDirs) > 0 {
+			return cmd.NewErrUsagef("external_package_dirs is not supported with --file: use --dir to push a model directory")
+		}
+		opts.ArchiveFromConfigYAML = raw
+		return nil
+	}
 
 	if extDirs, ok := opts.Config["external_package_dirs"].([]any); ok {
 		for _, v := range extDirs {
