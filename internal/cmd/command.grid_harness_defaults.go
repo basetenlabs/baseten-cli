@@ -27,7 +27,7 @@ func commandGridHarnessDefaults(ctx *CommandContext, flags *cmd.GridHarnessDefau
 	if err != nil {
 		return fmt.Errorf("getting harness defaults for team %s: %w", team.Name, err)
 	}
-	items := harnessDefaultItems(settings.HarnessDefaults, flags.Harness)
+	items := gridHarnessDefaultItems(settings.HarnessDefaults, flags.Harness)
 	if ctx.JSON {
 		ctx.OutputJSON(cmd.GridHarnessDefaultsList{
 			TeamId:   team.Id,
@@ -40,8 +40,8 @@ func commandGridHarnessDefaults(ctx *CommandContext, flags *cmd.GridHarnessDefau
 	for _, item := range items {
 		rows = append(rows, []string{
 			item.Harness,
-			harnessDefaultLabel(item.Primary, true),
-			harnessDefaultLabel(item.Background, harnessSupportsBackground(item.Harness)),
+			gridHarnessDefaultLabel(item.Primary, true),
+			gridHarnessDefaultLabel(item.Background, gridHarnessSupportsBackground(item.Harness)),
 		})
 	}
 	ctx.OutputTable(TableOutput{
@@ -51,23 +51,23 @@ func commandGridHarnessDefaults(ctx *CommandContext, flags *cmd.GridHarnessDefau
 	return nil
 }
 
-func harnessDefaultItems(defaults managementapi.GridHarnessDefaults, selected []string) []cmd.GridHarnessDefault {
+func gridHarnessDefaultItems(defaults managementapi.GridHarnessDefaults, selected []string) []cmd.GridHarnessDefault {
 	items := make([]cmd.GridHarnessDefault, 0, len(harness.All()))
 	for _, h := range harness.All() {
 		if len(selected) > 0 && !slices.Contains(selected, h.Name()) {
 			continue
 		}
-		models := harnessDefaultModels(&defaults, h.Name())
+		models := gridHarnessDefaultModels(&defaults, h.Name())
 		items = append(items, cmd.GridHarnessDefault{
 			Harness:    h.Name(),
-			Primary:    models[harnessRolePrimary],
-			Background: models[harnessRoleBackground],
+			Primary:    models[gridHarnessRolePrimary],
+			Background: models[gridHarnessRoleBackground],
 		})
 	}
 	return items
 }
 
-func harnessSupportsBackground(name string) bool {
+func gridHarnessSupportsBackground(name string) bool {
 	for _, h := range harness.All() {
 		if h.Name() == name {
 			return h.BackgroundRoute(harness.Selection{}) != ""
@@ -76,7 +76,7 @@ func harnessSupportsBackground(name string) bool {
 	return false
 }
 
-func harnessDefaultLabel(model *managementapi.GridHarnessModel, supported bool) string {
+func gridHarnessDefaultLabel(model *managementapi.GridHarnessModel, supported bool) string {
 	if !supported {
 		return "n/a"
 	}

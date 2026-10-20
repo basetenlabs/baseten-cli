@@ -128,8 +128,8 @@ func outputGridTeamSettings(ctx *CommandContext, settings *managementapi.GridTea
 	ctx.Outputf("Per-member monthly limit USD:  %s\n", gridSettingText(settings.SpendLimit.PerMemberMonthlyLimitUsd))
 	ctx.Outputf("Team-wide monthly limit USD:   %s\n", gridSettingText(settings.SpendLimit.TeamWideMonthlyLimitUsd))
 	var rows [][]string
-	for _, item := range harnessDefaultItems(settings.HarnessDefaults, nil) {
-		rows = append(rows, []string{item.Harness, harnessDefaultLabel(item.Primary, true), harnessDefaultLabel(item.Background, harnessSupportsBackground(item.Harness))})
+	for _, item := range gridHarnessDefaultItems(settings.HarnessDefaults, nil) {
+		rows = append(rows, []string{item.Harness, gridHarnessDefaultLabel(item.Primary, true), gridHarnessDefaultLabel(item.Background, gridHarnessSupportsBackground(item.Harness))})
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"HARNESS", "PRIMARY", "BACKGROUND"}, Rows: rows})
 }
