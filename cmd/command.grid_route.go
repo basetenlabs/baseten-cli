@@ -198,7 +198,10 @@ var commandGridRoute = Command{
 						Description: "Show which users drove usage over the last 7 days (admins).",
 						Command:     "baseten grid route usage --since 7d --group-by user",
 					},
-					{Description: "Break routed usage down by team and router.", Command: "baseten grid route usage --group-by team,router"},
+					{
+						Description: "Break routed usage down by team and router.",
+						Command:     "baseten grid route usage --group-by team,router",
+					},
 				},
 				JQExample: CommandExample{
 					Description: "Stream each day's cost per model as a JSONL stream.",
