@@ -520,7 +520,7 @@ type ModelDeploymentPromoteFlags struct {
 	Region                    OptionalFlag[string] `flag:"region" desc:"Region slug to set on the environment. Pass an empty string for Global. Run 'baseten org regions' to see the slugs available."`
 	InstanceTypeID            OptionalFlag[string] `flag:"instance-type-id" desc:"Instance type to set on the environment. Cannot be combined with --preserve-env-instance-type."`
 	RequestBackpressurePolicy OptionalFlag[string] `flag:"request-backpressure-policy" desc:"Backpressure policy to set on the environment. Pass null to clear the environment's policy." enum:"queue-on-full,reject-on-full" nullable:"true"`
-	AutoscalingScheduleUpdate string               `flag:"autoscaling-schedule-update" desc:"Autoscaling schedule changes for the environment, applied when the promotion completes, as a JSON object with schedules, delete_schedules, and timezone. Same shape as autoscaling_schedule_settings on the environment update API."`
+	AutoscalingScheduleUpdate OptionalFlag[string] `flag:"autoscaling-schedule-update" desc:"Autoscaling schedule changes for the environment, applied when the promotion completes, as a JSON object with schedules, delete_schedules, and timezone. Same shape as autoscaling_schedule_settings on the environment update API."`
 	PrefixedAutoscalingSettingsFlags
 	PromotionSettingsOverrideFlags
 

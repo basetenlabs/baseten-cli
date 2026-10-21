@@ -390,9 +390,14 @@ func Test_Model_Deployment_Promote_AutoscalingScheduleUpdate(t *testing.T) {
 		"start_hour": float64(8), "start_minute": float64(0), "end_hour": float64(18), "end_minute": float64(0),
 		"autoscaling_settings": map[string]any{"min_replica": float64(4)},
 	}
+	oneTime := map[string]any{
+		"name": "launch", "cadence": "ONE_TIME", "enabled": true,
+		"start_at": "2026-09-01T08:00:00-04:00", "end_at": "2026-09-01T20:00:00-04:00",
+		"autoscaling_settings": map[string]any{"min_replica": float64(10)},
+	}
 	update := map[string]any{
 		"timezone":         "America/New_York",
-		"schedules":        []any{schedule},
+		"schedules":        []any{schedule, oneTime},
 		"delete_schedules": []any{"s-old"},
 	}
 	raw, err := json.Marshal(update)
@@ -418,11 +423,16 @@ func Test_Model_Deployment_Promote_AutoscalingScheduleUpdate_RejectsUnknownKey(t
 	h.Require.Nil(m.FindCall("POST", "/v1/models/m-1/environments/production/promote"))
 }
 
-func Test_Model_Deployment_Promote_AutoscalingScheduleUpdate_RejectsEmptyOrTrailingInput(t *testing.T) {
+func Test_Model_Deployment_Promote_AutoscalingScheduleUpdate_RejectsInvalidInput(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, want string
 	}{
+		{"empty string", ``, "must be a JSON object"},
 		{"null", `null`, "set at least one of"},
+		{"nested typo", `{"schedules":[{"name":"s","cadence":"DAILY","enabled":true,"weekdays":["MONDAY"],` +
+			`"start_minute":0,"end_minute":0,"autoscaling_settings":{"scale_down_dely":60}}]}`,
+			`schedules[0]: invalid JSON: json: unknown field "scale_down_dely"`},
+		{"unknown cadence", `{"schedules":[{"name":"s","cadence":"WEEKLY"}]}`, `schedules[0]: unknown cadence "WEEKLY"`},
 		{"empty object", `{}`, "set at least one of"},
 		{"trailing data", `{"timezone":"UTC"} junk`, "unexpected data after the JSON object"},
 		{"second object", `{"timezone":"UTC"}{}`, "unexpected data after the JSON object"},

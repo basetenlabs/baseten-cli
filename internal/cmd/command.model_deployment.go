@@ -3,9 +3,11 @@ package cmd
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -573,8 +575,8 @@ func promotionEnvironmentSettingsFromFlags(
 		settings := requestBackpressureFromPolicy(flags.RequestBackpressurePolicy)
 		update.RequestBackpressureSettings = &settings
 	}
-	if flags.AutoscalingScheduleUpdate != "" {
-		schedules, err := parseAutoscalingScheduleUpdate(flags.AutoscalingScheduleUpdate)
+	if raw := flags.AutoscalingScheduleUpdate.Pointer(); raw != nil {
+		schedules, err := parseAutoscalingScheduleUpdate(*raw)
 		if err != nil {
 			return nil, err
 		}
@@ -587,19 +589,61 @@ func promotionEnvironmentSettingsFromFlags(
 // ignores unknown keys and reads an empty object as no change, so both are
 // rejected here rather than sent.
 func parseAutoscalingScheduleUpdate(raw string) (*managementapi.UpdateAutoscalingScheduleSettings, error) {
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	var schedules managementapi.UpdateAutoscalingScheduleSettings
-	if err := decoder.Decode(&schedules); err != nil {
-		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: invalid JSON: %v", err)
+	if strings.TrimSpace(raw) == "" {
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: must be a JSON object")
 	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: unexpected data after the JSON object")
+	var schedules managementapi.UpdateAutoscalingScheduleSettings
+	if err := decodeJSONStrict([]byte(raw), &schedules); err != nil {
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: %v", err)
 	}
 	if schedules == (managementapi.UpdateAutoscalingScheduleSettings{}) {
 		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: set at least one of schedules, delete_schedules, or timezone")
 	}
+	// Each schedule is a union kept as raw JSON, so the decode above never
+	// looked inside it.
+	if schedules.Schedules != nil {
+		for i, item := range *schedules.Schedules {
+			if err := validateScheduleUpsert(item); err != nil {
+				return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: schedules[%d]: %v", i, err)
+			}
+		}
+	}
 	return &schedules, nil
+}
+
+// validateScheduleUpsert strictly decodes one schedule into the request type
+// its cadence selects, so a misspelled key anywhere inside it is an error.
+func validateScheduleUpsert(item managementapi.UpdateAutoscalingScheduleSettings_Schedules_Item) error {
+	cadence, err := item.Discriminator()
+	if err != nil {
+		return err
+	}
+	raw, err := item.MarshalJSON()
+	if err != nil {
+		return err
+	}
+	switch cadence {
+	case "DAILY", "HOURLY":
+		return decodeJSONStrict(raw, &managementapi.AutoscalingScheduleUpsert{})
+	case "ONE_TIME":
+		return decodeJSONStrict(raw, &managementapi.OneTimeAutoscalingScheduleUpsert{})
+	default:
+		return fmt.Errorf("unknown cadence %q", cadence)
+	}
+}
+
+// decodeJSONStrict decodes exactly one JSON value, rejecting unknown keys and
+// anything after the value.
+func decodeJSONStrict(raw []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("unexpected data after the JSON object")
+	}
+	return nil
 }
 
 // environmentSettingsChanges names the settings a promotion changes on the
