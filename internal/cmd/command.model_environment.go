@@ -106,7 +106,23 @@ func commandModelEnvironmentDescribe(ctx *CommandContext, flags *cmd.ModelEnviro
 	if env.AutoscalingSchedules != nil {
 		outputAutoscalingSchedules(ctx, env.AutoscalingSchedules)
 	}
+	outputTrafficRules(ctx, trafficRules(env))
 	return nil
+}
+
+// outputTrafficRules prints an environment's active traffic routing rules one
+// per line, with the ids the traffic-rule update and delete commands take.
+func outputTrafficRules(ctx *CommandContext, rules []managementapi.TrafficRoutingRule) {
+	if len(rules) == 0 {
+		return
+	}
+	ctx.Outputf("Traffic Rules:\n")
+	for _, rule := range rules {
+		ctx.Outputf("  %s: %s %d%% to %s, %s, propagate client cancellation %t, expires %s\n",
+			rule.Id, enumFromAPIValue(rule.Type), rule.PercentTraffic, trafficRuleTargetText(rule.Targets),
+			enumFromAPIValue(string(rule.SamplingMode)), rule.PropagateClientCancellation,
+			rule.ExpiresAt.UTC().Format(time.RFC3339))
+	}
 }
 
 // outputAutoscalingSchedules prints an environment's schedules one per line.
