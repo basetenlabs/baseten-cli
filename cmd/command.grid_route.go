@@ -27,7 +27,7 @@ var commandGridRoute = Command{
 				"List all available routes, newest first.",
 			Output: &CommandOutput[GridRouteList]{
 				JSONDescription: "All matching routes in items. " + gridRouteTargetJSONDescription,
-				TextDescription: "Table with columns: ID, TEAM, DISPLAY NAME, NAME, CREATED. " +
+				TextDescription: "Table with columns: ID, TEAM ID, TEAM NAME, DISPLAY NAME, NAME, CREATED. " +
 					"Use 'grid route describe' for a route's target. When no routes match, prints \"No routes found.\" to stderr.",
 				Examples: []CommandExample{
 					{
@@ -76,7 +76,7 @@ var commandGridRoute = Command{
 				"from its target. Find Model API names with 'baseten model-api list'.\n\n" +
 				"Omit --team to use your only team; specify it when you belong to several. External providers are reached through " +
 				"a connection owned by the route's team, which holds the provider's API key; pass its ID with " +
-				"--target-connection. Pass the same --team value if the route uses a specific team.\n\n" +
+				"--target-connection-id. Pass the same --team value if the route uses a specific team.\n\n" +
 				"Set optional metadata with --display-name and --description.",
 			Output: &CommandOutput[managementapi.GridRoute]{
 				JSONDescription: gridRouteTargetJSONDescription,
@@ -94,7 +94,7 @@ var commandGridRoute = Command{
 						CommandLines: []string{
 							"baseten grid route create",
 							"--target-type connection --target-model <model>",
-							"--target-connection <connection-id>",
+							"--target-connection-id <connection-id>",
 						},
 					},
 					{
@@ -227,7 +227,7 @@ type GridRouteTargetFlags struct {
 	GridRouteClassifierFlags
 	TargetType       string `flag:"target-type" desc:"Target type." enum:"baseten-model-api,connection,classifier" required:"true"`
 	TargetModel      string `flag:"target-model" desc:"Model API name or external provider model name. Required for non-classifier targets."`
-	TargetConnection string `flag:"target-connection" desc:"ID of a connection in the route's team, whose provider serves the route. Required with --target-type connection."`
+	TargetConnection string `flag:"target-connection-id" desc:"ID of a connection in the route's team, whose provider serves the route. Required with --target-type connection."`
 }
 
 // GridRouteList contains the routes aggregated across all pages.

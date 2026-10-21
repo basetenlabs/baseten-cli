@@ -146,3 +146,98 @@ func Test_Grid_Connection_Update_ServerRejectsProviderChange(t *testing.T) {
 	h.Require.Equal(400, decodeJSONErrorEnvelope(h).APIStatusCode)
 	h.Require.Len(m.Calls(), 1)
 }
+
+func Test_Grid_Connection_List_UnknownProvider(t *testing.T) {
+	for _, output := range []string{"text", "json", "jsonl"} {
+		t.Run(output, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			providers := []string{"anthropic", "openai", "xai"}
+			items := make([]any, 0, len(providers)+1)
+			for _, provider := range providers {
+				connection := gridConnectionFixture(provider)
+				connection["id"] = "c-" + provider
+				items = append(items, connection)
+			}
+			// Simulate a provider and configuration shape added after this SDK.
+			unknown := gridConnectionFixture("future_provider")
+			unknown["id"] = "c-future"
+			unknown["config"] = map[string]any{
+				"provider":   "FUTURE_PROVIDER",
+				"credential": map[string]any{"name": "future-key"},
+			}
+			items = append(items, unknown)
+			m.SetRoute("GET", "/v1/grid/connections", 200, gridRoutePage(items, nil))
+			h.Require.NoError(h.Execute("grid", "connection", "list", "--output", output))
+			h.Require.Len(m.Calls(), 1)
+			if output == "text" {
+				lines := strings.Split(strings.TrimSpace(h.Stdout.String()), "\n")
+				h.Require.Len(lines, len(items)+1)
+				for i, provider := range providers {
+					h.Require.Equal([]string{"c-" + provider, "t123456", "Engineering", provider, "provider-key"}, strings.Fields(lines[i+1]))
+				}
+				h.Require.Equal([]string{"c-future", "t123456", "Engineering", "<unknown>", "<unknown>"}, strings.Fields(lines[len(items)]))
+			} else {
+				var got any
+				h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+				h.Require.Equal(map[string]any{"items": items}, got)
+			}
+		})
+	}
+}
+
+func Test_Grid_Connection_List_MalformedConfig(t *testing.T) {
+	type configCase struct {
+		name   string
+		config any
+	}
+	cases := []configCase{
+		{"missing-provider", map[string]any{}},
+		{"empty-provider", map[string]any{"provider": ""}},
+		{"invalid-provider", map[string]any{"provider": 42}},
+		{"null-config", nil},
+		{"invalid-config", "not an object"},
+	}
+	for _, provider := range []string{"ANTHROPIC", "OPENAI", "XAI"} {
+		cases = append(cases, configCase{provider, map[string]any{"provider": provider, "secret_id": 42, "secret_name": "provider-key"}})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			connection := gridConnectionFixture("anthropic")
+			connection["id"], connection["config"] = "c-bad", tc.config
+			m.SetRoute("GET", "/v1/grid/connections", 200, gridRoutePage([]any{gridConnectionFixture("openai"), connection}, nil))
+			h.Require.ErrorContains(h.Execute("grid", "connection", "list"), "reading connection c-bad config")
+			h.Require.Empty(h.Stdout.String())
+		})
+	}
+}
+
+func Test_Grid_Connection_List_MalformedResponse(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRouteFunc("GET", "/v1/grid/connections", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":`))
+	})
+	h.Require.ErrorContains(h.Execute("grid", "connection", "list"), "unexpected end of JSON input")
+	h.Require.Empty(h.Stdout.String())
+}
+
+func Test_Grid_Connection_List_TextAndJSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	connection := gridConnectionFixture("openai")
+	m.SetRoute("GET", "/v1/grid/connections", 200, gridRoutePage([]any{connection}, nil))
+
+	h.Require.NoError(h.Execute("grid", "connection", "list"))
+	h.Require.Regexp(`^ID\s+TEAM ID\s+TEAM NAME\s+PROVIDER\s+SECRET NAME\s*\n`, h.Stdout.String())
+	h.Require.NotContains(h.Stdout.String(), "s123456")
+	h.Require.Contains(h.Stdout.String(), "provider-key")
+
+	h.Require.NoError(h.Execute("grid", "connection", "list", "--output", "json"))
+	var got any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal(map[string]any{"items": []any{connection}}, got)
+}

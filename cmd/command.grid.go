@@ -295,7 +295,7 @@ var commandGrid = Command{
 					Description: gridPrereleaseNotice + "List connections across your teams; use --team to select one.",
 					Flags:       GridConnectionListFlags{},
 					Output: &CommandOutput[GridConnectionList]{
-						TextDescription: "Table with ID, TEAM ID, TEAM NAME, PROVIDER, SECRET ID, and SECRET NAME columns. Lists all pages; secret values are never returned.",
+						TextDescription: "Table with ID, TEAM ID, TEAM NAME, PROVIDER, and SECRET NAME columns. Lists all pages; secret values are never returned.",
 						Examples: []CommandExample{{
 							Description: "List connections across your teams.",
 							Command:     "baseten grid connection list",

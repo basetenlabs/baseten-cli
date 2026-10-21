@@ -32,7 +32,7 @@ func gridRouteCases() []gridRouteCase {
 		},
 		{
 			name:   "connection",
-			flags:  []string{"--target-type", "connection", "--target-model", "test-model", "--target-connection", "c123456"},
+			flags:  []string{"--target-type", "connection", "--target-model", "test-model", "--target-connection-id", "c123456"},
 			target: map[string]any{"type": "CONNECTION", "model": "test-model", "connection_id": "c123456"},
 		},
 	}
@@ -274,8 +274,9 @@ func Test_Grid_Route_List_TextAndJQ(t *testing.T) {
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage([]any{gridRouteCases()[0].Response, gridRouteCases()[1].Response}, nil))
 	h.Require.NoError(h.Execute("grid", "route", "list"))
-	h.Require.Regexp(`^ID\s+TEAM\s+DISPLAY NAME\s+NAME\s+CREATED\s*\n`, h.Stdout.String(), "team before the names, which come before the slug")
-	for _, text := range []string{"r123456", "Engineering", "Assistant", "acme/assistant", "2026-09-17T10:00:00Z"} {
+	h.Require.Regexp(`^ID\s+TEAM ID\s+TEAM NAME\s+DISPLAY NAME\s+NAME\s+CREATED\s*\n`, h.Stdout.String(), "team identifiers precede display name and route name")
+	h.Require.Regexp(`(?m)^r123456\s+t123456\s+Engineering\s+`, h.Stdout.String())
+	for _, text := range []string{"r123456", "t123456", "Engineering", "Assistant", "acme/assistant", "2026-09-17T10:00:00Z"} {
 		h.Require.Contains(h.Stdout.String(), text)
 	}
 	for _, text := range []string{"TARGET", "test-model-api", "c123456"} {
@@ -291,15 +292,15 @@ func Test_Grid_Route_List_TextAndJQ(t *testing.T) {
 }
 
 func Test_Grid_Route_Create_InvalidTargets(t *testing.T) {
-	provider := []string{"--target-type", "connection", "--target-model", "test-model", "--target-connection", "c123456"}
+	provider := []string{"--target-type", "connection", "--target-model", "test-model", "--target-connection-id", "c123456"}
 	cases := [][]string{
 		{}, {"--target-type", "baseten-model-api", "--target-model", ""}, {"--target-type", ""},
 		{"--target-type", "baseten-model-api", "--target-model", "model", "--target-type", "connection"},
-		{"--target-type", "baseten-model-api", "--target-model", "model", "--target-connection", "c123456"},
+		{"--target-type", "baseten-model-api", "--target-model", "model", "--target-connection-id", "c123456"},
 		{"--target-model", "model"}, {"--target-type", "connection"},
 		{"--target-type", "connection", "--target-model", "model"},
-		{"--target-type", "connection", "--target-connection", "c123456"},
-		{"--target-type", "invalid", "--target-model", "model", "--target-connection", "c123456"},
+		{"--target-type", "connection", "--target-connection-id", "c123456"},
+		{"--target-type", "invalid", "--target-model", "model", "--target-connection-id", "c123456"},
 		// Targets and flags the routes API no longer accepts.
 		{"--target-type", "openai", "--target-model", "model", "--target-secret", "key"},
 		{"--target-type", "anthropic", "--target-model", "model", "--target-secret", "key"},
@@ -499,7 +500,7 @@ func Test_Grid_Route_RequiresFlagsWithoutReadingStdin(t *testing.T) {
 func Test_Grid_Route_Create_TargetNamesAreLiteral(t *testing.T) {
 	for _, args := range [][]string{
 		{"--target-type", "baseten-model-api", "--target-model", "__manual__"},
-		{"--target-type", "connection", "--target-model", "test-model", "--target-connection", "__create_connection__"},
+		{"--target-type", "connection", "--target-model", "test-model", "--target-connection-id", "__create_connection__"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -684,7 +685,7 @@ func Test_Grid_Route_Create_Update_InvalidClassifierFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"create", "--target-type", "classifier"},
 		{"create", "--target-type", "classifier", "--target-model", "model"},
-		{"create", "--target-type", "connection", "--target-model", "model", "--target-connection", "c123456", "--classifier-id", "general-v1"},
+		{"create", "--target-type", "connection", "--target-model", "model", "--target-connection-id", "c123456", "--classifier-id", "general-v1"},
 		{"update", "--id", "r123456", "--classifier-id", "general-v1"},
 		{"update", "--id", "r123456", "--classifier-id", ""},
 		{"update", "--id", "r123456", "--display-name", "Name", "--classifier-id", "general-v1"},
