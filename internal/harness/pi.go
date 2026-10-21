@@ -116,6 +116,8 @@ func piModel(r Route, baseURL string) map[string]any {
 	case ProviderAnthropic:
 		// Pi's Anthropic client appends /v1/messages itself.
 		model["api"], model["baseUrl"] = "anthropic-messages", baseURL
+		// Anthropic Messages models use adaptive thinking, not a token budget.
+		model["compat"] = map[string]any{"forceAdaptiveThinking": true}
 	case ProviderOpenAI:
 		model["api"] = "openai-responses"
 	default:
