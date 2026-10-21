@@ -296,7 +296,7 @@ type AutoscalingSettingsFlags struct {
 // --autoscaling-* prefix, for commands that set more than autoscaling. Its
 // fields mirror [AutoscalingSettingsFlags] so one converts to the other.
 type PrefixedAutoscalingSettingsFlags struct {
-	MinReplica                  OptionalFlag[int] `flag:"autoscaling-min-replica" desc:"Minimum number of replicas." group:"autoscaling"`
+	MinReplica                  OptionalFlag[int] `flag:"autoscaling-min-replica" desc:"Minimum number of replicas." group:"autoscaling" group-pri:"200"`
 	MaxReplica                  OptionalFlag[int] `flag:"autoscaling-max-replica" desc:"Maximum number of replicas." group:"autoscaling"`
 	AutoscalingWindow           OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds." group:"autoscaling"`
 	ScaleDownDelay              OptionalFlag[int] `flag:"autoscaling-scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds." group:"autoscaling"`
@@ -335,7 +335,7 @@ type PromotionSettingsFlags struct {
 // [PromotionSettingsFlags] so one converts to the other; only the flag names
 // differ.
 type PromotionSettingsOverrideFlags struct {
-	RedeployOnPromotion      OptionalFlag[bool]   `flag:"override-redeploy-on-promotion" desc:"For this promotion only, whether to create a new deployment with a copy of the image." group:"promotion override"`
+	RedeployOnPromotion      OptionalFlag[bool]   `flag:"override-redeploy-on-promotion" desc:"For this promotion only, whether to create a new deployment with a copy of the image." group:"promotion override" group-pri:"300"`
 	RollingDeploy            OptionalFlag[bool]   `flag:"override-rolling-deploy" desc:"For this promotion only, whether to use rolling deploy orchestration." group:"promotion override"`
 	PromotionCleanupStrategy OptionalFlag[string] `flag:"override-promotion-cleanup-strategy" desc:"For this promotion only, the cleanup strategy to use after it completes." enum:"keep,scale-to-zero,deactivate" group:"promotion override"`
 

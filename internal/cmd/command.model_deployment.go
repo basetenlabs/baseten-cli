@@ -509,6 +509,8 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	if err != nil {
 		return err
 	}
+	override := nonZeroOrNil(promotionSettingsFromFlags(
+		cmd.PromotionSettingsFlags(flags.PromotionSettingsOverrideFlags)))
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -519,7 +521,14 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	}
 
 	if !flags.Yes {
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Promote deployment %s to environment %q?", ref.DeploymentID, flags.Environment)); err != nil {
+		prompt := fmt.Sprintf("Promote deployment %s to environment %q", ref.DeploymentID, flags.Environment)
+		if changes := environmentSettingsChanges(environmentSettings); len(changes) > 0 {
+			prompt += " and update its " + strings.Join(changes, ", ")
+		}
+		if override != nil {
+			prompt += ", with one-time promotion settings"
+		}
+		if err := ctx.ConfirmYesNo(prompt + "?"); err != nil {
 			return err
 		}
 	}
@@ -531,8 +540,7 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 			DeploymentId:              ref.DeploymentID,
 			PreserveEnvInstanceType:   &flags.PreserveEnvInstanceType,
 			EnvironmentSettingsUpdate: environmentSettings,
-			PromotionSettingsOverride: nonZeroOrNil(promotionSettingsFromFlags(
-				cmd.PromotionSettingsFlags(flags.PromotionSettingsOverrideFlags))),
+			PromotionSettingsOverride: override,
 		})
 	if err != nil {
 		return fmt.Errorf("promote deployment %s to environment %s: %w", ref.DeploymentID, flags.Environment, err)
@@ -552,6 +560,9 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 func promotionEnvironmentSettingsFromFlags(
 	flags *cmd.ModelDeploymentPromoteFlags,
 ) (*managementapi.PromotionEnvironmentSettingsUpdate, error) {
+	if flags.InstanceTypeID.IsSet() && flags.PreserveEnvInstanceType {
+		return nil, cmd.NewErrUsagef("--instance-type-id cannot be combined with --preserve-env-instance-type")
+	}
 	update := managementapi.PromotionEnvironmentSettingsUpdate{
 		Region:         flags.Region.Pointer(),
 		InstanceTypeId: flags.InstanceTypeID.Pointer(),
@@ -563,17 +574,57 @@ func promotionEnvironmentSettingsFromFlags(
 		update.RequestBackpressureSettings = &settings
 	}
 	if flags.AutoscalingScheduleUpdate != "" {
-		// The API ignores unknown keys, so a misspelled one would otherwise be
-		// dropped silently.
-		decoder := json.NewDecoder(strings.NewReader(flags.AutoscalingScheduleUpdate))
-		decoder.DisallowUnknownFields()
-		var schedules managementapi.UpdateAutoscalingScheduleSettings
-		if err := decoder.Decode(&schedules); err != nil {
-			return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: invalid JSON: %v", err)
+		schedules, err := parseAutoscalingScheduleUpdate(flags.AutoscalingScheduleUpdate)
+		if err != nil {
+			return nil, err
 		}
-		update.AutoscalingScheduleSettings = &schedules
+		update.AutoscalingScheduleSettings = schedules
 	}
 	return nonZeroOrNil(update), nil
+}
+
+// parseAutoscalingScheduleUpdate decodes --autoscaling-schedule-update. The API
+// ignores unknown keys and reads an empty object as no change, so both are
+// rejected here rather than sent.
+func parseAutoscalingScheduleUpdate(raw string) (*managementapi.UpdateAutoscalingScheduleSettings, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var schedules managementapi.UpdateAutoscalingScheduleSettings
+	if err := decoder.Decode(&schedules); err != nil {
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: invalid JSON: %v", err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: unexpected data after the JSON object")
+	}
+	if schedules == (managementapi.UpdateAutoscalingScheduleSettings{}) {
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: set at least one of schedules, delete_schedules, or timezone")
+	}
+	return &schedules, nil
+}
+
+// environmentSettingsChanges names the settings a promotion changes on the
+// environment, for the confirmation prompt.
+func environmentSettingsChanges(update *managementapi.PromotionEnvironmentSettingsUpdate) []string {
+	if update == nil {
+		return nil
+	}
+	var changes []string
+	if update.Region != nil {
+		changes = append(changes, "region")
+	}
+	if update.InstanceTypeId != nil {
+		changes = append(changes, "instance type")
+	}
+	if update.AutoscalingSettings != nil {
+		changes = append(changes, "autoscaling settings")
+	}
+	if update.RequestBackpressureSettings != nil {
+		changes = append(changes, "request backpressure policy")
+	}
+	if update.AutoscalingScheduleSettings != nil {
+		changes = append(changes, "autoscaling schedules")
+	}
+	return changes
 }
 
 // nonZeroOrNil returns nil for a zero value, so an untouched settings group is

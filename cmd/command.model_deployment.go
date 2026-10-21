@@ -517,9 +517,9 @@ type ModelDeploymentPromoteFlags struct {
 	Environment             string `flag:"environment" desc:"Target environment name. Defaults to production." default:"production"`
 	PreserveEnvInstanceType bool   `flag:"preserve-env-instance-type" desc:"Keep the target environment's current instance type instead of applying the promoted deployment's."`
 
-	Region                    OptionalFlag[string] `flag:"region" desc:"Slug of the region for the promoted deployment. Pass an empty string for Global. Run 'baseten org regions' to see the slugs available."`
-	InstanceTypeID            OptionalFlag[string] `flag:"instance-type-id" desc:"Instance type for the promoted deployment. Cannot be combined with --preserve-env-instance-type."`
-	RequestBackpressurePolicy OptionalFlag[string] `flag:"request-backpressure-policy" desc:"Backpressure policy for the promoted deployment. Pass null to clear an existing policy." enum:"queue-on-full,reject-on-full" nullable:"true"`
+	Region                    OptionalFlag[string] `flag:"region" desc:"Region slug to set on the environment. Pass an empty string for Global. Run 'baseten org regions' to see the slugs available."`
+	InstanceTypeID            OptionalFlag[string] `flag:"instance-type-id" desc:"Instance type to set on the environment. Cannot be combined with --preserve-env-instance-type."`
+	RequestBackpressurePolicy OptionalFlag[string] `flag:"request-backpressure-policy" desc:"Backpressure policy to set on the environment. Pass null to clear the environment's policy." enum:"queue-on-full,reject-on-full" nullable:"true"`
 	AutoscalingScheduleUpdate string               `flag:"autoscaling-schedule-update" desc:"Autoscaling schedule changes for the environment, applied when the promotion completes, as a JSON object with schedules, delete_schedules, and timezone. Same shape as autoscaling_schedule_settings on the environment update API."`
 	PrefixedAutoscalingSettingsFlags
 	PromotionSettingsOverrideFlags
