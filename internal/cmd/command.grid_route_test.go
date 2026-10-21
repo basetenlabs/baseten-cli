@@ -596,13 +596,25 @@ func Test_Grid_Route_Describe_ClassifierTarget(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 	for _, text := range []string{
 		"Target Type:      classifier",
-		"Classifier:       intent-v2",
-		"Default Route:    acme/fast",
-		"Allowed Routes:   acme/fast, acme/smart",
+		"Classifier:       intent-v2 (c123456)",
+		"Default Route:    acme/fast (r1)",
+		"Allowed Routes:   acme/fast (r1), acme/smart (r2)",
 	} {
 		h.Require.Contains(h.Stdout.String(), text)
 	}
 	h.Require.NotContains(h.Stdout.String(), "Target Model:")
+	h.Require.Len(m.Calls(), 1, "the response already contains the target IDs")
+
+	for _, output := range []string{"json", "jsonl"} {
+		h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456", "--output", output))
+		var got struct {
+			Target json.RawMessage `json:"target"`
+		}
+		h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+		want, err := json.Marshal(target)
+		h.Require.NoError(err)
+		h.Require.JSONEq(string(want), string(got.Target))
+	}
 
 	// A router created before classifiers could be selected has none, but
 	// still has its routes.
@@ -611,7 +623,7 @@ func Test_Grid_Route_Describe_ClassifierTarget(t *testing.T) {
 	h.Stdout.Reset()
 	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 	h.Require.NotContains(h.Stdout.String(), "Classifier:")
-	h.Require.Contains(h.Stdout.String(), "Default Route:    acme/fast")
+	h.Require.Contains(h.Stdout.String(), "Default Route:    acme/fast (r1)")
 }
 
 func Test_Grid_Route_Describe_UnknownTarget(t *testing.T) {

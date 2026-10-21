@@ -54,6 +54,7 @@ var commandGridRoute = Command{
 			Output: &CommandOutput[managementapi.GridRoute]{
 				JSONDescription: gridRouteTargetJSONDescription,
 				TextDescription: "Field-per-line summary of the route, including its target, invoke URL, and team name. " +
+					"Classifier and referenced route names include IDs in parentheses. " +
 					"Unrecognized target types are shown as <unrecognized type>.",
 				Examples: []CommandExample{
 					{

@@ -302,13 +302,16 @@ func gridRouteTargetFields(value any) (gridRouteTargetInfo, error) {
 	case managementapi.GridRouteTargetConnection:
 		return gridRouteTargetInfo{kind: t.Type, model: t.Model, connection: t.ConnectionId}, nil
 	case managementapi.GridRouteTargetClassifier:
-		info := gridRouteTargetInfo{kind: t.Type, defaultRoute: t.DefaultRoute.Slug}
+		info := gridRouteTargetInfo{
+			kind:         t.Type,
+			defaultRoute: fmt.Sprintf("%s (%s)", t.DefaultRoute.Slug, t.DefaultRoute.Id),
+		}
 		// Null for routers created before classifiers could be selected.
 		if t.Classifier != nil {
-			info.classifier = t.Classifier.Name
+			info.classifier = fmt.Sprintf("%s (%s)", t.Classifier.Name, t.Classifier.Id)
 		}
 		for _, r := range t.AllowedRoutes {
-			info.allowedRoutes = append(info.allowedRoutes, r.Slug)
+			info.allowedRoutes = append(info.allowedRoutes, fmt.Sprintf("%s (%s)", r.Slug, r.Id))
 		}
 		return info, nil
 	default:
