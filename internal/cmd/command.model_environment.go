@@ -151,7 +151,7 @@ func outputAutoscalingSchedules(
 
 // outputPromotionSettings prints the promotion block for environment describe,
 // flattening the rolling deploy config the way update-promotion's flags do.
-func outputPromotionSettings(ctx *CommandContext, settings managementapi.PromotionSettings) {
+func outputPromotionSettings(ctx *CommandContext, settings managementapi.ModelPromotionSettings) {
 	ctx.Outputf("Promotion:\n")
 	ctx.Outputf("  Redeploy On Promotion:   %s\n", describeSettingText(settings.RedeployOnPromotion, "%t"))
 	ctx.Outputf("  Rolling Deploy:          %s\n", describeSettingText(settings.RollingDeploy, "%t"))
@@ -251,7 +251,9 @@ func commandModelEnvironmentUpdatePromotion(
 		ctx.Logf("warning: --ramp-up-while-promoting and --ramp-up-duration-seconds are deprecated: " +
 			"models no longer support canary promotions. Use --rolling-deploy true for a gradual promotion.\n")
 	}
-	settings := promotionSettingsFromFlags(flags)
+	settings := managementapi.UpdateModelPromotionSettings(promotionSettingsFromFlags(flags.PromotionSettingsFlags))
+	settings.RampUpWhilePromoting = flags.RampUpWhilePromoting.Pointer()
+	settings.RampUpDurationSeconds = flags.RampUpDurationSeconds.Pointer()
 	resp, err := patchModelEnvironment(ctx, flags.ModelEnvironmentFlags,
 		managementapi.UpdateEnvironmentRequest{PromotionSettings: &settings})
 	if err != nil {
@@ -269,7 +271,7 @@ func commandModelEnvironmentUpdatePromotion(
 func commandModelEnvironmentUpdateRequestBackpressure(
 	ctx *CommandContext, flags *cmd.ModelEnvironmentUpdateRequestBackpressureFlags,
 ) error {
-	settings := requestBackpressureFromFlags(flags.RequestBackpressureFlags)
+	settings := requestBackpressureFromPolicy(flags.Policy)
 	resp, err := patchModelEnvironment(ctx, flags.ModelEnvironmentFlags,
 		managementapi.UpdateEnvironmentRequest{RequestBackpressureSettings: &settings})
 	if err != nil {
@@ -311,13 +313,11 @@ func patchModelEnvironment(
 // object is only sent when one of its own flags was passed, so touching a
 // top-level promotion setting does not rewrite the rolling deploy config.
 func promotionSettingsFromFlags(
-	flags *cmd.ModelEnvironmentUpdatePromotionFlags,
+	flags cmd.PromotionSettingsFlags,
 ) managementapi.UpdatePromotionSettings {
 	settings := managementapi.UpdatePromotionSettings{
-		RedeployOnPromotion:   flags.RedeployOnPromotion.Pointer(),
-		RollingDeploy:         flags.RollingDeploy.Pointer(),
-		RampUpWhilePromoting:  flags.RampUpWhilePromoting.Pointer(),
-		RampUpDurationSeconds: flags.RampUpDurationSeconds.Pointer(),
+		RedeployOnPromotion: flags.RedeployOnPromotion.Pointer(),
+		RollingDeploy:       flags.RollingDeploy.Pointer(),
 	}
 	if strategy := flags.PromotionCleanupStrategy.Pointer(); strategy != nil {
 		cleanup := managementapi.PromotionCleanupStrategy(enumToAPIValue(*strategy))

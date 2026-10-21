@@ -119,6 +119,12 @@ var commandModelDeployment = Command{
 			Description: "Promote a model deployment to an environment.\n\n" +
 				"Defaults to the production environment. Cleanup of the previous deployment " +
 				"is controlled by the target environment's promotion cleanup strategy.\n\n" +
+				"The --region, --instance-type-id, --request-backpressure-policy, " +
+				"--autoscaling-schedule-update, and --autoscaling-* flags change the environment's " +
+				"settings: the promoted deployment " +
+				"uses them, and the environment keeps them once the promotion completes. The " +
+				"--override-* flags apply to this promotion only and leave the environment's " +
+				"promotion settings unchanged. Settings without a flag are left unchanged.\n\n" +
 				"Prompts for yes/no confirmation. Pass --yes to skip the prompt. When " +
 				"stdin is not a terminal, --yes is required.",
 			Flags: ModelDeploymentPromoteFlags{},
@@ -136,6 +142,27 @@ var commandModelDeployment = Command{
 						CommandLines: []string{
 							"baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id>",
 							"--environment staging --preserve-env-instance-type --yes",
+						},
+					},
+					{
+						Description: "Promote with new replica bounds for the environment.",
+						CommandLines: []string{
+							"baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id>",
+							"--autoscaling-min-replica 2 --autoscaling-max-replica 8 --yes",
+						},
+					},
+					{
+						Description: "Roll this promotion out gradually, adding at most 10% extra replicas at a time.",
+						CommandLines: []string{
+							"baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id>",
+							"--override-rolling-deploy true --override-max-surge-percent 10 --yes",
+						},
+					},
+					{
+						Description: "Delete an autoscaling schedule once the promotion completes.",
+						CommandLines: []string{
+							"baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id>",
+							`--autoscaling-schedule-update '{"delete_schedules":["<schedule-id>"]}' --yes`,
 						},
 					},
 				},
@@ -489,6 +516,13 @@ type ModelDeploymentPromoteFlags struct {
 
 	Environment             string `flag:"environment" desc:"Target environment name. Defaults to production." default:"production"`
 	PreserveEnvInstanceType bool   `flag:"preserve-env-instance-type" desc:"Keep the target environment's current instance type instead of applying the promoted deployment's."`
+
+	Region                    OptionalFlag[string] `flag:"region" desc:"Slug of the region for the promoted deployment. Pass an empty string for Global. Run 'baseten org regions' to see the slugs available."`
+	InstanceTypeID            OptionalFlag[string] `flag:"instance-type-id" desc:"Instance type for the promoted deployment. Cannot be combined with --preserve-env-instance-type."`
+	RequestBackpressurePolicy OptionalFlag[string] `flag:"request-backpressure-policy" desc:"Backpressure policy for the promoted deployment. Pass null to clear an existing policy." enum:"queue-on-full,reject-on-full" nullable:"true"`
+	AutoscalingScheduleUpdate string               `flag:"autoscaling-schedule-update" desc:"Autoscaling schedule changes for the environment, applied when the promotion completes, as a JSON object with schedules, delete_schedules, and timezone. Same shape as autoscaling_schedule_settings on the environment update API."`
+	PrefixedAutoscalingSettingsFlags
+	PromotionSettingsOverrideFlags
 
 	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }

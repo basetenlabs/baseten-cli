@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -504,6 +505,10 @@ func extractTar(r io.Reader, dir string) error {
 }
 
 func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeploymentPromoteFlags) error {
+	environmentSettings, err := promotionEnvironmentSettingsFromFlags(flags)
+	if err != nil {
+		return err
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -523,8 +528,11 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	// server default, which is the opposite of this flag's.
 	dep, err := cl.API().PostModelsEnvironmentsPromote(ctx, ref.ModelID, flags.Environment,
 		managementapi.PromoteToEnvironmentRequest{
-			DeploymentId:            ref.DeploymentID,
-			PreserveEnvInstanceType: &flags.PreserveEnvInstanceType,
+			DeploymentId:              ref.DeploymentID,
+			PreserveEnvInstanceType:   &flags.PreserveEnvInstanceType,
+			EnvironmentSettingsUpdate: environmentSettings,
+			PromotionSettingsOverride: nonZeroOrNil(promotionSettingsFromFlags(
+				cmd.PromotionSettingsFlags(flags.PromotionSettingsOverrideFlags))),
 		})
 	if err != nil {
 		return fmt.Errorf("promote deployment %s to environment %s: %w", ref.DeploymentID, flags.Environment, err)
@@ -536,6 +544,46 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	}
 	ctx.Logf("Promoted deployment %s to environment %s\n", ref.DeploymentID, flags.Environment)
 	return nil
+}
+
+// promotionEnvironmentSettingsFromFlags builds the environment settings a
+// promotion changes, sending only the groups whose flags were passed. Nil when
+// none were, so a plain promote sends the same body as before.
+func promotionEnvironmentSettingsFromFlags(
+	flags *cmd.ModelDeploymentPromoteFlags,
+) (*managementapi.PromotionEnvironmentSettingsUpdate, error) {
+	update := managementapi.PromotionEnvironmentSettingsUpdate{
+		Region:         flags.Region.Pointer(),
+		InstanceTypeId: flags.InstanceTypeID.Pointer(),
+		AutoscalingSettings: nonZeroOrNil(autoscalingSettingsFromFlags(
+			cmd.AutoscalingSettingsFlags(flags.PrefixedAutoscalingSettingsFlags))),
+	}
+	if flags.RequestBackpressurePolicy.IsSet() {
+		settings := requestBackpressureFromPolicy(flags.RequestBackpressurePolicy)
+		update.RequestBackpressureSettings = &settings
+	}
+	if flags.AutoscalingScheduleUpdate != "" {
+		// The API ignores unknown keys, so a misspelled one would otherwise be
+		// dropped silently.
+		decoder := json.NewDecoder(strings.NewReader(flags.AutoscalingScheduleUpdate))
+		decoder.DisallowUnknownFields()
+		var schedules managementapi.UpdateAutoscalingScheduleSettings
+		if err := decoder.Decode(&schedules); err != nil {
+			return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: invalid JSON: %v", err)
+		}
+		update.AutoscalingScheduleSettings = &schedules
+	}
+	return nonZeroOrNil(update), nil
+}
+
+// nonZeroOrNil returns nil for a zero value, so an untouched settings group is
+// omitted from the request body.
+func nonZeroOrNil[T comparable](value T) *T {
+	var zero T
+	if value == zero {
+		return nil
+	}
+	return &value
 }
 
 func commandModelDeploymentRename(ctx *CommandContext, flags *cmd.ModelDeploymentRenameFlags) error {
@@ -598,7 +646,7 @@ func commandModelDeploymentUpdateRequestBackpressure(
 		return err
 	}
 	settings, err := cl.API().PatchModelsDeploymentsRequestBackpressureSettings(
-		ctx, ref.ModelID, ref.DeploymentID, requestBackpressureFromFlags(flags.RequestBackpressureFlags))
+		ctx, ref.ModelID, ref.DeploymentID, requestBackpressureFromPolicy(flags.Policy))
 	if err != nil {
 		return fmt.Errorf("update request backpressure settings for deployment %s: %w", ref.DeploymentID, err)
 	}
@@ -634,18 +682,18 @@ func autoscalingSettingsFromFlags(
 	}
 }
 
-// requestBackpressureFromFlags maps --policy onto the request body. The policy
-// is null-distinct, so null clears an existing policy rather than leaving it
-// unchanged, which is why the field is an Optional and not a pointer.
-func requestBackpressureFromFlags(
-	flags cmd.RequestBackpressureFlags,
+// requestBackpressureFromPolicy maps a passed policy flag onto the request body.
+// The policy is null-distinct, so null clears an existing policy rather than
+// leaving it unchanged, which is why the field is an Optional and not a pointer.
+func requestBackpressureFromPolicy(
+	flag cmd.OptionalFlag[string],
 ) managementapi.UpdateRequestBackpressureSettings {
-	if flags.Policy.IsNull() {
+	if flag.IsNull() {
 		return managementapi.UpdateRequestBackpressureSettings{
 			Policy: managementapi.NewOptional[managementapi.RequestBackpressurePolicy](nil),
 		}
 	}
-	policy := managementapi.RequestBackpressurePolicy(enumToAPIValue(*flags.Policy.Pointer()))
+	policy := managementapi.RequestBackpressurePolicy(enumToAPIValue(*flag.Pointer()))
 	return managementapi.UpdateRequestBackpressureSettings{
 		Policy: managementapi.NewOptional(&policy),
 	}
