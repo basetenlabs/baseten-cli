@@ -335,22 +335,41 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if f.UseSessionCredential {
 		credentialSource = harness.CredentialSourceSession
 	}
-	record := harness.Record{
-		KeyName:          f.KeyName,
-		CredentialSource: credentialSource,
-		Route:            f.PrimaryRoute,
-		BackgroundRoute:  f.BackgroundRoute,
-		SubagentRoute:    f.SubagentRoute,
-		FallbackRoute:    f.FallbackRoute,
-	}
 	targets := make([]gridHarnessTarget, len(selected))
 	for i := range selected {
-		targetRecord := record
-		if targetRecord.SubagentRoute != "" && !selected[i].SupportsSubagent() {
-			targetRecord.SubagentRoute = ""
-			ctx.Logf("warning: --subagent-route is not supported by %s; it will be ignored\n", selected[i].Name())
+		record := harness.Record{
+			KeyName:          f.KeyName,
+			CredentialSource: credentialSource,
 		}
-		targets[i] = gridHarnessTarget{gridSelectedHarness: selected[i], record: targetRecord}
+		subagentID := f.SubagentRouteID
+		if subagentID != "" && !selected[i].SupportsSubagent() {
+			subagentID = ""
+			ctx.Logf("warning: --subagent-route-id is not supported by %s; it will be ignored\n", selected[i].Name())
+		}
+		// Harness configuration and saved sync selections use route names.
+		for _, selection := range []struct {
+			flag string
+			id   string
+			name *string
+		}{
+			{"--primary-route-id", f.PrimaryRouteID, &record.Route},
+			{"--background-route-id", f.BackgroundRouteID, &record.BackgroundRoute},
+			{"--subagent-route-id", subagentID, &record.SubagentRoute},
+			{"--fallback-route-id", f.FallbackRouteID, &record.FallbackRoute},
+		} {
+			if selection.id == "" {
+				continue
+			}
+			index := slices.IndexFunc(listed, func(r managementapi.GridRoute) bool { return r.Id == selection.id })
+			if index < 0 {
+				return cmd.NewErrUsagef("%s: no route with ID %q in team %s; run 'baseten grid route list --team %s' to see route IDs", selection.flag, selection.id, team.Name, team.Id)
+			}
+			if listed[index].Name == "" {
+				return fmt.Errorf("route %q has no name", selection.id)
+			}
+			*selection.name = listed[index].Name
+		}
+		targets[i] = gridHarnessTarget{gridSelectedHarness: selected[i], record: record}
 	}
 	plans, err := gridPlanHarnessSetup(ctx, api, team, listed, targets, false)
 	if err != nil {

@@ -151,7 +151,7 @@ func outputAutoscalingSchedules(
 
 // outputPromotionSettings prints the promotion block for environment describe,
 // flattening the rolling deploy config the way update-promotion's flags do.
-func outputPromotionSettings(ctx *CommandContext, settings managementapi.PromotionSettings) {
+func outputPromotionSettings(ctx *CommandContext, settings managementapi.ModelPromotionSettings) {
 	ctx.Outputf("Promotion:\n")
 	ctx.Outputf("  Redeploy On Promotion:   %s\n", describeSettingText(settings.RedeployOnPromotion, "%t"))
 	ctx.Outputf("  Rolling Deploy:          %s\n", describeSettingText(settings.RollingDeploy, "%t"))
@@ -312,8 +312,8 @@ func patchModelEnvironment(
 // top-level promotion setting does not rewrite the rolling deploy config.
 func promotionSettingsFromFlags(
 	flags *cmd.ModelEnvironmentUpdatePromotionFlags,
-) managementapi.UpdatePromotionSettings {
-	settings := managementapi.UpdatePromotionSettings{
+) managementapi.UpdateModelPromotionSettings {
+	settings := managementapi.UpdateModelPromotionSettings{
 		RedeployOnPromotion:   flags.RedeployOnPromotion.Pointer(),
 		RollingDeploy:         flags.RollingDeploy.Pointer(),
 		RampUpWhilePromoting:  flags.RampUpWhilePromoting.Pointer(),

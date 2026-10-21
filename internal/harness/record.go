@@ -16,9 +16,9 @@ const recordFileName = "harness.json"
 const CredentialSourceSession = "session"
 
 // Record remembers the options of the last successful setup for one harness,
-// so sync can replay them. It stores raw flag values only: an empty route means
-// the option was not passed and follows the current default, never the value
-// resolved at setup time. Profile and ManagementURL scope the record the same
+// so sync can replay them. Explicit route selections are stored as route names;
+// an empty route follows the current default, never the default resolved at setup
+// time. Profile and ManagementURL scope the record the same
 // way saved routes API keys are scoped.
 type Record struct {
 	// Config is the settings file path setup wrote, which sync must match.

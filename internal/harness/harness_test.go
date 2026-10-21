@@ -686,7 +686,7 @@ func TestOpenCodeSetupAfterMigrationRetiresV1Settings(t *testing.T) {
 		require.False(t, get(d, key).Exists, "retired V1 subagent settings")
 	}
 	for _, key := range openCodeV2SubagentPaths {
-		require.False(t, get(d, key).Exists, "no --subagent-route on this run")
+		require.False(t, get(d, key).Exists, "no --subagent-route-id on this run")
 	}
 	require.Equal(t, "other/model", get(d, []string{"agent", "mine", "model"}).Data, "the user's V1 agent stays")
 	token, err := openCodeHarness{}.Credential(path)
