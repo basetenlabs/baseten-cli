@@ -1,6 +1,6 @@
 module github.com/basetenlabs/baseten-cli
 
-go 1.26.1
+go 1.26.10
 
 require (
 	charm.land/fang/v2 v2.0.1
