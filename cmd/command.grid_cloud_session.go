@@ -117,6 +117,7 @@ type CloudSessionCreateFlags struct {
 	ProxyAuth           bool     `flag:"proxy-auth" desc:"Route the session credential through the sandbox's network proxy: the key goes to the proxy's write-only secret store, which replaces the Authorization header on harness and management traffic, and the sandbox holds only a placeholder credential. Without this, the key is passed to the sandbox as the secret BASETEN_API_KEY."`
 	HarnessURL          string   `flag:"harness-url" desc:"Harness API base URL. Default https://coding.baseten.co." default:"https://coding.baseten.co"`
 	Env                 []string `flag:"env" desc:"Local environment variable to inject into the session as a secret, by name; its value is read from this process. Repeatable."`
+	PortConfig          bool     `flag:"port-config" desc:"Copy the local harness configuration into the session: ~/.claude/skills verbatim, and ~/CLAUDE.md and ~/AGENTS.md merged after the sandbox instructions."`
 	RunlayerServer      []string `flag:"runlayer-server" desc:"Runlayer server ID to expose in the session as an MCP server through the agent account. Repeatable. Requires --proxy-auth."`
 	RunlayerClientIDEnv string   `flag:"runlayer-client-id-env" desc:"Local environment variable holding the Runlayer agent account client ID." default:"RUNLAYER_GRID_AGENT_ID"`
 	RunlayerSecretEnv   string   `flag:"runlayer-secret-env" desc:"Local environment variable holding the Runlayer agent account client secret." default:"RUNLAYER_GRID_AGENT_SECRET"`
