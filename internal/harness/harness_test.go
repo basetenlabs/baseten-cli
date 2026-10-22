@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/stretchr/testify/require"
@@ -993,10 +994,11 @@ func TestMalformedSettingsAreReported(t *testing.T) {
 
 type codexDaemonExecer struct {
 	fakeExecer
-	outputs  map[string]string
-	binaries map[string]bool
-	env      []string
-	path     string
+	outputs   map[string]string
+	binaries  map[string]bool
+	env       []string
+	path      string
+	waitDelay time.Duration
 }
 
 func (e *codexDaemonExecer) LookPath(name string) (string, error) {
@@ -1007,7 +1009,7 @@ func (e *codexDaemonExecer) LookPath(name string) (string, error) {
 }
 
 func (e *codexDaemonExecer) Exec(command *exec.Cmd) error {
-	e.env, e.path = command.Env, command.Path
+	e.env, e.path, e.waitDelay = command.Env, command.Path, command.WaitDelay
 	out, ok := e.outputs[strings.Join(command.Args[1:], " ")]
 	if !ok {
 		return errors.New("exit status 1")
@@ -1102,6 +1104,7 @@ func TestRestartCodexDaemon(t *testing.T) {
 	pid, err := RestartCodexDaemon(t.Context(), e, dir)
 	require.NoError(t, err)
 	require.Equal(t, 4242, pid)
+	require.Equal(t, 5*time.Second, e.waitDelay)
 	require.Contains(t, e.env, "CODEX_HOME="+dir)
 	_, err = RestartCodexDaemon(t.Context(), &codexDaemonExecer{}, dir)
 	require.Error(t, err)

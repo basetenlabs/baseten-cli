@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/harness"
+	"github.com/creack/pty"
 	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 )
@@ -1342,6 +1344,144 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 	}
 }
 
+type gridPromptSession struct {
+	t       *testing.T
+	control *os.File
+	output  string
+	seen    int
+	chunks  <-chan []byte
+	done    chan error
+	stdin   *os.File
+	stdout  *os.File
+}
+
+func startGridPromptSession(t *testing.T, h *CommandHarness, args ...string) *gridPromptSession {
+	t.Helper()
+	t.Setenv("TERM", "dumb")
+	control, terminal, err := pty.Open()
+	require.NoError(t, err)
+	t.Cleanup(func() { control.Close(); terminal.Close() })
+	require.NoError(t, pty.Setsize(terminal, &pty.Winsize{Rows: 40, Cols: 120}))
+	chunks := make(chan []byte, 64)
+	go func() {
+		defer close(chunks)
+		buf := make([]byte, 4096)
+		for {
+			n, err := control.Read(buf)
+			if n > 0 {
+				chunks <- bytes.Clone(buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	s := &gridPromptSession{t: t, control: control, chunks: chunks, done: make(chan error, 1), stdin: os.Stdin, stdout: os.Stdout}
+	os.Stdin, os.Stdout = terminal, terminal
+	t.Cleanup(func() { os.Stdin, os.Stdout = s.stdin, s.stdout })
+	h.StdinReader = terminal
+	go func() { s.done <- h.Execute(args...) }()
+	return s
+}
+
+func (s *gridPromptSession) waitFor(want string) {
+	s.t.Helper()
+	deadline := time.After(20 * time.Second)
+	for {
+		if i := strings.Index(s.output[s.seen:], want); i >= 0 {
+			s.seen += i + len(want)
+			return
+		}
+		select {
+		case chunk, ok := <-s.chunks:
+			if !ok {
+				s.t.Fatalf("harness exited before printing %q; output so far:\n%s", want, s.output)
+			}
+			s.output += string(chunk)
+		case <-deadline:
+			s.t.Fatalf("timed out waiting for %q; output so far:\n%s", want, s.output)
+		}
+	}
+}
+
+func (s *gridPromptSession) answer(keys string) {
+	_, err := s.control.WriteString(keys)
+	require.NoError(s.t, err)
+}
+
+func (s *gridPromptSession) finish() error {
+	select {
+	case err := <-s.done:
+		return err
+	case <-time.After(30 * time.Second):
+		s.t.Fatalf("timed out; output so far:\n%s", s.output)
+		return nil
+	}
+}
+
+func Test_Grid_Setup_RestartsCodexDaemon_Prompt(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	for name, tc := range map[string]struct {
+		answer   string
+		restarts int
+		pending  bool
+		stderr   []string
+		absent   []string
+	}{
+		"answered no":  {"2\n", 0, true, []string{"changes are applied on next daemon restart"}, []string{"Restarted codex app-server daemon"}},
+		"answered yes": {"1\n", 1, false, []string{"Restarted codex app-server daemon (pid 4242) so the new model catalog takes effect."}, []string{"changes are applied on next daemon restart"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := gridAPI(t, "")
+			execer := &codexDaemonHarnessExecer{socket: socket, lsof: listener}
+			h.Context = internalcmd.WithExecer(h.Context, execer)
+			s := startGridPromptSession(t, h, "grid", "setup", "--harness", "codex", "--config-dir", t.TempDir())
+			s.waitFor("Apply these harness changes")
+			s.answer("1\n")
+			s.waitFor("Restart the codex app-server daemon now")
+			s.answer(tc.answer)
+			h.Require.NoError(s.finish())
+			h.Require.Equal(tc.restarts, execer.restarts)
+			h.Require.Equal(tc.pending, harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+			for _, want := range tc.stderr {
+				h.Require.Contains(h.Stderr.String(), want)
+			}
+			for _, unwanted := range tc.absent {
+				h.Require.NotContains(h.Stderr.String(), unwanted)
+			}
+		})
+	}
+}
+
+func Test_Grid_Setup_RestartsCodexDaemon_PromptSkippedWithYes(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, _ := gridAPI(t, "")
+	execer := &codexDaemonHarnessExecer{socket: socket, lsof: "p1\nf31\nn" + socket + " type=STREAM\n"}
+	h.Context = internalcmd.WithExecer(h.Context, execer)
+	s := startGridPromptSession(t, h, "grid", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--yes")
+	h.Require.NoError(s.finish())
+	h.Require.Equal(1, execer.restarts)
+	h.Require.NotContains(s.output, "daemon now")
+	h.Require.False(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+}
+
 func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 	skipUnlessSupported(t)
 	signingOut := "Signing codex out of OpenAI/ChatGPT"
@@ -1991,6 +2131,37 @@ func Test_Grid_Sync_RestartsCodexDaemon(t *testing.T) {
 	// An unchanged sync without a pending restart leaves the daemon alone.
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 	h.Require.Equal(1, busy.restarts)
+}
+
+func Test_Grid_Sync_RestartsCodexDaemon_NonInteractive(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	h, api := gridAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	h.Context = internalcmd.WithExecer(h.Context, &codexDaemonHarnessExecer{})
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--yes"))
+	file := harnessRecordFile(t)
+	record := file.Harnesses["codex"]
+	record.CodexRestartPending = true
+	file.Harnesses["codex"] = record
+	saveHarnessRecordFile(t, file)
+
+	busy := &codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\n"}
+	h.Context = internalcmd.WithExecer(h.Context, busy)
+	h.Require.NoError(h.Execute("grid", "sync"))
+	h.Require.Equal(1, busy.restarts)
+	h.Require.Contains(h.Stderr.String(), "will disconnect 1 running codex session(s)")
+	h.Require.Contains(h.Stderr.String(), "Restarted codex app-server daemon (pid 4242)")
+	h.Require.NotContains(h.Stderr.String(), "changes are applied on next daemon restart")
+	h.Require.False(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
 }
 
 func Test_Grid_Setup_UseSessionCredential(t *testing.T) {
