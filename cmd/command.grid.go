@@ -12,6 +12,7 @@ var commandGrid = Command{
 	Summary:     "Manage Baseten Grid (PRE-RELEASE)",
 	Description: "Configure harness integrations and manage routes with Baseten Grid. These commands are pre-release; their arguments, flags, and output may change.",
 	Children: []Command{
+		commandGridCloudSession,
 		{
 			Name:    "setup",
 			Summary: "Set up harness authentication and configuration (PRE-RELEASE)",

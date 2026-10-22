@@ -385,6 +385,17 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 }
 
 func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) error {
+	if err := sandboxConnectTerminal(ctx, flags.SandboxRefFlags, ""); err != nil {
+		return err
+	}
+	ctx.Logf("\nDisconnected from sandbox %s.\n", flags.Name)
+	return nil
+}
+
+// sandboxConnectTerminal opens an interactive terminal to a sandbox's shell,
+// sending firstInput to the shell once connected, before the local keyboard.
+// It takes over the terminal, reading keys from stdin and drawing to stdout.
+func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstInput string) error {
 	// Checked before anything is sent: the session takes over the terminal,
 	// reading keys from stdin and drawing to stdout.
 	stdin, stdinIsFile := ctx.Stdin.(*os.File)
@@ -392,7 +403,7 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) 
 	if !ctx.IsInteractive() || !stdinIsFile || !stdoutIsFile || !term.IsTerminal(int(stdout.Fd())) {
 		return cmd.NewErrUsagef("connect requires an interactive terminal for both input and output")
 	}
-	instance, err := sandboxInstance(ctx, flags.SandboxRefFlags)
+	instance, err := sandboxInstance(ctx, ref)
 	if err != nil {
 		return err
 	}
@@ -411,11 +422,15 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) 
 		}
 		return minted.Token, nil
 	}
-	ctx.Logf("Connecting to sandbox %s. Exit the shell or press Ctrl+D to disconnect.\n\n", flags.Name)
+	terminalInput := io.Reader(stdin)
+	if firstInput != "" {
+		terminalInput = io.MultiReader(strings.NewReader(firstInput), stdin)
+	}
+	ctx.Logf("Connecting to sandbox %s. Exit the shell or press Ctrl+D to disconnect.\n\n", ref.Name)
 	terminal, err := sandboxconnect.Dial(ctx, sandboxconnect.DialOptions{
 		SandboxURL: instance.URL(),
 		NewToken:   newSandboxToken,
-		Input:      stdin,
+		Input:      terminalInput,
 		Output:     stdout,
 		Errors:     ctx.Stderr,
 		Terminal:   sandboxconnect.NewOSTerminal(stdin, stdout),
@@ -423,11 +438,7 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) 
 	if err != nil {
 		return err
 	}
-	if err := terminal.Run(ctx); err != nil {
-		return err
-	}
-	ctx.Logf("\nDisconnected from sandbox %s.\n", flags.Name)
-	return nil
+	return terminal.Run(ctx)
 }
 
 // sandboxInstance gets a handle to work in a sandbox.
@@ -453,16 +464,20 @@ func sandboxCommandLine(args []string) (string, error) {
 	}
 	quoted := make([]string, 0, len(args))
 	for _, arg := range args {
-		// Quoted for a POSIX shell, unless it has nothing the shell would
-		// interpret.
-		if arg == "" || strings.IndexFunc(arg, func(r rune) bool {
-			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_/.=:@%+,", r))
-		}) >= 0 {
-			arg = "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
-		}
-		quoted = append(quoted, arg)
+		quoted = append(quoted, sandboxShellQuote(arg))
 	}
 	return strings.Join(quoted, " "), nil
+}
+
+// sandboxShellQuote quotes one argument for a POSIX shell, unless it has
+// nothing the shell would interpret.
+func sandboxShellQuote(arg string) string {
+	if arg == "" || strings.IndexFunc(arg, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_/.=:@%+,", r))
+	}) >= 0 {
+		return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+	}
+	return arg
 }
 
 // sandboxProcessOptions builds the SDK options for a command that 'sandbox
