@@ -175,7 +175,7 @@ func (openCodeHarness) SupportsSubagent() bool { return true }
 
 func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
 	if s.Fallback != "" {
-		return nil, errors.New("--fallback-route is supported only for Claude Code")
+		return nil, errors.New("--fallback-route-id is supported only for Claude Code")
 	}
 	explicitSubagent := s.Subagent != ""
 	s, err := s.Resolve(routes)
@@ -209,7 +209,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoin
 				values = append(values, desired(path, providerID+"/"+s.Subagent))
 			}
 		} else {
-			// A refresh may retire the route an earlier --subagent-route selected.
+			// A refresh may retire the route an earlier --subagent-route-id selected.
 			for _, key := range subagentPaths {
 				model, _ := get(current, key).Data.(string)
 				route, ours := strings.CutPrefix(model, providerID+"/")

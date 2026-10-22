@@ -137,21 +137,25 @@ func outputGridConnections(ctx *CommandContext, connections []managementapi.Grid
 	for _, connection := range connections {
 		value, err := connection.Config.ValueByDiscriminator()
 		if err != nil {
-			return fmt.Errorf("reading connection %s config: %w", connection.Id, err)
+			provider, discriminatorErr := connection.Config.Discriminator()
+			// The SDK retains a typed value when a known variant fails to decode.
+			if value != nil || discriminatorErr != nil || provider == "" {
+				return fmt.Errorf("reading connection %s config: %w", connection.Id, err)
+			}
 		}
-		var provider, secretID, secretName string
+		var provider, secretName string
 		switch config := value.(type) {
 		case managementapi.GridConnectionConfigAnthropic:
-			provider, secretID, secretName = config.Provider, config.SecretId, config.SecretName
+			provider, secretName = config.Provider, config.SecretName
 		case managementapi.GridConnectionConfigOpenAI:
-			provider, secretID, secretName = config.Provider, config.SecretId, config.SecretName
+			provider, secretName = config.Provider, config.SecretName
 		case managementapi.GridConnectionConfigXAI:
-			provider, secretID, secretName = config.Provider, config.SecretId, config.SecretName
+			provider, secretName = config.Provider, config.SecretName
 		default:
-			return fmt.Errorf("unsupported connection config %T", value)
+			provider, secretName = "<unknown>", "<unknown>"
 		}
-		rows = append(rows, []string{connection.Id, connection.TeamId, connection.TeamName, enumFromAPIValue(provider), secretID, secretName})
+		rows = append(rows, []string{connection.Id, connection.TeamId, connection.TeamName, enumFromAPIValue(provider), secretName})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"ID", "TEAM ID", "TEAM NAME", "PROVIDER", "SECRET ID", "SECRET NAME"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"ID", "TEAM ID", "TEAM NAME", "PROVIDER", "SECRET NAME"}, Rows: rows})
 	return nil
 }

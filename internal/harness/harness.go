@@ -75,7 +75,7 @@ type Harness interface {
 	// BackgroundRoute is the route for lightweight background tasks, or "" if
 	// the harness has no such setting.
 	BackgroundRoute(selection Selection) string
-	// SupportsSubagent reports whether --subagent-route applies to this harness.
+	// SupportsSubagent reports whether --subagent-route-id applies to this harness.
 	SupportsSubagent() bool
 	// Credential returns the routes API key setup wrote to the settings file at
 	// path, or "" if there is none.

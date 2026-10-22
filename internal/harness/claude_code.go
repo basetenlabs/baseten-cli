@@ -132,7 +132,7 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 	if selection.Subagent != "" {
 		values = append(values, desired(claudeSubagentPath, modelID(s.Subagent)))
 	} else if get(current, []string{"env", claudeMarker}).Data == "1" {
-		// A refresh may retire the route an earlier --subagent-route selected.
+		// A refresh may retire the route an earlier --subagent-route-id selected.
 		previous, _ := get(current, claudeSubagentPath).Data.(string)
 		if _, owned := claudeRoutes(current)[previous]; owned && !slices.Contains(allowed, any(previous)) {
 			values = append(values, setting{Path: claudeSubagentPath})

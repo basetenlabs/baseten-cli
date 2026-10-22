@@ -48,11 +48,11 @@ func (piHarness) SupportsSubagent() bool { return false }
 func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
 	switch {
 	case s.Background != "":
-		return nil, errors.New("--background-route is supported only for Claude Code and OpenCode")
+		return nil, errors.New("--background-route-id is supported only for Claude Code and OpenCode")
 	case s.Subagent != "":
-		return nil, errors.New("--subagent-route is supported only for Claude Code and OpenCode")
+		return nil, errors.New("--subagent-route-id is supported only for Claude Code and OpenCode")
 	case s.Fallback != "":
-		return nil, errors.New("--fallback-route is supported only for Claude Code")
+		return nil, errors.New("--fallback-route-id is supported only for Claude Code")
 	}
 	s, err := s.Resolve(routes)
 	if err != nil {
@@ -116,6 +116,8 @@ func piModel(r Route, baseURL string) map[string]any {
 	case ProviderAnthropic:
 		// Pi's Anthropic client appends /v1/messages itself.
 		model["api"], model["baseUrl"] = "anthropic-messages", baseURL
+		// Anthropic Messages models use adaptive thinking, not a token budget.
+		model["compat"] = map[string]any{"forceAdaptiveThinking": true}
 	case ProviderOpenAI:
 		model["api"] = "openai-responses"
 	default:
