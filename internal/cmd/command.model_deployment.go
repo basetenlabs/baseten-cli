@@ -559,22 +559,13 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 func promotionEnvironmentSettingsFromFlags(
 	flags *cmd.ModelDeploymentPromoteFlags,
 ) (*managementapi.PromotionEnvironmentSettingsUpdate, error) {
-	if flags.InstanceTypeID.IsSet() && flags.PreserveEnvInstanceType {
-		return nil, cmd.NewErrUsagef("--instance-type-id cannot be combined with --preserve-env-instance-type")
+	if flags.InstanceType.IsSet() && flags.PreserveEnvInstanceType {
+		return nil, cmd.NewErrUsagef("--instance-type cannot be combined with --preserve-env-instance-type")
 	}
 	update := managementapi.PromotionEnvironmentSettingsUpdate{
-		Region:         flags.Region.Pointer(),
-		InstanceTypeId: flags.InstanceTypeID.Pointer(),
-		AutoscalingSettings: settingsGroupOrNil(managementapi.UpdateAutoscalingSettings{
-			MinReplica:                  flags.AutoscalingMinReplica.Pointer(),
-			MaxReplica:                  flags.AutoscalingMaxReplica.Pointer(),
-			AutoscalingWindow:           flags.AutoscalingWindow.Pointer(),
-			ScaleDownDelay:              flags.AutoscalingScaleDownDelay.Pointer(),
-			ConcurrencyTarget:           flags.AutoscalingConcurrencyTarget.Pointer(),
-			TargetUtilizationPercentage: flags.AutoscalingTargetUtilizationPercentage.Pointer(),
-			TargetInFlightTokens:        flags.AutoscalingTargetInFlightTokens.Pointer(),
-			MaxScaleDownRate:            flags.AutoscalingMaxScaleDownRate.Pointer(),
-		}),
+		Region:              flags.Region.Pointer(),
+		InstanceTypeId:      flags.InstanceType.Pointer(),
+		AutoscalingSettings: settingsGroupOrNil(autoscalingSettingsFromFlags(flags.AutoscalingSettingsFlags)),
 	}
 	if flags.RequestBackpressurePolicy.IsSet() {
 		settings := requestBackpressureFromFlags(cmd.RequestBackpressureFlags{Policy: flags.RequestBackpressurePolicy})

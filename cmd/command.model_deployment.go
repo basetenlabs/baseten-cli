@@ -119,8 +119,8 @@ var commandModelDeployment = Command{
 			Description: "Promote a model deployment to an environment.\n\n" +
 				"Defaults to the production environment. Cleanup of the previous deployment " +
 				"is controlled by the target environment's promotion cleanup strategy.\n\n" +
-				"The --region, --instance-type-id, --request-backpressure-policy, " +
-				"--autoscaling-schedule-update-json, and --autoscaling-* flags change the environment's " +
+				"The --region, --instance-type, --request-backpressure-policy, " +
+				"--autoscaling-schedule-update-json, and autoscaling flags change the environment's " +
 				"settings: the promoted deployment " +
 				"uses them, and the environment keeps them once the promotion completes. The " +
 				"--override-* flags apply to this promotion only and leave the environment's " +
@@ -148,7 +148,7 @@ var commandModelDeployment = Command{
 						Description: "Promote with new replica bounds for the environment.",
 						CommandLines: []string{
 							"baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id>",
-							"--autoscaling-min-replica 2 --autoscaling-max-replica 8 --yes",
+							"--min-replica 2 --max-replica 8 --yes",
 						},
 					},
 					{
@@ -518,18 +518,11 @@ type ModelDeploymentPromoteFlags struct {
 	PreserveEnvInstanceType bool   `flag:"preserve-env-instance-type" desc:"Keep the target environment's current instance type instead of applying the promoted deployment's."`
 
 	Region                        OptionalFlag[string] `flag:"region" desc:"Region slug to set on the environment. Pass an empty string for Global. Run 'baseten org regions' to see the slugs available."`
-	InstanceTypeID                OptionalFlag[string] `flag:"instance-type-id" desc:"Instance type to set on the environment. Cannot be combined with --preserve-env-instance-type."`
+	InstanceType                  OptionalFlag[string] `flag:"instance-type" desc:"Instance type to set on the environment, for example A10Gx4x16. See https://docs.baseten.co/deployment/resources for the available types. Cannot be combined with --preserve-env-instance-type."`
 	RequestBackpressurePolicy     OptionalFlag[string] `flag:"request-backpressure-policy" desc:"Backpressure policy to set on the environment. Pass null to clear the environment's policy." enum:"queue-on-full,reject-on-full" nullable:"true"`
 	AutoscalingScheduleUpdateJSON OptionalFlag[string] `flag:"autoscaling-schedule-update-json" desc:"Autoscaling schedule changes for the environment, applied when the promotion completes, as a JSON object with schedules, delete_schedules, and timezone. Same shape and values as autoscaling_schedule_settings on the environment update API, for example cadence DAILY."`
 
-	AutoscalingMinReplica                  OptionalFlag[int] `flag:"autoscaling-min-replica" desc:"Minimum number of replicas." group:"autoscaling" group-pri:"200"`
-	AutoscalingMaxReplica                  OptionalFlag[int] `flag:"autoscaling-max-replica" desc:"Maximum number of replicas." group:"autoscaling"`
-	AutoscalingWindow                      OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds." group:"autoscaling"`
-	AutoscalingScaleDownDelay              OptionalFlag[int] `flag:"autoscaling-scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds." group:"autoscaling"`
-	AutoscalingConcurrencyTarget           OptionalFlag[int] `flag:"autoscaling-concurrency-target" desc:"Number of requests per replica before scaling up." group:"autoscaling"`
-	AutoscalingTargetUtilizationPercentage OptionalFlag[int] `flag:"autoscaling-target-utilization-percentage" desc:"Target utilization percentage for scaling up and down." group:"autoscaling"`
-	AutoscalingTargetInFlightTokens        OptionalFlag[int] `flag:"autoscaling-target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only." group:"autoscaling"`
-	AutoscalingMaxScaleDownRate            OptionalFlag[int] `flag:"autoscaling-max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window." group:"autoscaling"`
+	AutoscalingSettingsFlags
 
 	PromotionSettingsOverrideFlags
 
