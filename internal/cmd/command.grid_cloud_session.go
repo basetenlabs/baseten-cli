@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"net/url"
 	"os"
 	"time"
 
@@ -91,28 +92,59 @@ func cloudSessionHarnessDispatchCommand(harnessName string, prompt string) (stri
 	}
 }
 
-// cloudSessionEnvs builds the session's environment variables. The session
-// key's local name (--key-env) varies, but it always lands in the sandbox as
-// BASETEN_API_KEY, the name the in-sandbox 'grid setup' reads.
-func cloudSessionEnvs(flags *cmd.CloudSessionCreateFlags) (*[]managementapi.SandboxEnv, error) {
+// cloudSessionEnvs reads the session key and builds the sandbox's environment
+// variables. The sandbox always gets a BASETEN_API_KEY for its in-sandbox
+// 'grid setup' and CLI: the real key without --proxy-auth, a placeholder with
+// it — the proxy replaces the credential on the wire, so the placeholder is
+// all the sandbox ever holds.
+func cloudSessionEnvs(flags *cmd.CloudSessionCreateFlags) (string, *[]managementapi.SandboxEnv, error) {
 	keyEnv := flags.KeyEnv
 	if keyEnv == "" {
 		keyEnv = "BASETEN_API_KEY"
 	}
 	apiKeyValue, keyIsSet := os.LookupEnv(keyEnv)
 	if !keyIsSet || apiKeyValue == "" {
-		return nil, cmd.NewErrUsagef("the session's API key is not set: export %s first; a personal API key is never used for a session", keyEnv)
+		return "", nil, cmd.NewErrUsagef("the session's API key is not set: export %s first; a personal API key is never used for a session", keyEnv)
+	}
+	sandboxAPIKeyValue := apiKeyValue
+	if flags.ProxyAuth {
+		sandboxAPIKeyValue = "proxy-injected"
 	}
 	sandboxAPIKeyName := "BASETEN_API_KEY"
-	envs := []managementapi.SandboxEnv{{Name: &sandboxAPIKeyName, Value: &apiKeyValue}}
+	envs := []managementapi.SandboxEnv{{Name: &sandboxAPIKeyName, Value: &sandboxAPIKeyValue}}
 	for _, envName := range flags.Env {
 		envValue, envIsSet := os.LookupEnv(envName)
 		if !envIsSet || envValue == "" {
-			return nil, cmd.NewErrUsagef("--env %s: not set in the local environment", envName)
+			return "", nil, cmd.NewErrUsagef("--env %s: not set in the local environment", envName)
 		}
 		envs = append(envs, managementapi.SandboxEnv{Name: &envName, Value: &envValue})
 	}
-	return &envs, nil
+	return apiKeyValue, &envs, nil
+}
+
+// cloudSessionURLHost extracts a URL's host for proxy destination matching.
+func cloudSessionURLHost(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("parsing %q: %w", rawURL, err)
+	}
+	if parsed.Hostname() == "" {
+		return "", fmt.Errorf("parsing %q: no host", rawURL)
+	}
+	return parsed.Hostname(), nil
+}
+
+// cloudSessionProxyNetwork routes the session's credential through the
+// sandbox's network proxy: the key lives in the proxy's write-only secret
+// store, replacing the Authorization header on harness and management
+// traffic, so the placeholder the sandbox holds is all an agent can leak.
+func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string) *managementapi.SandboxNetwork {
+	routing := []managementapi.SandboxProxyTarget{{
+		Destinations: &[]string{harnessHost, "api.baseten.co"},
+		Headers:      &map[string]string{"Authorization": "Bearer {{SECRET:session_key}}"},
+		Secrets:      &map[string]string{"session_key": apiKeyValue},
+	}}
+	return &managementapi.SandboxNetwork{Proxy: &managementapi.SandboxProxyConfig{Routing: &routing}}
 }
 
 // cloudSessionWaitDeployed polls until the session's sandbox can run commands.
@@ -166,7 +198,7 @@ func cloudSessionExecStream(ctx *CommandContext, instance *sandbox.Sandbox, comm
 }
 
 func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionCreateFlags) error {
-	envs, err := cloudSessionEnvs(flags)
+	apiKeyValue, envs, err := cloudSessionEnvs(flags)
 	if err != nil {
 		return err
 	}
@@ -183,13 +215,23 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 		name = cloudSessionGeneratedName()
 	}
 	createIfNotExists := true
-	record, err := client.API().CreateSandbox(ctx, managementapi.CreateSandboxParams{TeamId: teamID}, managementapi.CreateSandboxRequest{
+	createRequest := managementapi.CreateSandboxRequest{
 		Name:              &name,
 		Image:             &flags.Image,
 		Memory:            &flags.Memory,
 		Envs:              envs,
 		CreateIfNotExists: &createIfNotExists,
-	})
+	}
+	var harnessHost string
+	if flags.ProxyAuth {
+		var err error
+		harnessHost, err = cloudSessionURLHost(flags.HarnessURL)
+		if err != nil {
+			return err
+		}
+		createRequest.Network = cloudSessionProxyNetwork(harnessHost, apiKeyValue)
+	}
+	record, err := client.API().CreateSandbox(ctx, managementapi.CreateSandboxParams{TeamId: teamID}, createRequest)
 	if err != nil {
 		return fmt.Errorf("creating session %s: %w", name, err)
 	}
@@ -201,6 +243,8 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	if err != nil {
 		return err
 	}
+	// With --proxy-auth the sandbox's BASETEN_API_KEY is a placeholder and the
+	// proxy replaces it on the wire, so the in-sandbox setup runs unchanged.
 	setupCommand := "baseten grid setup --harness " + flags.Harness + " --use-session-credential --yes"
 	if flags.Team != "" {
 		setupCommand += " --team " + sandboxShellQuote(flags.Team)
@@ -285,10 +329,10 @@ func cloudSessionAttach(ctx *CommandContext, ref cmd.SandboxRefFlags, tmuxWindow
 	ensureKeepAwake := func(reconnectCtx context.Context) error {
 		return cloudSessionEnsureKeepAwake(reconnectCtx, instance)
 	}
-	// The sandbox's terminal pty advertises the non-UTF-8 TERM=linux, so tmux
-	// ASCII-substitutes glyphs unless the attached client overrides it.
-	// tmux new -A: attach when the session exists, create it with the harness when not.
-	attachCommand := "TERM=xterm-256color tmux new-session -A -s " + cloudSessionTmuxSession + " " + tmuxWindowCommand + "\n"
+	// The sandbox's terminal pty advertises the non-UTF-8 TERM=linux and has no
+	// locale set, so tmux ASCII-substitutes glyphs; -u forces UTF-8.
+	// new -A: attach when the session exists, create it with the harness when not.
+	attachCommand := "TERM=xterm-256color tmux -u new-session -A -s " + cloudSessionTmuxSession + " " + tmuxWindowCommand + "\n"
 	connectErr := sandboxConnectTerminal(ctx, ref, attachCommand, ensureKeepAwake)
 	instance.Process().Kill(ctx, sandbox.ProcessKillOptions{Identifier: cloudSessionKeepAwakeProcess})
 	return connectErr

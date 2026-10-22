@@ -104,13 +104,15 @@ type CloudSessionConnectFlags struct {
 // CloudSessionCreateFlags are the flags for 'baseten grid cloud-session create'.
 type CloudSessionCreateFlags struct {
 	CommandFlags
-	Image   string   `flag:"image" desc:"Image from the sandbox image store, as shown by 'sandbox image list'." required:"true"`
-	Name    string   `flag:"name" desc:"Name of the session's sandbox. Defaults to a generated readable name."`
-	Team    string   `flag:"team" desc:"Team name or ID the session belongs to. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
-	Memory  int      `flag:"memory" desc:"Sandbox memory in MB, 1024 to 262144." default:"8192"`
-	Harness string   `flag:"harness" desc:"Harness the session runs." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
-	KeyEnv  string   `flag:"key-env" desc:"Local environment variable holding the session's API key, passed to the sandbox as BASETEN_API_KEY. Default BASETEN_API_KEY."`
-	Env     []string `flag:"env" desc:"Local environment variable to inject into the session as a secret, by name; its value is read from this process. Repeatable."`
+	Image      string   `flag:"image" desc:"Image from the sandbox image store, as shown by 'sandbox image list'." required:"true"`
+	Name       string   `flag:"name" desc:"Name of the session's sandbox. Defaults to a generated readable name."`
+	Team       string   `flag:"team" desc:"Team name or ID the session belongs to. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
+	Memory     int      `flag:"memory" desc:"Sandbox memory in MB, 1024 to 262144." default:"8192"`
+	Harness    string   `flag:"harness" desc:"Harness the session runs." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
+	KeyEnv     string   `flag:"key-env" desc:"Local environment variable holding the session's API key. Default BASETEN_API_KEY."`
+	ProxyAuth  bool     `flag:"proxy-auth" desc:"Route the session credential through the sandbox's network proxy: the key goes to the proxy's write-only secret store, which replaces the Authorization header on harness and management traffic, and the sandbox holds only a placeholder credential. Without this, the key is passed to the sandbox as the secret BASETEN_API_KEY."`
+	HarnessURL string   `flag:"harness-url" desc:"Harness API base URL. Default https://coding.baseten.co." default:"https://coding.baseten.co"`
+	Env        []string `flag:"env" desc:"Local environment variable to inject into the session as a secret, by name; its value is read from this process. Repeatable."`
 }
 
 // CloudSessionDispatchFlags are the flags for 'baseten grid cloud-session dispatch'.
