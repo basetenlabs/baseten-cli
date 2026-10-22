@@ -92,11 +92,9 @@ func cloudSessionHarnessDispatchCommand(harnessName string, prompt string) (stri
 	}
 }
 
-// cloudSessionEnvs reads the session key and builds the sandbox's environment
-// variables. The sandbox always gets a BASETEN_API_KEY for its in-sandbox
-// 'grid setup' and CLI: the real key without --proxy-auth, a placeholder with
-// it — the proxy replaces the credential on the wire, so the placeholder is
-// all the sandbox ever holds.
+// cloudSessionEnvs reads the session key and builds the sandbox's env vars.
+// With --proxy-auth the BASETEN_API_KEY value is a placeholder; the proxy
+// replaces the credential on the wire.
 func cloudSessionEnvs(flags *cmd.CloudSessionCreateFlags) (string, *[]managementapi.SandboxEnv, error) {
 	keyEnv := flags.KeyEnv
 	if keyEnv == "" {
@@ -134,10 +132,9 @@ func cloudSessionURLHost(rawURL string) (string, error) {
 	return parsed.Hostname(), nil
 }
 
-// cloudSessionProxyNetwork routes the session's credential through the
-// sandbox's network proxy: the key lives in the proxy's write-only secret
-// store, replacing the Authorization header on harness and management
-// traffic, so the placeholder the sandbox holds is all an agent can leak.
+// cloudSessionProxyNetwork puts the session key in the proxy's write-only
+// secret store, replacing the Authorization header on harness and management
+// traffic; the placeholder in the sandbox is all an agent can leak.
 func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string) *managementapi.SandboxNetwork {
 	routing := []managementapi.SandboxProxyTarget{{
 		Destinations: &[]string{harnessHost, "api.baseten.co"},
