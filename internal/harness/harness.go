@@ -199,7 +199,7 @@ func validateRoute(r Route) error {
 	switch {
 	case !r.Tools:
 		return fmt.Errorf("route %q lacks tool support", r.Name)
-	case r.ContextWindow <= 0 || r.OutputLimit <= 0 || r.OutputLimit >= r.ContextWindow:
+	case r.ContextWindow <= 0 || r.OutputLimit <= 0 || r.OutputLimit > r.ContextWindow:
 		return fmt.Errorf("route %q has no usable context and output limits", r.Name)
 	case len(r.InputModalities) == 0:
 		return fmt.Errorf("route %q has no input modalities", r.Name)
