@@ -78,7 +78,7 @@ func Test_API_Management_AuthHeader(t *testing.T) {
 	err := h.Execute("api", "management", "models")
 	h.Require.NoError(err)
 	h.Require.Equal("Bearer test-key", req.Headers.Get("Authorization"))
-	h.Require.Regexp(`^baseten-cli/\S+ \(Go/\S+; [^)]+\)$`, req.Headers.Get("User-Agent"))
+	h.Require.Regexp(`^baseten-cli/dev \(Go/\S+; [^)]+\)$`, req.Headers.Get("User-Agent"))
 }
 
 func Test_API_Management_ExplicitMethod(t *testing.T) {

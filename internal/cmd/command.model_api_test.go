@@ -218,8 +218,12 @@ func Test_ModelApi_Describe_JSON(t *testing.T) {
 func Test_ModelApi_Predict_Content(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/chat/completions", 200, map[string]any{
-		"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "hello there"}}},
+	m.SetRouteFunc("POST", "/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		h.Require.Regexp(`^baseten-cli/dev \(Go/\S+; [^)]+\)$`, r.Header.Get("User-Agent"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "hello there"}}},
+		})
 	})
 
 	err := h.Execute("model-api", "predict", "--url", m.URL+"/v1/chat/completions",
