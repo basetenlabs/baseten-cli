@@ -1,0 +1,121 @@
+package cmd
+
+import (
+	"github.com/basetenlabs/baseten-go/client/managementapi"
+)
+
+// commandGridCloudSession is 'baseten grid cloud-session': a coding sandbox
+// running a harness. A session's name is its sandbox name; no separate registry.
+var commandGridCloudSession = Command{
+	Name:    "cloud-session",
+	Summary: "Manage cloud coding sessions (PRE-RELEASE)",
+	Description: gridPrereleaseNotice +
+		"Sandboxes that run a coding harness, created from a session image already imported into the sandbox image store " +
+		"('baseten sandbox image push'); cloud-session never builds or imports images. " +
+		"Create runs the harness setup inside the session and starts the harness in a tmux session. " +
+		"Connect reattaches to that tmux session, and dispatch runs a headless prompt in it. " +
+		"A session left idle hibernates with its sandbox and resumes on the next connection, with the harness still running.",
+	Children: []Command{
+		{
+			Name:    "create",
+			Summary: "Create a cloud session (PRE-RELEASE)",
+			Description: gridPrereleaseNotice +
+				"Create a sandbox from an imported session image, wait for it to deploy, run 'grid setup' inside with the " +
+				"session credential, and start the harness in a tmux session. Idempotent: an existing running session is " +
+				"set up again and returned.\n\n" +
+				"The session's API key is read from the local environment named by --key-env (default BASETEN_API_KEY) and " +
+				"passed to the sandbox as a secret environment variable; its value is never stored by this command. " +
+				"--env injects more local environment variables the same way, by name. " +
+				"The session's name defaults to a generated readable name. " +
+				"Attach with 'baseten grid cloud-session connect --name <name>'.",
+			Flags: CloudSessionCreateFlags{},
+			Output: &CommandOutput[managementapi.Sandbox]{
+				TextDescription: "One field per line, like 'sandbox describe', followed by the connect command.",
+				Examples: []CommandExample{
+					{
+						Description: "Create a session from an imported image with a generated name.",
+						Command:     "baseten grid cloud-session create --image my-session-image:latest",
+					},
+					{
+						Description: "Create a named session and inject a local secret by name.",
+						CommandLines: []string{
+							"baseten grid cloud-session create --image my-session-image:latest",
+							"--name my-session --env GITHUB_TOKEN",
+						},
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the session's state.",
+					Command:     "baseten grid cloud-session create --image my-session-image:latest --jq '.status'",
+				},
+			},
+		},
+		{
+			Name:    "connect",
+			Summary: "Attach to a cloud session's harness (PRE-RELEASE)",
+			Description: gridPrereleaseNotice +
+				"Open an interactive terminal to the session's sandbox and attach to its tmux session, landing directly in " +
+				"the harness. Detaching (Ctrl+B D) or a dropped connection leaves the harness running; connect again to " +
+				"reattach. The sandbox hibernates after inactivity, which drops the connection; typing a key reconnects " +
+				"and wakes it.\n\n" +
+				"Requires an interactive terminal for both input and output; fails at once, before connecting, when either " +
+				"is redirected.",
+			Flags: CloudSessionConnectFlags{},
+			Output: &CommandOutput[struct{}]{
+				TextDescription: "The harness's terminal, until you detach.",
+				Examples: []CommandExample{{
+					Description: "Attach to a session's harness.",
+					Command:     "baseten grid cloud-session connect --name my-session",
+				}},
+				JSONOutputUnimportant: true,
+			},
+		},
+		{
+			Name:    "dispatch",
+			Summary: "Run a headless prompt in a cloud session (PRE-RELEASE)",
+			Description: gridPrereleaseNotice +
+				"Run the session's harness headless with a prompt ('claude -p' for Claude Code) and stream its output. " +
+				"The harness's exit code becomes the CLI's exit code. A dispatch runs as a sandbox process and does not " +
+				"survive the connection ending, unlike the harness in the tmux session.",
+			Flags: CloudSessionDispatchFlags{},
+			Output: &CommandOutput[struct{}]{
+				TextDescription: "The harness's standard output on stdout and standard error on stderr, as they arrive.",
+				Examples: []CommandExample{
+					{
+						Description: "Run a prompt headless in a session.",
+						Command:     "baseten grid cloud-session dispatch --name my-session --prompt \"Fix the failing test in go/limiter\"",
+					},
+				},
+				JSONOutputUnimportant: true,
+			},
+		},
+	},
+}
+
+// CloudSessionConnectFlags are the flags for 'baseten grid cloud-session connect'.
+type CloudSessionConnectFlags struct {
+	CommandFlags
+	SandboxRefFlags
+	Harness string `flag:"harness" desc:"Harness the session runs, used to start it when its tmux session is gone." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
+}
+
+// CloudSessionCreateFlags are the flags for 'baseten grid cloud-session create'.
+type CloudSessionCreateFlags struct {
+	CommandFlags
+	Image   string   `flag:"image" desc:"Image from the sandbox image store, as shown by 'sandbox image list'." required:"true"`
+	Name    string   `flag:"name" desc:"Name of the session's sandbox. Defaults to a generated readable name."`
+	Team    string   `flag:"team" desc:"Team name or ID the session belongs to. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
+	Memory  int      `flag:"memory" desc:"Sandbox memory in MB, 1024 to 262144." default:"8192"`
+	Harness string   `flag:"harness" desc:"Harness the session runs." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
+	KeyEnv  string   `flag:"key-env" desc:"Local environment variable holding the session's API key, passed to the sandbox as BASETEN_API_KEY. Default BASETEN_API_KEY."`
+	Env     []string `flag:"env" desc:"Local environment variable to inject into the session as a secret, by name; its value is read from this process. Repeatable."`
+}
+
+// CloudSessionDispatchFlags are the flags for 'baseten grid cloud-session dispatch'.
+type CloudSessionDispatchFlags struct {
+	CommandFlags
+	SandboxProcessOptionFlags
+	SandboxRefFlags
+	Harness string `flag:"harness" desc:"Harness to run the prompt in." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
+	Prompt  string `flag:"prompt" desc:"Prompt to run the harness with, headless." required:"true"`
+}
