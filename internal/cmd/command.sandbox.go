@@ -385,7 +385,7 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 }
 
 func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) error {
-	if err := sandboxConnectTerminal(ctx, flags.SandboxRefFlags, ""); err != nil {
+	if err := sandboxConnectTerminal(ctx, flags.SandboxRefFlags, "", nil); err != nil {
 		return err
 	}
 	ctx.Logf("\nDisconnected from sandbox %s.\n", flags.Name)
@@ -393,9 +393,10 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) 
 }
 
 // sandboxConnectTerminal opens an interactive terminal to a sandbox's shell,
-// sending firstInput to the shell once connected, before the local keyboard.
-// It takes over the terminal, reading keys from stdin and drawing to stdout.
-func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstInput string) error {
+// sending firstInput to the shell once connected, before the local keyboard,
+// and running onConnect after each successful connection. It takes over the
+// terminal, reading keys from stdin and drawing to stdout.
+func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstInput string, onConnect func(context.Context) error) error {
 	// Checked before anything is sent: the session takes over the terminal,
 	// reading keys from stdin and drawing to stdout.
 	stdin, stdinIsFile := ctx.Stdin.(*os.File)
@@ -434,6 +435,7 @@ func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstI
 		Output:     stdout,
 		Errors:     ctx.Stderr,
 		Terminal:   sandboxconnect.NewOSTerminal(stdin, stdout),
+		OnConnect:  onConnect,
 	})
 	if err != nil {
 		return err
