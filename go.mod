@@ -1,6 +1,6 @@
 module github.com/basetenlabs/baseten-cli
 
-go 1.26.1
+go 1.26.10
 
 require (
 	charm.land/fang/v2 v2.0.1
@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.21
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
-	github.com/basetenlabs/baseten-go v0.5.1-0.20261021000049-ba7e1592dfee
+	github.com/basetenlabs/baseten-go v0.5.1-0.20261021160419-cab805183529
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.7

@@ -686,7 +686,7 @@ func TestOpenCodeSetupAfterMigrationRetiresV1Settings(t *testing.T) {
 		require.False(t, get(d, key).Exists, "retired V1 subagent settings")
 	}
 	for _, key := range openCodeV2SubagentPaths {
-		require.False(t, get(d, key).Exists, "no --subagent-route on this run")
+		require.False(t, get(d, key).Exists, "no --subagent-route-id on this run")
 	}
 	require.Equal(t, "other/model", get(d, []string{"agent", "mine", "model"}).Data, "the user's V1 agent stays")
 	token, err := openCodeHarness{}.Credential(path)
@@ -805,7 +805,7 @@ func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	}
 	require.Equal(t, "anthropic-messages", models["acme/primary"]["api"])
 	require.Equal(t, testEndpoint, models["acme/primary"]["baseUrl"], "Pi's Anthropic client appends /v1")
-	require.NotContains(t, models["acme/primary"], "compat")
+	require.Equal(t, true, get(models["acme/primary"], []string{"compat", "forceAdaptiveThinking"}).Data)
 	require.Equal(t, "openai-responses", models["acme/background"]["api"])
 	require.NotContains(t, models["acme/background"], "baseUrl")
 	require.NotContains(t, models["acme/background"], "compat")

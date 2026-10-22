@@ -14,12 +14,13 @@ var commandModel = Command{
 	Children: []Command{
 		{
 			Name:      "push",
-			ArgsUsage: "[--dir DIR]",
-			Summary:   "Push a model directory as a new model or deployment",
+			ArgsUsage: "[--dir DIR | --file FILE]",
+			Summary:   "Push a model directory or config file as a new model or deployment",
 			Description: "Build a model archive, upload it to Baseten, and create either a new " +
 				"model or a new deployment of an existing model.\n\n" +
 				"The current directory is used by default; pass --dir to push a model " +
-				"directory at another path.\n\n" +
+				"directory at another path. For a model defined entirely by its config, " +
+				"pass --file to push only that config file, or --file - to read it from stdin.\n\n" +
 				"The model is identified by the `model_name` field in config.yaml. " +
 				"Use --override-name to override that for this push only.",
 			Flags: ModelPushFlags{},
@@ -38,6 +39,10 @@ var commandModel = Command{
 					{
 						Description: "Push and stream build/runtime logs until the deployment is active.",
 						Command:     "baseten model push --tail --wait",
+					},
+					{
+						Description: "Push a config-only model from a single file.",
+						Command:     "baseten model push --file llama.yaml",
 					},
 				},
 				JQExample: CommandExample{
@@ -389,7 +394,8 @@ type MetricsFlags struct {
 type ModelPushFlags struct {
 	CommandFlags
 
-	Dir string `flag:"dir" desc:"Model directory to push. Defaults to the current directory." default:"."`
+	Dir  string `flag:"dir" desc:"Model directory to push. Defaults to the current directory when --file is not set."`
+	File string `flag:"file" desc:"Config file to push on its own, for models defined entirely by their config. Use - for stdin. Only this file is uploaded, as the model's config.yaml. Mutually exclusive with --dir."`
 
 	Team string `flag:"team" desc:"Team the model belongs to. Only valid for new models."`
 

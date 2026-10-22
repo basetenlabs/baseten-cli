@@ -45,10 +45,10 @@ func commandGridRouteList(ctx *CommandContext, flags *cmd.GridRouteListFlags) er
 	}
 	rows := make([][]string, 0, len(items))
 	for _, r := range items {
-		rows = append(rows, []string{r.Id, r.TeamName, r.DisplayName, r.Name, r.CreatedAt.UTC().Format(time.RFC3339)})
+		rows = append(rows, []string{r.Id, r.TeamId, r.TeamName, r.DisplayName, r.Name, r.CreatedAt.UTC().Format(time.RFC3339)})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers: []string{"ID", "TEAM", "DISPLAY NAME", "NAME", "CREATED"},
+		Headers: []string{"ID", "TEAM ID", "TEAM NAME", "DISPLAY NAME", "NAME", "CREATED"},
 		Rows:    rows,
 	})
 	return nil
@@ -141,7 +141,7 @@ func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateGridR
 	switch flags.TargetType {
 	case "classifier":
 		if flags.TargetModel != "" || flags.TargetConnection != "" {
-			return nil, cmd.NewErrUsagef("classifier targets do not accept --target-model or --target-connection")
+			return nil, cmd.NewErrUsagef("classifier targets do not accept --target-model or --target-connection-id")
 		}
 		classifier, err := gridRouteClassifierTarget(flags.GridRouteClassifierFlags)
 		if err != nil {
@@ -151,7 +151,7 @@ func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateGridR
 		return target, err
 	case "baseten-model-api":
 		if flags.TargetConnection != "" {
-			return nil, cmd.NewErrUsagef("--target-connection is not valid with --target-type baseten-model-api")
+			return nil, cmd.NewErrUsagef("--target-connection-id is not valid with --target-type baseten-model-api")
 		}
 		err := target.FromUpsertGridRouteTargetBasetenModelAPI(managementapi.UpsertGridRouteTargetBasetenModelAPI{
 			Type:  "BASETEN_MODEL_API",
@@ -160,7 +160,7 @@ func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateGridR
 		return target, err
 	case "connection":
 		if flags.TargetConnection == "" {
-			return nil, cmd.NewErrUsagef("--target-connection is required with --target-type connection")
+			return nil, cmd.NewErrUsagef("--target-connection-id is required with --target-type connection")
 		}
 		err := target.FromUpsertGridRouteTargetConnection(managementapi.UpsertGridRouteTargetConnection{
 			Type:         "CONNECTION",
@@ -302,13 +302,16 @@ func gridRouteTargetFields(value any) (gridRouteTargetInfo, error) {
 	case managementapi.GridRouteTargetConnection:
 		return gridRouteTargetInfo{kind: t.Type, model: t.Model, connection: t.ConnectionId}, nil
 	case managementapi.GridRouteTargetClassifier:
-		info := gridRouteTargetInfo{kind: t.Type, defaultRoute: t.DefaultRoute.Slug}
+		info := gridRouteTargetInfo{
+			kind:         t.Type,
+			defaultRoute: fmt.Sprintf("%s (%s)", t.DefaultRoute.Slug, t.DefaultRoute.Id),
+		}
 		// Null for routers created before classifiers could be selected.
 		if t.Classifier != nil {
-			info.classifier = t.Classifier.Name
+			info.classifier = fmt.Sprintf("%s (%s)", t.Classifier.Name, t.Classifier.Id)
 		}
 		for _, r := range t.AllowedRoutes {
-			info.allowedRoutes = append(info.allowedRoutes, r.Slug)
+			info.allowedRoutes = append(info.allowedRoutes, fmt.Sprintf("%s (%s)", r.Slug, r.Id))
 		}
 		return info, nil
 	default:

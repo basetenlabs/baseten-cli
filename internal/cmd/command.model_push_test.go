@@ -390,6 +390,37 @@ func Test_Model_Push_DefaultIgnore(t *testing.T) {
 	h.Require.Equal("kept", entries["_build/keep.txt"])
 }
 
+// --file uploads the config alone as config.yaml, whatever the file is named,
+// and none of its neighbors.
+func Test_Model_Push_File(t *testing.T) {
+	h := newModelPushHarness(t)
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	file := filepath.Join(dir, "other.yaml")
+	h.Require.NoError(os.WriteFile(file, []byte("# config only\nmodel_name: test-model\n"), 0o644))
+
+	h.Require.NoError(h.Execute("model", "push", "--file", file))
+
+	prep := h.API.FindCall("POST", "/v1/prepare_model_upload")
+	h.Require.NotNil(prep)
+	body := prep.BodyJSON(h.T)
+	h.Require.Equal("test-model", body["name"])
+	h.Require.Equal("# config only\nmodel_name: test-model\n", body["deployment"].(map[string]any)["raw_config"])
+
+	entries := h.UntarUploaded()
+	h.Require.Equal(map[string]string{"config.yaml": "# config only\nmodel_name: test-model\n"}, entries)
+}
+
+// --file - reads the config from stdin.
+func Test_Model_Push_FileStdin(t *testing.T) {
+	h := newModelPushHarness(t)
+	h.Stdin.WriteString(modelPushMinimalConfig)
+
+	h.Require.NoError(h.Execute("model", "push", "--file", "-"))
+
+	entries := h.UntarUploaded()
+	h.Require.Equal(map[string]string{"config.yaml": modelPushMinimalConfig}, entries)
+}
+
 // Combined flag-validation coverage. Each subtest is a single Execute, no
 // HTTP/S3 traffic expected for the failure cases.
 func Test_Model_Push_Validation(t *testing.T) {
@@ -399,6 +430,33 @@ func Test_Model_Push_Validation(t *testing.T) {
 		err := h.Execute("model", "push", "--dir", dir)
 		h.Require.ErrorContains(err, "config.yaml not found")
 		h.Require.ErrorContains(err, "--dir")
+	})
+
+	t.Run("file_with_dir", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		err := h.Execute("model", "push", "--dir", dir, "--file", filepath.Join(dir, "config.yaml"))
+		h.Require.ErrorContains(err, "--file cannot be combined with --dir")
+	})
+
+	t.Run("file_with_watch", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		err := h.Execute("model", "push", "--file", filepath.Join(dir, "config.yaml"), "--watch")
+		h.Require.ErrorContains(err, "--file cannot be combined with --watch")
+	})
+
+	t.Run("file_with_external_package_dirs", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir("model_name: test-model\nexternal_package_dirs:\n  - extras\n")
+		err := h.Execute("model", "push", "--file", filepath.Join(dir, "config.yaml"))
+		h.Require.ErrorContains(err, "external_package_dirs is not supported with --file")
+	})
+
+	t.Run("file_empty", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		err := h.Execute("model", "push", "--file", "-", "--override-name", "test-model")
+		h.Require.ErrorContains(err, "stdin is empty")
 	})
 
 	t.Run("missing_model_name", func(t *testing.T) {

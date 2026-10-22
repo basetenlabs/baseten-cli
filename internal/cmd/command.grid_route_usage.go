@@ -50,9 +50,7 @@ type gridUsageRequest struct {
 	query      cmd.GridRouteUsageQueryFlags
 	// defaultStart is the window start when --start and --since are omitted.
 	defaultStart func(end time.Time) time.Time
-	// defaultToCaller narrows usage to the caller when --user-id is omitted.
-	defaultToCaller bool
-	newTable        func(dims []managementapi.GridRouteUsageDimension) gridUsageTable
+	newTable     func(dims []managementapi.GridRouteUsageDimension) gridUsageTable
 }
 
 // gridUsageTable renders the text output from daily buckets.
@@ -85,14 +83,6 @@ func runGridRouteUsage(ctx *CommandContext, req gridUsageRequest) error {
 		return err
 	}
 	api := cl.API()
-	userIDs := req.userIDs
-	if len(userIDs) == 0 && req.defaultToCaller {
-		me, err := api.GetUsersMe(ctx)
-		if err != nil {
-			return fmt.Errorf("getting current user: %w", err)
-		}
-		userIDs = []string{me.UserId}
-	}
 	team, err := gridTeamID(ctx, api, req.team)
 	if err != nil {
 		return err
@@ -103,8 +93,8 @@ func runGridRouteUsage(ctx *CommandContext, req gridUsageRequest) error {
 		EndDate:   &endDate,
 		GroupBy:   &dims,
 	}
-	if len(userIDs) > 0 {
-		params.UserIds = &userIDs
+	if len(req.userIDs) > 0 {
+		params.UserIds = &req.userIDs
 	}
 	if len(q.Models) > 0 {
 		params.Models = &q.Models
@@ -158,13 +148,6 @@ buckets:
 	}
 	if table.empty() {
 		ctx.LogLine("No usage in the selected window.")
-		// A team or workspace key authenticates as a service account, which
-		// never creates routes keys, so its own usage is always empty.
-		if req.defaultToCaller && len(req.userIDs) == 0 {
-			if session, err := ctx.authInfo.Session(); err == nil && session.UsesAPIKey() {
-				ctx.LogLine("If you're using a team or workspace API key, run 'baseten auth login' to see your own usage.")
-			}
-		}
 		return nil
 	}
 	names := make([]string, len(dims))
