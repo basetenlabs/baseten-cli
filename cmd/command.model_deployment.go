@@ -120,7 +120,7 @@ var commandModelDeployment = Command{
 				"Defaults to the production environment. Cleanup of the previous deployment " +
 				"is controlled by the target environment's promotion cleanup strategy.\n\n" +
 				"The --region, --instance-type-id, --request-backpressure-policy, " +
-				"--autoscaling-schedule-update, and --autoscaling-* flags change the environment's " +
+				"--autoscaling-schedule-update-json, and --autoscaling-* flags change the environment's " +
 				"settings: the promoted deployment " +
 				"uses them, and the environment keeps them once the promotion completes. The " +
 				"--override-* flags apply to this promotion only and leave the environment's " +
@@ -162,7 +162,7 @@ var commandModelDeployment = Command{
 						Description: "Delete an autoscaling schedule once the promotion completes.",
 						CommandLines: []string{
 							"baseten model deployment promote --model-id <model-id> --deployment-id <deployment-id>",
-							`--autoscaling-schedule-update '{"delete_schedules":["<schedule-id>"]}' --yes`,
+							`--autoscaling-schedule-update-json '{"delete_schedules":["<schedule-id>"]}' --yes`,
 						},
 					},
 				},
@@ -517,12 +517,29 @@ type ModelDeploymentPromoteFlags struct {
 	Environment             string `flag:"environment" desc:"Target environment name. Defaults to production." default:"production"`
 	PreserveEnvInstanceType bool   `flag:"preserve-env-instance-type" desc:"Keep the target environment's current instance type instead of applying the promoted deployment's."`
 
-	Region                    OptionalFlag[string] `flag:"region" desc:"Region slug to set on the environment. Pass an empty string for Global. Run 'baseten org regions' to see the slugs available."`
-	InstanceTypeID            OptionalFlag[string] `flag:"instance-type-id" desc:"Instance type to set on the environment. Cannot be combined with --preserve-env-instance-type."`
-	RequestBackpressurePolicy OptionalFlag[string] `flag:"request-backpressure-policy" desc:"Backpressure policy to set on the environment. Pass null to clear the environment's policy." enum:"queue-on-full,reject-on-full" nullable:"true"`
-	AutoscalingScheduleUpdate OptionalFlag[string] `flag:"autoscaling-schedule-update" desc:"Autoscaling schedule changes for the environment, applied when the promotion completes, as a JSON object with schedules, delete_schedules, and timezone. Same shape as autoscaling_schedule_settings on the environment update API."`
-	PrefixedAutoscalingSettingsFlags
-	PromotionSettingsOverrideFlags
+	Region                        OptionalFlag[string] `flag:"region" desc:"Region slug to set on the environment. Pass an empty string for Global. Run 'baseten org regions' to see the slugs available."`
+	InstanceTypeID                OptionalFlag[string] `flag:"instance-type-id" desc:"Instance type to set on the environment. Cannot be combined with --preserve-env-instance-type."`
+	RequestBackpressurePolicy     OptionalFlag[string] `flag:"request-backpressure-policy" desc:"Backpressure policy to set on the environment. Pass null to clear the environment's policy." enum:"queue-on-full,reject-on-full" nullable:"true"`
+	AutoscalingScheduleUpdateJSON OptionalFlag[string] `flag:"autoscaling-schedule-update-json" desc:"Autoscaling schedule changes for the environment, applied when the promotion completes, as a JSON object with schedules, delete_schedules, and timezone. Same shape and values as autoscaling_schedule_settings on the environment update API, for example cadence DAILY."`
+
+	AutoscalingMinReplica                  OptionalFlag[int] `flag:"autoscaling-min-replica" desc:"Minimum number of replicas." group:"autoscaling" group-pri:"200"`
+	AutoscalingMaxReplica                  OptionalFlag[int] `flag:"autoscaling-max-replica" desc:"Maximum number of replicas." group:"autoscaling"`
+	AutoscalingWindow                      OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds." group:"autoscaling"`
+	AutoscalingScaleDownDelay              OptionalFlag[int] `flag:"autoscaling-scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds." group:"autoscaling"`
+	AutoscalingConcurrencyTarget           OptionalFlag[int] `flag:"autoscaling-concurrency-target" desc:"Number of requests per replica before scaling up." group:"autoscaling"`
+	AutoscalingTargetUtilizationPercentage OptionalFlag[int] `flag:"autoscaling-target-utilization-percentage" desc:"Target utilization percentage for scaling up and down." group:"autoscaling"`
+	AutoscalingTargetInFlightTokens        OptionalFlag[int] `flag:"autoscaling-target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only." group:"autoscaling"`
+	AutoscalingMaxScaleDownRate            OptionalFlag[int] `flag:"autoscaling-max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window." group:"autoscaling"`
+
+	OverrideRedeployOnPromotion      OptionalFlag[bool]   `flag:"override-redeploy-on-promotion" desc:"For this promotion only, whether to create a new deployment with a copy of the image." group:"promotion override" group-pri:"300"`
+	OverrideRollingDeploy            OptionalFlag[bool]   `flag:"override-rolling-deploy" desc:"For this promotion only, whether to use rolling deploy orchestration." group:"promotion override"`
+	OverridePromotionCleanupStrategy OptionalFlag[string] `flag:"override-promotion-cleanup-strategy" desc:"For this promotion only, the cleanup strategy to use after it completes." enum:"keep,scale-to-zero,deactivate" group:"promotion override"`
+
+	OverrideRollingDeployStrategy    OptionalFlag[string] `flag:"override-rolling-deploy-strategy" desc:"For this promotion only, the rolling deploy strategy." enum:"replica" group:"promotion override"`
+	OverrideMaxSurgePercent          OptionalFlag[int]    `flag:"override-max-surge-percent" desc:"For this promotion only, the maximum surge percentage for rolling deploys." group:"promotion override"`
+	OverrideMaxUnavailablePercent    OptionalFlag[int]    `flag:"override-max-unavailable-percent" desc:"For this promotion only, the maximum unavailable percentage for rolling deploys." group:"promotion override"`
+	OverrideStabilizationTimeSeconds OptionalFlag[int]    `flag:"override-stabilization-time-seconds" desc:"For this promotion only, the stabilization time for rolling deploys, in seconds." group:"promotion override"`
+	OverrideReplicaOverheadPercent   OptionalFlag[int]    `flag:"override-replica-overhead-percent" desc:"For this promotion only, the replica overhead percentage for rolling deploys." group:"promotion override"`
 
 	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }

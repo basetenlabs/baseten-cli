@@ -3,11 +3,9 @@ package cmd
 import (
 	"archive/tar"
 	"bufio"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -511,8 +509,7 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	if err != nil {
 		return err
 	}
-	override := nonZeroOrNil(promotionSettingsFromFlags(
-		cmd.PromotionSettingsFlags(flags.PromotionSettingsOverrideFlags)))
+	override := promotionSettingsGroupOrNil(promotionSettingsOverrideFromFlags(flags))
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -524,7 +521,7 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 
 	if !flags.Yes {
 		prompt := fmt.Sprintf("Promote deployment %s to environment %q", ref.DeploymentID, flags.Environment)
-		if changes := environmentSettingsChanges(environmentSettings); len(changes) > 0 {
+		if changes := promotionEnvironmentSettingsChanges(environmentSettings); len(changes) > 0 {
 			prompt += " and update its " + strings.Join(changes, ", ")
 		}
 		if override != nil {
@@ -568,87 +565,85 @@ func promotionEnvironmentSettingsFromFlags(
 	update := managementapi.PromotionEnvironmentSettingsUpdate{
 		Region:         flags.Region.Pointer(),
 		InstanceTypeId: flags.InstanceTypeID.Pointer(),
-		AutoscalingSettings: nonZeroOrNil(autoscalingSettingsFromFlags(
-			cmd.AutoscalingSettingsFlags(flags.PrefixedAutoscalingSettingsFlags))),
+		AutoscalingSettings: promotionSettingsGroupOrNil(managementapi.UpdateAutoscalingSettings{
+			MinReplica:                  flags.AutoscalingMinReplica.Pointer(),
+			MaxReplica:                  flags.AutoscalingMaxReplica.Pointer(),
+			AutoscalingWindow:           flags.AutoscalingWindow.Pointer(),
+			ScaleDownDelay:              flags.AutoscalingScaleDownDelay.Pointer(),
+			ConcurrencyTarget:           flags.AutoscalingConcurrencyTarget.Pointer(),
+			TargetUtilizationPercentage: flags.AutoscalingTargetUtilizationPercentage.Pointer(),
+			TargetInFlightTokens:        flags.AutoscalingTargetInFlightTokens.Pointer(),
+			MaxScaleDownRate:            flags.AutoscalingMaxScaleDownRate.Pointer(),
+		}),
 	}
 	if flags.RequestBackpressurePolicy.IsSet() {
-		settings := requestBackpressureFromPolicy(flags.RequestBackpressurePolicy)
+		settings := requestBackpressureFromFlags(cmd.RequestBackpressureFlags{Policy: flags.RequestBackpressurePolicy})
 		update.RequestBackpressureSettings = &settings
 	}
-	if raw := flags.AutoscalingScheduleUpdate.Pointer(); raw != nil {
-		schedules, err := parseAutoscalingScheduleUpdate(*raw)
+	if raw := flags.AutoscalingScheduleUpdateJSON.Pointer(); raw != nil {
+		schedules, err := promotionAutoscalingScheduleUpdateFromJSON(*raw)
 		if err != nil {
 			return nil, err
 		}
 		update.AutoscalingScheduleSettings = schedules
 	}
-	return nonZeroOrNil(update), nil
+	return promotionSettingsGroupOrNil(update), nil
 }
 
-// parseAutoscalingScheduleUpdate decodes --autoscaling-schedule-update. The API
-// ignores unknown keys and reads an empty object as no change, so both are
-// rejected here rather than sent.
-func parseAutoscalingScheduleUpdate(raw string) (*managementapi.UpdateAutoscalingScheduleSettings, error) {
+// promotionAutoscalingScheduleUpdateFromJSON decodes
+// --autoscaling-schedule-update-json. The server validates the content; an
+// empty update or trailing text would otherwise promote without the intended
+// schedule change.
+func promotionAutoscalingScheduleUpdateFromJSON(
+	raw string,
+) (*managementapi.UpdateAutoscalingScheduleSettings, error) {
 	if strings.TrimSpace(raw) == "" {
-		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: must be a JSON object")
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update-json: must be a JSON object")
 	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
 	var schedules managementapi.UpdateAutoscalingScheduleSettings
-	if err := decodeJSONStrict([]byte(raw), &schedules); err != nil {
-		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: %v", err)
+	if err := decoder.Decode(&schedules); err != nil {
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update-json: invalid JSON: %v", err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update-json: unexpected data after the JSON object")
 	}
 	if schedules == (managementapi.UpdateAutoscalingScheduleSettings{}) {
-		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: set at least one of schedules, delete_schedules, or timezone")
-	}
-	// Each schedule is a union kept as raw JSON, so the decode above never
-	// looked inside it.
-	if schedules.Schedules != nil {
-		for i, item := range *schedules.Schedules {
-			if err := validateScheduleUpsert(item); err != nil {
-				return nil, cmd.NewErrUsagef("--autoscaling-schedule-update: schedules[%d]: %v", i, err)
-			}
-		}
+		return nil, cmd.NewErrUsagef(
+			"--autoscaling-schedule-update-json: set at least one of schedules, delete_schedules, or timezone")
 	}
 	return &schedules, nil
 }
 
-// validateScheduleUpsert strictly decodes one schedule into the request type
-// its cadence selects, so a misspelled key anywhere inside it is an error.
-func validateScheduleUpsert(item managementapi.UpdateAutoscalingScheduleSettings_Schedules_Item) error {
-	cadence, err := item.Discriminator()
-	if err != nil {
-		return err
+// promotionSettingsOverrideFromFlags maps the --override-* flags onto the
+// request body, nesting the rolling deploy config only when one of its own
+// flags was passed.
+func promotionSettingsOverrideFromFlags(flags *cmd.ModelDeploymentPromoteFlags) managementapi.UpdatePromotionSettings {
+	settings := managementapi.UpdatePromotionSettings{
+		RedeployOnPromotion: flags.OverrideRedeployOnPromotion.Pointer(),
+		RollingDeploy:       flags.OverrideRollingDeploy.Pointer(),
 	}
-	raw, err := item.MarshalJSON()
-	if err != nil {
-		return err
+	if strategy := flags.OverridePromotionCleanupStrategy.Pointer(); strategy != nil {
+		cleanup := managementapi.PromotionCleanupStrategy(enumToAPIValue(*strategy))
+		settings.PromotionCleanupStrategy = &cleanup
 	}
-	switch cadence {
-	case "DAILY", "HOURLY":
-		return decodeJSONStrict(raw, &managementapi.AutoscalingScheduleUpsert{})
-	case "ONE_TIME":
-		return decodeJSONStrict(raw, &managementapi.OneTimeAutoscalingScheduleUpsert{})
-	default:
-		return fmt.Errorf("unknown cadence %q", cadence)
+	config := managementapi.UpdateRollingDeployConfig{
+		MaxSurgePercent:          flags.OverrideMaxSurgePercent.Pointer(),
+		MaxUnavailablePercent:    flags.OverrideMaxUnavailablePercent.Pointer(),
+		StabilizationTimeSeconds: flags.OverrideStabilizationTimeSeconds.Pointer(),
+		ReplicaOverheadPercent:   flags.OverrideReplicaOverheadPercent.Pointer(),
 	}
+	if strategy := flags.OverrideRollingDeployStrategy.Pointer(); strategy != nil {
+		rolling := managementapi.RollingDeployStrategy(enumToAPIValue(*strategy))
+		config.RollingDeployStrategy = &rolling
+	}
+	settings.RollingDeployConfig = promotionSettingsGroupOrNil(config)
+	return settings
 }
 
-// decodeJSONStrict decodes exactly one JSON value, rejecting unknown keys and
-// anything after the value.
-func decodeJSONStrict(raw []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return fmt.Errorf("invalid JSON: %w", err)
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return errors.New("unexpected data after the JSON object")
-	}
-	return nil
-}
-
-// environmentSettingsChanges names the settings a promotion changes on the
-// environment, for the confirmation prompt.
-func environmentSettingsChanges(update *managementapi.PromotionEnvironmentSettingsUpdate) []string {
+// promotionEnvironmentSettingsChanges names the settings a promotion changes on
+// the environment, for the confirmation prompt.
+func promotionEnvironmentSettingsChanges(update *managementapi.PromotionEnvironmentSettingsUpdate) []string {
 	if update == nil {
 		return nil
 	}
@@ -671,14 +666,14 @@ func environmentSettingsChanges(update *managementapi.PromotionEnvironmentSettin
 	return changes
 }
 
-// nonZeroOrNil returns nil for a zero value, so an untouched settings group is
-// omitted from the request body.
-func nonZeroOrNil[T comparable](value T) *T {
+// promotionSettingsGroupOrNil returns nil for a settings group with no fields
+// set, so an untouched group is omitted from the promote request.
+func promotionSettingsGroupOrNil[T comparable](group T) *T {
 	var zero T
-	if value == zero {
+	if group == zero {
 		return nil
 	}
-	return &value
+	return &group
 }
 
 func commandModelDeploymentRename(ctx *CommandContext, flags *cmd.ModelDeploymentRenameFlags) error {
@@ -741,7 +736,7 @@ func commandModelDeploymentUpdateRequestBackpressure(
 		return err
 	}
 	settings, err := cl.API().PatchModelsDeploymentsRequestBackpressureSettings(
-		ctx, ref.ModelID, ref.DeploymentID, requestBackpressureFromPolicy(flags.Policy))
+		ctx, ref.ModelID, ref.DeploymentID, requestBackpressureFromFlags(flags.RequestBackpressureFlags))
 	if err != nil {
 		return fmt.Errorf("update request backpressure settings for deployment %s: %w", ref.DeploymentID, err)
 	}
@@ -777,18 +772,18 @@ func autoscalingSettingsFromFlags(
 	}
 }
 
-// requestBackpressureFromPolicy maps a passed policy flag onto the request body.
-// The policy is null-distinct, so null clears an existing policy rather than
-// leaving it unchanged, which is why the field is an Optional and not a pointer.
-func requestBackpressureFromPolicy(
-	flag cmd.OptionalFlag[string],
+// requestBackpressureFromFlags maps --policy onto the request body. The policy
+// is null-distinct, so null clears an existing policy rather than leaving it
+// unchanged, which is why the field is an Optional and not a pointer.
+func requestBackpressureFromFlags(
+	flags cmd.RequestBackpressureFlags,
 ) managementapi.UpdateRequestBackpressureSettings {
-	if flag.IsNull() {
+	if flags.Policy.IsNull() {
 		return managementapi.UpdateRequestBackpressureSettings{
 			Policy: managementapi.NewOptional[managementapi.RequestBackpressurePolicy](nil),
 		}
 	}
-	policy := managementapi.RequestBackpressurePolicy(enumToAPIValue(*flag.Pointer()))
+	policy := managementapi.RequestBackpressurePolicy(enumToAPIValue(*flags.Policy.Pointer()))
 	return managementapi.UpdateRequestBackpressureSettings{
 		Policy: managementapi.NewOptional(&policy),
 	}
