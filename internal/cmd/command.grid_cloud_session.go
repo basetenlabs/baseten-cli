@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
@@ -297,6 +298,74 @@ func cloudSessionResolveImage(flags *cmd.CloudSessionCreateFlags) (string, error
 	return image, nil
 }
 
+// cloudSessionInstructions are the sandbox mechanics every session's harness
+// must know; create merges them into the user's own instructions.
+const cloudSessionInstructions = `# Baseten cloud coding session
+
+You run inside a Baseten sandbox.
+
+- Your execution API is at http://localhost:8080, no auth from inside. POST /process with {"command": "...", "keepAlive": true, "timeout": 0} runs a process that also disables idle suspend while it runs; stop that process to let the sandbox sleep.
+- Idle suspend freezes the sandbox; files and processes resume on the next request. Never busy-wait to stay awake: end the work instead, and state what must re-run on wake.
+- The user's interactive harness lives in tmux session "code". On reconnect, attach to it; only when it is gone, start a fresh one (claude --continue resumes the last conversation).
+`
+
+// cloudSessionPortConfig copies the local harness configuration into the
+// session: skills verbatim, and the user's ~/CLAUDE.md and ~/AGENTS.md merged
+// after the sandbox instructions. settings.json stays out: the in-sandbox
+// 'grid setup' owns it, and the local one points at the local machine's grid.
+func cloudSessionPortConfig(ctx *CommandContext, instance *sandbox.Sandbox) error {
+	instructions := cloudSessionInstructions
+	for _, instructionsPath := range []string{"CLAUDE.md", "AGENTS.md"} {
+		userInstructions, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), instructionsPath))
+		if err == nil {
+			instructions += "\n" + string(userInstructions)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("reading the local %s: %w", instructionsPath, err)
+		}
+	}
+	if err := instance.FS().Write(ctx, sandbox.FileSystemWriteOptions{
+		Path:    "/root/.claude/CLAUDE.md",
+		Content: instructions,
+	}); err != nil {
+		return fmt.Errorf("writing the session instructions: %w", err)
+	}
+	skillsFiles := map[string]string{}
+	skillsRoot := filepath.Join(os.Getenv("HOME"), ".claude", "skills")
+	walkErr := filepath.WalkDir(skillsRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		// Text config only: skills may carry images or archives the text
+		// write-tree API cannot carry.
+		content, readErr := os.ReadFile(path)
+		if readErr != nil || len(content) > 256*1024 || !utf8.Valid(content) {
+			return nil
+		}
+		relativePath, relErr := filepath.Rel(skillsRoot, path)
+		if relErr != nil {
+			return relErr
+		}
+		skillsFiles[relativePath] = string(content)
+		return nil
+	})
+	if walkErr != nil && !os.IsNotExist(walkErr) {
+		return fmt.Errorf("reading the local skills: %w", walkErr)
+	}
+	if len(skillsFiles) > 0 {
+		if err := instance.FS().WriteTree(ctx, sandbox.FileSystemWriteTreeOptions{
+			Path:  "/root/.claude/skills",
+			Files: skillsFiles,
+		}); err != nil {
+			return fmt.Errorf("writing the session skills: %w", err)
+		}
+	}
+	ctx.Logf("Ported local harness config: instructions plus %d skill files.\n", len(skillsFiles))
+	return nil
+}
+
 func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionCreateFlags) error {
 	imageRef, err := cloudSessionResolveImage(flags)
 	if err != nil {
@@ -367,6 +436,11 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	ctx.Logf("Setting up %s inside session %s…\n", flags.Harness, name)
 	if err := cloudSessionExecStream(ctx, instance, setupCommand, "", cloudSessionInSandboxTimeout); err != nil {
 		return err
+	}
+	if flags.PortConfig {
+		if err := cloudSessionPortConfig(ctx, instance); err != nil {
+			return err
+		}
 	}
 	if len(flags.RunlayerServer) > 0 {
 		ctx.Logf("Exposing %d Runlayer MCP servers in session %s…\n", len(flags.RunlayerServer), name)
