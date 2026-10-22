@@ -27,7 +27,8 @@ var commandGridCloudSession = Command{
 				"passed to the sandbox as a secret environment variable; its value is never stored by this command. " +
 				"--env injects more local environment variables the same way, by name. " +
 				"The session's name defaults to a generated readable name. " +
-				"Attach with 'baseten grid cloud-session connect --name <name>'.",
+				"Run in a terminal, create attaches to the session when it is ready; run otherwise, it prints " +
+				"the command to attach. Reconnect later with 'baseten grid cloud-session connect --name <name>'.",
 			Flags: CloudSessionCreateFlags{},
 			Output: &CommandOutput[managementapi.Sandbox]{
 				TextDescription: "One field per line, like 'sandbox describe', followed by the connect command.",
