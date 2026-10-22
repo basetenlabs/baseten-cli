@@ -509,7 +509,7 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	if err != nil {
 		return err
 	}
-	override := promotionSettingsGroupOrNil(promotionSettingsOverrideFromFlags(flags))
+	override := settingsGroupOrNil(promotionSettingsOverrideFromFlags(flags.PromotionSettingsOverrideFlags))
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -565,7 +565,7 @@ func promotionEnvironmentSettingsFromFlags(
 	update := managementapi.PromotionEnvironmentSettingsUpdate{
 		Region:         flags.Region.Pointer(),
 		InstanceTypeId: flags.InstanceTypeID.Pointer(),
-		AutoscalingSettings: promotionSettingsGroupOrNil(managementapi.UpdateAutoscalingSettings{
+		AutoscalingSettings: settingsGroupOrNil(managementapi.UpdateAutoscalingSettings{
 			MinReplica:                  flags.AutoscalingMinReplica.Pointer(),
 			MaxReplica:                  flags.AutoscalingMaxReplica.Pointer(),
 			AutoscalingWindow:           flags.AutoscalingWindow.Pointer(),
@@ -587,7 +587,7 @@ func promotionEnvironmentSettingsFromFlags(
 		}
 		update.AutoscalingScheduleSettings = schedules
 	}
-	return promotionSettingsGroupOrNil(update), nil
+	return settingsGroupOrNil(update), nil
 }
 
 // promotionAutoscalingScheduleUpdateFromJSON decodes
@@ -618,7 +618,7 @@ func promotionAutoscalingScheduleUpdateFromJSON(
 // promotionSettingsOverrideFromFlags maps the --override-* flags onto the
 // request body, nesting the rolling deploy config only when one of its own
 // flags was passed.
-func promotionSettingsOverrideFromFlags(flags *cmd.ModelDeploymentPromoteFlags) managementapi.UpdatePromotionSettings {
+func promotionSettingsOverrideFromFlags(flags cmd.PromotionSettingsOverrideFlags) managementapi.UpdatePromotionSettings {
 	settings := managementapi.UpdatePromotionSettings{
 		RedeployOnPromotion: flags.OverrideRedeployOnPromotion.Pointer(),
 		RollingDeploy:       flags.OverrideRollingDeploy.Pointer(),
@@ -637,7 +637,7 @@ func promotionSettingsOverrideFromFlags(flags *cmd.ModelDeploymentPromoteFlags) 
 		rolling := managementapi.RollingDeployStrategy(enumToAPIValue(*strategy))
 		config.RollingDeployStrategy = &rolling
 	}
-	settings.RollingDeployConfig = promotionSettingsGroupOrNil(config)
+	settings.RollingDeployConfig = settingsGroupOrNil(config)
 	return settings
 }
 
@@ -666,9 +666,9 @@ func promotionEnvironmentSettingsChanges(update *managementapi.PromotionEnvironm
 	return changes
 }
 
-// promotionSettingsGroupOrNil returns nil for a settings group with no fields
-// set, so an untouched group is omitted from the promote request.
-func promotionSettingsGroupOrNil[T comparable](group T) *T {
+// settingsGroupOrNil returns nil for a settings group with no fields set, so an
+// untouched group is omitted from the promote or push request.
+func settingsGroupOrNil[T comparable](group T) *T {
 	var zero T
 	if group == zero {
 		return nil

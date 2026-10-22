@@ -22,7 +22,11 @@ var commandModel = Command{
 				"directory at another path. For a model defined entirely by its config, " +
 				"pass --file to push only that config file, or --file - to read it from stdin.\n\n" +
 				"The model is identified by the `model_name` field in config.yaml. " +
-				"Use --override-name to override that for this push only.",
+				"Use --override-name to override that for this push only.\n\n" +
+				"The autoscaling flags and --request-backpressure-policy configure the new " +
+				"deployment. With --environment, the environment also keeps them once the " +
+				"promotion completes. --autoscaling-schedule-update-json and the --override-* " +
+				"promotion flags apply only to the promotion into --environment, so they require it.",
 			Flags: ModelPushFlags{},
 			Output: &CommandOutput[ModelPushResult]{
 				TextDescription: "Narrative summary on stdout: success banner, deployment status, " +
@@ -43,6 +47,21 @@ var commandModel = Command{
 					{
 						Description: "Push a config-only model from a single file.",
 						Command:     "baseten model push --file llama.yaml",
+					},
+					{
+						Description: "Push to staging with new replica bounds for the deployment and the environment.",
+						Command:     "baseten model push --environment staging --min-replica 2 --max-replica 8",
+					},
+					{
+						Description: "Push a deployment with its own replica bounds, without promoting it.",
+						Command:     "baseten model push --min-replica 1 --max-replica 2",
+					},
+					{
+						Description: "Push to production, rolling this promotion out gradually.",
+						CommandLines: []string{
+							"baseten model push --environment production",
+							"--override-rolling-deploy true --override-max-surge-percent 10",
+						},
 					},
 				},
 				JQExample: CommandExample{
@@ -287,14 +306,14 @@ type ModelRenameFlags struct {
 // body carries: a nil field means the flag was never passed, so that setting is
 // left unchanged rather than reset.
 type AutoscalingSettingsFlags struct {
-	MinReplica                  OptionalFlag[int] `flag:"min-replica" desc:"Minimum number of replicas."`
-	MaxReplica                  OptionalFlag[int] `flag:"max-replica" desc:"Maximum number of replicas."`
-	AutoscalingWindow           OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds."`
-	ScaleDownDelay              OptionalFlag[int] `flag:"scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds."`
-	ConcurrencyTarget           OptionalFlag[int] `flag:"concurrency-target" desc:"Number of requests per replica before scaling up."`
-	TargetUtilizationPercentage OptionalFlag[int] `flag:"target-utilization-percentage" desc:"Target utilization percentage for scaling up and down."`
-	TargetInFlightTokens        OptionalFlag[int] `flag:"target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only."`
-	MaxScaleDownRate            OptionalFlag[int] `flag:"max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window."`
+	MinReplica                  OptionalFlag[int] `flag:"min-replica" desc:"Minimum number of replicas." group:"autoscaling" group-pri:"200"`
+	MaxReplica                  OptionalFlag[int] `flag:"max-replica" desc:"Maximum number of replicas." group:"autoscaling"`
+	AutoscalingWindow           OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds." group:"autoscaling"`
+	ScaleDownDelay              OptionalFlag[int] `flag:"scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds." group:"autoscaling"`
+	ConcurrencyTarget           OptionalFlag[int] `flag:"concurrency-target" desc:"Number of requests per replica before scaling up." group:"autoscaling"`
+	TargetUtilizationPercentage OptionalFlag[int] `flag:"target-utilization-percentage" desc:"Target utilization percentage for scaling up and down." group:"autoscaling"`
+	TargetInFlightTokens        OptionalFlag[int] `flag:"target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only." group:"autoscaling"`
+	MaxScaleDownRate            OptionalFlag[int] `flag:"max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window." group:"autoscaling"`
 }
 
 // RequestBackpressureFlags is the shared policy flag for
@@ -303,6 +322,21 @@ type AutoscalingSettingsFlags struct {
 // distinct from omitting the field.
 type RequestBackpressureFlags struct {
 	Policy OptionalFlag[string] `flag:"policy" desc:"Backpressure policy to apply. Pass null to clear an existing policy." enum:"queue-on-full,reject-on-full" nullable:"true" required:"true"`
+}
+
+// PromotionSettingsOverrideFlags is the --override-* flag set for
+// `baseten model deployment promote` and `baseten model push`: promotion
+// settings for one promotion only.
+type PromotionSettingsOverrideFlags struct {
+	OverrideRedeployOnPromotion      OptionalFlag[bool]   `flag:"override-redeploy-on-promotion" desc:"For this promotion only, whether to create a new deployment with a copy of the image." group:"promotion override" group-pri:"300"`
+	OverrideRollingDeploy            OptionalFlag[bool]   `flag:"override-rolling-deploy" desc:"For this promotion only, whether to use rolling deploy orchestration." group:"promotion override"`
+	OverridePromotionCleanupStrategy OptionalFlag[string] `flag:"override-promotion-cleanup-strategy" desc:"For this promotion only, the cleanup strategy to use after it completes." enum:"keep,scale-to-zero,deactivate" group:"promotion override"`
+
+	OverrideRollingDeployStrategy    OptionalFlag[string] `flag:"override-rolling-deploy-strategy" desc:"For this promotion only, the rolling deploy strategy." enum:"replica" group:"promotion override"`
+	OverrideMaxSurgePercent          OptionalFlag[int]    `flag:"override-max-surge-percent" desc:"For this promotion only, the maximum surge percentage for rolling deploys." group:"promotion override"`
+	OverrideMaxUnavailablePercent    OptionalFlag[int]    `flag:"override-max-unavailable-percent" desc:"For this promotion only, the maximum unavailable percentage for rolling deploys." group:"promotion override"`
+	OverrideStabilizationTimeSeconds OptionalFlag[int]    `flag:"override-stabilization-time-seconds" desc:"For this promotion only, the stabilization time for rolling deploys, in seconds." group:"promotion override"`
+	OverrideReplicaOverheadPercent   OptionalFlag[int]    `flag:"override-replica-overhead-percent" desc:"For this promotion only, the replica overhead percentage for rolling deploys." group:"promotion override"`
 }
 
 // LogFlags is the shared log-query flag set for `baseten model deployment logs`
@@ -376,6 +410,11 @@ type ModelPushFlags struct {
 
 	OverrideName            string `flag:"override-name" desc:"Override the model_name from config.yaml for this push only. The on-disk config.yaml is not modified."`
 	PreserveEnvInstanceType bool   `flag:"preserve-env-instance-type" desc:"Keep the target environment's current instance type instead of applying the one from config.yaml. Only meaningful when an environment is targeted."`
+
+	RequestBackpressurePolicy     OptionalFlag[string] `flag:"request-backpressure-policy" desc:"Backpressure policy for the new deployment. With --environment, the environment keeps it once the promotion completes. Pass null to clear the policy." enum:"queue-on-full,reject-on-full" nullable:"true"`
+	AutoscalingScheduleUpdateJSON OptionalFlag[string] `flag:"autoscaling-schedule-update-json" desc:"Autoscaling schedule changes for the environment, applied when the promotion completes, as a JSON object with schedules, delete_schedules, and timezone. Same shape and values as autoscaling_schedule_settings on the environment update API, for example cadence DAILY. Requires --environment."`
+	AutoscalingSettingsFlags
+	PromotionSettingsOverrideFlags
 
 	DisableArchiveDownload bool `flag:"disable-archive-download" desc:"Disable archive download for the new model. Only valid for new models."`
 }

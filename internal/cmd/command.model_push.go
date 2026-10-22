@@ -236,6 +236,9 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 	if err := applyModelPushLabels(&opts, flags.Labels); err != nil {
 		return opts, err
 	}
+	if err := applyModelPushSettings(&opts, flags); err != nil {
+		return opts, err
+	}
 	return opts, nil
 }
 
@@ -374,6 +377,27 @@ func applyModelPushLabels(opts *client.PushModelOptions, raw string) error {
 		return errors.New("--labels: must be a JSON object")
 	}
 	opts.Labels = asMap
+	return nil
+}
+
+// applyModelPushSettings maps the deployment and promotion settings flags onto
+// the push, sending only the groups whose flags were passed. Which of them need
+// --environment is the server's call, so a push without it gets the server's
+// error rather than a CLI one.
+func applyModelPushSettings(opts *client.PushModelOptions, flags *cmd.ModelPushFlags) error {
+	opts.AutoscalingSettings = settingsGroupOrNil(autoscalingSettingsFromFlags(flags.AutoscalingSettingsFlags))
+	if flags.RequestBackpressurePolicy.IsSet() {
+		settings := requestBackpressureFromFlags(cmd.RequestBackpressureFlags{Policy: flags.RequestBackpressurePolicy})
+		opts.RequestBackpressureSettings = &settings
+	}
+	if raw := flags.AutoscalingScheduleUpdateJSON.Pointer(); raw != nil {
+		schedules, err := promotionAutoscalingScheduleUpdateFromJSON(*raw)
+		if err != nil {
+			return err
+		}
+		opts.AutoscalingScheduleSettings = schedules
+	}
+	opts.PromotionSettingsOverride = settingsGroupOrNil(promotionSettingsOverrideFromFlags(flags.PromotionSettingsOverrideFlags))
 	return nil
 }
 

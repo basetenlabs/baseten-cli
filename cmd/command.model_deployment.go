@@ -531,15 +531,7 @@ type ModelDeploymentPromoteFlags struct {
 	AutoscalingTargetInFlightTokens        OptionalFlag[int] `flag:"autoscaling-target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only." group:"autoscaling"`
 	AutoscalingMaxScaleDownRate            OptionalFlag[int] `flag:"autoscaling-max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window." group:"autoscaling"`
 
-	OverrideRedeployOnPromotion      OptionalFlag[bool]   `flag:"override-redeploy-on-promotion" desc:"For this promotion only, whether to create a new deployment with a copy of the image." group:"promotion override" group-pri:"300"`
-	OverrideRollingDeploy            OptionalFlag[bool]   `flag:"override-rolling-deploy" desc:"For this promotion only, whether to use rolling deploy orchestration." group:"promotion override"`
-	OverridePromotionCleanupStrategy OptionalFlag[string] `flag:"override-promotion-cleanup-strategy" desc:"For this promotion only, the cleanup strategy to use after it completes." enum:"keep,scale-to-zero,deactivate" group:"promotion override"`
-
-	OverrideRollingDeployStrategy    OptionalFlag[string] `flag:"override-rolling-deploy-strategy" desc:"For this promotion only, the rolling deploy strategy." enum:"replica" group:"promotion override"`
-	OverrideMaxSurgePercent          OptionalFlag[int]    `flag:"override-max-surge-percent" desc:"For this promotion only, the maximum surge percentage for rolling deploys." group:"promotion override"`
-	OverrideMaxUnavailablePercent    OptionalFlag[int]    `flag:"override-max-unavailable-percent" desc:"For this promotion only, the maximum unavailable percentage for rolling deploys." group:"promotion override"`
-	OverrideStabilizationTimeSeconds OptionalFlag[int]    `flag:"override-stabilization-time-seconds" desc:"For this promotion only, the stabilization time for rolling deploys, in seconds." group:"promotion override"`
-	OverrideReplicaOverheadPercent   OptionalFlag[int]    `flag:"override-replica-overhead-percent" desc:"For this promotion only, the replica overhead percentage for rolling deploys." group:"promotion override"`
+	PromotionSettingsOverrideFlags
 
 	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
