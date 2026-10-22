@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"time"
+
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -138,6 +140,55 @@ var commandGrid = Command{
 				JQExample: CommandExample{
 					Description: "Print the primary route for Claude Code.",
 					Command:     "baseten grid harness-defaults --harness claude-code --jq '.items[0].primary.route.name'",
+				},
+			},
+		},
+		{
+			Name:    "usage",
+			Summary: "Show your routes spend in your teams, this month by default (PRE-RELEASE)",
+			Description: gridPrereleaseNotice +
+				"Show what you've spent on routes in each of your teams: your spend there against your limit there, a " +
+				"chart of spend per day, and each model's spend. --team narrows it to one team. " +
+				"The window is this UTC month so far, the period monthly spend limits apply to, unless " +
+				"--start, --end, or --since narrows or moves it; the limit is only shown for this month so far.\n\n" +
+				"This is the same spend that spend limits are checked against, and it can lag by up to 15 minutes. " +
+				"Model API costs use your prices and include tool calls. OpenAI, Anthropic, and xAI costs estimate what " +
+				"those providers charge and are not Baseten charges. Vertex and OpenAI-compatible usage isn't included.\n\n" +
+				"For filters, token counts, or other users' usage, use 'baseten grid route usage'. For " +
+				"machine-readable streaming, prefer --output jsonl over --output json.",
+			// TODO: Revisit this description, and null-cost handling in
+			// internal/cmd/command.grid_usage.go, as server-side usage changes:
+			// which providers are included (Vertex and OpenAI-compatible aren't
+			// yet), whether costs are always present, and the 15-minute lag.
+			Flags: GridUsageFlags{},
+			Output: &CommandOutput[managementapi.GridRouteUsageBucket]{
+				JSONArrayStreamed: true,
+				TextDescription: "The month and when limits reset go to stderr. Then, for each team, a line with the team, what you spent " +
+					"there this month and your limit there, with the team's default when yours differs from it, ending in " +
+					"\"limit reached\" or \"team limit reached\" when your requests there are rejected; on a terminal, a " +
+					"chart of spend per day per model from the first of the month; and a line per model with its spend and " +
+					"share, most expensive first. A cost of \"-\" means some of that usage couldn't be priced. With no " +
+					"teams, prints \"No usage this month.\" to stderr. For a window other than this month so far, the " +
+					"month line is the window instead, and the team line is what you spent there in it, with no limit.",
+				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-team, per-model usage " +
+					"in results, including days with no usage. cost_usd values are exact decimal strings.",
+				Examples: []CommandExample{
+					{
+						Description: "Show your spend this month in each of your teams.",
+						Command:     "baseten grid usage",
+					},
+					{
+						Description: "Show your spend this month in one of your teams.",
+						Command:     "baseten grid usage --team <team>",
+					},
+					{
+						Description: "Show your spend over the last week.",
+						Command:     "baseten grid usage --since 7d",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Stream each day's cost per team and model as a JSONL stream.",
+					Command:     "baseten grid usage --output jsonl --jq '.results[] | {team_id, model, cost_usd}'",
 				},
 			},
 		},
@@ -552,6 +603,17 @@ type GridHarnessStatus struct {
 // GridStatusList is the JSON output of `baseten grid status`.
 type GridStatusList struct {
 	Items []GridHarnessStatus `json:"items"`
+}
+
+// GridUsageFlags are the flags for `baseten grid usage`.
+type GridUsageFlags struct {
+	CommandFlags
+
+	Team string `flag:"team" desc:"Team name or ID to show. Without it, every team you're in."`
+
+	Start time.Time     `flag:"start" desc:"Start of the range, inclusive, snapped down to its UTC day. ISO 8601, local when no timezone is given. Defaults to the start of the current UTC month."`
+	End   time.Time     `flag:"end" desc:"End of the range, exclusive, rounded up to the end of its UTC day. ISO 8601, local when no timezone is given. Defaults to now."`
+	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '7d'). Mutually exclusive with --start and --end."`
 }
 
 // GridHarnessFlags selects the harnesses a command applies to.

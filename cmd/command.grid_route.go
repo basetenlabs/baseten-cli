@@ -177,8 +177,8 @@ var commandGridRoute = Command{
 				"Usage can lag by up to 15 minutes and is retained for 92 days. Model API costs use your prices and " +
 				"include tool calls. OpenAI, Anthropic, and xAI costs estimate what those providers charge and are not " +
 				"Baseten charges. Vertex and OpenAI-compatible usage isn't included.\n\n" +
-				"For your spend this month against your limit, see 'baseten grid user-settings describe'. For " +
-				"machine-readable streaming, prefer " +
+				"For your spend this month against your limit, see 'baseten grid usage'; for the limit itself, " +
+				"'baseten grid user-settings describe'. For machine-readable streaming, prefer " +
 				"--output jsonl over --output json.",
 			Flags: GridRouteUsageFlags{},
 			Output: &CommandOutput[managementapi.GridRouteUsageBucket]{
