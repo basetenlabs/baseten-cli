@@ -399,11 +399,11 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) 
 func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstInput string, onConnect func(context.Context) error) error {
 	// Checked before anything is sent: the session takes over the terminal,
 	// reading keys from stdin and drawing to stdout.
-	stdin, stdinIsFile := ctx.Stdin.(*os.File)
-	stdout, stdoutIsFile := ctx.Stdout.(*os.File)
-	if !ctx.IsInteractive() || !stdinIsFile || !stdoutIsFile || !term.IsTerminal(int(stdout.Fd())) {
+	if !stdinStdoutAreTerminals(ctx) {
 		return cmd.NewErrUsagef("connect requires an interactive terminal for both input and output")
 	}
+	stdin := ctx.Stdin.(*os.File)
+	stdout := ctx.Stdout.(*os.File)
 	instance, err := sandboxInstance(ctx, ref)
 	if err != nil {
 		return err
@@ -469,6 +469,14 @@ func sandboxCommandLine(args []string) (string, error) {
 		quoted = append(quoted, sandboxShellQuote(arg))
 	}
 	return strings.Join(quoted, " "), nil
+}
+
+// stdinStdoutAreTerminals reports whether this process can take over the
+// terminal, reading keys from stdin and drawing to stdout.
+func stdinStdoutAreTerminals(ctx *CommandContext) bool {
+	_, stdinIsFile := ctx.Stdin.(*os.File)
+	stdout, stdoutIsFile := ctx.Stdout.(*os.File)
+	return ctx.IsInteractive() && stdinIsFile && stdoutIsFile && term.IsTerminal(int(stdout.Fd()))
 }
 
 // sandboxShellQuote quotes one argument for a POSIX shell, unless it has

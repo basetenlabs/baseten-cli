@@ -64,6 +64,21 @@ func cloudSessionHarnessStartCommand(harnessName string) (string, error) {
 	}
 }
 
+// cloudSessionHarnessResumeCommand restarts the harness resuming its last
+// conversation. Idle suspend freezes files, not processes, so a reconnect
+// starts a new process; resuming the conversation is the closest to "where I
+// left off" it can get.
+func cloudSessionHarnessResumeCommand(harnessName string) (string, error) {
+	switch harnessName {
+	case "claude-code":
+		return "sh -c 'claude --continue 2>/dev/null || claude'", nil
+	case "codex":
+		return "codex", nil
+	default:
+		return "", cmd.NewErrUsagef("--harness %s: not supported by cloud-session yet", harnessName)
+	}
+}
+
 // cloudSessionHarnessDispatchCommand runs a prompt headless in the harness.
 func cloudSessionHarnessDispatchCommand(harnessName string, prompt string) (string, error) {
 	switch harnessName {
@@ -204,6 +219,11 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 		return fmt.Errorf("describing session %s: %w", name, err)
 	}
 	sandboxOutputRecord(ctx, deployedRecord)
+	// JSON output must stay machine-readable, so only a terminal auto-attaches.
+	if !ctx.JSON && stdinStdoutAreTerminals(ctx) {
+		ctx.Logf("Reconnect later with: baseten grid cloud-session connect --name %s\n", name)
+		return cloudSessionAttach(ctx, cmd.SandboxRefFlags{Name: name, Team: flags.Team}, harnessStart)
+	}
 	ctx.Logf("Attach with: baseten grid cloud-session connect --name %s\n", name)
 	return nil
 }
@@ -212,7 +232,11 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 // suspending: the platform does not count a terminal connection as activity,
 // so without it the sandbox sleeps again seconds after a wake. Timeout 0 means
 // the keepAlive never lapses; the terminal's detach kills the sentinel.
+// Calls are time-bounded: a waking sandbox can hold them, and the caller
+// relays only once this returns.
 func cloudSessionEnsureKeepAwake(ctx context.Context, instance *sandbox.Sandbox) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	processes, err := instance.Process().List(ctx, sandbox.ProcessListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing the session's processes: %w", err)
@@ -237,11 +261,24 @@ func cloudSessionEnsureKeepAwake(ctx context.Context, instance *sandbox.Sandbox)
 }
 
 func commandGridCloudSessionConnect(ctx *CommandContext, flags *cmd.CloudSessionConnectFlags) error {
-	harnessStart, err := cloudSessionHarnessStartCommand(flags.Harness)
+	harnessResume, err := cloudSessionHarnessResumeCommand(flags.Harness)
 	if err != nil {
 		return err
 	}
-	instance, err := sandboxInstance(ctx, flags.SandboxRefFlags)
+	if err := cloudSessionAttach(ctx, flags.SandboxRefFlags, harnessResume); err != nil {
+		return err
+	}
+	ctx.Logf("\nDetached from session %s.\n", flags.Name)
+	return nil
+}
+
+// cloudSessionAttach opens the session's terminal and lands it in the
+// session's tmux session, keeping the sandbox awake while attached. The
+// window command only runs when the tmux session does not exist yet.
+// The sentinel kill on detach is best effort: a hibernated sandbox wakes for the
+// kill and sleeps again right after.
+func cloudSessionAttach(ctx *CommandContext, ref cmd.SandboxRefFlags, tmuxWindowCommand string) error {
+	instance, err := sandboxInstance(ctx, ref)
 	if err != nil {
 		return err
 	}
@@ -251,16 +288,10 @@ func commandGridCloudSessionConnect(ctx *CommandContext, flags *cmd.CloudSession
 	// The sandbox's terminal pty advertises the non-UTF-8 TERM=linux, so tmux
 	// ASCII-substitutes glyphs unless the attached client overrides it.
 	// tmux new -A: attach when the session exists, create it with the harness when not.
-	attachCommand := "TERM=xterm-256color tmux new-session -A -s " + cloudSessionTmuxSession + " " + harnessStart + "\n"
-	connectErr := sandboxConnectTerminal(ctx, flags.SandboxRefFlags, attachCommand, ensureKeepAwake)
-	// The sandbox may sleep again once nothing is attached. Best effort: a
-	// hibernated sandbox wakes for the kill and sleeps again right after.
+	attachCommand := "TERM=xterm-256color tmux new-session -A -s " + cloudSessionTmuxSession + " " + tmuxWindowCommand + "\n"
+	connectErr := sandboxConnectTerminal(ctx, ref, attachCommand, ensureKeepAwake)
 	instance.Process().Kill(ctx, sandbox.ProcessKillOptions{Identifier: cloudSessionKeepAwakeProcess})
-	if connectErr != nil {
-		return connectErr
-	}
-	ctx.Logf("\nDetached from session %s.\n", flags.Name)
-	return nil
+	return connectErr
 }
 
 func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessionDispatchFlags) error {

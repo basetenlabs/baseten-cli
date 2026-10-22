@@ -108,8 +108,8 @@ type DialOptions struct {
 	Terminal TerminalControl
 
 	// OnConnect runs after each successful connection, the initial one and
-	// every reconnection, before input is relayed. An error fails that
-	// connect.
+	// every reconnection, before input is relayed. An error is reported as a
+	// warning and the connection proceeds.
 	OnConnect func(context.Context) error
 }
 
@@ -171,8 +171,8 @@ func Dial(ctx context.Context, opts DialOptions) (*Terminal, error) {
 	}
 	if terminal.opts.OnConnect != nil {
 		if err := terminal.opts.OnConnect(ctx); err != nil {
-			terminal.conn.Close(websocket.StatusInternalError, "")
-			return nil, err
+			// The connection works without the hook, so its failure is a warning, not a teardown.
+			io.WriteString(terminal.opts.Errors, fmt.Sprintf("Warning: on-connect failed: %v\r\n", err))
 		}
 	}
 	return terminal, nil
@@ -346,9 +346,9 @@ func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 		if err == nil {
 			if t.opts.OnConnect != nil {
 				if err := t.opts.OnConnect(ctx); err != nil {
-					t.conn.Close(websocket.StatusInternalError, "")
-					lastDialErr = err
-					continue
+					// The reconnection works without the hook; warn and relay,
+					// since a retrying teardown reads as a frozen screen.
+					io.WriteString(t.opts.Errors, fmt.Sprintf("Warning: on-connect failed: %v\r\n", err))
 				}
 			}
 			io.WriteString(t.opts.Errors, "Reconnected.\r\n")
