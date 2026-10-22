@@ -287,14 +287,14 @@ type ModelRenameFlags struct {
 // body carries: a nil field means the flag was never passed, so that setting is
 // left unchanged rather than reset.
 type AutoscalingSettingsFlags struct {
-	MinReplica                  OptionalFlag[int] `flag:"min-replica" desc:"Minimum number of replicas."`
-	MaxReplica                  OptionalFlag[int] `flag:"max-replica" desc:"Maximum number of replicas."`
-	AutoscalingWindow           OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds."`
-	ScaleDownDelay              OptionalFlag[int] `flag:"scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds."`
-	ConcurrencyTarget           OptionalFlag[int] `flag:"concurrency-target" desc:"Number of requests per replica before scaling up."`
-	TargetUtilizationPercentage OptionalFlag[int] `flag:"target-utilization-percentage" desc:"Target utilization percentage for scaling up and down."`
-	TargetInFlightTokens        OptionalFlag[int] `flag:"target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only."`
-	MaxScaleDownRate            OptionalFlag[int] `flag:"max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window."`
+	MinReplica                  OptionalFlag[int] `flag:"min-replica" desc:"Minimum number of replicas." group:"autoscaling" group-pri:"200"`
+	MaxReplica                  OptionalFlag[int] `flag:"max-replica" desc:"Maximum number of replicas." group:"autoscaling"`
+	AutoscalingWindow           OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds." group:"autoscaling"`
+	ScaleDownDelay              OptionalFlag[int] `flag:"scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds." group:"autoscaling"`
+	ConcurrencyTarget           OptionalFlag[int] `flag:"concurrency-target" desc:"Number of requests per replica before scaling up." group:"autoscaling"`
+	TargetUtilizationPercentage OptionalFlag[int] `flag:"target-utilization-percentage" desc:"Target utilization percentage for scaling up and down." group:"autoscaling"`
+	TargetInFlightTokens        OptionalFlag[int] `flag:"target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only." group:"autoscaling"`
+	MaxScaleDownRate            OptionalFlag[int] `flag:"max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window." group:"autoscaling"`
 }
 
 // RequestBackpressureFlags is the shared policy flag for

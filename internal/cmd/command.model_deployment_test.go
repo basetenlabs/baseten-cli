@@ -335,7 +335,7 @@ func Test_Model_Deployment_Promote_EnvironmentSettingsUpdate(t *testing.T) {
 
 	h.Require.NoError(h.Execute("model", "deployment", "promote",
 		"--model-id", "m-1", "--deployment-id", "d-1",
-		"--region", "us-east-1", "--instance-type-id", "H100", "--autoscaling-min-replica", "2",
+		"--region", "us-east-1", "--instance-type", "A10Gx4x16", "--min-replica", "2",
 		"--request-backpressure-policy", "queue-on-full", "--yes"))
 	body := m.FindCall("POST", "/v1/models/m-1/environments/production/promote").BodyJSON(h.T)
 	h.Require.NotContains(body, "promotion_settings_override")
@@ -343,7 +343,7 @@ func Test_Model_Deployment_Promote_EnvironmentSettingsUpdate(t *testing.T) {
 	h.Require.True(ok)
 	h.Require.Equal(map[string]any{
 		"region":                        "us-east-1",
-		"instance_type_id":              "H100",
+		"instance_type_id":              "A10Gx4x16",
 		"autoscaling_settings":          map[string]any{"min_replica": float64(2)},
 		"request_backpressure_settings": map[string]any{"policy": "QUEUE_ON_FULL"},
 	}, update)
@@ -441,8 +441,8 @@ func Test_Model_Deployment_Promote_InstanceTypeWithPreserveIsUsageError(t *testi
 
 	err := h.Execute("model", "deployment", "promote",
 		"--model-id", "m-1", "--deployment-id", "d-1",
-		"--instance-type-id", "H100", "--preserve-env-instance-type", "--yes")
-	h.Require.ErrorContains(err, "--instance-type-id cannot be combined with --preserve-env-instance-type")
+		"--instance-type", "A10Gx4x16", "--preserve-env-instance-type", "--yes")
+	h.Require.ErrorContains(err, "--instance-type cannot be combined with --preserve-env-instance-type")
 	h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
 	h.Require.Nil(m.FindCall("POST", "/v1/models/m-1/environments/production/promote"))
 }
