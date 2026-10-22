@@ -55,9 +55,10 @@ var commandGridCloudSession = Command{
 			Summary: "Attach to a cloud session's harness (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
 				"Open an interactive terminal to the session's sandbox and attach to its tmux session, landing directly in " +
-				"the harness. Detaching (Ctrl+B D) or a dropped connection leaves the harness running; connect again to " +
-				"reattach. The sandbox hibernates after inactivity, which drops the connection; typing a key reconnects " +
-				"and wakes it.\n\n" +
+				"the harness. While attached, the sandbox stays awake; after the terminal detaches (exit the shell or " +
+				"Ctrl+D), it sleeps again when idle. Detaching from tmux (Ctrl+B D) or a dropped connection leaves the " +
+				"harness running; connect again to reattach. A sleeping sandbox drops the connection; typing a key " +
+				"wakes it and reconnects.\n\n" +
 				"Requires an interactive terminal for both input and output; fails at once, before connecting, when either " +
 				"is redirected.",
 			Flags: CloudSessionConnectFlags{},
