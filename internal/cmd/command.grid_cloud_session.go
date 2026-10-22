@@ -2,13 +2,18 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand/v2"
+	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/basetenlabs/baseten-go/client/sandboxapi"
 	"github.com/basetenlabs/baseten-go/sandbox"
@@ -132,16 +137,80 @@ func cloudSessionURLHost(rawURL string) (string, error) {
 	return parsed.Hostname(), nil
 }
 
-// cloudSessionProxyNetwork puts the session key in the proxy's write-only
-// secret store, replacing the Authorization header on harness and management
-// traffic; the placeholder in the sandbox is all an agent can leak.
-func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string) *managementapi.SandboxNetwork {
+// cloudSessionProxyNetwork puts the session's credentials in the proxy's
+// write-only secret store, replacing the Authorization header on harness,
+// management, and Runlayer traffic; the placeholders in the sandbox are all
+// an agent can leak.
+func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string, runlayerM2MToken string) *managementapi.SandboxNetwork {
 	routing := []managementapi.SandboxProxyTarget{{
 		Destinations: &[]string{harnessHost, "api.baseten.co"},
 		Headers:      &map[string]string{"Authorization": "Bearer {{SECRET:session_key}}"},
 		Secrets:      &map[string]string{"session_key": apiKeyValue},
 	}}
+	if runlayerM2MToken != "" {
+		routing = append(routing, managementapi.SandboxProxyTarget{
+			Destinations: &[]string{"baseten.runlayer.com"},
+			Headers:      &map[string]string{"Authorization": "Bearer {{SECRET:runlayer_m2m}}"},
+			Secrets:      &map[string]string{"runlayer_m2m": runlayerM2MToken},
+		})
+	}
 	return &managementapi.SandboxNetwork{Proxy: &managementapi.SandboxProxyConfig{Routing: &routing}}
+}
+
+// cloudSessionRunlayerM2MToken mints a Runlayer agent-account token. The
+// client secret stays on the launcher; only the token reaches the proxy.
+func cloudSessionRunlayerM2MToken(clientIDEnv string, clientSecretEnv string) (string, error) {
+	clientID, idIsSet := os.LookupEnv(clientIDEnv)
+	clientSecret, secretIsSet := os.LookupEnv(clientSecretEnv)
+	if !idIsSet || clientID == "" || !secretIsSet || clientSecret == "" {
+		return "", cmd.NewErrUsagef("--runlayer-server needs the Runlayer agent account: export %s and %s", clientIDEnv, clientSecretEnv)
+	}
+	response, err := http.PostForm("https://baseten.runlayer.com/api/v1/oauth/token", url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+	})
+	if err != nil {
+		return "", fmt.Errorf("minting the Runlayer agent token: %w", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading the Runlayer token response: %w", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("minting the Runlayer agent token: status %d", response.StatusCode)
+	}
+	var tokenResponse struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &tokenResponse); err != nil || tokenResponse.AccessToken == "" {
+		return "", fmt.Errorf("minting the Runlayer agent token: the response has no access_token")
+	}
+	return tokenResponse.AccessToken, nil
+}
+
+// cloudSessionRunlayerMCPConfig writes the session's Runlayer MCP servers into
+// the in-sandbox ~/.claude.json; the Bearer is a placeholder the proxy
+// replaces on baseten.runlayer.com traffic.
+func cloudSessionRunlayerMCPConfig(ctx *CommandContext, instance *sandbox.Sandbox, serverIDs []string) error {
+	mcpServers := map[string]any{}
+	for _, serverID := range serverIDs {
+		mcpServers[serverID] = map[string]any{
+			"type":    "http",
+			"url":     "https://baseten.runlayer.com/api/v1/proxy/" + serverID + "/mcp",
+			"headers": map[string]string{"Authorization": "Bearer proxy-injected"},
+		}
+	}
+	serversJSON, err := json.Marshal(mcpServers)
+	if err != nil {
+		return fmt.Errorf("encoding the Runlayer MCP config: %w", err)
+	}
+	mergeConfig := "python3 -c 'import json,os,sys; p=os.path.expanduser(\"~/.claude.json\");" +
+		" c=json.load(open(p)) if os.path.exists(p) else {};" +
+		" c.setdefault(\"mcpServers\",{}).update(json.loads(sys.argv[1]));" +
+		" json.dump(c,open(p,\"w\"))' " + sandboxShellQuote(string(serversJSON))
+	return cloudSessionExecStream(ctx, instance, mergeConfig, "", cloudSessionInSandboxTimeout)
 }
 
 // cloudSessionWaitDeployed polls until the session's sandbox can run commands.
@@ -194,7 +263,45 @@ func cloudSessionExecStream(ctx *CommandContext, instance *sandbox.Sandbox, comm
 	return sandboxProcessExitError(*finished)
 }
 
+// cloudSessionResolveImage maps --repo to its imported image via the
+// session-image map in the CLI config dir, written by the local build/import
+// step. The backend's image service replaces that map in production; --image
+// bypasses it.
+func cloudSessionResolveImage(flags *cmd.CloudSessionCreateFlags) (string, error) {
+	if flags.Image != "" && flags.Repo != "" {
+		return "", cmd.NewErrUsagef("pass either --repo or --image, not both")
+	}
+	if flags.Image != "" {
+		return flags.Image, nil
+	}
+	if flags.Repo == "" {
+		return "", cmd.NewErrUsagef("a repository (--repo owner/name) or an image (--image) is required")
+	}
+	configDir, err := auth.DefaultConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving the image for repo %s: %w", flags.Repo, err)
+	}
+	imageMapPath := filepath.Join(configDir, "cloud-session-images.json")
+	imageMapData, err := os.ReadFile(imageMapPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving the image for repo %s: reading %s: %w", flags.Repo, imageMapPath, err)
+	}
+	repoImages := map[string]string{}
+	if err := json.Unmarshal(imageMapData, &repoImages); err != nil {
+		return "", fmt.Errorf("resolving the image for repo %s: parsing %s: %w", flags.Repo, imageMapPath, err)
+	}
+	image, found := repoImages[flags.Repo]
+	if !found {
+		return "", fmt.Errorf("no session image registered for repo %s in %s; build and import one first", flags.Repo, imageMapPath)
+	}
+	return image, nil
+}
+
 func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionCreateFlags) error {
+	imageRef, err := cloudSessionResolveImage(flags)
+	if err != nil {
+		return err
+	}
 	apiKeyValue, envs, err := cloudSessionEnvs(flags)
 	if err != nil {
 		return err
@@ -214,10 +321,21 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	createIfNotExists := true
 	createRequest := managementapi.CreateSandboxRequest{
 		Name:              &name,
-		Image:             &flags.Image,
+		Image:             &imageRef,
 		Memory:            &flags.Memory,
 		Envs:              envs,
 		CreateIfNotExists: &createIfNotExists,
+	}
+	var runlayerM2MToken string
+	if len(flags.RunlayerServer) > 0 {
+		if !flags.ProxyAuth {
+			return cmd.NewErrUsagef("--runlayer-server requires --proxy-auth: the Runlayer credential reaches the session only through the proxy's secret store")
+		}
+		var err error
+		runlayerM2MToken, err = cloudSessionRunlayerM2MToken(flags.RunlayerClientIDEnv, flags.RunlayerSecretEnv)
+		if err != nil {
+			return err
+		}
 	}
 	var harnessHost string
 	if flags.ProxyAuth {
@@ -226,7 +344,7 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 		if err != nil {
 			return err
 		}
-		createRequest.Network = cloudSessionProxyNetwork(harnessHost, apiKeyValue)
+		createRequest.Network = cloudSessionProxyNetwork(harnessHost, apiKeyValue, runlayerM2MToken)
 	}
 	record, err := client.API().CreateSandbox(ctx, managementapi.CreateSandboxParams{TeamId: teamID}, createRequest)
 	if err != nil {
@@ -249,6 +367,12 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	ctx.Logf("Setting up %s inside session %s…\n", flags.Harness, name)
 	if err := cloudSessionExecStream(ctx, instance, setupCommand, "", cloudSessionInSandboxTimeout); err != nil {
 		return err
+	}
+	if len(flags.RunlayerServer) > 0 {
+		ctx.Logf("Exposing %d Runlayer MCP servers in session %s…\n", len(flags.RunlayerServer), name)
+		if err := cloudSessionRunlayerMCPConfig(ctx, instance, flags.RunlayerServer); err != nil {
+			return err
+		}
 	}
 	tmuxCommand := "tmux has-session -t " + cloudSessionTmuxSession + " 2>/dev/null || " +
 		"tmux new-session -d -s " + cloudSessionTmuxSession + " " + sandboxShellQuote(harnessStart)
