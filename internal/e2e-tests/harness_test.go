@@ -29,7 +29,9 @@ func TestE2EHarnessThinking(t *testing.T) {
 		require.Zero(t, piErrorTurns(objects), "pi ended a turn with an API error; stdout:\n%s\nstderr:\n%s", stdout, stderr)
 		reply := piAssistantText(objects)
 		require.Contains(t, reply, harnessThinkingMarker, "pi's final reply lacks the marker; stdout:\n%s\nstderr:\n%s", stdout, stderr)
-		step(t, "pi thinking seen: %v", piThinkingSeen(objects))
+		piThinking := piThinkingSeen(objects)
+		require.True(t, piThinking, "pi's stream shows no thinking or reasoning event; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		step(t, "pi thinking seen: %v", piThinking)
 	})
 	t.Run("claude-code", func(t *testing.T) {
 		h := newHarnessTest(t, "claude-code", "claude")
@@ -53,14 +55,14 @@ func TestE2EHarnessToolCall(t *testing.T) {
 		events := parseClaudeStream(stdout)
 		harnessAssertNoAPIError(t, stdout+stderr)
 		require.NotEmpty(t, claudeToolUses(events), "claude-code made no tool calls; stdout:\n%s", stdout)
-		require.Equal(t, harnessClaudeToolWord, harnessReadWorkspaceFile(t, workspace, "answer.txt"))
+		require.Equal(t, harnessReadWorkspaceFile(t, workspace, "task.txt"), harnessReadWorkspaceFile(t, workspace, "answer.txt"))
 	})
 	t.Run("codex", func(t *testing.T) {
 		h := newHarnessTest(t, "codex", "codex")
 		workspace := harnessSeedWorkspace(t, map[string]string{"task.txt": harnessCodexToolWord + "\n"})
 		stdout, stderr := h.run(t, workspace, "exec", "--json", "--skip-git-repo-check", "-C", workspace, "-c", "sandbox_mode=danger-full-access", harnessToolTaskPrompt)
 		harnessAssertNoAPIError(t, stdout+stderr)
-		require.Equal(t, harnessCodexToolWord, harnessReadWorkspaceFile(t, workspace, "answer.txt"))
+		require.Equal(t, harnessReadWorkspaceFile(t, workspace, "task.txt"), harnessReadWorkspaceFile(t, workspace, "answer.txt"))
 	})
 }
 
@@ -86,12 +88,12 @@ func TestE2EHarnessWebSearch(t *testing.T) {
 			harnessAssertNoAPIError(t, stdout+stderr)
 			objects := harnessJSONObjects(stdout)
 			searched := false
-			for _, object := range objects {
+			harnessWalkObjects(objects, func(object map[string]any) {
 				kind, _ := object["type"].(string)
 				if strings.Contains(kind, "web_search") {
 					searched = true
 				}
-			}
+			})
 			require.True(t, searched, "codex emitted no web_search event; stdout:\n%s", stdout)
 			return
 		}
@@ -110,14 +112,14 @@ func TestE2EHarnessModelSwitch(t *testing.T) {
 		sessionID, _, ok := claudeResult(events1)
 		require.True(t, ok, "phase 1 stream-json has no result event; stdout:\n%s\nstderr:\n%s", stdout1, stderr1)
 		require.NotEmpty(t, sessionID, "phase 1 result event has no session_id")
-		require.Equal(t, harnessClaudeSwitchWord, harnessReadWorkspaceFile(t, workspace, "stage1.txt"))
+		require.Equal(t, harnessClaudeSwitchWord, harnessReadWorkspaceFileTrimmed(t, workspace, "stage1.txt"))
 		step(t, "claude-code resuming session %s under %s", sessionID, modelB)
 		stdout2, stderr2 := h.run(t, workspace, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--resume", sessionID, "--model", modelB, harnessSwitchPhase2)
 		events2 := parseClaudeStream(stdout2)
 		harnessAssertNoAPIError(t, stdout2+stderr2)
 		_, _, ok = claudeResult(events2)
 		require.True(t, ok, "phase 2 stream-json has no result event; stdout:\n%s\nstderr:\n%s", stdout2, stderr2)
-		require.Equal(t, harnessClaudeRecallWord, harnessReadWorkspaceFile(t, workspace, "stage2.txt"))
+		require.Equal(t, harnessClaudeRecallWord, harnessReadWorkspaceFileTrimmed(t, workspace, "stage2.txt"))
 	})
 	t.Run("codex", func(t *testing.T) {
 		h := newHarnessTest(t, "codex", "codex")
@@ -127,11 +129,11 @@ func TestE2EHarnessModelSwitch(t *testing.T) {
 		harnessAssertNoAPIError(t, stdout1+stderr1)
 		threadID := codexThreadID(harnessJSONObjects(stdout1))
 		require.NotEmpty(t, threadID, "codex emitted no thread.started thread_id; stdout:\n%s", stdout1)
-		require.Equal(t, harnessCodexSwitchWord, harnessReadWorkspaceFile(t, workspace, "stage1.txt"))
+		require.Equal(t, harnessCodexSwitchWord, harnessReadWorkspaceFileTrimmed(t, workspace, "stage1.txt"))
 		step(t, "codex resuming thread %s under %s", threadID, modelB)
 		stdout2, stderr2 := h.run(t, workspace, "exec", "resume", threadID, "--skip-git-repo-check", "-m", modelB, "-c", "sandbox_mode=danger-full-access", harnessSwitchPhase2)
 		harnessAssertNoAPIError(t, stdout2+stderr2)
-		require.Equal(t, harnessCodexRecallWord, harnessReadWorkspaceFile(t, workspace, "stage2.txt"))
+		require.Equal(t, harnessCodexRecallWord, harnessReadWorkspaceFileTrimmed(t, workspace, "stage2.txt"))
 	})
 	t.Run("pi", func(t *testing.T) {
 		h := newHarnessTest(t, "pi", "pi")
@@ -140,11 +142,11 @@ func TestE2EHarnessModelSwitch(t *testing.T) {
 		sessionDir := filepath.Join(h.root, "pi-sessions")
 		stdout1, stderr1 := h.run(t, workspace, "-p", "--mode", "json", "--offline", "--session-dir", sessionDir, "--model", modelA, fmt.Sprintf(harnessSwitchPhase1, harnessPiSwitchWord, harnessPiRecallWord))
 		harnessAssertNoAPIError(t, stdout1+stderr1)
-		require.Equal(t, harnessPiSwitchWord, harnessReadWorkspaceFile(t, workspace, "stage1.txt"))
+		require.Equal(t, harnessPiSwitchWord, harnessReadWorkspaceFileTrimmed(t, workspace, "stage1.txt"))
 		step(t, "pi continuing session dir %s under %s", sessionDir, modelB)
 		stdout2, stderr2 := h.run(t, workspace, "-p", "--mode", "json", "--offline", "--session-dir", sessionDir, "--continue", "--model", modelB, harnessSwitchPhase2)
 		harnessAssertNoAPIError(t, stdout2+stderr2)
 		require.Zero(t, piErrorTurns(harnessJSONObjects(stdout2)), "pi phase 2 hit an API error; stdout:\n%s", stdout2)
-		require.Equal(t, harnessPiRecallWord, harnessReadWorkspaceFile(t, workspace, "stage2.txt"))
+		require.Equal(t, harnessPiRecallWord, harnessReadWorkspaceFileTrimmed(t, workspace, "stage2.txt"))
 	})
 }

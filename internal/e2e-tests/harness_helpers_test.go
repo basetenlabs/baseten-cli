@@ -110,10 +110,7 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 		switch {
 		case strings.Contains(msg, "/v1/grid/routes was not found"):
 			t.Skipf("the grid routes API (/v1/grid/routes) is not deployed on this remote (%s); harness e2e needs a remote with the grid routes feature enabled", remoteURL)
-		case strings.Contains(msg, "no routes"),
-			strings.Contains(msg, "no accessible routes"),
-			strings.Contains(msg, "no usable model metadata"),
-			strings.Contains(msg, "different invoke URLs"):
+		case harnessEnvironmentalSetupError(msg):
 			t.Skipf("harness setup cannot run against this org: %s", msg)
 		}
 		t.Fatalf("harness setup failed: %v\nstderr: %s", err, errOut)
@@ -122,6 +119,27 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 	h.loadConfig(t)
 	require.NotEmpty(t, h.endpoint, "harness setup wrote no endpoint for %s", name)
 	return h
+}
+
+func harnessEnvironmentalSetupError(msg string) bool {
+	for _, marker := range []string{
+		"/v1/grid/routes was not found",
+		"no routes",
+		"none of the team's routes have usable model metadata",
+		"different invoke URLs",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+type harnessTeamProbeFailure struct {
+	team   string
+	err    error
+	out    string
+	errOut string
 }
 
 func harnessTeamArgs(t *testing.T, name string) []string {
@@ -150,16 +168,23 @@ func harnessTeamArgs(t *testing.T, name string) []string {
 		return nil
 	}
 	lastErr := probeErr
+	var failures []harnessTeamProbeFailure
 	for _, team := range listed.Teams {
 		if team.Name == "" {
 			continue
 		}
-		_, _, err := cli(t, "grid", "setup", "--harness", name, "--config-dir", probeDir,
+		out, errOut, err := cli(t, "grid", "setup", "--harness", name, "--config-dir", probeDir,
 			"--team", team.Name, "--use-session-credential", "--yes", "--dry-run")
 		if err == nil {
 			return []string{"--team", team.Name}
 		}
 		lastErr = err
+		failures = append(failures, harnessTeamProbeFailure{team: team.Name, err: err, out: out, errOut: errOut})
+	}
+	for _, failure := range failures {
+		if !harnessEnvironmentalSetupError(failure.errOut + failure.out) {
+			t.Fatalf("team %s probe failed with an unrecognized error: %v\nstdout:\n%s\nstderr:\n%s", failure.team, failure.err, failure.out, failure.errOut)
+		}
 	}
 	t.Skipf("none of the org's %d teams have routes %s can call; last probe error: %v", len(listed.Teams), name, lastErr)
 	return nil
@@ -254,12 +279,11 @@ func (h *harnessTest) loadCodexConfig(t *testing.T) {
 	require.NotNil(t, provider, "codex config.toml has no %s provider", harnessProviderID)
 	baseURL, _ := provider["base_url"].(string)
 	h.endpoint = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
-	if tools, ok := data["tools"].(map[string]any); ok {
-		switch search := tools["web_search"].(type) {
-		case bool:
-			h.codexWebSearch = search
-		case string:
-			h.codexWebSearch = search != "" && search != "disabled" && search != "false"
+	if value, ok := data["web_search"]; ok {
+		h.codexWebSearch = harnessCodexWebSearchEnabled(value)
+	} else if tools, ok := data["tools"].(map[string]any); ok {
+		if value, ok := tools["web_search"]; ok {
+			h.codexWebSearch = harnessCodexWebSearchEnabled(value)
 		}
 	}
 	catalogPath, _ := data["model_catalog_json"].(string)
@@ -276,6 +300,16 @@ func (h *harnessTest) loadCodexConfig(t *testing.T) {
 			h.codexSlugs = append(h.codexSlugs, slug)
 		}
 	}
+}
+
+func harnessCodexWebSearchEnabled(value any) bool {
+	switch search := value.(type) {
+	case bool:
+		return search
+	case string:
+		return search != "" && search != "disabled" && search != "false"
+	}
+	return false
 }
 
 func harnessReadJSON(t *testing.T, path string) map[string]any {
@@ -605,5 +639,10 @@ func harnessReadWorkspaceFile(t *testing.T, dir, name string) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, name))
 	require.NoError(t, err, "reading %s, which the harness was asked to produce", name)
-	return strings.TrimRight(string(data), "\n")
+	return string(data)
+}
+
+func harnessReadWorkspaceFileTrimmed(t *testing.T, dir, name string) string {
+	t.Helper()
+	return strings.TrimRight(harnessReadWorkspaceFile(t, dir, name), "\n")
 }
