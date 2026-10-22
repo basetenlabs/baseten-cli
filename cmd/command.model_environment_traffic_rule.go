@@ -6,27 +6,56 @@ import (
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
+const trafficRulePrereleaseNotice = "PRE-RELEASE: traffic-rule commands are not GA yet. " +
+	"Their arguments, flags, and output may change.\n\n"
+
 // commandModelEnvironmentTrafficRule groups the
-// `baseten model environment traffic-rule` subcommands. Hidden while the API
-// marks traffic routing as in development.
+// `baseten model environment traffic-rule` subcommands.
 var commandModelEnvironmentTrafficRule = Command{
-	Name:    "traffic-rule",
-	Summary: "Manage an environment's traffic routing rules",
-	Hidden:  true,
+	Name:        "traffic-rule",
+	Summary:     "Manage an environment's traffic routing rules (PRE-RELEASE)",
+	Description: trafficRulePrereleaseNotice + "Manage an environment's traffic routing rules.",
 	Children: []Command{
 		{
+			Name:    "list",
+			Summary: "List an environment's traffic routing rules (PRE-RELEASE)",
+			Description: trafficRulePrereleaseNotice +
+				"List every active traffic routing rule on an environment with its id, which " +
+				"the update and delete commands take.",
+			Flags: ModelEnvironmentTrafficRuleListFlags{},
+			Output: &CommandOutput[managementapi.EnvironmentTrafficRouting]{
+				TextDescription: "Table with columns: ID, TYPE, TARGET, PERCENT, SAMPLING MODE, " +
+					"PROPAGATE CANCELLATION, EXPIRES. " +
+					"When no rules exist, prints \"No traffic rules found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List an environment's rules.",
+						Command:     "baseten model environment traffic-rule list --model-id <model-id> --environment production",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print each rule's id and percentage.",
+					CommandLines: []string{
+						"baseten model environment traffic-rule list --model-id <model-id> --environment production",
+						"--jq '.rules[] | \"\\(.id) \\(.percent_traffic)\"'",
+					},
+				},
+			},
+		},
+		{
 			Name:    "create",
-			Summary: "Create a traffic routing rule",
-			Description: "Add a traffic routing rule to an environment. A shadow rule sends a copy " +
+			Summary: "Create a traffic routing rule (PRE-RELEASE)",
+			Description: trafficRulePrereleaseNotice +
+				"Add a traffic routing rule to an environment. A shadow rule sends a copy " +
 				"of a percentage of the environment's traffic to a target, and the target's " +
 				"responses are discarded.\n\n" +
 				"Set the target with exactly one of --target-environment and " +
 				"--target-deployment-id. The target can't be changed later: delete the rule and " +
 				"create a new one instead.\n\n" +
-				"Run 'baseten model environment describe' to see the environment's active rules.",
+				"Run 'baseten model environment traffic-rule list' to see the environment's active rules.",
 			Flags: ModelEnvironmentTrafficRuleCreateFlags{},
 			Output: &CommandOutput[managementapi.UpdateEnvironmentResponse]{
-				TextDescription: "On success, prints \"Created traffic rule <id>\" to stderr; no stdout output.",
+				TextDescription: "On success, prints \"Created traffic rule\" to stderr; no stdout output.",
 				Examples: []CommandExample{
 					{
 						Description: "Shadow 25% of production's traffic to staging.",
@@ -53,7 +82,7 @@ var commandModelEnvironmentTrafficRule = Command{
 						"baseten model environment traffic-rule create --model-id <model-id> --environment production",
 						"--type shadow --target-environment staging --percent-traffic 25",
 						"--expires-at 2026-10-08T18:00 --sampling-mode random",
-						"--propagate-client-cancellation false --yes",
+						"--propagate-client-cancellation false",
 						"--jq '.environment.traffic_routing.rules[].id'",
 					},
 				},
@@ -61,8 +90,9 @@ var commandModelEnvironmentTrafficRule = Command{
 		},
 		{
 			Name:    "update",
-			Summary: "Update a traffic routing rule",
-			Description: "Change one traffic routing rule, identified by id.\n\n" +
+			Summary: "Update a traffic routing rule (PRE-RELEASE)",
+			Description: trafficRulePrereleaseNotice +
+				"Change one traffic routing rule, identified by id.\n\n" +
 				"Only the flags you pass are changed; the rest of the rule is preserved. " +
 				"Because the API replaces a rule wholesale, the command reads the environment " +
 				"first and merges your changes into the existing rule.\n\n" +
@@ -97,10 +127,11 @@ var commandModelEnvironmentTrafficRule = Command{
 			},
 		},
 		{
-			Name:        "delete",
-			Summary:     "Delete a traffic routing rule",
-			Description: "Remove one traffic routing rule from an environment, identified by id.",
-			Flags:       ModelEnvironmentTrafficRuleDeleteFlags{},
+			Name:    "delete",
+			Summary: "Delete a traffic routing rule (PRE-RELEASE)",
+			Description: trafficRulePrereleaseNotice +
+				"Remove one traffic routing rule from an environment, identified by id.",
+			Flags: ModelEnvironmentTrafficRuleDeleteFlags{},
 			Output: &CommandOutput[managementapi.UpdateEnvironmentResponse]{
 				TextDescription: "On success, prints \"Deleted traffic rule <id>\" to stderr; no stdout output.",
 				Examples: []CommandExample{
@@ -124,6 +155,13 @@ var commandModelEnvironmentTrafficRule = Command{
 	},
 }
 
+// ModelEnvironmentTrafficRuleListFlags configures
+// `baseten model environment traffic-rule list`.
+type ModelEnvironmentTrafficRuleListFlags struct {
+	CommandFlags
+	ModelEnvironmentFlags
+}
+
 // ModelEnvironmentTrafficRuleCreateFlags configures
 // `baseten model environment traffic-rule create`.
 type ModelEnvironmentTrafficRuleCreateFlags struct {
@@ -137,8 +175,6 @@ type ModelEnvironmentTrafficRuleCreateFlags struct {
 	ExpiresAt                   time.Time          `flag:"expires-at" desc:"When the rule stops, ISO 8601 (for example 2026-10-08T18:00), at most 7 days out. Values without a timezone designator are read in the local timezone." required:"true"`
 	SamplingMode                string             `flag:"sampling-mode" desc:"How requests are picked for shadowing. random picks each request independently. user-session keeps a whole session together." enum:"random,user-session" required:"true"`
 	PropagateClientCancellation OptionalFlag[bool] `flag:"propagate-client-cancellation" desc:"Whether a shadow request is cancelled when the original client disconnects." required:"true"`
-
-	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
 // ModelEnvironmentTrafficRuleUpdateFlags configures
@@ -147,7 +183,7 @@ type ModelEnvironmentTrafficRuleUpdateFlags struct {
 	CommandFlags
 	ModelEnvironmentFlags
 
-	RuleID                      string               `flag:"rule-id" desc:"ID of the rule. Run 'baseten model environment describe' to see the environment's rules." required:"true"`
+	RuleID                      string               `flag:"rule-id" desc:"ID of the rule. Run 'baseten model environment traffic-rule list' to see the environment's rules." required:"true"`
 	PercentTraffic              OptionalFlag[int]    `flag:"percent-traffic" desc:"New percentage of the environment's traffic to shadow."`
 	ExpiresAt                   time.Time            `flag:"expires-at" desc:"New time the rule stops, ISO 8601 (for example 2026-10-08T18:00), at most 7 days out. Values without a timezone designator are read in the local timezone."`
 	SamplingMode                OptionalFlag[string] `flag:"sampling-mode" desc:"New way requests are picked for shadowing." enum:"random,user-session"`
@@ -160,7 +196,7 @@ type ModelEnvironmentTrafficRuleDeleteFlags struct {
 	CommandFlags
 	ModelEnvironmentFlags
 
-	RuleID string `flag:"rule-id" desc:"ID of the rule. Run 'baseten model environment describe' to see the environment's rules." required:"true"`
+	RuleID string `flag:"rule-id" desc:"ID of the rule. Run 'baseten model environment traffic-rule list' to see the environment's rules." required:"true"`
 
 	Yes bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }

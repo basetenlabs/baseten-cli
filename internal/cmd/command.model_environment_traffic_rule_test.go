@@ -34,6 +34,37 @@ func patchResponseFixture(env map[string]any) map[string]any {
 	return map[string]any{"environment": env, "status": "ACCEPTED", "message": "ok"}
 }
 
+func Test_Model_Environment_TrafficRule_List(t *testing.T) {
+	h := NewCommandHarness(t)
+	deleted := trafficRuleFixture("r-2", map[string]any{})
+	deleted["targets"] = []any{}
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/environments/production", 200,
+		envWithTrafficRulesFixture(
+			trafficRuleFixture("r-1", map[string]any{"environment": "staging"}), deleted))
+
+	h.Require.NoError(h.Execute("model", "environment", "traffic-rule", "list",
+		"--model-id", "m-1", "--environment", "production"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "r-1")
+	h.Require.Contains(out, "environment staging")
+	// Enums render in the spelling the traffic-rule flags take.
+	h.Require.Contains(out, "user-session")
+	h.Require.Contains(out, "25%")
+	h.Require.Contains(out, "2026-10-08T18:00:00Z")
+	h.Require.Contains(out, "r-2")
+	h.Require.Contains(out, "deleted target")
+}
+
+func Test_Model_Environment_TrafficRule_List_Empty(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/environments/production", 200,
+		envFixture("production", "d-1", "ACTIVE"))
+
+	h.Require.NoError(h.Execute("model", "environment", "traffic-rule", "list",
+		"--model-id", "m-1", "--environment", "production"))
+	h.Require.Contains(h.Stderr.String(), "No traffic rules found.")
+}
+
 func Test_Model_Environment_TrafficRule_Create_TargetEnvironment(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("PATCH", "/v1/models/m-1/environments/production", 200,
@@ -44,8 +75,8 @@ func Test_Model_Environment_TrafficRule_Create_TargetEnvironment(t *testing.T) {
 		"--model-id", "m-1", "--environment", "production",
 		"--type", "shadow", "--target-environment", "staging", "--percent-traffic", "25",
 		"--expires-at", "2026-10-08T18:00:00Z", "--sampling-mode", "user-session",
-		"--propagate-client-cancellation", "true", "--yes"))
-	h.Require.Contains(h.Stderr.String(), "Created traffic rule r-1")
+		"--propagate-client-cancellation", "true"))
+	h.Require.Contains(h.Stderr.String(), "Created traffic rule")
 
 	body := h.MockManagementAPI().FindCall("PATCH", "/v1/models/m-1/environments/production").BodyJSON(h.T)
 	// Only the traffic routing sub-object is sent, so no other setting is touched.
@@ -72,8 +103,8 @@ func Test_Model_Environment_TrafficRule_Create_TargetDeployment(t *testing.T) {
 		"--model-id", "m-1", "--environment", "production",
 		"--type", "shadow", "--target-deployment-id", "d-2", "--percent-traffic", "10",
 		"--expires-at", "2026-10-08T18:00:00Z", "--sampling-mode", "random",
-		"--propagate-client-cancellation", "false", "--yes"))
-	h.Require.Contains(h.Stderr.String(), "Created traffic rule r-1")
+		"--propagate-client-cancellation", "false"))
+	h.Require.Contains(h.Stderr.String(), "Created traffic rule")
 
 	body := h.MockManagementAPI().FindCall("PATCH", "/v1/models/m-1/environments/production").BodyJSON(h.T)
 	rule := body["traffic_routing_settings"].(map[string]any)["rules"].([]any)[0].(map[string]any)
@@ -89,20 +120,8 @@ func Test_Model_Environment_TrafficRule_Create_RejectsTwoTargets(t *testing.T) {
 		"--model-id", "m-1", "--environment", "production",
 		"--type", "shadow", "--target-environment", "staging", "--target-deployment-id", "d-2",
 		"--percent-traffic", "25", "--expires-at", "2026-10-08T18:00:00Z",
-		"--sampling-mode", "random", "--propagate-client-cancellation", "false", "--yes")
+		"--sampling-mode", "random", "--propagate-client-cancellation", "false")
 	h.Require.ErrorContains(err, "target-deployment-id")
-	h.Require.Nil(h.MockManagementAPI().FindCall("PATCH", "/v1/models/m-1/environments/production"))
-}
-
-func Test_Model_Environment_TrafficRule_Create_NoTTY_RequiresYes(t *testing.T) {
-	h := NewCommandHarness(t)
-
-	err := h.Execute("model", "environment", "traffic-rule", "create",
-		"--model-id", "m-1", "--environment", "production",
-		"--type", "shadow", "--target-environment", "staging", "--percent-traffic", "25",
-		"--expires-at", "2026-10-08T18:00:00Z", "--sampling-mode", "random",
-		"--propagate-client-cancellation", "false")
-	h.Require.ErrorContains(err, "stdin is not a terminal")
 	h.Require.Nil(h.MockManagementAPI().FindCall("PATCH", "/v1/models/m-1/environments/production"))
 }
 
@@ -212,32 +231,4 @@ func Test_Model_Environment_TrafficRule_Delete_NoTTY_RequiresYes(t *testing.T) {
 		"--model-id", "m-1", "--environment", "production", "--rule-id", "r-1")
 	h.Require.ErrorContains(err, "stdin is not a terminal")
 	h.Require.Nil(h.MockManagementAPI().FindCall("PATCH", "/v1/models/m-1/environments/production"))
-}
-
-func Test_Model_Environment_Describe_ShowsTrafficRules(t *testing.T) {
-	h := NewCommandHarness(t)
-	deleted := trafficRuleFixture("r-2", map[string]any{})
-	deleted["targets"] = []any{}
-	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/environments/production", 200,
-		envWithTrafficRulesFixture(
-			trafficRuleFixture("r-1", map[string]any{"environment": "staging"}), deleted))
-
-	h.Require.NoError(h.Execute("model", "environment", "describe",
-		"--model-id", "m-1", "--environment", "production"))
-	out := h.Stdout.String()
-	h.Require.Contains(out, "Traffic Rules:")
-	// Enums render in the spelling the traffic-rule flags take.
-	h.Require.Contains(out, "r-1: shadow 25% to environment staging, user-session, "+
-		"propagate client cancellation true, expires 2026-10-08T18:00:00Z")
-	h.Require.Contains(out, "r-2: shadow 25% to deleted target")
-}
-
-func Test_Model_Environment_Describe_NoTrafficRouting(t *testing.T) {
-	h := NewCommandHarness(t)
-	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/environments/production", 200,
-		envFixture("production", "d-1", "ACTIVE"))
-
-	h.Require.NoError(h.Execute("model", "environment", "describe",
-		"--model-id", "m-1", "--environment", "production"))
-	h.Require.NotContains(h.Stdout.String(), "Traffic Rules:")
 }

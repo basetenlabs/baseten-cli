@@ -324,6 +324,25 @@ func patchModelEnvironment(
 	return resp, nil
 }
 
+// getModelEnvironment reads one environment of a model.
+func getModelEnvironment(
+	ctx *CommandContext, flags cmd.ModelEnvironmentFlags,
+) (*managementapi.Environment, error) {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return nil, err
+	}
+	ref, err := ResolveModelRef(ctx, cl.API(), flags.ModelRefFlags)
+	if err != nil {
+		return nil, err
+	}
+	env, err := cl.API().GetModelsEnvironmentsEnvName(ctx, ref.ID, flags.Environment)
+	if err != nil {
+		return nil, fmt.Errorf("describe environment %s: %w", flags.Environment, err)
+	}
+	return env, nil
+}
+
 // promotionSettingsFromFlags maps the promotion flags onto the request body,
 // flattening the rolling deploy config back into its nested shape. The nested
 // object is only sent when one of its own flags was passed, so touching a
