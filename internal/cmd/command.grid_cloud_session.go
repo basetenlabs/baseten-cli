@@ -723,11 +723,8 @@ func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessio
 
 // cloudSessionPreviewGuidance is the preview flow for the harness: it cannot
 // mint previews (the session credential is not allowed to), so the operator does.
-const cloudSessionPreviewGuidance = `- To serve something for the user (vite, docs, a notebook): bind 0.0.0.0 and hand the user two commands to run outside, with the port filled in and an expiry you compute (about a week out):
-    baseten sandbox preview create --name=$BASETEN_SANDBOX_NAME --port=<port>
-    baseten sandbox preview token create --name=$BASETEN_SANDBOX_NAME --preview-name=<name the first command printed> --expires-at=<ISO 8601>
-  The second prints a private HTTPS link with an embedded access token, ready to open or curl. Your own listening ports: GET /network/process/{pid}/ports on the local API.
-- Do not hand out the sandbox URL or a :port link: the URL is auth-walled (401) and direct ports return 502. Only a preview link is reachable, and you cannot create one yourself, so the user must run the commands above.`
+const cloudSessionPreviewGuidance = `- To serve something for the user (vite, docs, a notebook): bind 0.0.0.0 and hand the user one command to run outside, with the port filled in: "baseten sandbox preview create --name=$BASETEN_SANDBOX_NAME --port=<port> --with-token" (add --ttl for a shorter-lived link). It prints a private HTTPS link with an embedded access token, ready to open or curl. Your own listening ports: GET /network/process/{pid}/ports on the local API.
+- Do not hand out the sandbox URL or a :port link: the URL is auth-walled (401) and direct ports return 502. Only a preview link is reachable, and you cannot create one yourself, so the user must run the command above.`
 
 // cloudSessionPreparePreviewGuidance replaces the preview bullets in the
 // session's CLAUDE.md, dropping older ones baked into images. Idempotent.
