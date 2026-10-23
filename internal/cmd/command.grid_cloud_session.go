@@ -15,7 +15,6 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
-	"github.com/basetenlabs/baseten-go/client/sandboxapi"
 	"github.com/basetenlabs/baseten-go/sandbox"
 )
 
@@ -23,10 +22,6 @@ const (
 	// cloudSessionTmuxSession must match between create (starts it) and
 	// connect (attaches to it).
 	cloudSessionTmuxSession = "code"
-
-	// The idle-suspend window observed live is ~60s with a connection open;
-	// a management read resets the counter.
-	cloudSessionHeartbeatGap = 30 * time.Second
 
 	// cloudSessionCredentialEnv holds the dedicated sandbox token that
 	// authenticates the session's harness and management traffic; the
@@ -474,33 +469,6 @@ func commandGridCloudSessionConnect(ctx *CommandContext, flags *cmd.CloudSession
 // The sentinel kill on detach is best effort: a hibernated sandbox wakes for the
 // kill and sleeps again right after.
 func cloudSessionAttach(ctx *CommandContext, ref cmd.SandboxRefFlags, tmuxWindowCommand string) error {
-	client, _, err := ctx.NewSandboxClient(ref.Team)
-	if err != nil {
-		return err
-	}
-	// Verified live: the idle counter (~60s) ignores open connections, keepAlive
-	// processes, and management reads; only execution-API calls reset it. So
-	// the launcher runs a trivial process every heartbeat while the CLI lives:
-	// detach or CLI death stops the pings and the sandbox sleeps.
-	instance, err := client.Get(ctx, sandbox.GetOptions{Name: ref.Name})
-	if err != nil {
-		return fmt.Errorf("getting sandbox %s: %w", ref.Name, err)
-	}
-	heartbeatDone := make(chan struct{})
-	defer close(heartbeatDone)
-	go func() {
-		ticker := time.NewTicker(cloudSessionHeartbeatGap)
-		defer ticker.Stop()
-		waitForCompletion := true
-		for {
-			select {
-			case <-heartbeatDone:
-				return
-			case <-ticker.C:
-				_, _ = instance.API().PostProcess(ctx, sandboxapi.ProcessRequest{Command: "true", WaitForCompletion: &waitForCompletion})
-			}
-		}
-	}()
 	// tmux -u: the pty's TERM=linux plus empty locale would make tmux
 	// ASCII-substitute glyphs. new -A: attach when the session exists, create
 	// it with the harness when not.

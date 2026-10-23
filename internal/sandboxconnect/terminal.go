@@ -136,6 +136,10 @@ func (e *TransportLostError) Error() string { return e.err.Error() }
 func (e *TransportLostError) Unwrap() error { return e.err }
 
 const (
+	// terminalPingGap is well under the observed ~2 min teardown of an idle
+	// terminal connection.
+	terminalPingGap = 30 * time.Second
+
 	wakeDialAttempts = 20
 	wakeDialInterval = 1 * time.Second
 	// dialTimeout bounds one dial: while a hibernated sandbox resumes, the
@@ -307,6 +311,25 @@ func (t *Terminal) runConnection(ctx context.Context) error {
 	// reconnects do not pile callbacks onto the session context.
 	stopCloseOnCancel := context.AfterFunc(ctx, func() { conn.Close(websocket.StatusNormalClosure, "") })
 	defer stopCloseOnCancel()
+	// A terminal idles with no downstream bytes, and every keepalive tested
+	// against the fixed ~2 min teardown failed except the only one left:
+	// protocol-level pings.
+	pingDone := make(chan struct{})
+	defer close(pingDone)
+	go func() {
+		ticker := time.NewTicker(terminalPingGap)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pingDone:
+				return
+			case <-ticker.C:
+				pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				_ = conn.Ping(pingCtx)
+				cancel()
+			}
+		}
+	}()
 	disconnect := make(chan struct{})
 	go t.inputLoop(ctx, disconnect)
 	return t.readLoop(ctx, disconnect)
