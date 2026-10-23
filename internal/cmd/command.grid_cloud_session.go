@@ -103,7 +103,7 @@ esac
 `
 
 // cloudSessionTurnLivenessHooks wires the stay-awake script into the harness.
-const cloudSessionTurnLivenessHooks = `{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh start","timeout":15}]}],"Stop":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh stop","timeout":15}]}]}}`
+const cloudSessionTurnLivenessHooks = `{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh start","timeout":15}]}],"Stop":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh stop","timeout":15}]}]}`
 
 // cloudSessionPrepareTurnLiveness installs the stay-awake script and merges
 // the turn-liveness hooks into the harness settings the in-sandbox setup
@@ -117,8 +117,8 @@ func cloudSessionPrepareTurnLiveness(ctx *CommandContext, instance *sandbox.Sand
 	}
 	mergeHooks := "python3 -c 'import json,os,sys; p=os.path.expanduser(\"~/.claude/settings.json\");" +
 		" s=json.load(open(p)) if os.path.exists(p) else {};" +
-		" hooks=json.loads(sys.argv[1]);" +
-		" [s.setdefault(\"hooks\",{}).setdefault(k,[]).extend(v) for k,v in hooks.items()];" +
+		" h=s.get(\"hooks\"); s[\"hooks\"]=h if isinstance(h,dict) else {};" +
+		" [s[\"hooks\"].setdefault(k,[]).extend(v) for k,v in json.loads(sys.argv[1]).items()];" +
 		" json.dump(s,open(p,\"w\"))' " + sandboxShellQuote(cloudSessionTurnLivenessHooks)
 	return cloudSessionExecStream(ctx, instance, mergeHooks, "", cloudSessionInSandboxTimeout)
 }
