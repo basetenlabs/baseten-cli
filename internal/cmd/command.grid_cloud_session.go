@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,6 +56,71 @@ func cloudSessionGeneratedName() string {
 		cloudSessionNameAdjectives[rand.IntN(len(cloudSessionNameAdjectives))],
 		cloudSessionNameNouns[rand.IntN(len(cloudSessionNameNouns))],
 		rand.IntN(90)+10)
+}
+
+// cloudSessionStayAwakeScript registers a keepAlive process via the local
+// execution API: registration alone holds off the platform's ~30-40s idle
+// pause (proven empirically; in-guest activity is invisible to the counter).
+// Driven by hooks: UserPromptSubmit starts it, Stop releases it, so the
+// sandbox is awake exactly while the harness works a turn.
+const cloudSessionStayAwakeScript = `#!/bin/bash
+# Turn-based sandbox keep-alive, driven by Claude Code session hooks.
+#   UserPromptSubmit -> stay-awake.sh start : register a keepAlive process;
+#                      the sandbox-api holds off idle hibernation while any
+#                      keepAlive process runs (verified empirically).
+#   Stop             -> stay-awake.sh stop  : kill it, letting the sandbox
+#                      hibernate ~30-40s after the turn ends.
+# The process itself is a bare sleep: registration, not activity, is what
+# holds the sandbox awake.
+set -u
+API=http://localhost:8080
+NAME=stay-awake-turn
+
+case "${1:-}" in
+  start)
+    # Idempotent: a running registration from a previous turn is replaced.
+    curl -s -m 5 -X DELETE "$API/process/$NAME/kill" -o /dev/null
+    curl -s -m 5 -X POST "$API/process" \
+      -H "Content-Type: application/json" \
+      -d '{"command": "sleep 3600", "keepAlive": true, "timeout": 0, "name": "'"$NAME"'"}' \
+      -o /dev/null
+    ;;
+  stop)
+    curl -s -m 5 -X DELETE "$API/process/$NAME/kill" -o /dev/null
+    ;;
+  status)
+    curl -s -m 5 "$API/process" | python3 -c '
+import json, sys
+running = [p for p in json.load(sys.stdin)
+           if p.get("name") == "stay-awake-turn" and p["status"] == "running"]
+print("awake" if running else "released")'
+    ;;
+  *)
+    echo "usage: $0 start|stop|status" >&2
+    exit 2
+    ;;
+esac
+`
+
+// cloudSessionTurnLivenessHooks wires the stay-awake script into the harness.
+const cloudSessionTurnLivenessHooks = `{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh start","timeout":15}]}],"Stop":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh stop","timeout":15}]}]}}`
+
+// cloudSessionPrepareTurnLiveness installs the stay-awake script and merges
+// the turn-liveness hooks into the harness settings the in-sandbox setup
+// already wrote.
+func cloudSessionPrepareTurnLiveness(ctx *CommandContext, instance *sandbox.Sandbox) error {
+	scriptB64 := base64.StdEncoding.EncodeToString([]byte(cloudSessionStayAwakeScript))
+	writeScript := "mkdir -p /root/hooks-alive && printf %s " + sandboxShellQuote(scriptB64) +
+		" | base64 -d > /root/hooks-alive/stay-awake.sh && chmod +x /root/hooks-alive/stay-awake.sh"
+	if err := cloudSessionExecStream(ctx, instance, writeScript, "", cloudSessionInSandboxTimeout); err != nil {
+		return err
+	}
+	mergeHooks := "python3 -c 'import json,os,sys; p=os.path.expanduser(\"~/.claude/settings.json\");" +
+		" s=json.load(open(p)) if os.path.exists(p) else {};" +
+		" hooks=json.loads(sys.argv[1]);" +
+		" [s.setdefault(\"hooks\",{}).setdefault(k,[]).extend(v) for k,v in hooks.items()];" +
+		" json.dump(s,open(p,\"w\"))' " + sandboxShellQuote(cloudSessionTurnLivenessHooks)
+	return cloudSessionExecStream(ctx, instance, mergeHooks, "", cloudSessionInSandboxTimeout)
 }
 
 // cloudSessionHarnessStartCommand is the command that starts the harness
@@ -502,6 +568,9 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 		" c.setdefault(\"projects\",{}).setdefault(\"/workspace\",{})[\"hasTrustDialogAccepted\"]=True;" +
 		" json.dump(c,open(p,\"w\"))'"
 	if err := cloudSessionExecStream(ctx, instance, prepareOnboarding, "", cloudSessionInSandboxTimeout); err != nil {
+		return err
+	}
+	if err := cloudSessionPrepareTurnLiveness(ctx, instance); err != nil {
 		return err
 	}
 	if flags.PortConfig {
