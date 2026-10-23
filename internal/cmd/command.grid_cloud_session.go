@@ -493,6 +493,17 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	if err := cloudSessionExecStream(ctx, instance, setupCommand, "", cloudSessionInSandboxTimeout); err != nil {
 		return err
 	}
+	// First-run screens (theme, onboarding, the workdir trust dialog) would
+	// greet every fresh session; dismiss them here until the image bake
+	// carries it.
+	prepareOnboarding := "python3 -c 'import json,os; p=os.path.expanduser(\"~/.claude.json\");" +
+		" c=json.load(open(p)) if os.path.exists(p) else {};" +
+		" c[\"theme\"]=\"dark\"; c[\"hasCompletedOnboarding\"]=True;" +
+		" c.setdefault(\"projects\",{}).setdefault(\"/workspace\",{})[\"hasTrustDialogAccepted\"]=True;" +
+		" json.dump(c,open(p,\"w\"))'"
+	if err := cloudSessionExecStream(ctx, instance, prepareOnboarding, "", cloudSessionInSandboxTimeout); err != nil {
+		return err
+	}
 	if flags.PortConfig {
 		if err := cloudSessionPortConfig(ctx, instance); err != nil {
 			return err
