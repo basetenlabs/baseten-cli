@@ -38,11 +38,16 @@ const (
 	cloudSessionDeployTimeout    = 10 * time.Minute
 	cloudSessionDeployPollGap    = 2 * time.Second
 	cloudSessionInSandboxTimeout = 10 * time.Minute
+
+	// cloudSessionPreviewTokenTTL is the share-link lifetime when --token-ttl
+	// is not given.
+	cloudSessionPreviewTokenTTL = 7 * 24 * time.Hour
 )
 
 func init() {
 	Register("grid cloud-session create", commandGridCloudSessionCreate)
 	Register("grid cloud-session connect", commandGridCloudSessionConnect)
+	Register("grid cloud-session preview", commandGridCloudSessionPreview)
 	Register("grid cloud-session dispatch", commandGridCloudSessionDispatch)
 }
 
@@ -625,6 +630,9 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 			return err
 		}
 	}
+	if err := cloudSessionPreparePreviewGuidance(ctx, instance); err != nil {
+		return err
+	}
 	if len(runlayerServers) > 0 {
 		ctx.Logf("Exposing %d Runlayer MCP servers in session %s…\n", len(runlayerServers), name)
 		if err := cloudSessionRunlayerMCPConfig(ctx, instance, runlayerServers); err != nil {
@@ -716,4 +724,93 @@ func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessio
 		return fmt.Errorf("running the dispatch in session %s: the output ended without the process's exit", flags.Name)
 	}
 	return sandboxProcessExitError(*finished)
+}
+
+// cloudSessionPreviewGuidance is the preview flow the harness follows: it
+// cannot mint previews (the session credential is not allowed to), so it
+// serves on 0.0.0.0, names the port, and the operator runs 'cloud-session
+// preview' for a share link.
+const cloudSessionPreviewGuidance = `- To serve something for the user (vite, docs, a notebook): bind 0.0.0.0, tell the user the port, and they run "baseten grid cloud-session preview --name=<session> --port=<port>", which prints a private HTTPS link with an embedded access token, ready to open or curl. Your own listening ports: GET /network/process/{pid}/ports on the local API.
+- Do not hand out the sandbox URL or a :port link: the URL is auth-walled (401) and direct ports return 502. Only a preview link is reachable, and you cannot create one yourself, so ask the user to run the preview command.`
+
+// cloudSessionPreparePreviewGuidance replaces the preview bullets in the
+// session's CLAUDE.md, dropping older guidance baked into images. Idempotent:
+// both the old and the current bullets are matched out before the current ones
+// are appended.
+func cloudSessionPreparePreviewGuidance(ctx *CommandContext, instance *sandbox.Sandbox) error {
+	rewrite := "python3 -c 'import os,sys; p=os.path.expanduser(\"~/.claude/CLAUDE.md\");" +
+		" lines=open(p).read().splitlines() if os.path.exists(p) else [];" +
+		" lines=[l for l in lines if (\"baseten sandbox preview create\" not in l and \"cloud-session preview --name=\" not in l and \"auth-walled\" not in l)];" +
+		" open(p,\"w\").write(\"\\n\".join(lines+[\"\"]+[sys.argv[1]])+\"\\n\")' " +
+		sandboxShellQuote(cloudSessionPreviewGuidance)
+	return cloudSessionExecStream(ctx, instance, rewrite, "", cloudSessionInSandboxTimeout)
+}
+
+func commandGridCloudSessionPreview(ctx *CommandContext, flags *cmd.CloudSessionPreviewFlags) error {
+	responseHeaders, err := sandboxPreviewHeaders("response-header", flags.ResponseHeader)
+	if err != nil {
+		return err
+	}
+	requestHeaders, err := sandboxPreviewHeaders("request-header", flags.RequestHeader)
+	if err != nil {
+		return err
+	}
+	client, teamID, err := ctx.NewSandboxClient(flags.Team)
+	if err != nil {
+		return err
+	}
+	createIfNotExists := true
+	createRequest := managementapi.CreateSandboxPreviewRequest{
+		Port:              flags.Port,
+		Name:              sandboxOptionalString(flags.PreviewName),
+		ResponseHeaders:   responseHeaders,
+		RequestHeaders:    requestHeaders,
+		CreateIfNotExists: &createIfNotExists,
+	}
+	if flags.Public {
+		createRequest.Public = &flags.Public
+	}
+	preview, err := client.API().CreateSandboxPreview(ctx, flags.Name, managementapi.CreateSandboxPreviewParams{TeamId: teamID}, createRequest)
+	if err != nil {
+		return fmt.Errorf("creating preview of session %s: %w", flags.Name, err)
+	}
+	link := cmd.CloudSessionPreviewLink{
+		Name:   deref(preview.Name),
+		Port:   flags.Port,
+		Public: preview.Public,
+		URL:    deref(preview.Url),
+	}
+	link.ShareURL = link.URL
+	if !preview.Public {
+		// A token outliving a deleted preview is useless, so it expires with the
+		// preview when the preview dies first.
+		tokenTTL := flags.TokenTTL
+		if tokenTTL == 0 {
+			tokenTTL = cloudSessionPreviewTokenTTL
+		}
+		tokenExpiresAt := time.Now().Add(tokenTTL)
+		if preview.ExpiresAt != nil && preview.ExpiresAt.Before(tokenExpiresAt) {
+			tokenExpiresAt = *preview.ExpiresAt
+		}
+		token, err := client.API().CreateSandboxPreviewToken(ctx, flags.Name, link.Name, managementapi.CreateSandboxPreviewTokenParams{TeamId: teamID}, managementapi.CreateSandboxPreviewTokenRequest{ExpiresAt: tokenExpiresAt})
+		if err != nil {
+			return fmt.Errorf("creating a token for preview %s of session %s: %w", link.Name, flags.Name, err)
+		}
+		link.ShareURL = link.URL + "?preview_token=" + url.QueryEscape(token.Token)
+		link.TokenExpiresAt = &token.ExpiresAt
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(link)
+		return nil
+	}
+	ctx.Outputf("Preview:    %s\n", link.Name)
+	ctx.Outputf("Port:       %d\n", link.Port)
+	ctx.Outputf("URL:        %s\n", link.URL)
+	if link.Public {
+		ctx.Outputf("Reachable by anyone with the URL (public).\n")
+		return nil
+	}
+	ctx.Outputf("Share link: %s\n", link.ShareURL)
+	ctx.Outputf("Link good until: %s; the first open sets a cookie, and the link also works with curl.\n", sandboxFormatTime(link.TokenExpiresAt))
+	return nil
 }
