@@ -53,6 +53,9 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	if (flags.WatchHotReload || flags.WatchNoKeepalive) && !flags.Watch {
 		return cmd.NewErrUsagef("--watch-hot-reload and --watch-no-keepalive require --watch")
 	}
+	if flags.InstanceType != "" && flags.PreserveEnvInstanceType {
+		return cmd.NewErrUsagef("--instance-type cannot be combined with --preserve-env-instance-type")
+	}
 	// --file pushes the config alone, so there is no directory to combine it
 	// with or for --watch to patch from. Without either, the current directory
 	// is pushed.
@@ -203,6 +206,7 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 		// --watch implies --develop: both push a development deployment.
 		IsDevelopment:              flags.Develop || flags.Watch,
 		PreserveEnvInstanceType:    flags.PreserveEnvInstanceType,
+		InstanceTypeID:             flags.InstanceType,
 		CreateEnvironmentIfMissing: flags.CreateEnvironmentIfMissing,
 		ModelUploader: func(uploadCtx context.Context, upload client.ModelUpload) error {
 			return uploadModelPushArchive(ctx, uploadCtx, upload)
@@ -234,6 +238,9 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 		return opts, err
 	}
 	if err := applyModelPushLabels(&opts, flags.Labels); err != nil {
+		return opts, err
+	}
+	if err := applyModelPushSettings(&opts, flags); err != nil {
 		return opts, err
 	}
 	return opts, nil
@@ -374,6 +381,27 @@ func applyModelPushLabels(opts *client.PushModelOptions, raw string) error {
 		return errors.New("--labels: must be a JSON object")
 	}
 	opts.Labels = asMap
+	return nil
+}
+
+// applyModelPushSettings maps the deployment and promotion settings flags onto
+// the push, sending only the groups whose flags were passed. Which of them need
+// --environment is the server's call, so a push without it gets the server's
+// error rather than a CLI one.
+func applyModelPushSettings(opts *client.PushModelOptions, flags *cmd.ModelPushFlags) error {
+	opts.AutoscalingSettings = deploymentSettingsGroupOrNil(autoscalingSettingsFromFlags(flags.AutoscalingSettingsFlags))
+	if flags.RequestBackpressurePolicy.IsSet() {
+		settings := requestBackpressureFromFlags(cmd.RequestBackpressureFlags{Policy: flags.RequestBackpressurePolicy})
+		opts.RequestBackpressureSettings = &settings
+	}
+	if raw := flags.AutoscalingScheduleUpdateJSON.Pointer(); raw != nil {
+		schedules, err := promotionAutoscalingScheduleUpdateFromJSON(*raw)
+		if err != nil {
+			return err
+		}
+		opts.AutoscalingScheduleSettings = schedules
+	}
+	opts.PromotionSettingsOverride = deploymentSettingsGroupOrNil(promotionSettingsOverrideFromFlags(flags.PromotionSettingsOverrideFlags))
 	return nil
 }
 
