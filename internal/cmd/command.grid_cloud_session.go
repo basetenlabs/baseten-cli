@@ -146,35 +146,69 @@ func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string, runlayerM2
 	return &managementapi.SandboxNetwork{Proxy: &managementapi.SandboxProxyConfig{Routing: &routing}}
 }
 
-// cloudSessionRunlayerM2MToken mints a Runlayer agent-account token. The
-// client secret stays on the launcher; only the token reaches the proxy.
-func cloudSessionRunlayerM2MToken(clientIDEnv string, clientSecretEnv string) (string, error) {
+// cloudSessionRunlayerM2MToken mints a Runlayer agent-account token and, when
+// the launcher user's identity is configured, exchanges it for an OBO token
+// carrying that user's connectors and policies. The client secret stays on the
+// launcher; only the token reaches the proxy.
+func cloudSessionRunlayerM2MToken(clientIDEnv string, clientSecretEnv string, servers []string) (string, error) {
 	clientID, idIsSet := os.LookupEnv(clientIDEnv)
 	clientSecret, secretIsSet := os.LookupEnv(clientSecretEnv)
 	if !idIsSet || clientID == "" || !secretIsSet || clientSecret == "" {
 		return "", cmd.NewErrUsagef("--runlayer-server needs the Runlayer agent account: export %s and %s", clientIDEnv, clientSecretEnv)
 	}
-	response, err := http.PostForm("https://baseten.runlayer.com/api/v1/oauth/token", url.Values{
+	form := url.Values{
 		"grant_type":    {"client_credentials"},
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
+	}
+	// Every target gets named on both calls: an exchange cannot widen past
+	// the agent token's scope (RFC 8707).
+	resources := make([]string, len(servers))
+	for i, server := range servers {
+		resources[i] = "https://baseten.runlayer.com/api/v1/proxy/" + server + "/mcp"
+	}
+	if cloudSessionRunlayerUserEmail != "" {
+		form["resource"] = resources
+	}
+	token, err := cloudSessionRunlayerTokenRequest(form)
+	if err != nil {
+		return "", err
+	}
+	if cloudSessionRunlayerUserEmail == "" {
+		return token, nil
+	}
+	obo, err := cloudSessionRunlayerTokenRequest(url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"actor_token":        {token},
+		"actor_token_type":   {"urn:ietf:params:oauth:token-type:access_token"},
+		"subject_token":      {cloudSessionRunlayerUserEmail},
+		"subject_token_type": {"urn:runlayer:token-type:user-email"},
+		"resource":           resources,
 	})
 	if err != nil {
-		return "", fmt.Errorf("minting the Runlayer agent token: %w", err)
+		return "", fmt.Errorf("exchanging for the user's Runlayer token: %w", err)
+	}
+	return obo, nil
+}
+
+func cloudSessionRunlayerTokenRequest(form url.Values) (string, error) {
+	response, err := http.PostForm("https://baseten.runlayer.com/api/v1/oauth/token", form)
+	if err != nil {
+		return "", err
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		return "", fmt.Errorf("reading the Runlayer token response: %w", err)
+		return "", err
 	}
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("minting the Runlayer agent token: status %d", response.StatusCode)
+		return "", fmt.Errorf("status %d", response.StatusCode)
 	}
 	var tokenResponse struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.Unmarshal(body, &tokenResponse); err != nil || tokenResponse.AccessToken == "" {
-		return "", fmt.Errorf("minting the Runlayer agent token: the response has no access_token")
+		return "", fmt.Errorf("the response has no access_token")
 	}
 	return tokenResponse.AccessToken, nil
 }
@@ -374,13 +408,20 @@ func cloudSessionConfiguredRunlayerServers(flagServers []string) ([]string, erro
 		return nil, fmt.Errorf("reading the configured Runlayer servers: %w", err)
 	}
 	var configured struct {
-		Servers []string `json:"servers"`
+		Servers   []string `json:"servers"`
+		UserEmail string   `json:"user_email"`
 	}
 	if err := json.Unmarshal(defaultsData, &configured); err != nil {
 		return nil, fmt.Errorf("parsing the configured Runlayer servers: %w", err)
 	}
+	cloudSessionRunlayerUserEmail = configured.UserEmail
 	return configured.Servers, nil
 }
+
+// cloudSessionRunlayerUserEmail is the launcher user's Runlayer identity; set
+// it to exchange the agent token for one carrying the user's own connectors
+// and policies (OBO) instead of the shared agent identity (M2M).
+var cloudSessionRunlayerUserEmail string
 
 func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionCreateFlags) error {
 	imageRef, err := cloudSessionResolveImage(flags)
@@ -421,7 +462,7 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	}
 	var runlayerM2MToken string
 	if len(runlayerServers) > 0 {
-		runlayerM2MToken, err = cloudSessionRunlayerM2MToken(flags.RunlayerClientIDEnv, flags.RunlayerSecretEnv)
+		runlayerM2MToken, err = cloudSessionRunlayerM2MToken(flags.RunlayerClientIDEnv, flags.RunlayerSecretEnv, runlayerServers)
 		if err != nil {
 			return err
 		}
