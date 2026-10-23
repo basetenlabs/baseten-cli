@@ -333,6 +333,9 @@ func cloudSessionRunlayerMCPConfig(ctx *CommandContext, instance *sandbox.Sandbo
 // cloudSessionWaitDeployed polls until the session's sandbox can run commands.
 func cloudSessionWaitDeployed(ctx *CommandContext, client *sandbox.Client, teamID *string, name string) error {
 	deadline := time.Now().Add(cloudSessionDeployTimeout)
+	waiting := startSpinner(ctx, "Waiting for the sandbox to deploy")
+	defer waiting.Stop("")
+	lastStatus := ""
 	for {
 		record, err := client.API().GetSandbox(ctx, name, managementapi.GetSandboxParams{TeamId: teamID})
 		if err != nil {
@@ -340,14 +343,21 @@ func cloudSessionWaitDeployed(ctx *CommandContext, client *sandbox.Client, teamI
 		}
 		switch record.Status {
 		case managementapi.SandboxStatus_DEPLOYED:
+			waiting.Stop(fmt.Sprintf("Session %s deployed", name))
 			return nil
 		case managementapi.SandboxStatus_FAILED, managementapi.SandboxStatus_TERMINATED:
+			waiting.Stop("")
 			return fmt.Errorf("session %s is %s", name, record.Status)
 		}
 		if time.Now().After(deadline) {
+			waiting.Stop("")
 			return fmt.Errorf("session %s did not deploy within %s (status %s)", name, cloudSessionDeployTimeout, record.Status)
 		}
-		ctx.Logf("Session %s is %s…\n", name, record.Status)
+		// Status lines only when not animating; they would collide with the rewritten spinner line.
+		if !waiting.animated && lastStatus != string(record.Status) {
+			ctx.Logf("Session %s is %s\n", name, record.Status)
+			lastStatus = string(record.Status)
+		}
 		if err := ctx.Sleep(cloudSessionDeployPollGap); err != nil {
 			return err
 		}
@@ -576,11 +586,14 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 		githubPat, githubPatIsSet = "", false
 	}
 	createRequest.Network = cloudSessionProxyNetwork(harnessHost, apiKeyValue, runlayerM2MToken, githubPat)
+	creating := startSpinner(ctx, fmt.Sprintf("Creating session %s from image %s", name, imageRef))
 	record, err := client.API().CreateSandbox(ctx, managementapi.CreateSandboxParams{TeamId: teamID}, createRequest)
 	if err != nil {
+		creating.Stop("")
 		return fmt.Errorf("creating session %s: %w", name, err)
 	}
 	name = deref(record.Name)
+	creating.Stop(fmt.Sprintf("Session %s created", name))
 	if err := cloudSessionWaitDeployed(ctx, client, teamID, name); err != nil {
 		return err
 	}
@@ -625,6 +638,7 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 		}
 	}
 	if flags.PortConfig {
+		ctx.Logf("Copying local harness config into the session…\n")
 		if err := cloudSessionPortConfig(ctx, instance); err != nil {
 			return err
 		}
@@ -638,6 +652,7 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 			return err
 		}
 	}
+	ctx.Logf("Starting the harness in tmux…\n")
 	tmuxCommand := "tmux has-session -t " + cloudSessionTmuxSession + " 2>/dev/null || " +
 		"tmux new-session -d -s " + cloudSessionTmuxSession + " " + sandboxShellQuote(harnessStart)
 	if err := cloudSessionExecStream(ctx, instance, tmuxCommand, "/workspace", cloudSessionInSandboxTimeout); err != nil {
