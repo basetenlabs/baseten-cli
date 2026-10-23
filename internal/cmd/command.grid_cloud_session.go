@@ -23,9 +23,9 @@ const (
 	// connect (attaches to it).
 	cloudSessionTmuxSession = "code"
 
-	// cloudSessionHeartbeatGap stays under the observed ~15 min idle-suspend
-	// window; a management read resets the counter.
-	cloudSessionHeartbeatGap = 8 * time.Minute
+	// The idle-suspend window observed live is ~60s with a connection open;
+	// a management read resets the counter.
+	cloudSessionHeartbeatGap = 30 * time.Second
 
 	// cloudSessionCredentialEnv holds the dedicated sandbox token that
 	// authenticates the session's harness and management traffic; the
