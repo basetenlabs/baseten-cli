@@ -385,7 +385,7 @@ func commandSandboxExec(ctx *CommandContext, flags *cmd.SandboxExecFlags) error 
 }
 
 func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) error {
-	if err := sandboxConnectTerminal(ctx, flags.SandboxRefFlags, "", nil); err != nil {
+	if err := sandboxConnectTerminal(ctx, flags.SandboxRefFlags, ""); err != nil {
 		return err
 	}
 	ctx.Logf("\nDisconnected from sandbox %s.\n", flags.Name)
@@ -393,10 +393,9 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) 
 }
 
 // sandboxConnectTerminal opens an interactive terminal to a sandbox's shell,
-// sending firstInput to the shell once connected, before the local keyboard,
-// and running onConnect after each successful connection. It takes over the
-// terminal, reading keys from stdin and drawing to stdout.
-func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstInput string, onConnect func(context.Context) error) error {
+// sending firstInput to the shell once connected, before the local keyboard.
+// It takes over the terminal, reading keys from stdin and drawing to stdout.
+func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstInput string) error {
 	// Checked before anything is sent: the session takes over the terminal,
 	// reading keys from stdin and drawing to stdout.
 	if !stdinStdoutAreTerminals(ctx) {
@@ -435,12 +434,16 @@ func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstI
 		Output:     stdout,
 		Errors:     ctx.Stderr,
 		Terminal:   sandboxconnect.NewOSTerminal(stdin, stdout),
-		OnConnect:  onConnect,
 	})
 	if err != nil {
 		return err
 	}
-	return terminal.Run(ctx)
+	connectErr := terminal.Run(ctx)
+	// A dropped transport kills tmux's client before it can disable mouse
+	// reporting and leave the alternate screen, leaving the local terminal
+	// scrolling through prompt history instead of the pane; restore locally.
+	io.WriteString(stdout, "\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1015l\x1b[?1006l\x1b[?25h\x1b[0m")
+	return connectErr
 }
 
 // sandboxInstance gets a handle to work in a sandbox.

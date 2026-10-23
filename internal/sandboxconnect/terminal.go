@@ -106,11 +106,6 @@ type DialOptions struct {
 	// Terminal is the local terminal, or nil for none: an 80 by 24 window,
 	// with no raw mode and no resizing.
 	Terminal TerminalControl
-
-	// OnConnect runs after each successful connection, the initial one and
-	// every reconnection, before input is relayed. An error is reported as a
-	// warning and the connection proceeds.
-	OnConnect func(context.Context) error
 }
 
 // Terminal is one connected terminal session.
@@ -168,12 +163,6 @@ func Dial(ctx context.Context, opts DialOptions) (*Terminal, error) {
 	}
 	if err := terminal.connect(ctx, token); err != nil {
 		return nil, err
-	}
-	if terminal.opts.OnConnect != nil {
-		if err := terminal.opts.OnConnect(ctx); err != nil {
-			// The connection works without the hook, so its failure is a warning, not a teardown.
-			io.WriteString(terminal.opts.Errors, fmt.Sprintf("Warning: on-connect failed: %v\r\n", err))
-		}
 	}
 	return terminal, nil
 }
@@ -344,13 +333,6 @@ func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 		}
 		err := t.connect(ctx, token)
 		if err == nil {
-			if t.opts.OnConnect != nil {
-				if err := t.opts.OnConnect(ctx); err != nil {
-					// The reconnection works without the hook; warn and relay,
-					// since a retrying teardown reads as a frozen screen.
-					io.WriteString(t.opts.Errors, fmt.Sprintf("Warning: on-connect failed: %v\r\n", err))
-				}
-			}
 			io.WriteString(t.opts.Errors, "Reconnected.\r\n")
 			return nil
 		}
