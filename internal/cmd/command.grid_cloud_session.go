@@ -724,14 +724,15 @@ func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessio
 // cloudSessionPreviewGuidance is the preview flow for the harness: it cannot
 // mint previews (the session credential is not allowed to), so the operator does.
 const cloudSessionPreviewGuidance = `- To serve something for the user (vite, docs, a notebook): bind 0.0.0.0 and hand the user one command to run outside, with the port filled in: "baseten sandbox preview create --name=$BASETEN_SANDBOX_NAME --port=<port> --with-token" (add --ttl for a shorter-lived link). It prints a private HTTPS link with an embedded access token, ready to open or curl. Your own listening ports: GET /network/process/{pid}/ports on the local API.
-- Do not hand out the sandbox URL or a :port link: the URL is auth-walled (401) and direct ports return 502. Only a preview link is reachable, and you cannot create one yourself, so the user must run the command above.`
+- Do not hand out the sandbox URL or a :port link: the URL is auth-walled (401) and direct ports return 502. Only a preview link is reachable, and you cannot create one yourself, so the user must run the command above.
+- A preview forwards the external hostname in the Host header (X-Forwarded-Host carries it too): dev servers with host allowlists (Vite server.allowedHosts, Django ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS) must allow it or trust X-Forwarded-Host, or they reject the request. Serve a frontend and its API behind one reverse proxy port so the browser stays same-origin.`
 
 // cloudSessionPreparePreviewGuidance replaces the preview bullets in the
 // session's CLAUDE.md, dropping older ones baked into images. Idempotent.
 func cloudSessionPreparePreviewGuidance(ctx *CommandContext, instance *sandbox.Sandbox) error {
 	rewrite := "python3 -c 'import os,sys; p=os.path.expanduser(\"~/.claude/CLAUDE.md\");" +
 		" lines=open(p).read().splitlines() if os.path.exists(p) else [];" +
-		" lines=[l for l in lines if (\"baseten sandbox preview create\" not in l and \"sandbox preview token create\" not in l and \"cloud-session preview --name=\" not in l and \"auth-walled\" not in l)];" +
+		" lines=[l for l in lines if (\"baseten sandbox preview create\" not in l and \"sandbox preview token create\" not in l and \"cloud-session preview --name=\" not in l and \"auth-walled\" not in l and \"X-Forwarded-Host\" not in l)];" +
 		" open(p,\"w\").write(\"\\n\".join(lines+[\"\"]+[sys.argv[1]])+\"\\n\")' " +
 		sandboxShellQuote(cloudSessionPreviewGuidance)
 	return cloudSessionExecStream(ctx, instance, rewrite, "", cloudSessionInSandboxTimeout)
