@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"time"
-
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -79,29 +77,6 @@ var commandGridCloudSession = Command{
 			},
 		},
 		{
-			Name:    "preview",
-			Summary: "Expose a session port as a shareable preview link (PRE-RELEASE)",
-			Description: gridPrereleaseNotice +
-				"Create a preview of a session port and print a link ready to open or share. A private preview, the default, " +
-				"embeds an access token in the link: the first open sets a cookie so a browser keeps working, and the link " +
-				"also works with curl. Anyone with the link can view the preview, so share it over private channels only.\n\n" +
-				"The session's harness cannot mint previews itself (the session credential lacks the permission), so this is " +
-				"the operator-side step: the harness binds a port and names it, and this command does the rest. Re-running " +
-				"with the same port reuses the existing preview and mints a fresh token.",
-			Flags: CloudSessionPreviewFlags{},
-			Output: &CommandOutput[CloudSessionPreviewLink]{
-				TextDescription: "The preview's fields, with the share link ready to open.",
-				Examples: []CommandExample{{
-					Description: "Expose the session's port 3000 and print a private link with a token.",
-					Command:     "baseten grid cloud-session preview --name my-session --port 3000",
-				}},
-				JQExample: CommandExample{
-					Description: "Print just the share link.",
-					Command:     "baseten grid cloud-session preview --name my-session --port 3000 --jq '.share_url'",
-				},
-			},
-		},
-		{
 			Name:    "dispatch",
 			Summary: "Run a headless prompt in a cloud session (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
@@ -145,28 +120,6 @@ type CloudSessionCreateFlags struct {
 	RunlayerServer      []string `flag:"runlayer-server" desc:"Runlayer server ID to expose in the session as an MCP server through the agent account. Repeatable. Defaults to the launcher-configured servers when omitted."`
 	RunlayerClientIDEnv string   `flag:"runlayer-client-id-env" desc:"Local environment variable holding the Runlayer agent account client ID." default:"RUNLAYER_GRID_AGENT_ID"`
 	RunlayerSecretEnv   string   `flag:"runlayer-secret-env" desc:"Local environment variable holding the Runlayer agent account client secret." default:"RUNLAYER_GRID_AGENT_SECRET"`
-}
-
-// CloudSessionPreviewFlags are the flags for 'baseten grid cloud-session preview'.
-type CloudSessionPreviewFlags struct {
-	CommandFlags
-	SandboxRefFlags
-	SandboxPreviewHeaderFlags
-
-	Port        int           `flag:"port" desc:"Session port to expose." required:"true"`
-	PreviewName string        `flag:"preview-name" desc:"Name of the preview, unique within the sandbox. Defaults to a name derived from the port."`
-	Public      bool          `flag:"public" desc:"Make the URL reachable without a token; no token is minted."`
-	TokenTTL    time.Duration `flag:"token-ttl" desc:"How long the share link stays valid, such as 24h or 7d. The server default is 7d."`
-}
-
-// CloudSessionPreviewLink is the output of 'baseten grid cloud-session preview'.
-type CloudSessionPreviewLink struct {
-	Name           string     `json:"name"`
-	Port           int        `json:"port"`
-	Public         bool       `json:"public"`
-	URL            string     `json:"url"`
-	ShareURL       string     `json:"share_url"`
-	TokenExpiresAt *time.Time `json:"token_expires_at,omitempty"`
 }
 
 // CloudSessionDispatchFlags are the flags for 'baseten grid cloud-session dispatch'.
