@@ -15,6 +15,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
+	"github.com/basetenlabs/baseten-go/client/sandboxapi"
 	"github.com/basetenlabs/baseten-go/sandbox"
 )
 
@@ -473,25 +474,30 @@ func commandGridCloudSessionConnect(ctx *CommandContext, flags *cmd.CloudSession
 // The sentinel kill on detach is best effort: a hibernated sandbox wakes for the
 // kill and sleeps again right after.
 func cloudSessionAttach(ctx *CommandContext, ref cmd.SandboxRefFlags, tmuxWindowCommand string) error {
-	client, teamID, err := ctx.NewSandboxClient(ref.Team)
+	client, _, err := ctx.NewSandboxClient(ref.Team)
 	if err != nil {
 		return err
 	}
-	// The platform's idle counter ignores open connections and keepAlive
-	// processes, but a management read resets it (all verified live), so the
-	// launcher pings while attached: detach or CLI death stops the pings and
-	// the sandbox sleeps exactly when nothing is attached.
+	// Verified live: the idle counter (~60s) ignores open connections, keepAlive
+	// processes, and management reads; only execution-API calls reset it. So
+	// the launcher runs a trivial process every heartbeat while the CLI lives:
+	// detach or CLI death stops the pings and the sandbox sleeps.
+	instance, err := client.Get(ctx, sandbox.GetOptions{Name: ref.Name})
+	if err != nil {
+		return fmt.Errorf("getting sandbox %s: %w", ref.Name, err)
+	}
 	heartbeatDone := make(chan struct{})
 	defer close(heartbeatDone)
 	go func() {
 		ticker := time.NewTicker(cloudSessionHeartbeatGap)
 		defer ticker.Stop()
+		waitForCompletion := true
 		for {
 			select {
 			case <-heartbeatDone:
 				return
 			case <-ticker.C:
-				_, _ = client.API().GetSandbox(ctx, ref.Name, managementapi.GetSandboxParams{TeamId: teamID})
+				_, _ = instance.API().PostProcess(ctx, sandboxapi.ProcessRequest{Command: "true", WaitForCompletion: &waitForCompletion})
 			}
 		}
 	}()
