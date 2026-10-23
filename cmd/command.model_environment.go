@@ -64,8 +64,9 @@ var commandModelEnvironment = Command{
 				TextDescription: "Field-per-line summary: Name, Model, Current Deployment, Status, " +
 					"Candidate Deployment (optional), Invoke URL, Logs URL, Created, " +
 					"Backpressure, indented Autoscaling and Promotion blocks covering every " +
-					"setting the update commands can change, and one line per autoscaling " +
-					"schedule. Settings that are unset or inherited show as '-'.",
+					"setting the update commands can change, one line per autoscaling " +
+					"schedule, and one line per active traffic rule. Settings that are unset or " +
+					"inherited show as '-'.",
 				Examples: []CommandExample{
 					{
 						Description: "Describe the production environment of a model.",
@@ -274,6 +275,7 @@ var commandModelEnvironment = Command{
 			},
 		},
 		commandModelEnvironmentAutoscalingSchedule,
+		commandModelEnvironmentTrafficRule,
 	},
 }
 
