@@ -354,6 +354,34 @@ func cloudSessionPortConfig(ctx *CommandContext, instance *sandbox.Sandbox) erro
 	return nil
 }
 
+// cloudSessionConfiguredRunlayerServers picks the session's Runlayer servers:
+// the flags when given, else the launcher's configured defaults from the CLI
+// config dir. The web UI's connector configuration replaces that file in
+// production.
+func cloudSessionConfiguredRunlayerServers(flagServers []string) ([]string, error) {
+	if len(flagServers) > 0 {
+		return flagServers, nil
+	}
+	configDir, err := auth.DefaultConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	defaultsData, err := os.ReadFile(filepath.Join(configDir, "cloud-session-runlayer.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading the configured Runlayer servers: %w", err)
+	}
+	var configured struct {
+		Servers []string `json:"servers"`
+	}
+	if err := json.Unmarshal(defaultsData, &configured); err != nil {
+		return nil, fmt.Errorf("parsing the configured Runlayer servers: %w", err)
+	}
+	return configured.Servers, nil
+}
+
 func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionCreateFlags) error {
 	imageRef, err := cloudSessionResolveImage(flags)
 	if err != nil {
@@ -387,9 +415,12 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 		Envs:              envs,
 		CreateIfNotExists: &createIfNotExists,
 	}
+	runlayerServers, err := cloudSessionConfiguredRunlayerServers(flags.RunlayerServer)
+	if err != nil {
+		return err
+	}
 	var runlayerM2MToken string
-	if len(flags.RunlayerServer) > 0 {
-		var err error
+	if len(runlayerServers) > 0 {
 		runlayerM2MToken, err = cloudSessionRunlayerM2MToken(flags.RunlayerClientIDEnv, flags.RunlayerSecretEnv)
 		if err != nil {
 			return err
@@ -426,9 +457,9 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 			return err
 		}
 	}
-	if len(flags.RunlayerServer) > 0 {
-		ctx.Logf("Exposing %d Runlayer MCP servers in session %s…\n", len(flags.RunlayerServer), name)
-		if err := cloudSessionRunlayerMCPConfig(ctx, instance, flags.RunlayerServer); err != nil {
+	if len(runlayerServers) > 0 {
+		ctx.Logf("Exposing %d Runlayer MCP servers in session %s…\n", len(runlayerServers), name)
+		if err := cloudSessionRunlayerMCPConfig(ctx, instance, runlayerServers); err != nil {
 			return err
 		}
 	}
