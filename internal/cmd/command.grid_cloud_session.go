@@ -138,7 +138,7 @@ func cloudSessionURLHost(rawURL string) (string, error) {
 // an agent can leak.
 func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string, runlayerM2MToken string) *managementapi.SandboxNetwork {
 	routing := []managementapi.SandboxProxyTarget{{
-		Destinations: &[]string{harnessHost, "api.baseten.co"},
+		Destinations: &[]string{harnessHost, "*.baseten.co"},
 		Headers:      &map[string]string{"Authorization": "Bearer {{SECRET:session_key}}"},
 		Secrets:      &map[string]string{"session_key": apiKeyValue},
 	}}
