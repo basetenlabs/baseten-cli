@@ -176,6 +176,10 @@ func (t *Transport) base() http.RoundTripper {
 }
 
 func (t *Transport) Do(req *http.Request) (*http.Response, error) {
+	// SDK clients set the User-Agent themselves, but raw requests built by
+	// commands do not.
+	req = req.Clone(req.Context())
+	client.ApplyUserAgentHeader(req.Header)
 	// A request that already carries a credential keeps it: volume transfers
 	// authenticate to the volume service with a capability token over this
 	// same client, and the API key would not be read there.
@@ -186,7 +190,6 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	req = req.Clone(req.Context())
 	req.Header.Set("Authorization", "Bearer "+token)
 	return t.base().RoundTrip(req)
 }

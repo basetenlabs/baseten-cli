@@ -174,6 +174,27 @@ func Test_Sandbox_Create_SendsOnlySetFields(t *testing.T) {
 		sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[2].BodyJSON(t))
 }
 
+func Test_Sandbox_Create_FilesystemMaxMemoryUsage(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := newSandboxTestAPI(h)
+	record := sandboxTestRecord(m, "sbx-1", "DEPLOYED")
+	record["filesystem"] = map[string]any{"max_memory_usage": "80%"}
+	m.SetRoute("POST", "/v1/sandboxes/instances", 201, record)
+
+	h.Require.NoError(h.Execute("sandbox", "create", "--filesystem-max-memory-usage", "80%"))
+	h.Require.Equal(map[string]any{"filesystem": map[string]any{"max_memory_usage": "80%"}},
+		sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[0].BodyJSON(t))
+	h.Require.Contains(h.Stdout.String(), "FS mem usage: 80%")
+
+	// A bare integer is sent as a number of Mi.
+	record["filesystem"] = map[string]any{"max_memory_usage": 2048}
+	m.SetRoute("POST", "/v1/sandboxes/instances", 201, record)
+	h.Require.NoError(h.Execute("sandbox", "create", "--filesystem-max-memory-usage", "2048"))
+	h.Require.Equal(map[string]any{"filesystem": map[string]any{"max_memory_usage": float64(2048)}},
+		sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[1].BodyJSON(t))
+	h.Require.Contains(h.Stdout.String(), "FS mem usage: 2048Mi")
+}
+
 func Test_Sandbox_Create_RejectsMalformedKeyValues(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.Require.ErrorContains(h.Execute("sandbox", "create", "--env", "NOEQUALS"), "KEY=VALUE")

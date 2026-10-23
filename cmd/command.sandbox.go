@@ -290,13 +290,14 @@ type SandboxCreateFlags struct {
 	SandboxEnvFlags
 	SandboxLifecycleFlags
 
-	Name        string   `flag:"name" desc:"Unique name of the sandbox. The server generates one when omitted."`
-	Team        string   `flag:"team" desc:"Team name or ID to create the sandbox in. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
-	IfNotExists bool     `flag:"if-not-exists" desc:"Return the existing sandbox with this name instead of failing, or recreate it if it is failed, terminated, or being deleted."`
-	Region      string   `flag:"region" desc:"Region to create the sandbox in."`
-	Memory      int      `flag:"memory" desc:"Memory in MB, which also sets the CPU allocation."`
-	Image       string   `flag:"image" desc:"Image to create the sandbox from, including its tag, such as my-image:latest."`
-	Label       []string `flag:"label" desc:"Label as KEY=VALUE. Repeatable."`
+	Name                     string   `flag:"name" desc:"Unique name of the sandbox. The server generates one when omitted."`
+	Team                     string   `flag:"team" desc:"Team name or ID to create the sandbox in. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
+	IfNotExists              bool     `flag:"if-not-exists" desc:"Return the existing sandbox with this name instead of failing, or recreate it if it is failed, terminated, or being deleted."`
+	Region                   string   `flag:"region" desc:"Region to create the sandbox in."`
+	Memory                   int      `flag:"memory" desc:"Memory in MB, which also sets the CPU allocation."`
+	FileSystemMaxMemoryUsage string   `flag:"filesystem-max-memory-usage" desc:"Maximum memory the filesystem can use, as a percentage of memory (80%), a size (2Gi), or Mi (2048). Defaults to 50%."`
+	Image                    string   `flag:"image" desc:"Image to create the sandbox from, including its tag, such as my-image:latest."`
+	Label                    []string `flag:"label" desc:"Label as KEY=VALUE. Repeatable."`
 }
 
 // SandboxUpdateFlags configures 'baseten sandbox update'. Unset flags leave
