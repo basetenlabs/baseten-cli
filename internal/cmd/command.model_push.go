@@ -53,6 +53,9 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 	if (flags.WatchHotReload || flags.WatchNoKeepalive) && !flags.Watch {
 		return cmd.NewErrUsagef("--watch-hot-reload and --watch-no-keepalive require --watch")
 	}
+	if flags.InstanceType != "" && flags.PreserveEnvInstanceType {
+		return cmd.NewErrUsagef("--instance-type cannot be combined with --preserve-env-instance-type")
+	}
 	// --file pushes the config alone, so there is no directory to combine it
 	// with or for --watch to patch from. Without either, the current directory
 	// is pushed.
@@ -203,6 +206,7 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 		// --watch implies --develop: both push a development deployment.
 		IsDevelopment:              flags.Develop || flags.Watch,
 		PreserveEnvInstanceType:    flags.PreserveEnvInstanceType,
+		InstanceTypeID:             flags.InstanceType,
 		CreateEnvironmentIfMissing: flags.CreateEnvironmentIfMissing,
 		ModelUploader: func(uploadCtx context.Context, upload client.ModelUpload) error {
 			return uploadModelPushArchive(ctx, uploadCtx, upload)

@@ -840,7 +840,7 @@ func Test_Model_Push_EnvironmentFlagsDefaultOff(t *testing.T) {
 	h.Require.Equal(false, dep["preserve_env_instance_type"])
 	h.Require.Equal(false, dep["create_environment_if_missing"])
 	for _, field := range []string{
-		"autoscaling_settings", "request_backpressure_settings",
+		"instance_type_id", "autoscaling_settings", "request_backpressure_settings",
 		"autoscaling_schedule_settings", "promotion_settings_override",
 	} {
 		h.Require.NotContains(dep, field)
@@ -851,7 +851,7 @@ func Test_Model_Push_SettingsWithEnvironment(t *testing.T) {
 	h := newModelPushHarness(t)
 	dir := h.WriteModelDir(modelPushMinimalConfig)
 	h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--environment", "staging",
-		"--min-replica", "2", "--request-backpressure-policy", "reject-on-full",
+		"--instance-type", "A10Gx4x16", "--min-replica", "2", "--request-backpressure-policy", "reject-on-full",
 		"--autoscaling-schedule-update-json", `{"delete_schedules":["s-1"]}`,
 		"--override-rolling-deploy", "true", "--override-max-surge-percent", "10"))
 
@@ -859,6 +859,7 @@ func Test_Model_Push_SettingsWithEnvironment(t *testing.T) {
 	h.Require.NotNil(prep)
 	dep := prep.BodyJSON(h.T)["deployment"].(map[string]any)
 	h.Require.Equal("staging", dep["environment_name"])
+	h.Require.Equal("A10Gx4x16", dep["instance_type_id"])
 	h.Require.Equal(map[string]any{"min_replica": float64(2)}, dep["autoscaling_settings"])
 	h.Require.Equal(map[string]any{"policy": "REJECT_ON_FULL"}, dep["request_backpressure_settings"])
 	h.Require.Equal(map[string]any{"delete_schedules": []any{"s-1"}}, dep["autoscaling_schedule_settings"])
@@ -882,6 +883,15 @@ func Test_Model_Push_SettingsWithoutEnvironment(t *testing.T) {
 	h.Require.NotContains(dep, "environment_name")
 	h.Require.Equal(map[string]any{"min_replica": float64(1), "max_replica": float64(2)}, dep["autoscaling_settings"])
 	h.Require.Equal(map[string]any{"policy": nil}, dep["request_backpressure_settings"])
+}
+
+func Test_Model_Push_InstanceTypeWithPreserveIsUsageError(t *testing.T) {
+	h := newModelPushHarness(t)
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--environment", "staging",
+		"--instance-type", "A10Gx4x16", "--preserve-env-instance-type")
+	h.Require.ErrorContains(err, "--instance-type cannot be combined with --preserve-env-instance-type")
+	h.Require.Nil(h.API.FindCall("POST", "/v1/prepare_model_upload"))
 }
 
 func Test_Model_Push_AutoscalingScheduleUpdateRejectsEmptyObject(t *testing.T) {

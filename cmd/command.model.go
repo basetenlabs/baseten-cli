@@ -23,7 +23,7 @@ var commandModel = Command{
 				"pass --file to push only that config file, or --file - to read it from stdin.\n\n" +
 				"The model is identified by the `model_name` field in config.yaml. " +
 				"Use --override-name to override that for this push only.\n\n" +
-				"The autoscaling flags and --request-backpressure-policy configure the new " +
+				"--instance-type, the autoscaling flags and --request-backpressure-policy configure the new " +
 				"deployment. With --environment, the environment also keeps them once the " +
 				"promotion completes. --autoscaling-schedule-update-json and the --override-* " +
 				"promotion flags apply only to the promotion into --environment, so they require it.",
@@ -410,6 +410,7 @@ type ModelPushFlags struct {
 
 	OverrideName            string `flag:"override-name" desc:"Override the model_name from config.yaml for this push only. The on-disk config.yaml is not modified."`
 	PreserveEnvInstanceType bool   `flag:"preserve-env-instance-type" desc:"Keep the target environment's current instance type instead of applying the one from config.yaml. Only meaningful when an environment is targeted."`
+	InstanceType            string `flag:"instance-type" desc:"Instance type for the new deployment, for example A10Gx4x16, instead of the one in config.yaml. With --environment, the environment keeps it once the promotion completes. See https://docs.baseten.co/deployment/resources for the available types. Cannot be combined with --preserve-env-instance-type."`
 
 	RequestBackpressurePolicy     OptionalFlag[string] `flag:"request-backpressure-policy" desc:"Backpressure policy for the new deployment. With --environment, the environment keeps it once the promotion completes. Pass null to clear the policy." enum:"queue-on-full,reject-on-full" nullable:"true"`
 	AutoscalingScheduleUpdateJSON OptionalFlag[string] `flag:"autoscaling-schedule-update-json" desc:"Autoscaling schedule changes for the environment, applied when the promotion completes, as a JSON object with schedules, delete_schedules, and timezone. Same shape and values as autoscaling_schedule_settings on the environment update API, for example cadence DAILY. Requires --environment."`
