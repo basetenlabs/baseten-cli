@@ -115,10 +115,11 @@ func cloudSessionPrepareTurnLiveness(ctx *CommandContext, instance *sandbox.Sand
 	if err := cloudSessionExecStream(ctx, instance, writeScript, "", cloudSessionInSandboxTimeout); err != nil {
 		return err
 	}
+	// Idempotent: a re-run of create must not duplicate hook entries.
 	mergeHooks := "python3 -c 'import json,os,sys; p=os.path.expanduser(\"~/.claude/settings.json\");" +
 		" s=json.load(open(p)) if os.path.exists(p) else {};" +
 		" h=s.get(\"hooks\"); s[\"hooks\"]=h if isinstance(h,dict) else {};" +
-		" [s[\"hooks\"].setdefault(k,[]).extend(v) for k,v in json.loads(sys.argv[1]).items()];" +
+		" [s[\"hooks\"].setdefault(k,[]).extend([e for e in v if json.dumps(e,sort_keys=True) not in {json.dumps(x,sort_keys=True) for x in s[\"hooks\"][k]}]) for k,v in json.loads(sys.argv[1]).items()];" +
 		" json.dump(s,open(p,\"w\"))' " + sandboxShellQuote(cloudSessionTurnLivenessHooks)
 	return cloudSessionExecStream(ctx, instance, mergeHooks, "", cloudSessionInSandboxTimeout)
 }
