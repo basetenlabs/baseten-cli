@@ -280,6 +280,7 @@ type SandboxPreviewCreateFlags struct {
 	Port        int    `flag:"port" desc:"Sandbox port to expose." required:"true"`
 	PreviewName string `flag:"preview-name" desc:"Name of the preview, unique within the sandbox. The server generates one when omitted."`
 	Public      bool   `flag:"public" desc:"Make the URL reachable without a token."`
+	WithToken   bool   `flag:"with-token" desc:"Mint an access token and print the link with it embedded, ready to open or share. The token expires with the preview when it has a ttl, else after 7 days."`
 	IfNotExists bool   `flag:"if-not-exists" desc:"Return the existing preview with this name, unchanged, instead of failing."`
 }
 

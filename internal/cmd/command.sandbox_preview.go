@@ -13,6 +13,15 @@ import (
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
+// sandboxPreviewCreateTokenTTL is the --with-token link lifetime when the preview has no expiry.
+const sandboxPreviewCreateTokenTTL = 7 * 24 * time.Hour
+
+// sandboxPreviewWithToken is a preview plus the share link minted for it.
+type sandboxPreviewWithToken struct {
+	managementapi.SandboxPreview
+	ShareURL string `json:"share_url"`
+}
+
 func init() {
 	Register("sandbox preview list", commandSandboxPreviewList)
 	Register("sandbox preview describe", commandSandboxPreviewDescribe)
@@ -91,6 +100,9 @@ func commandSandboxPreviewDescribe(ctx *CommandContext, flags *cmd.SandboxPrevie
 }
 
 func commandSandboxPreviewCreate(ctx *CommandContext, flags *cmd.SandboxPreviewCreateFlags) error {
+	if flags.Public && flags.WithToken {
+		return cmd.NewErrUsagef("--public and --with-token cannot be combined")
+	}
 	responseHeaders, err := sandboxPreviewHeaders("response-header", flags.ResponseHeader)
 	if err != nil {
 		return err
@@ -122,7 +134,27 @@ func commandSandboxPreviewCreate(ctx *CommandContext, flags *cmd.SandboxPreviewC
 	if err != nil {
 		return fmt.Errorf("creating preview of sandbox %s: %w", flags.Name, err)
 	}
+	if !flags.WithToken {
+		sandboxPreviewOutputRecord(ctx, record)
+		return nil
+	}
+	// The token dies with the preview when the preview has the shorter life.
+	tokenExpiresAt := time.Now().Add(sandboxPreviewCreateTokenTTL)
+	if expiresAt != nil && expiresAt.Before(tokenExpiresAt) {
+		tokenExpiresAt = *expiresAt
+	}
+	token, tokenErr := client.API().CreateSandboxPreviewToken(ctx, flags.Name, deref(record.Name), managementapi.CreateSandboxPreviewTokenParams{TeamId: teamID}, managementapi.CreateSandboxPreviewTokenRequest{ExpiresAt: tokenExpiresAt})
+	if tokenErr != nil {
+		return fmt.Errorf("creating a token for preview %s of sandbox %s: %w", deref(record.Name), flags.Name, tokenErr)
+	}
+	shareURL := deref(record.Url) + "?preview_token=" + url.QueryEscape(token.Token)
+	if ctx.JSON {
+		ctx.OutputJSON(sandboxPreviewWithToken{SandboxPreview: *record, ShareURL: shareURL})
+		return nil
+	}
 	sandboxPreviewOutputRecord(ctx, record)
+	ctx.Outputf("Share link: %s\n", shareURL)
+	ctx.Outputf("Link good until: %s; the first open sets a cookie, and the link also works with curl.\n", sandboxFormatTime(&token.ExpiresAt))
 	return nil
 }
 
