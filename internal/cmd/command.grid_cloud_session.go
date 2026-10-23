@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,7 +15,6 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
-	"github.com/basetenlabs/baseten-go/client/sandboxapi"
 	"github.com/basetenlabs/baseten-go/sandbox"
 )
 
@@ -457,38 +455,6 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	return nil
 }
 
-// cloudSessionEnsureKeepAwake starts the sentinel that keeps the sandbox from
-// suspending: the platform does not count a terminal connection as activity,
-// so without it the sandbox sleeps again seconds after a wake. Timeout 0 means
-// the keepAlive never lapses; the terminal's detach kills the sentinel.
-// Calls are time-bounded: a waking sandbox can hold them, and the caller
-// relays only once this returns.
-func cloudSessionEnsureKeepAwake(ctx context.Context, instance *sandbox.Sandbox) error {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	processes, err := instance.Process().List(ctx, sandbox.ProcessListOptions{})
-	if err != nil {
-		return fmt.Errorf("listing the session's processes: %w", err)
-	}
-	for _, running := range processes {
-		if running.Name == cloudSessionKeepAwakeProcess && running.Status == sandbox.ProcessStatusRunning {
-			return nil
-		}
-	}
-	keepAlive := true
-	noTimeout := 0
-	sentinelName := cloudSessionKeepAwakeProcess
-	if _, err := instance.API().PostProcess(ctx, sandboxapi.ProcessRequest{
-		Command:   "sleep infinity",
-		Name:      &sentinelName,
-		KeepAlive: &keepAlive,
-		Timeout:   &noTimeout,
-	}); err != nil {
-		return fmt.Errorf("starting the keep-awake process: %w", err)
-	}
-	return nil
-}
-
 func commandGridCloudSessionConnect(ctx *CommandContext, flags *cmd.CloudSessionConnectFlags) error {
 	harnessResume, err := cloudSessionHarnessResumeCommand(flags.Harness)
 	if err != nil {
@@ -511,14 +477,17 @@ func cloudSessionAttach(ctx *CommandContext, ref cmd.SandboxRefFlags, tmuxWindow
 	if err != nil {
 		return err
 	}
-	ensureKeepAwake := func(reconnectCtx context.Context) error {
-		return cloudSessionEnsureKeepAwake(reconnectCtx, instance)
-	}
-	// The sandbox's terminal pty advertises the non-UTF-8 TERM=linux and has no
-	// locale set, so tmux ASCII-substitutes glyphs; -u forces UTF-8.
-	// new -A: attach when the session exists, create it with the harness when not.
-	attachCommand := "TERM=xterm-256color tmux -u new-session -A -s " + cloudSessionTmuxSession + " " + tmuxWindowCommand + "\n"
-	connectErr := sandboxConnectTerminal(ctx, ref, attachCommand, ensureKeepAwake)
+	// The sentinel is ensured from inside the sandbox as part of the attach
+	// line: the local execution API answers immediately even mid-wake, while
+	// the gateway path can hang past the next idle suspend and loop the
+	// connection. new -A: attach when the session exists, create it with the
+	// harness when not; -u forces UTF-8 over the pty's TERM=linux.
+	ensureSentinel := "python3 -c 'import json,urllib.request,sys; ps=json.load(urllib.request.urlopen(\"http://localhost:8080/process\"));" +
+		" sys.exit(0 if any(p.get(\"name\")==\"" + cloudSessionKeepAwakeProcess + "\" and p.get(\"status\")==\"running\" for p in ps) else 1)' || " +
+		"curl -s -X POST http://localhost:8080/process -H 'Content-Type: application/json' " +
+		"'-d {\"command\":\"sleep infinity\",\"name\":\"" + cloudSessionKeepAwakeProcess + "\",\"keepAlive\":true,\"timeout\":0}' >/dev/null"
+	attachCommand := ensureSentinel + "; TERM=xterm-256color tmux -u new-session -A -s " + cloudSessionTmuxSession + " " + tmuxWindowCommand + "\n"
+	connectErr := sandboxConnectTerminal(ctx, ref, attachCommand)
 	instance.Process().Kill(ctx, sandbox.ProcessKillOptions{Identifier: cloudSessionKeepAwakeProcess})
 	return connectErr
 }
