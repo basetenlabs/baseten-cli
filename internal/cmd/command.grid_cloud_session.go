@@ -177,6 +177,10 @@ func cloudSessionEnvs(flags *cmd.CloudSessionCreateFlags) (*[]managementapi.Sand
 	sandboxAPIKeyName := "BASETEN_API_KEY"
 	sandboxAPIKeyValue := "proxy-injected"
 	envs := []managementapi.SandboxEnv{{Name: &sandboxAPIKeyName, Value: &sandboxAPIKeyValue}}
+	// Vite rejects the preview host by default (DNS-rebinding check); this whitelists only the preview domain.
+	viteAllowedHostsName := "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"
+	viteAllowedHostsValue := ".preview.b10.co"
+	envs = append(envs, managementapi.SandboxEnv{Name: &viteAllowedHostsName, Value: &viteAllowedHostsValue})
 	for _, envName := range flags.Env {
 		envValue, envIsSet := os.LookupEnv(envName)
 		if !envIsSet || envValue == "" {
@@ -725,7 +729,7 @@ func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessio
 // mint previews (the session credential is not allowed to), so the operator does.
 const cloudSessionPreviewGuidance = `- To serve something for the user (vite, docs, a notebook): bind 0.0.0.0 and hand the user one command to run outside, with the port filled in: "baseten sandbox preview create --name=$BASETEN_SANDBOX_NAME --port=<port> --with-token" (add --ttl for a shorter-lived link). It prints a private HTTPS link with an embedded access token, ready to open or curl. Your own listening ports: GET /network/process/{pid}/ports on the local API.
 - Do not hand out the sandbox URL or a :port link: the URL is auth-walled (401) and direct ports return 502. Only a preview link is reachable, and you cannot create one yourself, so the user must run the command above.
-- A preview forwards the external hostname in the Host header (X-Forwarded-Host carries it too): dev servers with host allowlists (Vite server.allowedHosts, Django ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS) must allow it or trust X-Forwarded-Host, or they reject the request. Serve a frontend and its API behind one reverse proxy port so the browser stays same-origin.`
+- A preview forwards the external hostname in the Host header (X-Forwarded-Host carries it too). Vite already works: the session sets __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=.preview.b10.co. Other host-checking servers (Django ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS, webpack) must allow the host or trust X-Forwarded-Host, or sit behind a small proxy that rewrites Host and Origin to localhost. Serve a frontend and its API behind one port so the browser stays same-origin.`
 
 // cloudSessionPreparePreviewGuidance replaces the preview bullets in the
 // session's CLAUDE.md, dropping older ones baked into images. Idempotent.
