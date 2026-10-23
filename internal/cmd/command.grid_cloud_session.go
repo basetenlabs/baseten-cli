@@ -98,32 +98,21 @@ func cloudSessionHarnessDispatchCommand(harnessName string, prompt string) (stri
 	}
 }
 
-// cloudSessionEnvs reads the session key and builds the sandbox's env vars.
-// With --proxy-auth the BASETEN_API_KEY value is a placeholder; the proxy
-// replaces the credential on the wire.
-func cloudSessionEnvs(flags *cmd.CloudSessionCreateFlags) (string, *[]managementapi.SandboxEnv, error) {
-	keyEnv := flags.KeyEnv
-	if keyEnv == "" {
-		keyEnv = "BASETEN_API_KEY"
-	}
-	apiKeyValue, keyIsSet := os.LookupEnv(keyEnv)
-	if !keyIsSet || apiKeyValue == "" {
-		return "", nil, cmd.NewErrUsagef("the session's API key is not set: export %s first; a personal API key is never used for a session", keyEnv)
-	}
-	sandboxAPIKeyValue := apiKeyValue
-	if flags.ProxyAuth {
-		sandboxAPIKeyValue = "proxy-injected"
-	}
+// cloudSessionEnvs builds the sandbox's env vars; the placeholder
+// BASETEN_API_KEY is all an agent can leak, the proxy injects the real
+// credential on the wire.
+func cloudSessionEnvs(flags *cmd.CloudSessionCreateFlags) (*[]managementapi.SandboxEnv, error) {
 	sandboxAPIKeyName := "BASETEN_API_KEY"
+	sandboxAPIKeyValue := "proxy-injected"
 	envs := []managementapi.SandboxEnv{{Name: &sandboxAPIKeyName, Value: &sandboxAPIKeyValue}}
 	for _, envName := range flags.Env {
 		envValue, envIsSet := os.LookupEnv(envName)
 		if !envIsSet || envValue == "" {
-			return "", nil, cmd.NewErrUsagef("--env %s: not set in the local environment", envName)
+			return nil, cmd.NewErrUsagef("--env %s: not set in the local environment", envName)
 		}
 		envs = append(envs, managementapi.SandboxEnv{Name: &envName, Value: &envValue})
 	}
-	return apiKeyValue, &envs, nil
+	return &envs, nil
 }
 
 // cloudSessionURLHost extracts a URL's host for proxy destination matching.
@@ -371,9 +360,13 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	if err != nil {
 		return err
 	}
-	apiKeyValue, envs, err := cloudSessionEnvs(flags)
+	envs, err := cloudSessionEnvs(flags)
 	if err != nil {
 		return err
+	}
+	apiKeyValue, err := gridHarnessSessionAPIKey(ctx)
+	if err != nil {
+		return fmt.Errorf("the session's credential comes from this CLI's login: %w", err)
 	}
 	harnessStart, err := cloudSessionHarnessStartCommand(flags.Harness)
 	if err != nil {
@@ -397,24 +390,17 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	}
 	var runlayerM2MToken string
 	if len(flags.RunlayerServer) > 0 {
-		if !flags.ProxyAuth {
-			return cmd.NewErrUsagef("--runlayer-server requires --proxy-auth: the Runlayer credential reaches the session only through the proxy's secret store")
-		}
 		var err error
 		runlayerM2MToken, err = cloudSessionRunlayerM2MToken(flags.RunlayerClientIDEnv, flags.RunlayerSecretEnv)
 		if err != nil {
 			return err
 		}
 	}
-	var harnessHost string
-	if flags.ProxyAuth {
-		var err error
-		harnessHost, err = cloudSessionURLHost(flags.HarnessURL)
-		if err != nil {
-			return err
-		}
-		createRequest.Network = cloudSessionProxyNetwork(harnessHost, apiKeyValue, runlayerM2MToken)
+	harnessHost, err := cloudSessionURLHost(flags.HarnessURL)
+	if err != nil {
+		return err
 	}
+	createRequest.Network = cloudSessionProxyNetwork(harnessHost, apiKeyValue, runlayerM2MToken)
 	record, err := client.API().CreateSandbox(ctx, managementapi.CreateSandboxParams{TeamId: teamID}, createRequest)
 	if err != nil {
 		return fmt.Errorf("creating session %s: %w", name, err)
@@ -427,8 +413,7 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	if err != nil {
 		return err
 	}
-	// With --proxy-auth the sandbox's BASETEN_API_KEY is a placeholder and the
-	// proxy replaces it on the wire, so the in-sandbox setup runs unchanged.
+	// The setup installs the placeholder credential, which the proxy replaces on the wire.
 	setupCommand := "baseten grid setup --harness " + flags.Harness + " --use-session-credential --yes"
 	if flags.Team != "" {
 		setupCommand += " --team " + sandboxShellQuote(flags.Team)

@@ -26,9 +26,9 @@ var commandGridCloudSession = Command{
 				"Point at a repository with --repo owner/name and the image is resolved from it: from the session-image " +
 				"map written by the build/import step, by the backend's image service in production. --image names an " +
 				"imported image directly instead. " +
-				"The session's API key is read from the local environment named by --key-env (default BASETEN_API_KEY) and " +
-				"passed to the sandbox as a secret environment variable; its value is never stored by this command. " +
-				"--env injects more local environment variables the same way, by name. " +
+				"The session authenticates with this CLI's own login: its API key goes to the sandbox's network proxy, " +
+				"which injects it on the harness and management traffic, while the sandbox itself holds only a " +
+				"placeholder credential. --env injects more local environment variables the same way, by name. " +
 				"The session's name defaults to a generated readable name. " +
 				"Run in a terminal, create attaches to the session when it is ready; run otherwise, it prints " +
 				"the command to attach. Reconnect later with 'baseten grid cloud-session connect --name <name>'.",
@@ -113,12 +113,10 @@ type CloudSessionCreateFlags struct {
 	Team                string   `flag:"team" desc:"Team name or ID the session belongs to. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
 	Memory              int      `flag:"memory" desc:"Sandbox memory in MB, 1024 to 262144." default:"8192"`
 	Harness             string   `flag:"harness" desc:"Harness the session runs." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
-	KeyEnv              string   `flag:"key-env" desc:"Local environment variable holding the session's API key. Default BASETEN_API_KEY."`
-	ProxyAuth           bool     `flag:"proxy-auth" desc:"Route the session credential through the sandbox's network proxy: the key goes to the proxy's write-only secret store, which replaces the Authorization header on harness and management traffic, and the sandbox holds only a placeholder credential. Without this, the key is passed to the sandbox as the secret BASETEN_API_KEY."`
 	HarnessURL          string   `flag:"harness-url" desc:"Harness API base URL. Default https://coding.baseten.co." default:"https://coding.baseten.co"`
 	Env                 []string `flag:"env" desc:"Local environment variable to inject into the session as a secret, by name; its value is read from this process. Repeatable."`
 	PortConfig          bool     `flag:"port-config" desc:"Copy the local harness configuration into the session: ~/.claude/skills verbatim, and ~/CLAUDE.md and ~/AGENTS.md merged after the sandbox instructions."`
-	RunlayerServer      []string `flag:"runlayer-server" desc:"Runlayer server ID to expose in the session as an MCP server through the agent account. Repeatable. Requires --proxy-auth."`
+	RunlayerServer      []string `flag:"runlayer-server" desc:"Runlayer server ID to expose in the session as an MCP server through the agent account. Repeatable."`
 	RunlayerClientIDEnv string   `flag:"runlayer-client-id-env" desc:"Local environment variable holding the Runlayer agent account client ID." default:"RUNLAYER_GRID_AGENT_ID"`
 	RunlayerSecretEnv   string   `flag:"runlayer-secret-env" desc:"Local environment variable holding the Runlayer agent account client secret." default:"RUNLAYER_GRID_AGENT_SECRET"`
 }
