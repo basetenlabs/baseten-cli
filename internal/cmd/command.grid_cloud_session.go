@@ -23,14 +23,14 @@ const (
 	// connect (attaches to it).
 	cloudSessionTmuxSession = "code"
 
+	// cloudSessionHeartbeatGap stays under the observed ~15 min idle-suspend
+	// window; a management read resets the counter.
+	cloudSessionHeartbeatGap = 8 * time.Minute
+
 	// cloudSessionCredentialEnv holds the dedicated sandbox token that
 	// authenticates the session's harness and management traffic; the
 	// backend's secret store replaces this lookup in production.
 	cloudSessionCredentialEnv = "BASETEN_API_KEY_CODING_SANDBOX"
-
-	// cloudSessionKeepAwakeProcess is the sentinel that disables the
-	// sandbox's auto-standby while a terminal is attached.
-	cloudSessionKeepAwakeProcess = "cloud-session-keep-awake"
 
 	cloudSessionDeployTimeout    = 10 * time.Minute
 	cloudSessionDeployPollGap    = 2 * time.Second
@@ -473,23 +473,33 @@ func commandGridCloudSessionConnect(ctx *CommandContext, flags *cmd.CloudSession
 // The sentinel kill on detach is best effort: a hibernated sandbox wakes for the
 // kill and sleeps again right after.
 func cloudSessionAttach(ctx *CommandContext, ref cmd.SandboxRefFlags, tmuxWindowCommand string) error {
-	instance, err := sandboxInstance(ctx, ref)
+	client, teamID, err := ctx.NewSandboxClient(ref.Team)
 	if err != nil {
 		return err
 	}
-	// The sentinel is ensured from inside the sandbox as part of the attach
-	// line: the local execution API answers immediately even mid-wake, while
-	// the gateway path can hang past the next idle suspend and loop the
-	// connection. new -A: attach when the session exists, create it with the
-	// harness when not; -u forces UTF-8 over the pty's TERM=linux.
-	ensureSentinel := "python3 -c 'import json,urllib.request,sys; ps=json.load(urllib.request.urlopen(\"http://localhost:8080/process\"));" +
-		" sys.exit(0 if any(p.get(\"name\")==\"" + cloudSessionKeepAwakeProcess + "\" and p.get(\"status\")==\"running\" for p in ps) else 1)' || " +
-		"curl -s -X POST http://localhost:8080/process -H 'Content-Type: application/json' " +
-		"'-d {\"command\":\"sleep infinity\",\"name\":\"" + cloudSessionKeepAwakeProcess + "\",\"keepAlive\":true,\"timeout\":0}' >/dev/null"
-	attachCommand := ensureSentinel + "; TERM=xterm-256color tmux -u new-session -A -s " + cloudSessionTmuxSession + " " + tmuxWindowCommand + "\n"
-	connectErr := sandboxConnectTerminal(ctx, ref, attachCommand)
-	instance.Process().Kill(ctx, sandbox.ProcessKillOptions{Identifier: cloudSessionKeepAwakeProcess})
-	return connectErr
+	// The platform's idle counter ignores open connections and keepAlive
+	// processes, but a management read resets it (all verified live), so the
+	// launcher pings while attached: detach or CLI death stops the pings and
+	// the sandbox sleeps exactly when nothing is attached.
+	heartbeatDone := make(chan struct{})
+	defer close(heartbeatDone)
+	go func() {
+		ticker := time.NewTicker(cloudSessionHeartbeatGap)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatDone:
+				return
+			case <-ticker.C:
+				_, _ = client.API().GetSandbox(ctx, ref.Name, managementapi.GetSandboxParams{TeamId: teamID})
+			}
+		}
+	}()
+	// tmux -u: the pty's TERM=linux plus empty locale would make tmux
+	// ASCII-substitute glyphs. new -A: attach when the session exists, create
+	// it with the harness when not.
+	attachCommand := "TERM=xterm-256color tmux -u new-session -A -s " + cloudSessionTmuxSession + " " + tmuxWindowCommand + "\n"
+	return sandboxConnectTerminal(ctx, ref, attachCommand)
 }
 
 func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessionDispatchFlags) error {
