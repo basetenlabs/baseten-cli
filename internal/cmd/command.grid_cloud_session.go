@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -28,6 +30,10 @@ const (
 	// authenticates the session's harness and management traffic; the
 	// backend's secret store replaces this lookup in production.
 	cloudSessionCredentialEnv = "BASETEN_API_KEY_CODING_SANDBOX"
+
+	// cloudSessionGitHubPatEnv holds the launcher user's GitHub credential.
+	// The web UI's GitHub connector (or Runlayer's) replaces this lookup.
+	cloudSessionGitHubPatEnv = "GITHUB_SANDBOX_PAT"
 
 	cloudSessionDeployTimeout    = 10 * time.Minute
 	cloudSessionDeployPollGap    = 2 * time.Second
@@ -197,7 +203,7 @@ func cloudSessionURLHost(rawURL string) (string, error) {
 // write-only secret store, replacing the Authorization header on harness,
 // management, and Runlayer traffic; the placeholders in the sandbox are all
 // an agent can leak.
-func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string, runlayerM2MToken string) *managementapi.SandboxNetwork {
+func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string, runlayerM2MToken string, githubPat string) *managementapi.SandboxNetwork {
 	routing := []managementapi.SandboxProxyTarget{{
 		Destinations: &[]string{harnessHost, "*.baseten.co"},
 		Headers:      &map[string]string{"Authorization": "Bearer {{SECRET:session_key}}"},
@@ -209,6 +215,23 @@ func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string, runlayerM2
 			Headers:      &map[string]string{"Authorization": "Bearer {{SECRET:runlayer_m2m}}"},
 			Secrets:      &map[string]string{"runlayer_m2m": runlayerM2MToken},
 		})
+	}
+	if githubPat != "" {
+		// github.com's git endpoints reject Bearer and take Basic auth only;
+		// api.github.com takes Bearer. Both values live in the write-only
+		// store, the Basic one precomputed host-side.
+		gitBasic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + githubPat))
+		routing = append(routing,
+			managementapi.SandboxProxyTarget{
+				Destinations: &[]string{"github.com"},
+				Headers:      &map[string]string{"Authorization": "Basic {{SECRET:github_basic}}"},
+				Secrets:      &map[string]string{"github_basic": gitBasic},
+			},
+			managementapi.SandboxProxyTarget{
+				Destinations: &[]string{"api.github.com"},
+				Headers:      &map[string]string{"Authorization": "Bearer {{SECRET:github_pat}}"},
+				Secrets:      &map[string]string{"github_pat": githubPat},
+			})
 	}
 	return &managementapi.SandboxNetwork{Proxy: &managementapi.SandboxProxyConfig{Routing: &routing}}
 }
@@ -490,6 +513,12 @@ func cloudSessionConfiguredRunlayerServers(flagServers []string) ([]string, erro
 // and policies (OBO) instead of the shared agent identity (M2M).
 var cloudSessionRunlayerUserEmail string
 
+// execLookGitConfig reads one value from the launcher's git config.
+func execLookGitConfig(key string) (string, error) {
+	value, err := exec.Command("git", "config", key).Output()
+	return strings.TrimSpace(string(value)), err
+}
+
 func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionCreateFlags) error {
 	imageRef, err := cloudSessionResolveImage(flags)
 	if err != nil {
@@ -538,7 +567,11 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	if err != nil {
 		return err
 	}
-	createRequest.Network = cloudSessionProxyNetwork(harnessHost, apiKeyValue, runlayerM2MToken)
+	githubPat, githubPatIsSet := os.LookupEnv(cloudSessionGitHubPatEnv)
+	if githubPatIsSet && githubPat == "" {
+		githubPat, githubPatIsSet = "", false
+	}
+	createRequest.Network = cloudSessionProxyNetwork(harnessHost, apiKeyValue, runlayerM2MToken, githubPat)
 	record, err := client.API().CreateSandbox(ctx, managementapi.CreateSandboxParams{TeamId: teamID}, createRequest)
 	if err != nil {
 		return fmt.Errorf("creating session %s: %w", name, err)
@@ -573,6 +606,19 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	}
 	if err := cloudSessionPrepareTurnLiveness(ctx, instance); err != nil {
 		return err
+	}
+	if githubPatIsSet {
+		// The proxy authenticates git, so the sandbox needs only an identity
+		// to write commits under, carried from the launcher's own git config.
+		gitUserName, nameErr := execLookGitConfig("user.name")
+		gitUserEmail, emailErr := execLookGitConfig("user.email")
+		if nameErr == nil && emailErr == nil {
+			writeGitIdentity := "git config --global user.name " + sandboxShellQuote(gitUserName) +
+				" && git config --global user.email " + sandboxShellQuote(gitUserEmail)
+			if err := cloudSessionExecStream(ctx, instance, writeGitIdentity, "", cloudSessionInSandboxTimeout); err != nil {
+				return err
+			}
+		}
 	}
 	if flags.PortConfig {
 		if err := cloudSessionPortConfig(ctx, instance); err != nil {
