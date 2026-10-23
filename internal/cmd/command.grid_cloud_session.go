@@ -25,6 +25,11 @@ const (
 	// connect (attaches to it).
 	cloudSessionTmuxSession = "code"
 
+	// cloudSessionCredentialEnv holds the dedicated sandbox token that
+	// authenticates the session's harness and management traffic; the
+	// backend's secret store replaces this lookup in production.
+	cloudSessionCredentialEnv = "BASETEN_API_KEY_CODING_SANDBOX"
+
 	// cloudSessionKeepAwakeProcess is the sentinel that disables the
 	// sandbox's auto-standby while a terminal is attached.
 	cloudSessionKeepAwakeProcess = "cloud-session-keep-awake"
@@ -364,10 +369,6 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	if err != nil {
 		return err
 	}
-	apiKeyValue, err := gridHarnessSessionAPIKey(ctx)
-	if err != nil {
-		return fmt.Errorf("the session's credential comes from this CLI's login: %w", err)
-	}
 	harnessStart, err := cloudSessionHarnessStartCommand(flags.Harness)
 	if err != nil {
 		return err
@@ -375,6 +376,10 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	client, teamID, err := ctx.NewSandboxClient(flags.Team)
 	if err != nil {
 		return err
+	}
+	apiKeyValue, credentialIsSet := os.LookupEnv(cloudSessionCredentialEnv)
+	if !credentialIsSet || apiKeyValue == "" {
+		return cmd.NewErrUsagef("the session credential is not set: export %s (a dedicated sandbox token, never a personal key)", cloudSessionCredentialEnv)
 	}
 	name := flags.Name
 	if name == "" {
