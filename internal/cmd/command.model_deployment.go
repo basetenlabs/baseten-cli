@@ -509,7 +509,7 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	if err != nil {
 		return err
 	}
-	override := settingsGroupOrNil(promotionSettingsOverrideFromFlags(flags.PromotionSettingsOverrideFlags))
+	override := deploymentSettingsGroupOrNil(promotionSettingsOverrideFromFlags(flags.PromotionSettingsOverrideFlags))
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -565,7 +565,7 @@ func promotionEnvironmentSettingsFromFlags(
 	update := managementapi.PromotionEnvironmentSettingsUpdate{
 		Region:              flags.Region.Pointer(),
 		InstanceTypeId:      flags.InstanceType.Pointer(),
-		AutoscalingSettings: settingsGroupOrNil(autoscalingSettingsFromFlags(flags.AutoscalingSettingsFlags)),
+		AutoscalingSettings: deploymentSettingsGroupOrNil(autoscalingSettingsFromFlags(flags.AutoscalingSettingsFlags)),
 	}
 	if flags.RequestBackpressurePolicy.IsSet() {
 		settings := requestBackpressureFromFlags(cmd.RequestBackpressureFlags{Policy: flags.RequestBackpressurePolicy})
@@ -578,7 +578,7 @@ func promotionEnvironmentSettingsFromFlags(
 		}
 		update.AutoscalingScheduleSettings = schedules
 	}
-	return settingsGroupOrNil(update), nil
+	return deploymentSettingsGroupOrNil(update), nil
 }
 
 // promotionAutoscalingScheduleUpdateFromJSON decodes
@@ -628,7 +628,7 @@ func promotionSettingsOverrideFromFlags(flags cmd.PromotionSettingsOverrideFlags
 		rolling := managementapi.RollingDeployStrategy(enumToAPIValue(*strategy))
 		config.RollingDeployStrategy = &rolling
 	}
-	settings.RollingDeployConfig = settingsGroupOrNil(config)
+	settings.RollingDeployConfig = deploymentSettingsGroupOrNil(config)
 	return settings
 }
 
@@ -657,9 +657,9 @@ func promotionEnvironmentSettingsChanges(update *managementapi.PromotionEnvironm
 	return changes
 }
 
-// settingsGroupOrNil returns nil for a settings group with no fields set, so an
-// untouched group is omitted from the promote or push request.
-func settingsGroupOrNil[T comparable](group T) *T {
+// deploymentSettingsGroupOrNil returns nil for a settings group with no fields
+// set, so an untouched group is omitted from the promote or push request.
+func deploymentSettingsGroupOrNil[T comparable](group T) *T {
 	var zero T
 	if group == zero {
 		return nil

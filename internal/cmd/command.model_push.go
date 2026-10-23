@@ -385,7 +385,7 @@ func applyModelPushLabels(opts *client.PushModelOptions, raw string) error {
 // --environment is the server's call, so a push without it gets the server's
 // error rather than a CLI one.
 func applyModelPushSettings(opts *client.PushModelOptions, flags *cmd.ModelPushFlags) error {
-	opts.AutoscalingSettings = settingsGroupOrNil(autoscalingSettingsFromFlags(flags.AutoscalingSettingsFlags))
+	opts.AutoscalingSettings = deploymentSettingsGroupOrNil(autoscalingSettingsFromFlags(flags.AutoscalingSettingsFlags))
 	if flags.RequestBackpressurePolicy.IsSet() {
 		settings := requestBackpressureFromFlags(cmd.RequestBackpressureFlags{Policy: flags.RequestBackpressurePolicy})
 		opts.RequestBackpressureSettings = &settings
@@ -397,7 +397,7 @@ func applyModelPushSettings(opts *client.PushModelOptions, flags *cmd.ModelPushF
 		}
 		opts.AutoscalingScheduleSettings = schedules
 	}
-	opts.PromotionSettingsOverride = settingsGroupOrNil(promotionSettingsOverrideFromFlags(flags.PromotionSettingsOverrideFlags))
+	opts.PromotionSettingsOverride = deploymentSettingsGroupOrNil(promotionSettingsOverrideFromFlags(flags.PromotionSettingsOverrideFlags))
 	return nil
 }
 
