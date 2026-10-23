@@ -169,6 +169,21 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 	if ctx.Command.Flags().Changed("memory") {
 		request.Memory = &flags.Memory
 	}
+	if ctx.Command.Flags().Changed("filesystem-max-memory-usage") {
+		// The API takes a number of Mi or a percentage/size string, so a bare
+		// integer is sent as the number and anything else as the string.
+		var usage managementapi.SandboxFilesystem_MaxMemoryUsage
+		var err error
+		if mi, atoiErr := strconv.Atoi(flags.FileSystemMaxMemoryUsage); atoiErr == nil {
+			err = usage.FromSandboxFilesystemMaxMemoryUsage1(mi)
+		} else {
+			err = usage.FromSandboxFilesystemMaxMemoryUsage0(flags.FileSystemMaxMemoryUsage)
+		}
+		if err != nil {
+			return fmt.Errorf("encoding --filesystem-max-memory-usage: %w", err)
+		}
+		request.Filesystem = &managementapi.SandboxFilesystem{MaxMemoryUsage: &usage}
+	}
 	if labels != nil {
 		sandboxLabels := managementapi.SandboxMetadataLabels(labels)
 		request.Labels = &sandboxLabels
@@ -504,6 +519,13 @@ func sandboxOutputRecord(ctx *CommandContext, record *managementapi.Sandbox) {
 	sandboxOutputField(ctx, "Image:        ", deref(record.Image))
 	if record.Memory != nil {
 		ctx.Outputf("Memory:       %d MB\n", *record.Memory)
+	}
+	if record.Filesystem != nil && record.Filesystem.MaxMemoryUsage != nil {
+		if usage, err := record.Filesystem.MaxMemoryUsage.AsSandboxFilesystemMaxMemoryUsage0(); err == nil {
+			ctx.Outputf("FS mem usage: %s\n", usage)
+		} else if mi, err := record.Filesystem.MaxMemoryUsage.AsSandboxFilesystemMaxMemoryUsage1(); err == nil {
+			ctx.Outputf("FS mem usage: %dMi\n", mi)
+		}
 	}
 	sandboxOutputField(ctx, "Region:       ", deref(record.Region))
 	sandboxOutputField(ctx, "External ID:  ", deref(record.ExternalId))

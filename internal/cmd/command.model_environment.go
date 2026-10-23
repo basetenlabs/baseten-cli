@@ -267,9 +267,7 @@ func commandModelEnvironmentUpdatePromotion(
 		ctx.Logf("warning: --ramp-up-while-promoting and --ramp-up-duration-seconds are deprecated: " +
 			"models no longer support canary promotions. Use --rolling-deploy true for a gradual promotion.\n")
 	}
-	settings := managementapi.UpdateModelPromotionSettings(promotionSettingsFromFlags(flags.PromotionSettingsFlags))
-	settings.RampUpWhilePromoting = flags.RampUpWhilePromoting.Pointer()
-	settings.RampUpDurationSeconds = flags.RampUpDurationSeconds.Pointer()
+	settings := promotionSettingsFromFlags(flags)
 	resp, err := patchModelEnvironment(ctx, flags.ModelEnvironmentFlags,
 		managementapi.UpdateEnvironmentRequest{PromotionSettings: &settings})
 	if err != nil {
@@ -287,7 +285,7 @@ func commandModelEnvironmentUpdatePromotion(
 func commandModelEnvironmentUpdateRequestBackpressure(
 	ctx *CommandContext, flags *cmd.ModelEnvironmentUpdateRequestBackpressureFlags,
 ) error {
-	settings := requestBackpressureFromPolicy(flags.Policy)
+	settings := requestBackpressureFromFlags(flags.RequestBackpressureFlags)
 	resp, err := patchModelEnvironment(ctx, flags.ModelEnvironmentFlags,
 		managementapi.UpdateEnvironmentRequest{RequestBackpressureSettings: &settings})
 	if err != nil {
@@ -348,11 +346,13 @@ func getModelEnvironment(
 // object is only sent when one of its own flags was passed, so touching a
 // top-level promotion setting does not rewrite the rolling deploy config.
 func promotionSettingsFromFlags(
-	flags cmd.PromotionSettingsFlags,
-) managementapi.UpdatePromotionSettings {
-	settings := managementapi.UpdatePromotionSettings{
-		RedeployOnPromotion: flags.RedeployOnPromotion.Pointer(),
-		RollingDeploy:       flags.RollingDeploy.Pointer(),
+	flags *cmd.ModelEnvironmentUpdatePromotionFlags,
+) managementapi.UpdateModelPromotionSettings {
+	settings := managementapi.UpdateModelPromotionSettings{
+		RedeployOnPromotion:   flags.RedeployOnPromotion.Pointer(),
+		RollingDeploy:         flags.RollingDeploy.Pointer(),
+		RampUpWhilePromoting:  flags.RampUpWhilePromoting.Pointer(),
+		RampUpDurationSeconds: flags.RampUpDurationSeconds.Pointer(),
 	}
 	if strategy := flags.PromotionCleanupStrategy.Pointer(); strategy != nil {
 		cleanup := managementapi.PromotionCleanupStrategy(enumToAPIValue(*strategy))

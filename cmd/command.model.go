@@ -287,28 +287,14 @@ type ModelRenameFlags struct {
 // body carries: a nil field means the flag was never passed, so that setting is
 // left unchanged rather than reset.
 type AutoscalingSettingsFlags struct {
-	MinReplica                  OptionalFlag[int] `flag:"min-replica" desc:"Minimum number of replicas."`
-	MaxReplica                  OptionalFlag[int] `flag:"max-replica" desc:"Maximum number of replicas."`
-	AutoscalingWindow           OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds."`
-	ScaleDownDelay              OptionalFlag[int] `flag:"scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds."`
-	ConcurrencyTarget           OptionalFlag[int] `flag:"concurrency-target" desc:"Number of requests per replica before scaling up."`
-	TargetUtilizationPercentage OptionalFlag[int] `flag:"target-utilization-percentage" desc:"Target utilization percentage for scaling up and down."`
-	TargetInFlightTokens        OptionalFlag[int] `flag:"target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only."`
-	MaxScaleDownRate            OptionalFlag[int] `flag:"max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window."`
-}
-
-// PrefixedAutoscalingSettingsFlags is [AutoscalingSettingsFlags] under an
-// --autoscaling-* prefix, for commands that set more than autoscaling. Its
-// fields mirror [AutoscalingSettingsFlags] so one converts to the other.
-type PrefixedAutoscalingSettingsFlags struct {
-	MinReplica                  OptionalFlag[int] `flag:"autoscaling-min-replica" desc:"Minimum number of replicas." group:"autoscaling" group-pri:"200"`
-	MaxReplica                  OptionalFlag[int] `flag:"autoscaling-max-replica" desc:"Maximum number of replicas." group:"autoscaling"`
+	MinReplica                  OptionalFlag[int] `flag:"min-replica" desc:"Minimum number of replicas." group:"autoscaling" group-pri:"200"`
+	MaxReplica                  OptionalFlag[int] `flag:"max-replica" desc:"Maximum number of replicas." group:"autoscaling"`
 	AutoscalingWindow           OptionalFlag[int] `flag:"autoscaling-window" desc:"Timeframe of traffic considered for autoscaling decisions, in seconds." group:"autoscaling"`
-	ScaleDownDelay              OptionalFlag[int] `flag:"autoscaling-scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds." group:"autoscaling"`
-	ConcurrencyTarget           OptionalFlag[int] `flag:"autoscaling-concurrency-target" desc:"Number of requests per replica before scaling up." group:"autoscaling"`
-	TargetUtilizationPercentage OptionalFlag[int] `flag:"autoscaling-target-utilization-percentage" desc:"Target utilization percentage for scaling up and down." group:"autoscaling"`
-	TargetInFlightTokens        OptionalFlag[int] `flag:"autoscaling-target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only." group:"autoscaling"`
-	MaxScaleDownRate            OptionalFlag[int] `flag:"autoscaling-max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window." group:"autoscaling"`
+	ScaleDownDelay              OptionalFlag[int] `flag:"scale-down-delay" desc:"Waiting period before scaling down any active replica, in seconds." group:"autoscaling"`
+	ConcurrencyTarget           OptionalFlag[int] `flag:"concurrency-target" desc:"Number of requests per replica before scaling up." group:"autoscaling"`
+	TargetUtilizationPercentage OptionalFlag[int] `flag:"target-utilization-percentage" desc:"Target utilization percentage for scaling up and down." group:"autoscaling"`
+	TargetInFlightTokens        OptionalFlag[int] `flag:"target-in-flight-tokens" desc:"Target number of in-flight tokens for autoscaling decisions. Early access only." group:"autoscaling"`
+	MaxScaleDownRate            OptionalFlag[int] `flag:"max-scale-down-rate" desc:"Maximum percentage of replicas that can be removed per autoscaling window (1-50). For example, 20 means at most 20% of replicas are removed per window." group:"autoscaling"`
 }
 
 // RequestBackpressureFlags is the shared policy flag for
@@ -317,38 +303,6 @@ type PrefixedAutoscalingSettingsFlags struct {
 // distinct from omitting the field.
 type RequestBackpressureFlags struct {
 	Policy OptionalFlag[string] `flag:"policy" desc:"Backpressure policy to apply. Pass null to clear an existing policy." enum:"queue-on-full,reject-on-full" nullable:"true" required:"true"`
-}
-
-// PromotionSettingsFlags is the promotion flag set for
-// `baseten model environment update-promotion`. The rolling deploy config is
-// flattened into these flags; its nesting in the API exists only to group the
-// fields.
-type PromotionSettingsFlags struct {
-	RedeployOnPromotion      OptionalFlag[bool]   `flag:"redeploy-on-promotion" desc:"Whether to deploy on all promotions. Enabling this allows model code to safely handle environment-specific logic: when a deployment is promoted, a new deployment is created with a copy of the image."`
-	RollingDeploy            OptionalFlag[bool]   `flag:"rolling-deploy" desc:"Whether the environment should rely on rolling deploy orchestration."`
-	PromotionCleanupStrategy OptionalFlag[string] `flag:"promotion-cleanup-strategy" desc:"The cleanup strategy to use after a promotion completes." enum:"keep,scale-to-zero,deactivate"`
-
-	RollingDeployStrategy    OptionalFlag[string] `flag:"rolling-deploy-strategy" desc:"The rolling deploy strategy to use for promotions." enum:"replica"`
-	MaxSurgePercent          OptionalFlag[int]    `flag:"max-surge-percent" desc:"The maximum surge percentage for rolling deploys."`
-	MaxUnavailablePercent    OptionalFlag[int]    `flag:"max-unavailable-percent" desc:"The maximum unavailable percentage for rolling deploys."`
-	StabilizationTimeSeconds OptionalFlag[int]    `flag:"stabilization-time-seconds" desc:"The stabilization time for rolling deploys, in seconds."`
-	ReplicaOverheadPercent   OptionalFlag[int]    `flag:"replica-overhead-percent" desc:"The replica overhead percentage for rolling deploys."`
-}
-
-// PromotionSettingsOverrideFlags is the one-time promotion flag set for
-// `baseten model deployment promote`. Its fields mirror
-// [PromotionSettingsFlags] so one converts to the other; only the flag names
-// differ.
-type PromotionSettingsOverrideFlags struct {
-	RedeployOnPromotion      OptionalFlag[bool]   `flag:"override-redeploy-on-promotion" desc:"For this promotion only, whether to create a new deployment with a copy of the image." group:"promotion override" group-pri:"300"`
-	RollingDeploy            OptionalFlag[bool]   `flag:"override-rolling-deploy" desc:"For this promotion only, whether to use rolling deploy orchestration." group:"promotion override"`
-	PromotionCleanupStrategy OptionalFlag[string] `flag:"override-promotion-cleanup-strategy" desc:"For this promotion only, the cleanup strategy to use after it completes." enum:"keep,scale-to-zero,deactivate" group:"promotion override"`
-
-	RollingDeployStrategy    OptionalFlag[string] `flag:"override-rolling-deploy-strategy" desc:"For this promotion only, the rolling deploy strategy." enum:"replica" group:"promotion override"`
-	MaxSurgePercent          OptionalFlag[int]    `flag:"override-max-surge-percent" desc:"For this promotion only, the maximum surge percentage for rolling deploys." group:"promotion override"`
-	MaxUnavailablePercent    OptionalFlag[int]    `flag:"override-max-unavailable-percent" desc:"For this promotion only, the maximum unavailable percentage for rolling deploys." group:"promotion override"`
-	StabilizationTimeSeconds OptionalFlag[int]    `flag:"override-stabilization-time-seconds" desc:"For this promotion only, the stabilization time for rolling deploys, in seconds." group:"promotion override"`
-	ReplicaOverheadPercent   OptionalFlag[int]    `flag:"override-replica-overhead-percent" desc:"For this promotion only, the replica overhead percentage for rolling deploys." group:"promotion override"`
 }
 
 // LogFlags is the shared log-query flag set for `baseten model deployment logs`

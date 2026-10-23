@@ -131,7 +131,12 @@ func TestValidateRouteRejectsUnknownReasoningLevels(t *testing.T) {
 
 func TestValidateRouteRequiresLimits(t *testing.T) {
 	r := testRoute("acme/primary", "Primary")
+	r.OutputLimit = 0
+	require.ErrorContains(t, validateRoute(r), "no usable context and output limits")
+	r = testRoute("acme/primary", "Primary")
 	r.OutputLimit = r.ContextWindow
+	require.NoError(t, validateRoute(r))
+	r.OutputLimit = r.ContextWindow + 1
 	require.ErrorContains(t, validateRoute(r), "no usable context and output limits")
 	r = testRoute("acme/primary", "Primary")
 	r.Tools = false

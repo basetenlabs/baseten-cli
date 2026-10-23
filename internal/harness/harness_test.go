@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,6 +26,34 @@ func testRoute(name, displayName string) Route {
 		Name: name, DisplayName: displayName,
 		ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, Responses: true,
 	}
+}
+
+func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
+	contextWindow, mirroredOutput, tools := 500000, 500000, true
+	route, err := NewRoute(managementapi.GridRoute{
+		Name: "acme/possible",
+		Metadata: &managementapi.ExploreMetadata{
+			ContextWindow:   &contextWindow,
+			MaxOutputTokens: &mirroredOutput,
+			InputModalities: []string{"text", "image"},
+			Tools:           &tools,
+		},
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 500000, route.ContextWindow)
+	require.Equal(t, 500000, route.OutputLimit)
+
+	impossibleOutput := 500001
+	_, err = NewRoute(managementapi.GridRoute{
+		Name: "acme/impossible",
+		Metadata: &managementapi.ExploreMetadata{
+			ContextWindow:   &contextWindow,
+			MaxOutputTokens: &impossibleOutput,
+			InputModalities: []string{"text"},
+			Tools:           &tools,
+		},
+	}, nil)
+	require.ErrorContains(t, err, "no usable context and output limits")
 }
 
 func testRoutes() []Route {
