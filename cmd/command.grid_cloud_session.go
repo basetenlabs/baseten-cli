@@ -26,9 +26,10 @@ var commandGridCloudSession = Command{
 				"Point at a repository with --repo owner/name and the image is resolved from it: from the session-image " +
 				"map written by the build/import step, by the backend's image service in production. --image names an " +
 				"imported image directly instead. " +
-				"The session authenticates with this CLI's own login: its API key goes to the sandbox's network proxy, " +
-				"which injects it on the harness and management traffic, while the sandbox itself holds only a " +
-				"placeholder credential. --env injects more local environment variables the same way, by name. " +
+				"The session credential is a dedicated sandbox token this CLI picks up from its environment; " +
+				"it goes to the sandbox's network proxy, which injects it on the harness and management " +
+				"traffic, while the sandbox itself holds only a placeholder credential. " +
+				"--env injects local environment variables the same way, by name. " +
 				"The session's name defaults to a generated readable name. " +
 				"Run in a terminal, create attaches to the session when it is ready; run otherwise, it prints " +
 				"the command to attach. Reconnect later with 'baseten grid cloud-session connect --name <name>'.",
