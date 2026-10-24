@@ -643,7 +643,12 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 			return err
 		}
 	}
-	if err := cloudSessionPreparePreviewGuidance(ctx, instance); err != nil {
+	if err := cloudSessionPrepareGuidance(ctx, instance); err != nil {
+		return err
+	}
+	// Images carrying docker boot the daemon here; absent docker-start is a no-op.
+	startDocker := "command -v docker-start >/dev/null 2>&1 && docker-start || true"
+	if err := cloudSessionExecStream(ctx, instance, startDocker, "", cloudSessionInSandboxTimeout); err != nil {
 		return err
 	}
 	if len(runlayerServers) > 0 {
@@ -740,19 +745,20 @@ func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessio
 	return sandboxProcessExitError(*finished)
 }
 
-// cloudSessionPreviewGuidance is the preview flow for the harness: it cannot
-// mint previews (the session credential is not allowed to), so the operator does.
-const cloudSessionPreviewGuidance = `- To serve something for the user (vite, docs, a notebook): bind 0.0.0.0 and hand the user one command to run outside, with the port filled in: "baseten sandbox preview create --name=$BASETEN_SANDBOX_NAME --port=<port> --with-token" (add --ttl for a shorter-lived link). It prints a private HTTPS link with an embedded access token, ready to open or curl. Your own listening ports: GET /network/process/{pid}/ports on the local API.
+// cloudSessionSandboxGuidance carries the sandbox mechanics the harness cannot
+// discover by trial: previews are operator-minted, and docker availability varies by image.
+const cloudSessionSandboxGuidance = `- To serve something for the user (vite, docs, a notebook): bind 0.0.0.0 and hand the user one command to run outside, with the port filled in: "baseten sandbox preview create --name=$BASETEN_SANDBOX_NAME --port=<port> --with-token" (add --ttl for a shorter-lived link). It prints a private HTTPS link with an embedded access token, ready to open or curl. Your own listening ports: GET /network/process/{pid}/ports on the local API.
 - Do not hand out the sandbox URL or a :port link: the URL is auth-walled (401) and direct ports return 502. Only a preview link is reachable, and you cannot create one yourself, so the user must run the command above.
-- A preview forwards the external hostname in the Host header (X-Forwarded-Host carries it too). Vite already works: the session sets __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=.preview.b10.co. Other host-checking servers (Django ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS, webpack) must allow the host or trust X-Forwarded-Host, or sit behind a small proxy that rewrites Host and Origin to localhost. Serve a frontend and its API behind one port so the browser stays same-origin.`
+- A preview forwards the external hostname in the Host header (X-Forwarded-Host carries it too). Vite already works: the session sets __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=.preview.b10.co. Other host-checking servers (Django ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS, webpack) must allow the host or trust X-Forwarded-Host, or sit behind a small proxy that rewrites Host and Origin to localhost. Serve a frontend and its API behind one port so the browser stays same-origin.
+- Docker: when /usr/local/bin/docker-start exists, run it (the session setup usually already has) and the repo's container workflows (bt-it up, docker compose) apply as documented. Without it the sandbox has no docker: run services natively (uv run, npm, moon, go) and apt-install missing ones (postgres, redis) only when the backend is truly needed; a frontend-only demo needs just the dev server.`
 
-// cloudSessionPreparePreviewGuidance replaces the preview bullets in the
-// session's CLAUDE.md, dropping older ones baked into images. Idempotent.
-func cloudSessionPreparePreviewGuidance(ctx *CommandContext, instance *sandbox.Sandbox) error {
+// cloudSessionPrepareGuidance replaces the sandbox bullets in the session's
+// CLAUDE.md, dropping older ones baked into images. Idempotent.
+func cloudSessionPrepareGuidance(ctx *CommandContext, instance *sandbox.Sandbox) error {
 	rewrite := "python3 -c 'import os,sys; p=os.path.expanduser(\"~/.claude/CLAUDE.md\");" +
 		" lines=open(p).read().splitlines() if os.path.exists(p) else [];" +
-		" lines=[l for l in lines if (\"baseten sandbox preview create\" not in l and \"sandbox preview token create\" not in l and \"cloud-session preview --name=\" not in l and \"auth-walled\" not in l and \"X-Forwarded-Host\" not in l)];" +
+		" lines=[l for l in lines if (\"baseten sandbox preview create\" not in l and \"sandbox preview token create\" not in l and \"cloud-session preview --name=\" not in l and \"auth-walled\" not in l and \"X-Forwarded-Host\" not in l and \"no devcontainer runtime\" not in l and \"docker-start\" not in l)];" +
 		" open(p,\"w\").write(\"\\n\".join(lines+[\"\"]+[sys.argv[1]])+\"\\n\")' " +
-		sandboxShellQuote(cloudSessionPreviewGuidance)
+		sandboxShellQuote(cloudSessionSandboxGuidance)
 	return cloudSessionExecStream(ctx, instance, rewrite, "", cloudSessionInSandboxTimeout)
 }
