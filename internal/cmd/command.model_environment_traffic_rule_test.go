@@ -65,6 +65,16 @@ func Test_Model_Environment_TrafficRule_List_Empty(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "No traffic rules found.")
 }
 
+func Test_Model_Environment_TrafficRule_List_Empty_JSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/environments/production", 200,
+		envFixture("production", "d-1", "ACTIVE"))
+
+	h.Require.NoError(h.Execute("model", "environment", "traffic-rule", "list",
+		"--model-id", "m-1", "--environment", "production", "--output", "json"))
+	h.Require.JSONEq(`{"rules": []}`, h.Stdout.String())
+}
+
 func Test_Model_Environment_TrafficRule_Create_TargetEnvironment(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("PATCH", "/v1/models/m-1/environments/production", 200,

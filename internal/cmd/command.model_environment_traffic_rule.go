@@ -26,7 +26,7 @@ func commandModelEnvironmentTrafficRuleList(
 	rules := trafficRules(env)
 
 	if ctx.JSON {
-		ctx.OutputJSON(managementapi.EnvironmentTrafficRouting{Rules: rules})
+		ctx.OutputJSON(managementapi.EnvironmentTrafficRouting{Rules: normalizeJSONSlice(rules)})
 		return nil
 	}
 	if len(rules) == 0 {
