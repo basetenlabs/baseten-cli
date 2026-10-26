@@ -257,7 +257,7 @@ func (t *Terminal) Run(ctx context.Context) error {
 			return err
 		}
 		io.WriteString(t.opts.Errors,
-			"\r\nConnection lost. The sandbox hibernates after inactivity, which drops the connection.\r\n"+
+			"\r\nConnection lost. Idle connections drop after a couple of minutes; if the sandbox has hibernated, reconnecting wakes it.\r\n"+
 				"Type any key to reconnect and wake the sandbox, or press Ctrl+C or Ctrl+D to quit.\r\n")
 		// The input loop ends when it delivers a keystroke, so a failed
 		// reconnect must restart it: nothing else would ever read the retry.
