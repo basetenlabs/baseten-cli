@@ -123,10 +123,13 @@ func cloudSessionPrepareTurnLiveness(ctx *CommandContext, instance *sandbox.Sand
 		return err
 	}
 	// Idempotent: a re-run of create must not duplicate hook entries.
+	// Reads allowed everywhere: the sandbox is user-controlled.
 	mergeHooks := "python3 -c 'import json,os,sys; p=os.path.expanduser(\"~/.claude/settings.json\");" +
 		" s=json.load(open(p)) if os.path.exists(p) else {};" +
 		" h=s.get(\"hooks\"); s[\"hooks\"]=h if isinstance(h,dict) else {};" +
 		" [s[\"hooks\"].setdefault(k,[]).extend([e for e in v if json.dumps(e,sort_keys=True) not in {json.dumps(x,sort_keys=True) for x in s[\"hooks\"][k]}]) for k,v in json.loads(sys.argv[1]).items()];" +
+		" s.setdefault(\"permissions\",{}).setdefault(\"allow\",[]);" +
+		" s[\"permissions\"][\"allow\"]=[r for r in s[\"permissions\"][\"allow\"] if r!=\"Read\"]+[\"Read\"];" +
 		" json.dump(s,open(p,\"w\"))' " + sandboxShellQuote(cloudSessionTurnLivenessHooks)
 	return cloudSessionExecStream(ctx, instance, mergeHooks, "", cloudSessionInSandboxTimeout)
 }
@@ -182,6 +185,11 @@ func cloudSessionEnvs(flags *cmd.CloudSessionCreateFlags) (*[]managementapi.Sand
 	viteAllowedHostsName := "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"
 	viteAllowedHostsValue := ".preview.b10.co"
 	envs = append(envs, managementapi.SandboxEnv{Name: &viteAllowedHostsName, Value: &viteAllowedHostsValue})
+	// The gateway drops server-side classifier checks, so sessions fall back with a billing notice;
+	// this silences it. Remove when the gateway passes requests and replies through unchanged.
+	autoModeServerName := "CLAUDE_CODE_AUTO_MODE_SERVER"
+	autoModeServerValue := "0"
+	envs = append(envs, managementapi.SandboxEnv{Name: &autoModeServerName, Value: &autoModeServerValue})
 	for _, envName := range flags.Env {
 		envValue, envIsSet := os.LookupEnv(envName)
 		if !envIsSet || envValue == "" {
@@ -449,6 +457,17 @@ func cloudSessionPortConfig(ctx *CommandContext, instance *sandbox.Sandbox) erro
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("reading the local %s: %w", instructionsPath, err)
 		}
+	}
+	// The user's AGENTS.md @-imports this doc; the session copy keeps the import resolvable.
+	if reinjectContents, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), "Documents", "claude-behavior-reinject.md")); err == nil {
+		if err := instance.FS().Write(ctx, sandbox.FileSystemWriteOptions{
+			Path:    "/root/Documents/claude-behavior-reinject.md",
+			Content: string(reinjectContents),
+		}); err != nil {
+			return fmt.Errorf("writing the behavior reinject doc: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("reading the local behavior reinject doc: %w", err)
 	}
 	if err := instance.FS().Write(ctx, sandbox.FileSystemWriteOptions{
 		Path:    "/root/.claude/CLAUDE.md",
