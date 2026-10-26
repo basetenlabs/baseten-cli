@@ -182,8 +182,8 @@ func cloudSessionEnvs(flags *cmd.CloudSessionCreateFlags) (*[]managementapi.Sand
 	viteAllowedHostsName := "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"
 	viteAllowedHostsValue := ".preview.b10.co"
 	envs = append(envs, managementapi.SandboxEnv{Name: &viteAllowedHostsName, Value: &viteAllowedHostsValue})
-	// The gateway drops server-side classifier checks, so sessions fall back with a billing notice;
-	// this silences it. Remove when the gateway passes requests and replies through unchanged.
+	// coding.baseten.co backends run no Anthropic safeguard classifier (unknown fields
+	// are dropped by design), so without this every session shows the classifier notice. Permanent.
 	autoModeServerName := "CLAUDE_CODE_AUTO_MODE_SERVER"
 	autoModeServerValue := "0"
 	envs = append(envs, managementapi.SandboxEnv{Name: &autoModeServerName, Value: &autoModeServerValue})
