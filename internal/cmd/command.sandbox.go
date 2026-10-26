@@ -422,6 +422,21 @@ func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstI
 		}
 		return minted.Token, nil
 	}
+	_, sandboxTeamID, err := ctx.NewSandboxClient(ref.Team)
+	if err != nil {
+		return err
+	}
+	sandboxExists := func(ctx context.Context) (bool, error) {
+		_, err := managementClient.API().GetSandbox(ctx, ref.Name, managementapi.GetSandboxParams{TeamId: sandboxTeamID})
+		if err == nil {
+			return true, nil
+		}
+		var responseErr *managementapi.ResponseError
+		if errors.As(err, &responseErr) && responseErr.StatusCode == 404 {
+			return false, nil
+		}
+		return false, err
+	}
 	terminalInput := io.Reader(stdin)
 	if firstInput != "" {
 		terminalInput = io.MultiReader(strings.NewReader(firstInput), stdin)
@@ -430,6 +445,7 @@ func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstI
 	terminal, err := sandboxconnect.Dial(ctx, sandboxconnect.DialOptions{
 		SandboxURL: instance.URL(),
 		NewToken:   newSandboxToken,
+		Exists:     sandboxExists,
 		Input:      terminalInput,
 		Output:     stdout,
 		Errors:     ctx.Stderr,

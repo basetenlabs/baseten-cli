@@ -63,7 +63,24 @@ type terminalTestServer struct {
 	queries               []url.Values
 	messages              []message
 	abruptClosesRemaining int
+	rejectsRemainingDials int
+	rejectedDials         int
 	rejectToken           string
+}
+
+// dialsRejected reports how many dials the server answered with a 404.
+func (s *terminalTestServer) dialsRejected() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rejectedDials
+}
+
+// rejectRemainingDials makes the server answer that many later dials with a
+// 404, as the gateway does for a deleted sandbox.
+func (s *terminalTestServer) rejectRemainingDials(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rejectsRemainingDials = n
 }
 
 func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestServer {
@@ -76,8 +93,17 @@ func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestSer
 		if abrupt {
 			s.abruptClosesRemaining--
 		}
+		rejectDial := s.rejectsRemainingDials > 0
+		if rejectDial {
+			s.rejectsRemainingDials--
+			s.rejectedDials++
+		}
 		reject := s.rejectToken
 		s.mu.Unlock()
+		if rejectDial {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		if reject != "" && r.URL.Query().Get("token") == reject {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -140,7 +166,7 @@ func mintCountingTestToken(mints *int, failAt int) func(context.Context) (string
 // it input, returning what it wrote and a channel with Run's result.
 func runTerminal(
 	t *testing.T, server *terminalTestServer, input io.Reader, errors *lockedBuffer,
-	newToken func(context.Context) (string, error),
+	newToken func(context.Context) (string, error), dialOpts ...func(*DialOptions),
 ) (*lockedBuffer, *Terminal, <-chan error) {
 	t.Helper()
 	if newToken == nil {
@@ -149,13 +175,17 @@ func runTerminal(
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
 	var output lockedBuffer
-	terminal, err := Dial(ctx, DialOptions{
+	dialOptions := DialOptions{
 		SandboxURL: server.URL + "/",
 		NewToken:   newToken,
 		Input:      input,
 		Output:     &output,
 		Errors:     errors,
-	})
+	}
+	for _, opt := range dialOpts {
+		opt(&dialOptions)
+	}
+	terminal, err := Dial(ctx, dialOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,6 +308,45 @@ func TestTerminal_DialIsBoundedAgainstAHungUpgrade(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > dialTimeout+2*time.Second {
 		t.Errorf("connect took %s, want bounded by %s", elapsed, dialTimeout)
+	}
+}
+
+func TestTerminal_ReconnectToADeletedSandboxStops(t *testing.T) {
+	// The connection drops as hibernation kills it, then the sandbox is
+	// deleted. The wake dial fails, the existence check sees the deletion,
+	// and the terminal stops with a clear message instead of retrying.
+	server := newTerminalTestServer(t, 1)
+	server.abruptClosesRemaining = 1
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	errors := &lockedBuffer{}
+	existsCalls := 0
+	opts := func(o *DialOptions) {
+		o.Exists = func(context.Context) (bool, error) {
+			existsCalls++
+			return false, nil
+		}
+	}
+	_, _, done := runTerminal(t, server, input, errors, nil, opts)
+
+	if _, err := inputWriter.Write([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "Connection lost", 1)
+	// The sandbox is deleted while disconnected: later dials get a 404.
+	server.rejectRemainingDials(wakeDialAttempts)
+	if _, err := inputWriter.Write([]byte("b")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "no longer exists", 1)
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if existsCalls != 1 {
+		t.Errorf("existence checks %d, want 1: checked once at the first failed dial", existsCalls)
+	}
+	if server.dialsRejected() != 1 {
+		t.Errorf("dial attempts %d, want 1: a deleted sandbox stops the wake loop", server.dialsRejected())
 	}
 }
 
