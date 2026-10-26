@@ -88,7 +88,7 @@ case "${1:-}" in
     curl -s -m 5 -X DELETE "$API/process/$NAME/kill" -o /dev/null
     curl -s -m 5 -X POST "$API/process" \
       -H "Content-Type: application/json" \
-      -d '{"command": "sleep 3600", "keepAlive": true, "timeout": 0, "name": "'"$NAME"'"}' \
+      -d '{"command": "sleep 600", "keepAlive": true, "timeout": 0, "name": "'"$NAME"'"}' \
       -o /dev/null
     ;;
   stop)
@@ -109,7 +109,8 @@ esac
 `
 
 // cloudSessionTurnLivenessHooks wires the stay-awake script into the harness.
-const cloudSessionTurnLivenessHooks = `{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh start","timeout":15}]}],"Stop":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh stop","timeout":15}]}]}`
+// PostToolUse refreshes it, so an interrupted turn (no Stop hook) ages out in one window.
+const cloudSessionTurnLivenessHooks = `{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh start","timeout":15}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh start","timeout":15}]}],"Stop":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh stop","timeout":15}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"/root/hooks-alive/stay-awake.sh stop","timeout":15}]}]}`
 
 // cloudSessionPrepareTurnLiveness installs the stay-awake script and merges
 // the turn-liveness hooks into the harness settings the in-sandbox setup
