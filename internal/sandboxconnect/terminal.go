@@ -96,6 +96,9 @@ type DialOptions struct {
 	// the first token.
 	NewToken sandbox.TokenProvider
 
+	// Exists reports whether the sandbox still exists; nil when unknown.
+	Exists func(context.Context) (bool, error)
+
 	// Input is read and sent to the sandbox's shell.
 	Input io.Reader
 
@@ -294,6 +297,10 @@ func (t *Terminal) Run(ctx context.Context) error {
 				_, triggerRuneSize := utf8.DecodeRune(keystroke)
 				t.pendingShellInput = append(t.pendingShellInput, keystroke[triggerRuneSize:]...)
 				if err := t.wakeAndConnect(ctx); err != nil {
+					if errors.Is(err, errSandboxDeleted) {
+						io.WriteString(t.opts.Errors, "The sandbox no longer exists (it was deleted). Nothing to reconnect to.\r\n")
+						return nil
+					}
 					fmt.Fprintf(t.opts.Errors,
 						"Reconnect failed: %v\r\nType any key to retry, or press Ctrl+C or Ctrl+D to quit.\r\n", err)
 					continue
@@ -348,6 +355,9 @@ func (t *Terminal) runConnection(ctx context.Context) error {
 	return t.readLoop(ctx, disconnect)
 }
 
+// errSandboxDeleted stops reconnecting: the sandbox record is gone.
+var errSandboxDeleted = errors.New("the sandbox was deleted")
+
 // wakeAndConnect reconnects, retrying while the sandbox is still resuming.
 func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 	io.WriteString(t.opts.Errors, "Waking the sandbox...\r\n")
@@ -359,6 +369,7 @@ func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 	}
 	var lastDialErr error
 	reMinted := false
+	existenceChecked := false
 	for attempt := 0; attempt < wakeDialAttempts; attempt++ {
 		if attempt > 0 {
 			select {
@@ -378,6 +389,13 @@ func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 			token, err = t.mintToken(ctx, token)
 			if err != nil {
 				return err
+			}
+		}
+		// A deleted sandbox never wakes, so the first failed dial checks existence.
+		if !existenceChecked && t.opts.Exists != nil {
+			existenceChecked = true
+			if exists, existsErr := t.opts.Exists(ctx); existsErr == nil && !exists {
+				return errSandboxDeleted
 			}
 		}
 		if attempt%5 == 4 {
