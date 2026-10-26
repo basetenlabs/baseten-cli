@@ -67,17 +67,14 @@ func cloudSessionGeneratedName() string {
 // cloudSessionStayAwakeScript registers a keepAlive process via the local
 // execution API: registration alone holds off the platform's ~30-40s idle
 // pause (proven empirically; in-guest activity is invisible to the counter).
-// Driven by hooks: UserPromptSubmit starts it, Stop releases it, so the
-// sandbox is awake exactly while the harness works a turn.
+// Driven by hooks: UserPromptSubmit and PostToolUse (re)start it, Stop and
+// SessionEnd release it, so the sandbox is awake while the harness works.
 const cloudSessionStayAwakeScript = `#!/bin/bash
-# Turn-based sandbox keep-alive, driven by Claude Code session hooks.
-#   UserPromptSubmit -> stay-awake.sh start : register a keepAlive process;
-#                      the sandbox-api holds off idle hibernation while any
-#                      keepAlive process runs (verified empirically).
-#   Stop             -> stay-awake.sh stop  : kill it, letting the sandbox
-#                      hibernate ~30-40s after the turn ends.
-# The process itself is a bare sleep: registration, not activity, is what
-# holds the sandbox awake.
+# Turn-based keep-alive, driven by Claude Code session hooks:
+#   UserPromptSubmit/PostToolUse -> stay-awake.sh start : (re)register it
+#   Stop/SessionEnd             -> stay-awake.sh stop  : kill it, the sandbox hibernates
+# The sleep is refreshed on every hook, so 600s only bounds a leaked
+# registration (an interrupted turn skips Stop) and one long tool call.
 set -u
 API=http://localhost:8080
 NAME=stay-awake-turn
