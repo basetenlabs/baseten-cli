@@ -158,6 +158,9 @@ func TestStore_RemoveProfile_MissingNoError(t *testing.T) {
 }
 
 func TestStore_CancelledContext(t *testing.T) {
+	// Fresh keyring, so entries other tests left for the same profiles cannot
+	// pass for something written here.
+	keyring.MockInit()
 	s := newKeyringStore(t)
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 	ctx, cancel := context.WithCancel(t.Context())
