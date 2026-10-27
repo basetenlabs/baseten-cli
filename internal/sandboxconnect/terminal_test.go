@@ -350,6 +350,27 @@ func TestTerminal_ReconnectToADeletedSandboxStops(t *testing.T) {
 	}
 }
 
+func TestTerminal_NormalCloseOfADeletedSandboxSaysSo(t *testing.T) {
+	// Deleting a sandbox closes its live socket with a normal close: the clean
+	// end must report the deletion, not exit silently.
+	server := newTerminalTestServer(t, 1)
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	errors := &lockedBuffer{}
+	opts := func(o *DialOptions) {
+		o.Exists = func(context.Context) (bool, error) { return false, nil }
+	}
+	_, _, done := runTerminal(t, server, input, errors, nil, opts)
+
+	if _, err := inputWriter.Write([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	waitForString(t, errors, "no longer exists", 1)
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+}
+
 func TestTerminal_ReconnectAfterTransportLoss(t *testing.T) {
 	// The first connection dies without a close frame, as a hibernating
 	// sandbox kills it. The next keystroke reconnects, reattaching to the

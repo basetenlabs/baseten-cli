@@ -254,6 +254,13 @@ func (t *Terminal) Run(ctx context.Context) error {
 		err := t.runConnection(ctx)
 		var lost *TransportLostError
 		if err == nil || !errors.As(err, &lost) {
+			// Deleting a sandbox closes its live sockets with a normal close, so a
+			// clean end is also how deletion looks: say so instead of exiting silently.
+			if err == nil && t.opts.Exists != nil {
+				if exists, existsErr := t.opts.Exists(ctx); existsErr == nil && !exists {
+					io.WriteString(t.opts.Errors, "The sandbox no longer exists (it was deleted). Nothing to reconnect to.\r\n")
+				}
+			}
 			return err
 		}
 		io.WriteString(t.opts.Errors,
