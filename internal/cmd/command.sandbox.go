@@ -395,6 +395,22 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) 
 // sandboxConnectTerminal opens an interactive terminal to a sandbox's shell,
 // sending firstInput to the shell once connected, before the local keyboard.
 // It takes over the terminal, reading keys from stdin and drawing to stdout.
+type sandboxAPI interface {
+	GetSandbox(ctx context.Context, sandboxName string, params managementapi.GetSandboxParams) (*managementapi.Sandbox, error)
+}
+
+func sandboxExistsInTeam(ctx context.Context, api sandboxAPI, teamID *string, sandboxName string) (bool, error) {
+	_, err := api.GetSandbox(ctx, sandboxName, managementapi.GetSandboxParams{TeamId: teamID})
+	if err == nil {
+		return true, nil
+	}
+	var responseErr *managementapi.ResponseError
+	if errors.As(err, &responseErr) && responseErr.StatusCode == 404 {
+		return false, nil
+	}
+	return false, err
+}
+
 func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstInput string) error {
 	// Checked before anything is sent: the session takes over the terminal,
 	// reading keys from stdin and drawing to stdout.
@@ -427,15 +443,7 @@ func sandboxConnectTerminal(ctx *CommandContext, ref cmd.SandboxRefFlags, firstI
 		return err
 	}
 	sandboxExists := func(ctx context.Context) (bool, error) {
-		_, err := managementClient.API().GetSandbox(ctx, ref.Name, managementapi.GetSandboxParams{TeamId: sandboxTeamID})
-		if err == nil {
-			return true, nil
-		}
-		var responseErr *managementapi.ResponseError
-		if errors.As(err, &responseErr) && responseErr.StatusCode == 404 {
-			return false, nil
-		}
-		return false, err
+		return sandboxExistsInTeam(ctx, managementClient.API(), sandboxTeamID, ref.Name)
 	}
 	terminalInput := io.Reader(stdin)
 	if firstInput != "" {
