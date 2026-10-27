@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -143,11 +144,27 @@ func (s *Store) saveLocked(af *AuthFile) error {
 	return nil
 }
 
+// keyringDo runs fn, a system keyring operation, returning ctx's error if ctx
+// is done first.
+func keyringDo(ctx context.Context, fn func() error) error {
+	// Keyring operations take no context and can block indefinitely on an OS
+	// prompt, such as a macOS keychain access dialog. On cancellation fn is
+	// abandoned rather than awaited, since the process exits shortly after.
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // SetOAuthProfile stores an OAuth credential under name. When switchCurrent is
 // true, the profile also becomes the current profile. Tries the keyring first;
 // falls back to plaintext in auth.json with a warning written to warnWriter
 // (if non-nil).
-func (s *Store) SetOAuthProfile(profileName, remoteURL string, cred OAuthCredential, switchCurrent bool, warnWriter func(string)) error {
+func (s *Store) SetOAuthProfile(ctx context.Context, profileName, remoteURL string, cred OAuthCredential, switchCurrent bool, warnWriter func(string)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -162,7 +179,11 @@ func (s *Store) SetOAuthProfile(profileName, remoteURL string, cred OAuthCredent
 		if err != nil {
 			return fmt.Errorf("marshaling credential: %w", err)
 		}
-		if err := keyring.Set(keyringServiceName, profileName, string(secretJSON)); err != nil {
+		err = keyringDo(ctx, func() error { return keyring.Set(keyringServiceName, profileName, string(secretJSON)) })
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if err != nil {
 			if warnWriter != nil {
 				warnWriter("warning: could not store credentials in system keyring, storing in plain text\n")
 			}
@@ -181,7 +202,7 @@ func (s *Store) SetOAuthProfile(profileName, remoteURL string, cred OAuthCredent
 
 // SetAPIKeyProfile stores an API key credential under name. When switchCurrent
 // is true, the profile also becomes the current profile.
-func (s *Store) SetAPIKeyProfile(profileName, remoteURL, apiKey string, switchCurrent bool, warnWriter func(string)) error {
+func (s *Store) SetAPIKeyProfile(ctx context.Context, profileName, remoteURL, apiKey string, switchCurrent bool, warnWriter func(string)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -192,7 +213,11 @@ func (s *Store) SetAPIKeyProfile(profileName, remoteURL, apiKey string, switchCu
 
 	profile := Profile{RemoteURL: remoteURL, AuthType: AuthTypeAPIKey}
 	if !s.insecureStorage {
-		if err := keyring.Set(keyringServiceName, profileName, apiKey); err != nil {
+		err = keyringDo(ctx, func() error { return keyring.Set(keyringServiceName, profileName, apiKey) })
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if err != nil {
 			if warnWriter != nil {
 				warnWriter("warning: could not store credentials in system keyring, storing in plain text\n")
 			}
@@ -211,8 +236,15 @@ func (s *Store) SetAPIKeyProfile(profileName, remoteURL, apiKey string, switchCu
 
 // GetOAuthCredential retrieves the OAuth credential for a profile, trying the
 // keyring first, then falling back to the auth.json plaintext field.
-func (s *Store) GetOAuthCredential(profileName string) (*OAuthCredential, error) {
-	secret, err := keyring.Get(keyringServiceName, profileName)
+func (s *Store) GetOAuthCredential(ctx context.Context, profileName string) (*OAuthCredential, error) {
+	var secret string
+	err := keyringDo(ctx, func() (err error) {
+		secret, err = keyring.Get(keyringServiceName, profileName)
+		return err
+	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	if err == nil {
 		var cred OAuthCredential
 		if err := json.Unmarshal([]byte(secret), &cred); err != nil {
@@ -237,8 +269,15 @@ func (s *Store) GetOAuthCredential(profileName string) (*OAuthCredential, error)
 
 // GetAPIKey retrieves the API key for a profile, trying the keyring first, then
 // falling back to the auth.json plaintext field.
-func (s *Store) GetAPIKey(profileName string) (string, error) {
-	secret, err := keyring.Get(keyringServiceName, profileName)
+func (s *Store) GetAPIKey(ctx context.Context, profileName string) (string, error) {
+	var secret string
+	err := keyringDo(ctx, func() (err error) {
+		secret, err = keyring.Get(keyringServiceName, profileName)
+		return err
+	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
+	}
 	if err == nil {
 		return secret, nil
 	}
@@ -259,11 +298,14 @@ func (s *Store) GetAPIKey(profileName string) (string, error) {
 
 // RemoveProfile removes a profile and deletes its keyring entry. If the removed
 // profile was current, the current pointer is cleared.
-func (s *Store) RemoveProfile(profileName string) error {
+func (s *Store) RemoveProfile(ctx context.Context, profileName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_ = keyring.Delete(keyringServiceName, profileName)
+	_ = keyringDo(ctx, func() error { return keyring.Delete(keyringServiceName, profileName) })
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	af, err := s.loadLocked()
 	if err != nil {

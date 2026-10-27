@@ -108,14 +108,14 @@ func (s *Session) UsesAPIKey() bool {
 // APIKey returns the session's API key when it authenticates with one — the
 // ephemeral BASETEN_API_KEY value, or the stored key of an API key profile —
 // and "" for OAuth or unauthenticated sessions, which have no embeddable key.
-func (s *Session) APIKey() (string, error) {
+func (s *Session) APIKey(ctx context.Context) (string, error) {
 	if s.ephemeralAPIKey != "" {
 		return s.ephemeralAPIKey, nil
 	}
 	if !s.UsesAPIKey() {
 		return "", nil
 	}
-	return s.store.GetAPIKey(s.profileName)
+	return s.store.GetAPIKey(ctx, s.profileName)
 }
 
 // CacheIdentity returns a stable, filesystem-safe token for the resolved
@@ -136,19 +136,25 @@ func (s *Session) CacheIdentity() string {
 }
 
 // OAuthContext returns a context that carries an oauth2 HTTP client which
-// stamps the Baseten User-Agent on every request, layered over base.
+// stamps the Baseten User-Agent on every request, layered over base. Requests
+// made through the client are bound to ctx, so cancelling ctx aborts them.
 func OAuthContext(ctx context.Context, base http.RoundTripper) context.Context {
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	c := &http.Client{Transport: userAgentRoundTripper{base: base}}
+	c := &http.Client{Transport: oauthRoundTripper{ctx: ctx, base: base}}
 	return context.WithValue(ctx, oauth2.HTTPClient, c)
 }
 
-type userAgentRoundTripper struct{ base http.RoundTripper }
+type oauthRoundTripper struct {
+	// oauth2 builds its device auth and token requests without a context, so
+	// the caller's context is applied here instead.
+	ctx  context.Context
+	base http.RoundTripper
+}
 
-func (r userAgentRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	req = req.Clone(req.Context())
+func (r oauthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(r.ctx)
 	client.ApplyUserAgentHeader(req.Header)
 	return r.base.RoundTrip(req)
 }
@@ -215,13 +221,13 @@ func (t *Transport) Credential(ctx context.Context) (string, error) {
 
 	switch profile.AuthType {
 	case AuthTypeAPIKey:
-		return t.Session.store.GetAPIKey(profileName)
+		return t.Session.store.GetAPIKey(ctx, profileName)
 
 	case AuthTypeOAuth:
 		if t.OAuthConfig == nil {
 			return "", fmt.Errorf("OAuth credential requires OAuthConfig to be set on Transport")
 		}
-		cred, err := t.Session.store.GetOAuthCredential(profileName)
+		cred, err := t.Session.store.GetOAuthCredential(ctx, profileName)
 		if err != nil {
 			return "", err
 		}
@@ -242,7 +248,7 @@ func (t *Transport) Credential(ctx context.Context) (string, error) {
 				RefreshToken: newToken.RefreshToken,
 				Expiry:       newToken.Expiry,
 			}
-			if err := t.Session.store.SetOAuthProfile(profileName, profile.RemoteURL, updated, false, nil); err != nil {
+			if err := t.Session.store.SetOAuthProfile(ctx, profileName, profile.RemoteURL, updated, false, nil); err != nil {
 				return "", fmt.Errorf("storing refreshed credential: %w", err)
 			}
 		}

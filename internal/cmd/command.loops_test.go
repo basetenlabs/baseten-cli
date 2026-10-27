@@ -161,7 +161,7 @@ func Test_Loops_Exec_ProfileSelectsForwardedAuth(t *testing.T) {
 	h, fake := newTrussHarness(t)
 	fake.stdout = loopsExecJSON
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("research", "https://research.example.com", "research-key", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "research", "https://research.example.com", "research-key", true, nil))
 
 	h.Require.NoError(h.Execute("loops", "exec", "--dir", t.TempDir(), "--profile", "research", "--", "python", "client.py"))
 

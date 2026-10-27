@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -80,7 +81,7 @@ func Test_Auth_Status_APIKey(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.example.com", "key-xyz", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-xyz", true, nil))
 
 	h.Require.NoError(h.Execute("auth", "status"))
 	out := h.Stdout.String()
@@ -93,7 +94,7 @@ func Test_Auth_Status_JSON(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.example.com", "key-xyz", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-xyz", true, nil))
 
 	h.Require.NoError(h.Execute("auth", "status", "--output", "json"))
 	var got map[string]string
@@ -115,8 +116,8 @@ func Test_Auth_Status_ProfileFlagSelects(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.example.com", "key-a", true, nil))
-	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.other.example.com", "key-b", false, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "bob", "https://app.other.example.com", "key-b", false, nil))
 
 	h.Require.NoError(h.Execute("auth", "status", "--profile", "bob", "--output", "json"))
 	var got map[string]string
@@ -161,8 +162,8 @@ func Test_Auth_List_DefaultRemote(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.baseten.co", "key-b", false, nil))
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.baseten.co", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "bob", "https://app.baseten.co", "key-b", false, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.baseten.co", "key-a", true, nil))
 
 	h.Require.NoError(h.Execute("auth", "list"))
 	out := h.Stdout.String()
@@ -176,8 +177,8 @@ func Test_Auth_List_MixedRemotes(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.baseten.co", "key-a", true, nil))
-	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.example.com", "key-b", false, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.baseten.co", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "bob", "https://app.example.com", "key-b", false, nil))
 
 	h.Require.NoError(h.Execute("auth", "list"))
 	h.Require.Contains(h.Stdout.String(), "REMOTE")
@@ -188,7 +189,7 @@ func Test_Auth_List_JSON(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.example.com", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-a", true, nil))
 
 	h.Require.NoError(h.Execute("auth", "list", "--output", "json"))
 	var got cmd.AuthListResult
@@ -205,8 +206,8 @@ func Test_Auth_List_EnvProfileMarksCurrent(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.baseten.co", "key-a", true, nil))
-	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.baseten.co", "key-b", false, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.baseten.co", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "bob", "https://app.baseten.co", "key-b", false, nil))
 	t.Setenv("BASETEN_PROFILE", "bob")
 
 	h.Require.Equal([]string{"bob"}, authListCurrent(h))
@@ -216,8 +217,8 @@ func Test_Auth_List_ProfileFlagMarksCurrent(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.baseten.co", "key-a", true, nil))
-	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.baseten.co", "key-b", false, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.baseten.co", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "bob", "https://app.baseten.co", "key-b", false, nil))
 
 	h.Require.Equal([]string{"bob"}, authListCurrent(h, "--profile", "bob"))
 }
@@ -226,7 +227,7 @@ func Test_Auth_List_EphemeralEnvAPIKey(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.baseten.co", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.baseten.co", "key-a", true, nil))
 	t.Setenv("BASETEN_API_KEY", "env-key")
 
 	h.Require.Empty(authListCurrent(h))
@@ -243,7 +244,7 @@ func Test_Auth_Logout_RemovesCurrentProfile(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.example.com", "key-xyz", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-xyz", true, nil))
 
 	h.Require.NoError(h.Execute("auth", "logout"))
 	h.Require.Contains(h.Stdout.String(), "alice")
@@ -256,8 +257,8 @@ func Test_Auth_Logout_ProfileFlagSelects(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.example.com", "key-a", true, nil))
-	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.example.com", "key-b", false, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "bob", "https://app.example.com", "key-b", false, nil))
 
 	h.Require.NoError(h.Execute("auth", "logout", "--profile", "bob"))
 
@@ -279,7 +280,7 @@ func Test_Auth_Logout_APIKey_SkipsServerCall(t *testing.T) {
 	pointManagementAt(t, srv.URL)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", srv.URL, "key-xyz", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", srv.URL, "key-xyz", true, nil))
 
 	h.Require.NoError(h.Execute("auth", "logout"))
 	h.Require.Equal(0, calls, "API key logout should not call server")
@@ -298,7 +299,7 @@ func Test_Auth_Logout_OAuth_CallsRevokeEndpoint(t *testing.T) {
 
 	store := configDirStore(t)
 	cred := auth.OAuthCredential{AccessToken: "at_abc", RefreshToken: "rt_abc"}
-	h.Require.NoError(store.SetOAuthProfile("alice", srv.URL, cred, true, nil))
+	h.Require.NoError(store.SetOAuthProfile(t.Context(), "alice", srv.URL, cred, true, nil))
 
 	h.Require.NoError(h.Execute("auth", "logout"))
 	h.Require.Equal("/v1/users/auth/logout", gotPath)
@@ -318,7 +319,7 @@ func Test_Auth_Logout_OAuth_WarnsOnServerFailureButStillRemoves(t *testing.T) {
 
 	store := configDirStore(t)
 	cred := auth.OAuthCredential{AccessToken: "at_abc", RefreshToken: "rt_abc"}
-	h.Require.NoError(store.SetOAuthProfile("alice", srv.URL, cred, true, nil))
+	h.Require.NoError(store.SetOAuthProfile(t.Context(), "alice", srv.URL, cred, true, nil))
 
 	h.Require.NoError(h.Execute("auth", "logout"))
 	h.Require.Contains(h.Stderr.String(), "warning")
@@ -337,8 +338,8 @@ func Test_Auth_Switch_UpdatesCurrentProfile(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.example.com", "key-alice", true, nil))
-	h.Require.NoError(store.SetAPIKeyProfile("bob", "https://app.example.com", "key-bob", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-alice", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "bob", "https://app.example.com", "key-bob", true, nil))
 
 	h.Require.NoError(h.Execute("auth", "switch", "--profile", "alice"))
 
@@ -350,7 +351,7 @@ func Test_Auth_Switch_UnknownProfileFails(t *testing.T) {
 	h := newAuthHarness(t)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("alice", "https://app.example.com", "key-alice", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-alice", true, nil))
 
 	h.Require.Error(h.Execute("auth", "switch", "--profile", "ghost"))
 	h.Require.Equal(1, h.ExitCode)
@@ -375,7 +376,7 @@ func Test_Auth_Login_APIKey_Stdin(t *testing.T) {
 	h.Require.Equal("my-laptop", name)
 	h.Require.Equal(auth.AuthTypeAPIKey, profile.AuthType)
 
-	got, err := store.GetAPIKey("my-laptop")
+	got, err := store.GetAPIKey(t.Context(), "my-laptop")
 	h.Require.NoError(err)
 	h.Require.Equal("secret-api-key", got)
 }
@@ -386,7 +387,7 @@ func Test_Auth_Login_APIKey_NoSwitchKeepsCurrent(t *testing.T) {
 	pointManagementAt(t, srv.URL)
 
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("existing", srv.URL, "key-existing", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "existing", srv.URL, "key-existing", true, nil))
 
 	h.Stdin.WriteString("secret-api-key\n")
 	h.Require.NoError(h.Execute("auth", "login", "--with-api-key", "--profile", "my-laptop", "--no-switch"))
@@ -530,10 +531,33 @@ func Test_Auth_Login_Web_DeviceFlow(t *testing.T) {
 	h.Require.Contains(name, "user@example.com", "profile is named after the email")
 	h.Require.Equal(auth.AuthTypeOAuth, profile.AuthType)
 
-	cred, err := store.GetOAuthCredential(name)
+	cred, err := store.GetOAuthCredential(t.Context(), name)
 	h.Require.NoError(err)
 	h.Require.Equal("access-xyz", cred.AccessToken)
 	h.Require.Equal("refresh-xyz", cred.RefreshToken)
+}
+
+func Test_Auth_Login_Web_CancelDuringDeviceAuth(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx, cancel := context.WithCancel(h.Context)
+	h.Context = ctx
+	// The device authorization request never gets a response. Once it arrives,
+	// the command is cancelled as Ctrl-C would, and the request must be aborted
+	// rather than left waiting.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		cancel()
+		<-release
+	}))
+	t.Cleanup(srv.Close)
+	// Registered after srv.Close so it runs first, letting Close finish.
+	t.Cleanup(func() { close(release) })
+	pointManagementAt(t, srv.URL)
+
+	h.Require.Error(h.Execute("auth", "login", "--web"))
+	h.Require.Equal(int(cmd.ExitInterrupted), h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), "Canceled.")
+	h.Require.Empty(h.OpenedURLs)
 }
 
 func Test_Auth_Login_Web_ProfileFlagOverridesName(t *testing.T) {

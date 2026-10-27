@@ -74,11 +74,10 @@ func commandOrgSecretSet(ctx *CommandContext, flags *cmd.OrgSecretSetFlags) erro
 	case ctx.Command.Flags().Changed("value"):
 		value = flags.Value
 	case ctx.IsInteractive():
-		err = huh.NewInput().
+		err = ctx.RunPrompt(huh.NewInput().
 			Title("Secret value").
 			EchoMode(huh.EchoModePassword).
-			Value(&value).
-			Run()
+			Value(&value))
 		if err != nil {
 			return err
 		}
