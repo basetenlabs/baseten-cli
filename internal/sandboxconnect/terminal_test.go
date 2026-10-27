@@ -351,8 +351,7 @@ func TestTerminal_ReconnectToADeletedSandboxStops(t *testing.T) {
 }
 
 func TestTerminal_NormalCloseOfADeletedSandboxSaysSo(t *testing.T) {
-	// Deleting a sandbox closes its live socket with a normal close: the clean
-	// end must report the deletion, not exit silently.
+	// A deleted sandbox's live socket closes normally: the clean end must report it.
 	server := newTerminalTestServer(t, 1)
 	input, inputWriter := io.Pipe()
 	t.Cleanup(func() { inputWriter.Close() })
