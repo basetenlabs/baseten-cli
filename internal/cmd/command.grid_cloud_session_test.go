@@ -61,3 +61,24 @@ func TestCloudSessionHarnessDispatchCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestCloudSessionDispatchPermissionMode(t *testing.T) {
+	tests := []struct {
+		name      string
+		harness   string
+		flagValue string
+		want      string
+	}{
+		{name: "claude-code unset", harness: "claude-code", want: "auto"},
+		{name: "claude-code explicit", harness: "claude-code", flagValue: "plan", want: "plan"},
+		{name: "codex unset", harness: "codex", want: ""},
+		{name: "codex explicit", harness: "codex", flagValue: "plan", want: "plan"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := cloudSessionDispatchPermissionMode(test.harness, test.flagValue); got != test.want {
+				t.Errorf("mode %q, want %q", got, test.want)
+			}
+		})
+	}
+}

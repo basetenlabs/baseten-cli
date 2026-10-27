@@ -82,8 +82,8 @@ var commandGridCloudSession = Command{
 			Description: gridPrereleaseNotice +
 				"Run the session's harness headless with a prompt ('claude -p' for Claude Code) and stream its output. " +
 				"The harness's exit code becomes the CLI's exit code. A dispatch runs as a sandbox process and does not " +
-				"survive the connection ending, unlike the harness in the tmux session. Without --permission-mode the " +
-				"harness denies every mutation; pass --permission-mode acceptEdits to let it edit files.",
+				"survive the connection ending, unlike the harness in the tmux session. --permission-mode defaults to " +
+				"auto; pass manual or plan for read-only runs.",
 			Flags: CloudSessionDispatchFlags{},
 			Output: &CommandOutput[struct{}]{
 				TextDescription: "The harness's standard output on stdout and standard error on stderr, as they arrive.",
@@ -130,5 +130,5 @@ type CloudSessionDispatchFlags struct {
 	SandboxRefFlags
 	Harness string `flag:"harness" desc:"Harness to run the prompt in." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
 	Prompt        string `flag:"prompt" desc:"Prompt to run the harness with, headless." required:"true"`
-	PermissionMode string `flag:"permission-mode" desc:"Claude Code permission mode for the headless run; without it every mutation is denied. Only --harness claude-code supports this." enum:"acceptEdits,auto,bypassPermissions,manual,dontAsk,plan"`
+	PermissionMode string `flag:"permission-mode" desc:"Claude Code permission mode for the headless run; defaults to auto. Only --harness claude-code supports this." enum:"acceptEdits,auto,bypassPermissions,manual,dontAsk,plan"`
 }
