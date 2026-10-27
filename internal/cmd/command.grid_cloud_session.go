@@ -610,6 +610,10 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 		githubPat, githubPatIsSet = "", false
 	}
 	createRequest.Network = cloudSessionProxyNetwork(harnessHost, apiKeyValue, runlayerM2MToken, githubPat)
+	sandboxExisted, err := sandboxExistsInTeam(ctx, client.API(), teamID, name)
+	if err != nil {
+		return err
+	}
 	creating := startSpinner(ctx, fmt.Sprintf("Creating session %s from image %s", name, imageRef))
 	record, err := client.API().CreateSandbox(ctx, managementapi.CreateSandboxParams{TeamId: teamID}, createRequest)
 	if err != nil {
@@ -624,6 +628,13 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	instance, err := client.Get(ctx, sandbox.GetOptions{Name: name})
 	if err != nil {
 		return err
+	}
+	if !sandboxExisted {
+		// Image builds can leave their own dirt in the baked checkout; start a fresh session at the image's HEAD.
+		restoreCheckout := "if [ -d /workspace/.git ]; then git -C /workspace checkout -- . && git -C /workspace clean -fdq; fi"
+		if err := cloudSessionExecStream(ctx, instance, restoreCheckout, "/workspace", cloudSessionInSandboxTimeout); err != nil {
+			return err
+		}
 	}
 	// The setup installs the placeholder credential, which the proxy replaces on the wire.
 	setupCommand := "baseten grid setup --harness " + flags.Harness + " --use-session-credential --yes"

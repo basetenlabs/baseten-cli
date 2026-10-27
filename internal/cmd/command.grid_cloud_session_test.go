@@ -1,6 +1,12 @@
 package cmd
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/basetenlabs/baseten-go/client/managementapi"
+)
 
 func TestCloudSessionHarnessDispatchCommand(t *testing.T) {
 	tests := []struct {
@@ -78,6 +84,44 @@ func TestCloudSessionDispatchPermissionMode(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := cloudSessionDispatchPermissionMode(test.harness, test.flagValue); got != test.want {
 				t.Errorf("mode %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+type stubSandboxAPI struct {
+	getSandboxErr error
+}
+
+func (stub stubSandboxAPI) GetSandbox(context.Context, string, managementapi.GetSandboxParams) (*managementapi.Sandbox, error) {
+	return &managementapi.Sandbox{}, stub.getSandboxErr
+}
+
+func TestSandboxExistsInTeam(t *testing.T) {
+	tests := []struct {
+		name          string
+		getSandboxErr error
+		want          bool
+		wantErr       bool
+	}{
+		{name: "exists", want: true},
+		{name: "missing", getSandboxErr: &managementapi.ResponseError{StatusCode: 404}},
+		{name: "other error", getSandboxErr: errors.New("sandbox API unreachable"), wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := sandboxExistsInTeam(context.Background(), stubSandboxAPI{getSandboxErr: test.getSandboxErr}, nil, "demo-session")
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("exists %v, want an error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("exists: %v", err)
+			}
+			if got != test.want {
+				t.Errorf("exists %v, want %v", got, test.want)
 			}
 		})
 	}
