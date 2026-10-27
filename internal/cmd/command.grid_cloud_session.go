@@ -160,11 +160,18 @@ func cloudSessionHarnessResumeCommand(harnessName string) (string, error) {
 }
 
 // cloudSessionHarnessDispatchCommand runs a prompt headless in the harness.
-func cloudSessionHarnessDispatchCommand(harnessName string, prompt string) (string, error) {
+func cloudSessionHarnessDispatchCommand(harnessName string, prompt string, permissionMode string) (string, error) {
 	switch harnessName {
 	case "claude-code":
-		return "claude -p " + sandboxShellQuote(prompt), nil
+		commandLine := "claude -p"
+		if permissionMode != "" {
+			commandLine += " --permission-mode " + sandboxShellQuote(permissionMode)
+		}
+		return commandLine + " " + sandboxShellQuote(prompt), nil
 	case "codex":
+		if permissionMode != "" {
+			return "", cmd.NewErrUsagef("--permission-mode: not supported by --harness %s", harnessName)
+		}
 		return "codex exec " + sandboxShellQuote(prompt), nil
 	default:
 		return "", cmd.NewErrUsagef("--harness %s: not supported by cloud-session yet", harnessName)
@@ -720,7 +727,7 @@ func cloudSessionAttach(ctx *CommandContext, ref cmd.SandboxRefFlags, tmuxWindow
 }
 
 func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessionDispatchFlags) error {
-	commandLine, err := cloudSessionHarnessDispatchCommand(flags.Harness, flags.Prompt)
+	commandLine, err := cloudSessionHarnessDispatchCommand(flags.Harness, flags.Prompt, flags.PermissionMode)
 	if err != nil {
 		return err
 	}
