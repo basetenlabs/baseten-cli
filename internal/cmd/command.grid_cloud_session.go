@@ -726,8 +726,17 @@ func cloudSessionAttach(ctx *CommandContext, ref cmd.SandboxRefFlags, tmuxWindow
 	return sandboxConnectTerminal(ctx, ref, attachCommand)
 }
 
+// Default claude-code to auto: a dispatch that denies every mutation cannot work.
+func cloudSessionDispatchPermissionMode(harness string, flagValue string) string {
+	if flagValue == "" && harness == "claude-code" {
+		return "auto"
+	}
+	return flagValue
+}
+
 func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessionDispatchFlags) error {
-	commandLine, err := cloudSessionHarnessDispatchCommand(flags.Harness, flags.Prompt, flags.PermissionMode)
+	commandLine, err := cloudSessionHarnessDispatchCommand(
+		flags.Harness, flags.Prompt, cloudSessionDispatchPermissionMode(flags.Harness, flags.PermissionMode))
 	if err != nil {
 		return err
 	}
