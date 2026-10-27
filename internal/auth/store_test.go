@@ -168,10 +168,19 @@ func TestStore_CancelledContext(t *testing.T) {
 	_, err := s.GetAPIKey(ctx, profileA)
 	require.ErrorIs(t, err, context.Canceled)
 
-	// A cancelled write fails rather than falling back to plaintext storage.
+	// A cancelled write fails without storing anything, in the keyring or as a
+	// plaintext fallback.
 	require.ErrorIs(t, s.SetAPIKeyProfile(ctx, profileB, remoteURL, "key-bob", true, nil), context.Canceled)
 	_, ok := s.GetProfile(profileB)
 	require.False(t, ok)
+	_, err = s.GetAPIKey(t.Context(), profileB)
+	require.Error(t, err)
+
+	// A cancelled removal leaves the keyring entry in place.
+	require.ErrorIs(t, s.RemoveProfile(ctx, profileA), context.Canceled)
+	got, err := s.GetAPIKey(t.Context(), profileA)
+	require.NoError(t, err)
+	require.Equal(t, apiKeyA, got)
 }
 
 func TestStore_ProfileIsolation(t *testing.T) {

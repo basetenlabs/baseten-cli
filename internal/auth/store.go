@@ -150,6 +150,9 @@ func keyringDo(ctx context.Context, fn func() error) error {
 	// Keyring operations take no context and can block indefinitely on an OS
 	// prompt, such as a macOS keychain access dialog. On cancellation fn is
 	// abandoned rather than awaited, since the process exits shortly after.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	done := make(chan error, 1)
 	go func() { done <- fn() }()
 	select {
