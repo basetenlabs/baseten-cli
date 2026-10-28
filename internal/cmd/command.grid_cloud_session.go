@@ -231,11 +231,8 @@ func cloudSessionURLHost(rawURL string) (string, error) {
 	return parsed.Hostname(), nil
 }
 
-// cloudSessionProxyNetwork puts the session's credentials in the proxy's
-// write-only secret store, replacing the Authorization header on harness,
-// Runlayer and GitHub traffic; the placeholders in the sandbox are all an
-// agent can leak. The Baseten key reaches only the harness host: the sandbox
-// has no control-plane access.
+// The placeholders in the sandbox are all an agent can leak; the Baseten key
+// reaches only the harness host, never the control plane.
 func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string, runlayerM2MToken string, githubPat string) *managementapi.SandboxNetwork {
 	routing := []managementapi.SandboxProxyTarget{{
 		Destinations: &[]string{harnessHost},
@@ -422,8 +419,6 @@ func cloudSessionExecStream(ctx *CommandContext, instance *sandbox.Sandbox, comm
 // The sandbox sees only this value; the proxy swaps in the session credential on the wire.
 const cloudSessionPlaceholderAPIKey = "proxy-injected"
 
-// cloudSessionHarnessConfigDirs are the harnesses' native config dirs inside
-// the session, where root runs them.
 var cloudSessionHarnessConfigDirs = map[string]string{
 	harness.ClaudeCode: "/root/.claude",
 	harness.Codex:      "/root/.codex",
@@ -431,10 +426,7 @@ var cloudSessionHarnessConfigDirs = map[string]string{
 	harness.Pi:         "/root/.pi/agent",
 }
 
-// cloudSessionWriteHarnessSettings runs grid setup's planning on this machine,
-// where the management API is reachable, against a copy of the session's
-// settings, and writes the result back: the sandbox itself never needs
-// control-plane access.
+// Plans on the host so the sandbox never needs control-plane access.
 func cloudSessionWriteHarnessSettings(ctx *CommandContext, instance *sandbox.Sandbox, flags *cmd.CloudSessionCreateFlags, apiKeyValue string) error {
 	harnessIndex := slices.IndexFunc(harness.All(), func(h harness.Harness) bool { return h.Name() == flags.Harness })
 	sandboxConfigDir, configDirKnown := cloudSessionHarnessConfigDirs[flags.Harness]
@@ -471,7 +463,7 @@ func cloudSessionWriteHarnessSettings(ctx *CommandContext, instance *sandbox.San
 	if err != nil {
 		return err
 	}
-	// Routes resolve in the session credential's team, the team the harness will call.
+	// The session credential's team, the one the harness calls.
 	managementClient, err := ctx.NewManagementClientWithAuth(remote.ManagementURL(), "Api-Key "+apiKeyValue)
 	if err != nil {
 		return err
