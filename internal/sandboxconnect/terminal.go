@@ -142,6 +142,8 @@ const (
 	// terminalPingGap is well under the observed ~2 min teardown of an idle
 	// terminal connection.
 	terminalPingGap = 30 * time.Second
+	// After a first failed ping, re-probe fast so a dead link surfaces within seconds.
+	deadLinkPingRetry = 5 * time.Second
 
 	wakeDialAttempts = 20
 	wakeDialInterval = 1 * time.Second
@@ -266,8 +268,9 @@ func (t *Terminal) Run(ctx context.Context) error {
 			}
 			return err
 		}
+		// Clear the stale sandbox screen: a frozen frame left behind would read as alive.
 		io.WriteString(t.opts.Errors,
-			"\r\nConnection lost. Idle connections drop after a couple of minutes; if the sandbox has hibernated, reconnecting wakes it.\r\n"+
+			"\x1b[2J\x1b[H\r\nConnection lost. Idle connections drop after a couple of minutes, and a suspended sandbox freezes the same way mid-work; reconnecting wakes it.\r\n"+
 				"Type any key to reconnect and wake the sandbox, or press Ctrl+C or Ctrl+D to quit.\r\n")
 		// The input loop ends when it delivers a keystroke, so a failed
 		// reconnect must restart it: nothing else would ever read the retry.
@@ -336,15 +339,29 @@ func (t *Terminal) runConnection(ctx context.Context) error {
 	go func() {
 		ticker := time.NewTicker(terminalPingGap)
 		defer ticker.Stop()
+		consecutivePingFailures := 0
 		for {
 			select {
 			case <-pingDone:
 				return
 			case <-ticker.C:
-				pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				_ = conn.Ping(pingCtx)
-				cancel()
 			}
+			pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := conn.Ping(pingCtx)
+			cancel()
+			if err == nil {
+				consecutivePingFailures = 0
+				ticker.Reset(terminalPingGap)
+				continue
+			}
+			consecutivePingFailures++
+			// A suspended sandbox stops answering pings while the socket stays half-open;
+			// two failures = dead link, so force the close into the reconnect flow.
+			if consecutivePingFailures >= 2 {
+				conn.Close(websocket.StatusAbnormalClosure, "ping timeout")
+				return
+			}
+			ticker.Reset(deadLinkPingRetry)
 		}
 	}()
 	disconnect := make(chan struct{})
@@ -426,10 +443,7 @@ func (t *Terminal) readLoop(ctx context.Context, disconnect chan struct{}) error
 				return nil
 			}
 			close(disconnect)
-			if websocket.CloseStatus(err) == -1 {
-				return &TransportLostError{err: err}
-			}
-			return fmt.Errorf("terminal connection: %w", err)
+			return &TransportLostError{err: err}
 		}
 		var frame message
 		if err := json.Unmarshal(payload, &frame); err != nil {
