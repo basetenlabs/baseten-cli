@@ -394,7 +394,9 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 // command context is cancelled.
 func (c *CommandContext) RunPrompt(field huh.Field) error {
 	// Equivalent to the field's own Run, which ignores the context and so
-	// leaves the prompt running after Ctrl-C has cancelled the command.
+	// leaves the prompt running when the command is cancelled by a SIGTERM or
+	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
+	// signal, which huh handles itself by returning huh.ErrUserAborted.
 	return huh.NewForm(huh.NewGroup(field)).WithShowHelp(false).RunWithContext(c)
 }
 
