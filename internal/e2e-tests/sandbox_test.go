@@ -257,7 +257,8 @@ func TestE2ESandbox(t *testing.T) {
 		require.Contains(t, described, "Response headers:  X-E2E=added\n")
 		require.Contains(t, mustCLI(t, "sandbox", "preview", "list", "--name", name), previewName)
 
-		expiresAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+		// A token cannot outlive its preview, which was created with a 1h TTL.
+		expiresAt := time.Now().Add(30 * time.Minute).UTC().Format(time.RFC3339)
 		tokenText := mustCLI(t, append([]string{"sandbox", "preview", "token", "create", "--expires-at", expiresAt}, previewFlags...)...)
 		// The printed URL is the one fetched, so it must work as printed.
 		tokenURL := regexp.MustCompile(`URL:\s+(` + regexp.QuoteMeta(url) + `\?preview_token=\S+)\n`).FindStringSubmatch(tokenText)
