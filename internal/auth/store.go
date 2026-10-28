@@ -182,11 +182,11 @@ func (s *Store) SetOAuthProfile(ctx context.Context, profileName, remoteURL stri
 		if err != nil {
 			return fmt.Errorf("marshaling credential: %w", err)
 		}
-		err = keyringDo(ctx, func() error { return keyring.Set(keyringServiceName, profileName, string(secretJSON)) })
+		keyringErr := keyringDo(ctx, func() error { return keyring.Set(keyringServiceName, profileName, string(secretJSON)) })
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if err != nil {
+		if keyringErr != nil {
 			if warnWriter != nil {
 				warnWriter("warning: could not store credentials in system keyring, storing in plain text\n")
 			}
@@ -216,11 +216,11 @@ func (s *Store) SetAPIKeyProfile(ctx context.Context, profileName, remoteURL, ap
 
 	profile := Profile{RemoteURL: remoteURL, AuthType: AuthTypeAPIKey}
 	if !s.insecureStorage {
-		err = keyringDo(ctx, func() error { return keyring.Set(keyringServiceName, profileName, apiKey) })
+		keyringErr := keyringDo(ctx, func() error { return keyring.Set(keyringServiceName, profileName, apiKey) })
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if err != nil {
+		if keyringErr != nil {
 			if warnWriter != nil {
 				warnWriter("warning: could not store credentials in system keyring, storing in plain text\n")
 			}
@@ -241,14 +241,14 @@ func (s *Store) SetAPIKeyProfile(ctx context.Context, profileName, remoteURL, ap
 // keyring first, then falling back to the auth.json plaintext field.
 func (s *Store) GetOAuthCredential(ctx context.Context, profileName string) (*OAuthCredential, error) {
 	var secret string
-	err := keyringDo(ctx, func() (err error) {
+	keyringErr := keyringDo(ctx, func() (err error) {
 		secret, err = keyring.Get(keyringServiceName, profileName)
 		return err
 	})
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
-	if err == nil {
+	if keyringErr == nil {
 		var cred OAuthCredential
 		if err := json.Unmarshal([]byte(secret), &cred); err != nil {
 			return nil, fmt.Errorf("parsing keyring credential: %w", err)
@@ -274,14 +274,14 @@ func (s *Store) GetOAuthCredential(ctx context.Context, profileName string) (*OA
 // falling back to the auth.json plaintext field.
 func (s *Store) GetAPIKey(ctx context.Context, profileName string) (string, error) {
 	var secret string
-	err := keyringDo(ctx, func() (err error) {
+	keyringErr := keyringDo(ctx, func() (err error) {
 		secret, err = keyring.Get(keyringServiceName, profileName)
 		return err
 	})
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return "", ctxErr
 	}
-	if err == nil {
+	if keyringErr == nil {
 		return secret, nil
 	}
 

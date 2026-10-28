@@ -35,14 +35,14 @@ func (s RoutesKeyScope) account() string {
 // field.
 func (s *Store) GetRoutesKey(ctx context.Context, scope RoutesKeyScope) (string, error) {
 	var key string
-	err := keyringDo(ctx, func() (err error) {
+	keyringErr := keyringDo(ctx, func() (err error) {
 		key, err = keyring.Get(routesKeyService, scope.account())
 		return err
 	})
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return "", ctxErr
 	}
-	if err == nil {
+	if keyringErr == nil {
 		return key, nil
 	}
 	af, err := s.Load()
@@ -60,15 +60,15 @@ func (s *Store) SetRoutesKey(ctx context.Context, scope RoutesKeyScope, key stri
 	defer s.mu.Unlock()
 
 	if !s.insecureStorage {
-		err := keyringDo(ctx, func() error { return keyring.Set(routesKeyService, scope.account(), key) })
+		keyringErr := keyringDo(ctx, func() error { return keyring.Set(routesKeyService, scope.account(), key) })
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if err == nil {
+		if keyringErr == nil {
 			return nil
 		}
 		if warnWriter != nil {
-			warnWriter(fmt.Sprintf("warning: could not store Grid API key in system keyring, storing in plain text: %v\n", err))
+			warnWriter(fmt.Sprintf("warning: could not store Grid API key in system keyring, storing in plain text: %v\n", keyringErr))
 		}
 	}
 	af, err := s.loadLocked()
