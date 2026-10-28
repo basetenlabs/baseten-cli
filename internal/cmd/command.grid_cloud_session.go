@@ -770,6 +770,8 @@ func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessio
 		WorkingDir: options.WorkingDir,
 		Name:       options.Name,
 		Timeout:    options.Timeout,
+		// A headless turn fires no harness hooks, so the dispatch process itself holds the sandbox awake.
+		KeepAlive: true,
 	}) {
 		if err != nil {
 			return fmt.Errorf("running the dispatch in session %s: %w", flags.Name, err)
