@@ -16,19 +16,21 @@ var commandGrid = Command{
 			Name:    "setup",
 			Summary: "Set up harness authentication and configuration (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
-				"Configure installed harnesses with your team's routes and a Grid API key.\n\n" +
+				"Configure installed harnesses with your team's routes. Each harness runs 'baseten grid token' to fetch a short-lived Grid token for its requests, " +
+				"except OpenCode, which gets a Grid API key.\n\n" +
 				"Setup offers a picker of installed harnesses when --harness is omitted. Repeat --harness to select several. " +
 				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code lists the routes that serve " +
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the primary route unless --primary-route-id is set. " +
 				"Use 'baseten grid route list' to find route IDs; harness configurations use the corresponding route names.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
-				"The Grid API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
+				"A Grid API key an earlier setup installed is deleted once no other harness on this machine uses it. OpenCode's Grid API key is created on first setup and reused afterward. " +
+				"With --use-session-credential, the session's API key is installed in every harness instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
-				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
+				TextDescription: "The replaced keys and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
 				Examples: []CommandExample{
 					{
 						Description: "Configure installed harnesses interactively.",
@@ -373,6 +375,26 @@ var commandGrid = Command{
 			},
 		},
 		{
+			Name:    "token",
+			Hidden:  true,
+			Summary: "Print a short-lived Grid token",
+			Description: "Print a Grid token for a team: the team a harness was set up with (--harness), a named team (--team), or your only team. " +
+				"Harnesses configured by 'grid setup' run this command to authenticate their requests, so it is rarely run by hand.\n\n" +
+				"The token is scoped to you and the team and lasts four hours. It is cached in the system keyring, with a plaintext " +
+				"fallback in the config directory, and replaced when fewer than 15 minutes remain. Messages go to stderr, so stdout is only the token.",
+			Flags: GridTokenFlags{},
+			Output: &CommandOutput[JSONUndefined]{
+				JSONOutputUnimportant: true,
+				TextDescription:       "The token followed by a newline, whatever --output says. On failure, nothing on stdout, the reason on stderr, and exit code 1.",
+				Examples: []CommandExample{
+					{
+						Description: "Print the token Codex uses.",
+						Command:     "baseten grid token --harness codex",
+					},
+				},
+			},
+		},
+		{
 			Name:    "classifier",
 			Summary: "Discover managed classifiers (PRE-RELEASE)",
 			Children: []Command{{
@@ -502,7 +524,7 @@ type GridPlan struct {
 // GridPlanList is the JSON output of `baseten grid setup` and `baseten grid teardown`.
 type GridPlanList struct {
 	Items []GridPlan `json:"items"`
-	// DeletedAPIKeys lists the prefixes of Grid API keys teardown deleted.
+	// DeletedAPIKeys lists the prefixes of Grid API keys setup or teardown deleted.
 	DeletedAPIKeys []string `json:"deleted_api_keys,omitempty"`
 }
 
@@ -560,6 +582,13 @@ type GridHarnessFlags struct {
 	ConfigDir string   `flag:"config-dir" desc:"Harness configuration directory. Requires exactly one --harness. Defaults to the harness's own location."`
 }
 
+// GridTokenFlags are the flags for `baseten grid token`.
+type GridTokenFlags struct {
+	CommandFlags
+	Harness string `flag:"harness" desc:"Harness whose recorded team the token is for." enum:"claude-code,codex,opencode,pi"`
+	Team    string `flag:"team" desc:"Team name or ID the token is for. Omit, with --harness, to let the API select your only team."`
+}
+
 // GridStatusFlags are the flags for `baseten grid status`.
 type GridStatusFlags struct {
 	CommandFlags
@@ -576,7 +605,7 @@ type GridSetupFlags struct {
 	BackgroundRouteID    string `flag:"background-route-id" desc:"Route ID for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
 	SubagentRouteID      string `flag:"subagent-route-id" desc:"Route ID for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
 	FallbackRouteID      string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
-	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
+	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of the Grid token helper. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
 	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
