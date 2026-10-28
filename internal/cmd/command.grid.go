@@ -201,6 +201,17 @@ type gridHarnessTarget struct {
 	record harness.Record
 }
 
+func gridRouteNameByID(listed []gridHarnessRoute, team *managementapi.Team, flag string, routeID string) (string, error) {
+	index := slices.IndexFunc(listed, func(r gridHarnessRoute) bool { return r.Id == routeID })
+	if index < 0 {
+		return "", cmd.NewErrUsagef("%s: no route with ID %q in team %s; run 'baseten grid route list --team %s' to see route IDs", flag, routeID, team.Name, team.Id)
+	}
+	if listed[index].Name == "" {
+		return "", fmt.Errorf("route %q has no name", routeID)
+	}
+	return listed[index].Name, nil
+}
+
 func gridLoadHarnessSetupRoutes(ctx *CommandContext, api *managementapi.Client, selectedTeam string) (*managementapi.Team, []gridHarnessRoute, error) {
 	// teamID is the team last sent, which after a pick is the chosen one.
 	var teamID *string
@@ -493,14 +504,9 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 			if selection.id == "" {
 				continue
 			}
-			index := slices.IndexFunc(listed, func(r gridHarnessRoute) bool { return r.Id == selection.id })
-			if index < 0 {
-				return cmd.NewErrUsagef("%s: no route with ID %q in team %s; run 'baseten grid route list --team %s' to see route IDs", selection.flag, selection.id, team.Name, team.Id)
+			if *selection.name, err = gridRouteNameByID(listed, team, selection.flag, selection.id); err != nil {
+				return err
 			}
-			if listed[index].Name == "" {
-				return fmt.Errorf("route %q has no name", selection.id)
-			}
-			*selection.name = listed[index].Name
 		}
 		targets[i] = gridHarnessTarget{gridSelectedHarness: selected[i], record: record}
 	}
