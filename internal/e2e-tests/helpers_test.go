@@ -188,17 +188,24 @@ type cliResult struct {
 }
 
 // APIStatus is the HTTP status of the failed API call that ended a command
-// run with --output json, read from the JSON error the CLI documents on
-// stderr. Zero when the failure did not come from an API call.
+// run with --output json, read from the JSON error the CLI documents as the
+// last JSON document on stdout. Zero when the failure did not come from an API
+// call.
 func (r cliResult) APIStatus(t *testing.T) int {
 	t.Helper()
-	var envelope struct {
+	type envelope struct {
 		Error struct {
 			APIStatusCode int `json:"api_status_code"`
 		} `json:"error"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(r.Stderr), &envelope), "stderr: %s", r.Stderr)
-	return envelope.Error.APIStatusCode
+	// Anything the command printed before failing comes first.
+	var last envelope
+	decoder := json.NewDecoder(strings.NewReader(r.Stdout))
+	for decoder.More() {
+		last = envelope{}
+		require.NoError(t, decoder.Decode(&last), "stdout: %s", r.Stdout)
+	}
+	return last.Error.APIStatusCode
 }
 
 // cliRun runs the CLI in-process until it exits. It is the e2e tests' only way

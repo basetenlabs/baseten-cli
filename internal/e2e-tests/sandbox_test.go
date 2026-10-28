@@ -452,7 +452,7 @@ func TestE2ESandboxVolume(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(result.Stdout), &deleted))
 			return deleted, true
 		}
-		require.Equal(t, http.StatusConflict, result.APIStatus(t), "stderr: %s", result.Stderr)
+		require.Equal(t, http.StatusConflict, result.APIStatus(t), "stdout: %s\nstderr: %s", result.Stdout, result.Stderr)
 		return nil, false
 	}
 	t.Cleanup(func() {
@@ -490,7 +490,7 @@ func TestE2ESandboxVolume(t *testing.T) {
 	require.Equal(t, map[string]any{"created_by": "cli-e2e", "stage": "two"}, updated["labels"])
 	shrunk := cliRun(t.Context(), cliRunOptions{Args: []string{"sandbox", "volume", "update", "--name", volumeName, "--size", "256", "--output", "json"}})
 	require.Error(t, shrunk.Err)
-	require.Equal(t, http.StatusBadRequest, shrunk.APIStatus(t), "stderr: %s", shrunk.Stderr)
+	require.Equal(t, http.StatusBadRequest, shrunk.APIStatus(t), "stdout: %s\nstderr: %s", shrunk.Stdout, shrunk.Stderr)
 
 	sandboxName := "cli-e2e-" + randomSuffix(t)[:8]
 	step(t, "create sandbox %s with volume %s", sandboxName, volumeName)
