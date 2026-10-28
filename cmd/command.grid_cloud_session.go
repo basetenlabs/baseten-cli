@@ -116,6 +116,7 @@ type CloudSessionCreateFlags struct {
 	Memory              int      `flag:"memory" desc:"Sandbox memory in MB, 1024 to 262144." default:"8192"`
 	Harness             string   `flag:"harness" desc:"Harness the session runs." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
 	HarnessURL          string   `flag:"harness-url" desc:"Harness API base URL. Default https://coding.baseten.co." default:"https://coding.baseten.co"`
+	PrimaryRouteID      string   `flag:"primary-route-id" desc:"Primary route ID for the harness. Defaults to GLM 5.3 Fast for claude-code, else the team's default for the harness."`
 	Env                 []string `flag:"env" desc:"Local environment variable to inject into the session as a secret, by name; its value is read from this process. Repeatable."`
 	PortConfig          bool     `flag:"port-config" desc:"Copy the local harness configuration into the session: ~/.claude/skills verbatim, and ~/CLAUDE.md and ~/AGENTS.md merged after the sandbox instructions."`
 	RunlayerServer      []string `flag:"runlayer-server" desc:"Runlayer server ID to expose in the session as an MCP server through the agent account. Repeatable. Defaults to the launcher-configured servers when omitted."`
@@ -128,7 +129,7 @@ type CloudSessionDispatchFlags struct {
 	CommandFlags
 	SandboxProcessOptionFlags
 	SandboxRefFlags
-	Harness string `flag:"harness" desc:"Harness to run the prompt in." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
-	Prompt        string `flag:"prompt" desc:"Prompt to run the harness with, headless." required:"true"`
+	Harness        string `flag:"harness" desc:"Harness to run the prompt in." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
+	Prompt         string `flag:"prompt" desc:"Prompt to run the harness with, headless." required:"true"`
 	PermissionMode string `flag:"permission-mode" desc:"Claude Code permission mode for the headless run; defaults to auto. Only --harness claude-code supports this." enum:"acceptEdits,auto,bypassPermissions,manual,dontAsk,plan"`
 }
