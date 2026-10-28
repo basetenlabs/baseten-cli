@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -32,8 +33,16 @@ func (s RoutesKeyScope) account() string {
 // GetRoutesKey returns the Grid API key saved for scope, or "" if there is
 // none. Tries the keyring first, then falls back to the auth.json plaintext
 // field.
-func (s *Store) GetRoutesKey(scope RoutesKeyScope) (string, error) {
-	if key, err := keyring.Get(routesKeyService, scope.account()); err == nil {
+func (s *Store) GetRoutesKey(ctx context.Context, scope RoutesKeyScope) (string, error) {
+	var key string
+	keyringErr := keyringDo(ctx, func() (err error) {
+		key, err = keyring.Get(routesKeyService, scope.account())
+		return err
+	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
+	}
+	if keyringErr == nil {
 		return key, nil
 	}
 	af, err := s.Load()
@@ -46,17 +55,20 @@ func (s *Store) GetRoutesKey(scope RoutesKeyScope) (string, error) {
 // SetRoutesKey saves a Grid API key for scope. Tries the keyring first;
 // falls back to plaintext in auth.json with a warning written to warnWriter
 // (if non-nil).
-func (s *Store) SetRoutesKey(scope RoutesKeyScope, key string, warnWriter func(string)) error {
+func (s *Store) SetRoutesKey(ctx context.Context, scope RoutesKeyScope, key string, warnWriter func(string)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !s.insecureStorage {
-		err := keyring.Set(routesKeyService, scope.account(), key)
-		if err == nil {
+		keyringErr := keyringDo(ctx, func() error { return keyring.Set(routesKeyService, scope.account(), key) })
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if keyringErr == nil {
 			return nil
 		}
 		if warnWriter != nil {
-			warnWriter(fmt.Sprintf("warning: could not store Grid API key in system keyring, storing in plain text: %v\n", err))
+			warnWriter(fmt.Sprintf("warning: could not store Grid API key in system keyring, storing in plain text: %v\n", keyringErr))
 		}
 	}
 	af, err := s.loadLocked()

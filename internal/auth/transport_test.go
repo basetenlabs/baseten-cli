@@ -64,7 +64,7 @@ func mustRequest(t *testing.T, url string) *http.Request {
 
 func TestTransport_EphemeralAPIKeyWinsOverCurrentProfile(t *testing.T) {
 	s := storeWithConfigDir(t)
-	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, "stored-key", true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, "stored-key", true, nil))
 	t.Setenv("BASETEN_API_KEY", "env-key")
 
 	es := newEchoServer(t)
@@ -78,7 +78,7 @@ func TestTransport_EphemeralAPIKeyWinsOverCurrentProfile(t *testing.T) {
 
 func TestTransport_APIKeyInjected(t *testing.T) {
 	s := storeWithConfigDir(t)
-	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 
 	es := newEchoServer(t)
 	tr := &auth.Transport{Session: mustResolve(t, profileA)}
@@ -92,7 +92,7 @@ func TestTransport_APIKeyInjected(t *testing.T) {
 func TestTransport_OAuthBearerInjected(t *testing.T) {
 	s := storeWithConfigDir(t)
 	cred := auth.OAuthCredential{AccessToken: accessToken, RefreshToken: refreshToken}
-	require.NoError(t, s.SetOAuthProfile(profileA, remoteURL, cred, true, nil))
+	require.NoError(t, s.SetOAuthProfile(t.Context(), profileA, remoteURL, cred, true, nil))
 
 	es := newEchoServer(t)
 	tr := &auth.Transport{
@@ -117,7 +117,7 @@ func TestTransport_OAuthRefreshRotatesStoredToken(t *testing.T) {
 	s := storeWithConfigDir(t)
 	// Blank access token with a refresh token forces oauth2 to refresh
 	// immediately: the library treats a missing access token as invalid.
-	require.NoError(t, s.SetOAuthProfile(profileA, remoteURL,
+	require.NoError(t, s.SetOAuthProfile(t.Context(), profileA, remoteURL,
 		auth.OAuthCredential{AccessToken: "", RefreshToken: "old-refresh"}, true, nil))
 
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +142,7 @@ func TestTransport_OAuthRefreshRotatesStoredToken(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, "Bearer new-access", es.LastAuthHeader)
 
-	stored, err := s.GetOAuthCredential(profileA)
+	stored, err := s.GetOAuthCredential(t.Context(), profileA)
 	require.NoError(t, err)
 	require.Equal(t, "new-access", stored.AccessToken)
 	require.Equal(t, "new-refresh", stored.RefreshToken)
@@ -150,7 +150,7 @@ func TestTransport_OAuthRefreshRotatesStoredToken(t *testing.T) {
 
 func TestTransport_OAuthRefreshFailureSurfacesError(t *testing.T) {
 	s := storeWithConfigDir(t)
-	require.NoError(t, s.SetOAuthProfile(profileA, remoteURL,
+	require.NoError(t, s.SetOAuthProfile(t.Context(), profileA, remoteURL,
 		auth.OAuthCredential{AccessToken: "", RefreshToken: "bad-refresh"}, true, nil))
 
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -170,7 +170,7 @@ func TestTransport_OAuthRefreshFailureSurfacesError(t *testing.T) {
 
 func TestTransport_CustomBaseUsed(t *testing.T) {
 	s := storeWithConfigDir(t)
-	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 
 	called := false
 	base := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -192,8 +192,8 @@ func TestTransport_CustomBaseUsed(t *testing.T) {
 
 func TestSession_CacheIdentity(t *testing.T) {
 	s := storeWithConfigDir(t)
-	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
-	require.NoError(t, s.SetAPIKeyProfile(profileB, remoteURL, "api-key-bob", false, nil))
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileB, remoteURL, "api-key-bob", false, nil))
 
 	alice := mustResolve(t, profileA).CacheIdentity()
 	bob := mustResolve(t, profileB).CacheIdentity()
@@ -234,8 +234,8 @@ func TestSession_UsesAPIKey(t *testing.T) {
 	s := storeWithConfigDir(t)
 	require.False(t, mustResolve(t, "").UsesAPIKey(), "unauthenticated")
 
-	require.NoError(t, s.SetAPIKeyProfile(profileA, remoteURL, apiKeyA, true, nil))
-	require.NoError(t, s.SetOAuthProfile(profileB, remoteURL, auth.OAuthCredential{AccessToken: "token"}, false, nil))
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetOAuthProfile(t.Context(), profileB, remoteURL, auth.OAuthCredential{AccessToken: "token"}, false, nil))
 	require.True(t, mustResolve(t, profileA).UsesAPIKey())
 	require.False(t, mustResolve(t, profileB).UsesAPIKey())
 

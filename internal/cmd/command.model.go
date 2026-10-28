@@ -199,10 +199,9 @@ func commandModelDelete(ctx *CommandContext, flags *cmd.ModelDeleteFlags) error 
 			return cmd.NewErrUsagef("cannot confirm deletion: stdin is not a terminal; pass --yes to skip the prompt")
 		}
 		var typed string
-		err := huh.NewInput().
+		err := ctx.RunPrompt(huh.NewInput().
 			Title(fmt.Sprintf("Type the model name %q to confirm deletion", model.Name)).
-			Value(&typed).
-			Run()
+			Value(&typed))
 		if err != nil {
 			return err
 		}

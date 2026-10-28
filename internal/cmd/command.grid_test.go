@@ -519,7 +519,7 @@ func Test_Grid_Setup_KeyPerTeamAndUser(t *testing.T) {
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-b/api_keys"))
 	h.Require.Equal(map[string]any{"type": "ROUTES", "name": "laptop"}, api.FindCall("POST", "/v1/teams/team-a/api_keys").BodyJSON(t))
-	key, err := configDirStore(t).GetRoutesKey(auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: "team-b"})
+	key, err := configDirStore(t).GetRoutesKey(t.Context(), auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: "team-b"})
 	h.Require.NoError(err)
 	h.Require.Equal("secret-team-b", key)
 
@@ -2045,13 +2045,13 @@ func Test_Grid_Setup_UseSessionCredentialRequiresAPIKey(t *testing.T) {
 	path := harnessSettingsFile("claude-code", dir)
 
 	// An OAuth session has no embeddable key.
-	h.Require.NoError(configDirStore(t).SetOAuthProfile("alice", api.URL, auth.OAuthCredential{AccessToken: "at", RefreshToken: "rt"}, true, nil))
+	h.Require.NoError(configDirStore(t).SetOAuthProfile(t.Context(), "alice", api.URL, auth.OAuthCredential{AccessToken: "at", RefreshToken: "rt"}, true, nil))
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--dry-run"))
 	h.Require.Contains(h.Stderr.String(), "no API key to install")
 	h.Require.NoFileExists(path)
 
 	// Neither does an unauthenticated session, which cannot list teams at all.
-	h.Require.NoError(configDirStore(t).RemoveProfile("alice"))
+	h.Require.NoError(configDirStore(t).RemoveProfile(t.Context(), "alice"))
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--dry-run"))
 	h.Require.Contains(h.Stderr.String(), "not logged in")
 	h.Require.NoFileExists(path)
