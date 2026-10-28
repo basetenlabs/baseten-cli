@@ -205,6 +205,10 @@ func (t *Terminal) connect(ctx context.Context, token string) error {
 	query.Set("cols", strconv.Itoa(cols))
 	query.Set("rows", strconv.Itoa(rows))
 	query.Set("sessionId", t.sessionID)
+	// The pty's TERM follows the caller's terminal; absent, the server defaults to xterm-256color.
+	if terminalTerm := os.Getenv("TERM"); terminalTerm != "" {
+		query.Set("term", terminalTerm)
+	}
 	parsed.RawQuery = query.Encode()
 
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
