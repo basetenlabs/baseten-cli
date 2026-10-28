@@ -195,6 +195,29 @@ func Test_Sandbox_Create_FilesystemMaxMemoryUsage(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "FS mem usage: 2048Mi")
 }
 
+func Test_Sandbox_Create_Volume(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := newSandboxTestAPI(h)
+	record := sandboxTestRecord(m, "sbx-1", "DEPLOYED")
+	record["volumes"] = []any{map[string]any{"name": "data", "mount_path": "/mnt/a:b", "read_only": true}}
+	m.SetRoute("POST", "/v1/sandboxes/instances", 201, record)
+
+	// Only the first colon ends the name, and a trailing :ro is read-only.
+	h.Require.NoError(h.Execute("sandbox", "create", "--volume", "data:/mnt/a:b:ro", "--volume", "other:/other"))
+	h.Require.Equal(map[string]any{"volumes": []any{
+		map[string]any{"name": "data", "mount_path": "/mnt/a:b", "read_only": true},
+		map[string]any{"name": "other", "mount_path": "/other"},
+	}}, sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[0].BodyJSON(t))
+	h.Require.Contains(h.Stdout.String(), "Volume:       data at /mnt/a:b (read-only)\n")
+}
+
+func Test_Sandbox_Create_RejectsMalformedVolume(t *testing.T) {
+	for _, value := range []string{"data", ":/data", "data:", "data::ro"} {
+		h := NewCommandHarness(t)
+		h.Require.ErrorContains(h.Execute("sandbox", "create", "--volume", value), "NAME:MOUNT_PATH", value)
+	}
+}
+
 func Test_Sandbox_Create_RejectsMalformedKeyValues(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.Require.ErrorContains(h.Execute("sandbox", "create", "--env", "NOEQUALS"), "KEY=VALUE")
@@ -243,6 +266,20 @@ func Test_Sandbox_Update_SendsOnlySetFields(t *testing.T) {
 	h.Require.NoError(h.Execute("sandbox", "update", "--name", "sbx-1", "--terminated-retention", "7d"))
 	h.Require.Equal(map[string]any{"lifecycle": map[string]any{"terminated_retention": "168h0m0s"}},
 		sandboxTestCalls(m, "PATCH", "/v1/sandboxes/instances/sbx-1")[1].BodyJSON(t))
+}
+
+func Test_Sandbox_Update_ClearLabels(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := newSandboxTestAPI(h)
+	m.SetRoute("PATCH", "/v1/sandboxes/instances/sbx-1", 200, sandboxTestRecord(m, "sbx-1", "DEPLOYED"))
+
+	h.Require.NoError(h.Execute("sandbox", "update", "--name", "sbx-1", "--clear-labels"))
+	// Sent empty, not left out, so the server removes them all.
+	h.Require.Equal(map[string]any{"labels": map[string]any{}},
+		sandboxTestCalls(m, "PATCH", "/v1/sandboxes/instances/sbx-1")[0].BodyJSON(t))
+
+	h.Require.ErrorContains(h.Execute("sandbox", "update", "--name", "sbx-1", "--clear-labels", "--label", "a=1"), "cannot be combined")
+	h.Require.Len(sandboxTestCalls(m, "PATCH", "/v1/sandboxes/instances/sbx-1"), 1)
 }
 
 func Test_Sandbox_Delete_ConfirmsAndLogsToStderr(t *testing.T) {

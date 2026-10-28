@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -156,19 +157,78 @@ func cliCtx(t *testing.T, ctx context.Context, args ...string) (stdout, stderr s
 // cliWithStdin is cliCtx that pipes the given string to the command's stdin.
 func cliWithStdin(t *testing.T, ctx context.Context, stdin string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	var sout, serr bytes.Buffer
-	exit := 0
-	err = cmd.Execute(ctx, cmd.ExecuteOptions{
-		Args:         args,
-		Stdin:        strings.NewReader(stdin),
-		Stdout:       &sout,
-		Stderr:       &serr,
-		ExitWithCode: func(c int) { exit = c },
-	})
-	if err == nil && exit != 0 {
-		err = fmt.Errorf("baseten %s: exit %d", strings.Join(args, " "), exit)
+	result := cliRun(ctx, cliRunOptions{Args: args, Stdin: strings.NewReader(stdin)})
+	return result.Stdout, result.Stderr, result.Err
+}
+
+// cliRunOptions configures [cliRun].
+type cliRunOptions struct {
+	Args []string
+
+	// Stdin is the command's stdin, empty when nil.
+	Stdin io.Reader
+
+	// Stdout and Stderr, when set, receive the command's output instead of
+	// [cliResult] capturing it.
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+// cliResult is the outcome of [cliRun].
+type cliResult struct {
+	// Stdout and Stderr are the captured output, empty when
+	// [cliRunOptions] redirected it.
+	Stdout string
+	Stderr string
+
+	ExitCode int
+
+	// Err is non-nil when the command failed, including any non-zero exit.
+	Err error
+}
+
+// APIStatus is the HTTP status of the failed API call that ended a command
+// run with --output json, read from the JSON error the CLI documents on
+// stderr. Zero when the failure did not come from an API call.
+func (r cliResult) APIStatus(t *testing.T) int {
+	t.Helper()
+	var envelope struct {
+		Error struct {
+			APIStatusCode int `json:"api_status_code"`
+		} `json:"error"`
 	}
-	return sout.String(), serr.String(), err
+	require.NoError(t, json.Unmarshal([]byte(r.Stderr), &envelope), "stderr: %s", r.Stderr)
+	return envelope.Error.APIStatusCode
+}
+
+// cliRun runs the CLI in-process until it exits. It is the e2e tests' only way
+// into the CLI, so they use it the way a user would: through arguments, the
+// standard streams, and the exit code.
+func cliRun(ctx context.Context, options cliRunOptions) cliResult {
+	var stdout, stderr bytes.Buffer
+	execute := cmd.ExecuteOptions{
+		Args:   options.Args,
+		Stdin:  options.Stdin,
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+	if execute.Stdin == nil {
+		execute.Stdin = strings.NewReader("")
+	}
+	if options.Stdout != nil {
+		execute.Stdout = options.Stdout
+	}
+	if options.Stderr != nil {
+		execute.Stderr = options.Stderr
+	}
+	var result cliResult
+	execute.ExitWithCode = func(code int) { result.ExitCode = code }
+	result.Err = cmd.Execute(ctx, execute)
+	if result.Err == nil && result.ExitCode != 0 {
+		result.Err = fmt.Errorf("baseten %s: exit %d", strings.Join(options.Args, " "), result.ExitCode)
+	}
+	result.Stdout, result.Stderr = stdout.String(), stderr.String()
+	return result
 }
 
 // mustCLI runs cli and fatals on error, returning stdout.

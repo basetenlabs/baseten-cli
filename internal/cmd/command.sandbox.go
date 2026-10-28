@@ -146,6 +146,10 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 	if err != nil {
 		return err
 	}
+	volumes, err := sandboxParseVolumes(flags.Volume)
+	if err != nil {
+		return err
+	}
 	lifecycle, err := sandboxLifecycle(flags.SandboxLifecycleFlags)
 	if err != nil {
 		return err
@@ -155,6 +159,7 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 		return err
 	}
 	request := managementapi.CreateSandboxRequest{
+		Volumes:   volumes,
 		Name:      sandboxOptionalString(flags.Name),
 		Region:    sandboxOptionalString(flags.Region),
 		Image:     sandboxOptionalString(flags.Image),
@@ -197,6 +202,9 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 }
 
 func commandSandboxUpdate(ctx *CommandContext, flags *cmd.SandboxUpdateFlags) error {
+	if flags.ClearLabels && len(flags.Label) > 0 {
+		return cmd.NewErrUsagef("--label and --clear-labels cannot be combined")
+	}
 	envs, err := sandboxParseEnvs(flags.SandboxEnvFlags)
 	if err != nil {
 		return err
@@ -204,6 +212,10 @@ func commandSandboxUpdate(ctx *CommandContext, flags *cmd.SandboxUpdateFlags) er
 	labels, err := sandboxParseKeyValues("label", flags.Label)
 	if err != nil {
 		return err
+	}
+	// An empty map is sent, not left out, so the server removes every label.
+	if flags.ClearLabels {
+		labels = map[string]string{}
 	}
 	lifecycle, err := sandboxLifecycle(flags.SandboxLifecycleFlags)
 	if err != nil {
@@ -553,6 +565,15 @@ func sandboxOutputRecord(ctx *CommandContext, record *managementapi.Sandbox) {
 		}
 		ctx.Outputf("Ports:        %s\n", strings.Join(ports, ", "))
 	}
+	if record.Volumes != nil {
+		for _, volume := range *record.Volumes {
+			readOnly := ""
+			if volume.ReadOnly != nil && *volume.ReadOnly {
+				readOnly = " (read-only)"
+			}
+			ctx.Outputf("Volume:       %s at %s%s\n", volume.Name, volume.MountPath, readOnly)
+		}
+	}
 	sandboxOutputField(ctx, "Created:      ", sandboxFormatTime(record.CreatedAt))
 	sandboxOutputField(ctx, "Last used:    ", sandboxFormatTime(record.LastUsedAt))
 	if record.ExpiresIn != nil {
@@ -619,6 +640,31 @@ func sandboxParseKeyValues(flagName string, values []string) (map[string]string,
 		parsed[key] = rest
 	}
 	return parsed, nil
+}
+
+// sandboxParseVolumes reads --volume NAME:MOUNT_PATH[:ro] values, nil when
+// none are passed.
+func sandboxParseVolumes(values []string) (*[]managementapi.SandboxVolumeAttachment, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	volumes := make([]managementapi.SandboxVolumeAttachment, 0, len(values))
+	for _, value := range values {
+		// Volume names cannot contain a colon, so the first one ends the name
+		// and the path may contain more. A path that itself ends in :ro cannot
+		// be expressed, since that suffix always means read-only.
+		name, path, found := strings.Cut(value, ":")
+		path, readOnly := strings.CutSuffix(path, ":ro")
+		if !found || name == "" || path == "" {
+			return nil, cmd.NewErrUsagef("--volume must be NAME:MOUNT_PATH or NAME:MOUNT_PATH:ro, got %q", value)
+		}
+		volume := managementapi.SandboxVolumeAttachment{Name: name, MountPath: path}
+		if readOnly {
+			volume.ReadOnly = &readOnly
+		}
+		volumes = append(volumes, volume)
+	}
+	return &volumes, nil
 }
 
 // sandboxParseEnvs builds a sandbox's environment variables, nil when no flag
