@@ -17,6 +17,7 @@ import (
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
+	"github.com/basetenlabs/baseten-cli/internal/harness"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/basetenlabs/baseten-go/sandbox"
 )
@@ -415,6 +416,16 @@ func cloudSessionExecStream(ctx *CommandContext, instance *sandbox.Sandbox, comm
 	return sandboxProcessExitError(*finished)
 }
 
+// Transient until the team default carries it: the in-sandbox defaults read can time out and fall back to the auto route.
+const cloudSessionClaudeCodePrimaryRouteID = "20aa106" // b10-internal/baseten-GLM-5.3-Fast
+
+func cloudSessionPrimaryRouteID(flags *cmd.CloudSessionCreateFlags) string {
+	if flags.PrimaryRouteID == "" && flags.Harness == harness.ClaudeCode {
+		return cloudSessionClaudeCodePrimaryRouteID
+	}
+	return flags.PrimaryRouteID
+}
+
 // cloudSessionResolveImage maps --repo to its imported image via the
 // session-image map in the CLI config dir, written by the local build/import
 // step. The backend's image service replaces that map in production; --image
@@ -652,6 +663,9 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	setupCommand := "baseten grid setup --harness " + flags.Harness + " --use-session-credential --yes"
 	if flags.Team != "" {
 		setupCommand += " --team " + sandboxShellQuote(flags.Team)
+	}
+	if primaryRouteID := cloudSessionPrimaryRouteID(flags); primaryRouteID != "" {
+		setupCommand += " --primary-route-id " + sandboxShellQuote(primaryRouteID)
 	}
 	ctx.Logf("Setting up %s inside session %s…\n", flags.Harness, name)
 	if err := cloudSessionExecStream(ctx, instance, setupCommand, "", cloudSessionInSandboxTimeout); err != nil {
