@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -196,7 +198,7 @@ func cloudSessionHarnessDispatchCommand(harnessName string, prompt string, permi
 // credential on the wire.
 func cloudSessionEnvs(flags *cmd.CloudSessionCreateFlags) (*[]managementapi.SandboxEnv, error) {
 	sandboxAPIKeyName := "BASETEN_API_KEY"
-	sandboxAPIKeyValue := "proxy-injected"
+	sandboxAPIKeyValue := cloudSessionPlaceholderAPIKey
 	envs := []managementapi.SandboxEnv{{Name: &sandboxAPIKeyName, Value: &sandboxAPIKeyValue}}
 	// Vite rejects the preview host by default (DNS-rebinding check); this whitelists only the preview domain.
 	viteAllowedHostsName := "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"
@@ -231,11 +233,12 @@ func cloudSessionURLHost(rawURL string) (string, error) {
 
 // cloudSessionProxyNetwork puts the session's credentials in the proxy's
 // write-only secret store, replacing the Authorization header on harness,
-// management, and Runlayer traffic; the placeholders in the sandbox are all
-// an agent can leak.
+// Runlayer and GitHub traffic; the placeholders in the sandbox are all an
+// agent can leak. The Baseten key reaches only the harness host: the sandbox
+// has no control-plane access.
 func cloudSessionProxyNetwork(harnessHost string, apiKeyValue string, runlayerM2MToken string, githubPat string) *managementapi.SandboxNetwork {
 	routing := []managementapi.SandboxProxyTarget{{
-		Destinations: &[]string{harnessHost, "*.baseten.co"},
+		Destinations: &[]string{harnessHost},
 		Headers:      &map[string]string{"Authorization": "Bearer {{SECRET:session_key}}"},
 		Secrets:      &map[string]string{"session_key": apiKeyValue},
 	}}
@@ -416,7 +419,103 @@ func cloudSessionExecStream(ctx *CommandContext, instance *sandbox.Sandbox, comm
 	return sandboxProcessExitError(*finished)
 }
 
-// Transient until the team default carries it: the in-sandbox defaults read can time out and fall back to the auto route.
+// The sandbox sees only this value; the proxy swaps in the session credential on the wire.
+const cloudSessionPlaceholderAPIKey = "proxy-injected"
+
+// cloudSessionHarnessConfigDirs are the harnesses' native config dirs inside
+// the session, where root runs them.
+var cloudSessionHarnessConfigDirs = map[string]string{
+	harness.ClaudeCode: "/root/.claude",
+	harness.Codex:      "/root/.codex",
+	harness.OpenCode:   "/root/.config/opencode",
+	harness.Pi:         "/root/.pi/agent",
+}
+
+// cloudSessionWriteHarnessSettings runs grid setup's planning on this machine,
+// where the management API is reachable, against a copy of the session's
+// settings, and writes the result back: the sandbox itself never needs
+// control-plane access.
+func cloudSessionWriteHarnessSettings(ctx *CommandContext, instance *sandbox.Sandbox, flags *cmd.CloudSessionCreateFlags, apiKeyValue string) error {
+	harnessIndex := slices.IndexFunc(harness.All(), func(h harness.Harness) bool { return h.Name() == flags.Harness })
+	sandboxConfigDir, configDirKnown := cloudSessionHarnessConfigDirs[flags.Harness]
+	if harnessIndex < 0 || !configDirKnown {
+		return fmt.Errorf("no session config location for harness %q", flags.Harness)
+	}
+	selectedHarness := harness.All()[harnessIndex]
+	renderDir, err := os.MkdirTemp("", "cloud-session-harness-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(renderDir)
+	detection, err := selectedHarness.Detect(ctx, ctx.Execer(), renderDir)
+	if err != nil {
+		return err
+	}
+	settingsRelPath, err := filepath.Rel(renderDir, detection.Path)
+	if err != nil {
+		return err
+	}
+	// Setup merges into the existing file, so a re-create keeps what the session already holds.
+	existingSettings, err := instance.FS().ReadBytes(ctx, sandbox.FileSystemReadBytesOptions{Path: filepath.Join(sandboxConfigDir, settingsRelPath)})
+	var readErr *sandbox.APIError
+	switch {
+	case err == nil:
+		if err := os.WriteFile(detection.Path, existingSettings, 0o600); err != nil {
+			return err
+		}
+	case errors.As(err, &readErr) && readErr.Status == http.StatusNotFound:
+	default:
+		return fmt.Errorf("reading the session's %s settings: %w", flags.Harness, err)
+	}
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return err
+	}
+	// Routes resolve in the session credential's team, the team the harness will call.
+	managementClient, err := ctx.NewManagementClientWithAuth(remote.ManagementURL(), "Api-Key "+apiKeyValue)
+	if err != nil {
+		return err
+	}
+	api := managementClient.API()
+	team, listed, err := gridLoadHarnessSetupRoutes(ctx, api, flags.Team)
+	if err != nil {
+		return err
+	}
+	record := harness.Record{CredentialSource: harness.CredentialSourceSession}
+	if primaryRouteID := cloudSessionPrimaryRouteID(flags); primaryRouteID != "" {
+		if record.Route, err = gridRouteNameByID(listed, team, "--primary-route-id", primaryRouteID); err != nil {
+			return err
+		}
+	}
+	targets := []gridHarnessTarget{{gridSelectedHarness: gridSelectedHarness{Harness: selectedHarness, detection: detection}, record: record}}
+	plans, err := gridPlanHarnessSetup(ctx, api, team, listed, targets, false)
+	if err != nil {
+		return err
+	}
+	if err := harness.ApplyPlans(plans, cloudSessionPlaceholderAPIKey); err != nil {
+		return err
+	}
+	for _, plan := range plans {
+		if !plan.Changed {
+			continue
+		}
+		planRelPath, err := filepath.Rel(renderDir, plan.Path)
+		if err != nil {
+			return err
+		}
+		renderedSettings, err := os.ReadFile(plan.Path)
+		if err != nil {
+			return err
+		}
+		sandboxPath := filepath.Join(sandboxConfigDir, planRelPath)
+		if err := instance.FS().WriteBytes(ctx, sandbox.FileSystemWriteBytesOptions{Path: sandboxPath, Content: renderedSettings, Permissions: "0600"}); err != nil {
+			return fmt.Errorf("writing %s into the session: %w", sandboxPath, err)
+		}
+	}
+	return nil
+}
+
+// Transient until the team default carries it.
 const cloudSessionClaudeCodePrimaryRouteID = "20aa106" // b10-internal/baseten-GLM-5.3-Fast
 
 func cloudSessionPrimaryRouteID(flags *cmd.CloudSessionCreateFlags) string {
@@ -659,16 +758,8 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 			return err
 		}
 	}
-	// The setup installs the placeholder credential, which the proxy replaces on the wire.
-	setupCommand := "baseten grid setup --harness " + flags.Harness + " --use-session-credential --yes"
-	if flags.Team != "" {
-		setupCommand += " --team " + sandboxShellQuote(flags.Team)
-	}
-	if primaryRouteID := cloudSessionPrimaryRouteID(flags); primaryRouteID != "" {
-		setupCommand += " --primary-route-id " + sandboxShellQuote(primaryRouteID)
-	}
-	ctx.Logf("Setting up %s inside session %s…\n", flags.Harness, name)
-	if err := cloudSessionExecStream(ctx, instance, setupCommand, "", cloudSessionInSandboxTimeout); err != nil {
+	ctx.Logf("Setting up %s for session %s…\n", flags.Harness, name)
+	if err := cloudSessionWriteHarnessSettings(ctx, instance, flags, apiKeyValue); err != nil {
 		return err
 	}
 	// First-run screens (theme, onboarding, the workdir trust dialog) would
@@ -819,7 +910,7 @@ func commandGridCloudSessionDispatch(ctx *CommandContext, flags *cmd.CloudSessio
 
 // cloudSessionSandboxGuidance carries the sandbox mechanics the harness cannot
 // discover by trial: previews are operator-minted, and docker availability varies by image.
-const cloudSessionSandboxGuidance = `- To serve something for the user (vite, docs, a notebook): bind 0.0.0.0 and give the user the ready-to-paste command with the session name and port substituted (the session name is the value of $BASETEN_SANDBOX_NAME; never hand over a command that still contains a placeholder): "baseten sandbox preview create --name=<session name> --port=<port> --with-token" (add --ttl for a shorter-lived link). It prints a private HTTPS link with an embedded access token, ready to open or curl. Your own listening ports: GET /network/process/{pid}/ports on the local API.
+const cloudSessionSandboxGuidance = `- To serve something for the user (vite, docs, a notebook): bind 0.0.0.0 and give the user the ready-to-paste command with the session name and port substituted (the session name is the value of $BASETEN_SANDBOX_NAME; never hand over a command that still contains a placeholder): "baseten sandbox preview create --name=<session name> --port=<port> --with-token" (add --ttl for a shorter-lived link). It prints a private HTTPS link with an embedded access token, ready to open or curl. You cannot create the link yourself (the sandbox has no Baseten control-plane access): when you open a PR, put this command in its description for the user to run. Your own listening ports: GET /network/process/{pid}/ports on the local API.
 - Do not hand out the sandbox URL or a :port link: the URL is auth-walled (401) and direct ports return 502. Only a preview link is reachable, and you cannot create one yourself, so the user must run the command above.
 - A preview forwards the external hostname in the Host header (X-Forwarded-Host carries it too). Vite already works: the session sets __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=.preview.b10.co. Other host-checking servers (Django ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS, webpack) must allow the host or trust X-Forwarded-Host; when /usr/local/bin/baseten-preview-front exists, prefer it: run it as "baseten-preview-front <app-port> [listen-port, default 9000]" and preview the proxy port - it rewrites Host and Origin to localhost and Location back, so such servers work unmodified. Serve a frontend and its API behind one port so the browser stays same-origin.
 - GitHub works only through the sandbox proxy: git push needs GIT_SSL_CAINFO=/etc/ssl/certs/proxy/proxy-ca.pem, and api.github.com is authenticated by the proxy with no token (use curl or python against the REST API; gh is not installed). There is no local GitHub credential - never claim the repo is unreachable.
