@@ -71,31 +71,43 @@ func cloudSessionGeneratedName() string {
 // SessionEnd release it, so the sandbox is awake while the harness works.
 const cloudSessionStayAwakeScript = `#!/bin/bash
 # Turn-based keep-alive, driven by Claude Code session hooks:
-#   UserPromptSubmit/PostToolUse -> stay-awake.sh start : (re)register it
+#   UserPromptSubmit/PostToolUse -> stay-awake.sh start : register a fresh hold
 #   Stop/SessionEnd             -> stay-awake.sh stop  : kill it, the sandbox hibernates
+# Names are unique per registration: the API kills by name, and with the fixed
+# name and many registrations it killed unrelated processes (observed live).
 # The sleep is refreshed on every hook, so 600s only bounds a leaked
 # registration (an interrupted turn skips Stop) and one long tool call.
 set -u
 API=http://localhost:8080
-NAME=stay-awake-turn
+STATE=/root/hooks-alive/current-registration
+
+kill_registered() {
+  local name=""
+  [ -f "$STATE" ] && read -r name < "$STATE" || true
+  if [ -n "$name" ]; then
+    curl -s -m 5 -X DELETE "$API/process/$name/kill" -o /dev/null
+  fi
+  rm -f "$STATE"
+}
 
 case "${1:-}" in
   start)
-    # Idempotent: a running registration from a previous turn is replaced.
-    curl -s -m 5 -X DELETE "$API/process/$NAME/kill" -o /dev/null
+    kill_registered
+    name="stay-awake-turn-$(date +%s%N)"
     curl -s -m 5 -X POST "$API/process" \
       -H "Content-Type: application/json" \
-      -d '{"command": "sleep 600", "keepAlive": true, "timeout": 0, "name": "'"$NAME"'"}' \
+      -d '{"command": "sleep 600", "keepAlive": true, "timeout": 0, "name": "'"$name"'"}' \
       -o /dev/null
+    echo "$name" > "$STATE"
     ;;
   stop)
-    curl -s -m 5 -X DELETE "$API/process/$NAME/kill" -o /dev/null
+    kill_registered
     ;;
   status)
     curl -s -m 5 "$API/process" | python3 -c '
 import json, sys
 running = [p for p in json.load(sys.stdin)
-           if p.get("name") == "stay-awake-turn" and p["status"] == "running"]
+           if p.get("name", "").startswith("stay-awake-turn-") and p["status"] == "running"]
 print("awake" if running else "released")'
     ;;
   *)
