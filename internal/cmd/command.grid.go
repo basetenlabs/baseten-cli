@@ -29,6 +29,7 @@ func init() {
 	Register("grid status", commandGridStatus)
 	Register("grid sync", commandGridSync)
 	Register("grid teardown", commandGridTeardown)
+	Register("grid token", commandGridToken)
 	Register("grid classifier list", commandGridClassifierList)
 	Register("grid team-settings describe", commandGridTeamSettingsDescribe)
 	Register("grid team-settings update", commandGridTeamSettingsUpdate)
@@ -1587,4 +1588,10 @@ func outputGridUserSettings(ctx *CommandContext, settings *managementapi.GridTea
 	ctx.Outputf("Team-wide limit USD:        %s\n", gridSettingText(settings.SpendLimit.TeamWideMonthlyLimitUsd))
 	ctx.Outputf("Blocked:                    %t\n", settings.IsBlocked)
 	ctx.Outputf("Blocked by:                 %s\n", gridSettingText(settings.BlockedBy))
+}
+
+// commandGridToken prints a short-lived Grid token for the team a harness was
+// set up with, or the team --team names. Implemented in the next PR.
+func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
+	return errors.New("not implemented")
 }
