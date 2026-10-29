@@ -52,7 +52,7 @@ func (piHarness) SupportsSubagent() bool { return false }
 
 func (piHarness) SupportsAuthCommand() bool { return true }
 
-func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint, helper string) ([]*Plan, error) {
+func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint string, helper *Helper) ([]*Plan, error) {
 	switch {
 	case s.Background != "":
 		return nil, errors.New("--background-route-id is supported only for Claude Code and OpenCode")
@@ -71,8 +71,8 @@ func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint, hel
 		models = append(models, piModel(r, baseURL))
 	}
 	apiKey, credentialPath := "", piCredentialPath
-	if helper != "" {
-		apiKey, credentialPath = "!"+helperShellCommand(helper, Pi), nil
+	if helper != nil {
+		apiKey, credentialPath = "!"+helper.shellCommand(Pi), nil
 	}
 	provider := desired(piProviderPath, map[string]any{
 		"name":    "Baseten",

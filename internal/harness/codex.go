@@ -228,7 +228,7 @@ func (codexHarness) Routes(routes []Route) []Route {
 	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Responses })
 }
 
-func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, helper string) ([]*Plan, error) {
+func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint string, helper *Helper) ([]*Plan, error) {
 	switch {
 	case s.Background != "":
 		return nil, errors.New("--background-route-id is supported only for Claude Code and OpenCode")
@@ -249,12 +249,14 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, 
 		"http_headers":         map[string]any{clientHeader: Codex},
 	}
 	credentialPath := codexCredentialPath
-	if helper != "" {
+	if helper != nil {
 		credentialPath = nil
 		// Absolute: the app-server daemon has no user PATH.
 		provider["auth"] = map[string]any{
-			"command": helper, "args": helperArgs(Codex),
-			"timeout_ms": codexHelperTimeout, "refresh_interval_ms": codexHelperRefreshInterval,
+			"command":             helper.Path,
+			"args":                helper.args(Codex),
+			"timeout_ms":          codexHelperTimeout,
+			"refresh_interval_ms": codexHelperRefreshInterval,
 		}
 	} else {
 		provider["experimental_bearer_token"] = ""

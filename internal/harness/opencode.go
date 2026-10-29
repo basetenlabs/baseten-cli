@@ -176,7 +176,7 @@ func (openCodeHarness) SupportsSubagent() bool { return true }
 func (openCodeHarness) SupportsAuthCommand() bool { return false }
 
 // Prepare ignores helper: OpenCode has no credential command.
-func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, _ string) ([]*Plan, error) {
+func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string, _ *Helper) ([]*Plan, error) {
 	if s.Fallback != "" {
 		return nil, errors.New("--fallback-route-id is supported only for Claude Code")
 	}

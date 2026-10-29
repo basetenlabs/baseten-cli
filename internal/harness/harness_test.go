@@ -248,7 +248,7 @@ func settingsPath(t *testing.T, h Harness) string {
 
 func setup(t *testing.T, h Harness, path string, routes []Route, s Selection) []*Plan {
 	t.Helper()
-	plans, err := h.Prepare(path, routes, s, testEndpoint, "")
+	plans, err := h.Prepare(path, routes, s, testEndpoint, nil)
 	require.NoError(t, err)
 	require.NoError(t, ApplyPlans(plans, testToken))
 	return plans
@@ -291,7 +291,7 @@ func TestSetupRefreshAndTeardownKeepUnrelatedSettings(t *testing.T) {
 				}
 				setup(t, h, path, testRoutes(), Selection{Primary: testRoutes()[i%2].Name})
 			}
-			plans, err := h.Prepare(path, testRoutes(), Selection{Primary: "acme/background"}, testEndpoint, "")
+			plans, err := h.Prepare(path, testRoutes(), Selection{Primary: "acme/background"}, testEndpoint, nil)
 			require.NoError(t, err)
 			require.NoError(t, ApplyPlans(plans, testToken))
 			for _, p := range plans {
@@ -345,22 +345,22 @@ func TestHelperCredential(t *testing.T) {
 		t.Run(h.Name(), func(t *testing.T) {
 			path := settingsPath(t, h)
 			setup(t, h, path, testRoutes(), Selection{})
-			cli := "/opt/my tools/baseten"
+			cli := &Helper{Path: "/opt/my tools/baseten", Profile: "alice"}
 			plans, err := h.Prepare(path, testRoutes(), Selection{}, testEndpoint, cli)
 			require.NoError(t, err)
 			require.NoError(t, ApplyPlans(plans, ""))
 			raw, err := os.ReadFile(path)
 			require.NoError(t, err)
 			require.NotContains(t, string(raw), testToken, "the static key is dropped")
-			require.Contains(t, string(raw), cli)
-			require.Contains(t, string(raw), "--harness")
+			require.Contains(t, string(raw), cli.Path)
+			require.Contains(t, string(raw), "--profile")
 			token, err := h.Credential(path)
 			require.NoError(t, err)
 			require.Empty(t, token, "a helper command is not a key")
 			teardown(t, h, path)
 			raw, err = os.ReadFile(path)
 			require.NoError(t, err)
-			require.NotContains(t, string(raw), cli)
+			require.NotContains(t, string(raw), cli.Path)
 		})
 	}
 }
@@ -527,18 +527,18 @@ func TestUnsupportedSelectionsAreRejected(t *testing.T) {
 		{piHarness{}, Selection{Fallback: "acme/fallback"}},
 	} {
 		t.Run(fmt.Sprintf("%s/%+v", tc.h.Name(), tc.s), func(t *testing.T) {
-			_, err := tc.h.Prepare(settingsPath(t, tc.h), testRoutes(), tc.s, testEndpoint, "")
+			_, err := tc.h.Prepare(settingsPath(t, tc.h), testRoutes(), tc.s, testEndpoint, nil)
 			require.ErrorContains(t, err, "supported only")
 		})
 	}
-	_, err := claudeCodeHarness{}.Prepare(settingsPath(t, claudeCodeHarness{}), testRoutes(), Selection{Primary: "acme/missing"}, testEndpoint, "")
+	_, err := claudeCodeHarness{}.Prepare(settingsPath(t, claudeCodeHarness{}), testRoutes(), Selection{Primary: "acme/missing"}, testEndpoint, nil)
 	require.ErrorContains(t, err, "not one of the team's routes")
 }
 
 func TestCodexOrphanedCatalog(t *testing.T) {
 	h := codexHarness{}
 	path := settingsPath(t, h)
-	plans, err := h.Prepare(path, testRoutes(), Selection{}, testEndpoint, "")
+	plans, err := h.Prepare(path, testRoutes(), Selection{}, testEndpoint, nil)
 	require.NoError(t, err)
 	// Only the catalog is written, as when setup is interrupted.
 	require.NoError(t, ApplyPlans(plans[:1], testToken))
@@ -576,7 +576,7 @@ func TestOpenCodeJSONC(t *testing.T) {
 
 	invalid := []byte("{ // comment\n invalid }")
 	require.NoError(t, os.WriteFile(path, invalid, 0o644))
-	_, err = openCodeHarness{}.Prepare(path, testRoutes(), Selection{}, testEndpoint, "")
+	_, err = openCodeHarness{}.Prepare(path, testRoutes(), Selection{}, testEndpoint, nil)
 	require.ErrorContains(t, err, "invalid settings JSON")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -901,7 +901,7 @@ func TestPiTeardownPreservesAnotherProviderSelection(t *testing.T) {
 func TestPiIncomplete(t *testing.T) {
 	h := piHarness{}
 	path := settingsPath(t, h)
-	plans, err := h.Prepare(path, testRoutes(), Selection{}, testEndpoint, "")
+	plans, err := h.Prepare(path, testRoutes(), Selection{}, testEndpoint, nil)
 	require.NoError(t, err)
 	// Only the default model is written, as when models.json is removed by hand.
 	require.NoError(t, ApplyPlans(plans[1:], testToken))

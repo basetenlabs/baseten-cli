@@ -22,13 +22,14 @@ var commandGrid = Command{
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the primary route unless --primary-route-id is set. " +
 				"Use 'baseten grid route list' to find route IDs; harness configurations use the corresponding route names.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
-				"The Grid API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
+				"Claude Code, Codex, and Pi run this CLI for a short-lived credential instead of storing a key, and setup deletes a Grid API key they stored earlier once no harness on this machine uses it. " +
+				"OpenCode stores a Grid API key, created on first setup and reused afterward. With --use-session-credential, the session's API key is installed in every harness instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
-				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
+				TextDescription: "Any created or deleted key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
 				Examples: []CommandExample{
 					{
 						Description: "Configure installed harnesses interactively.",
@@ -375,13 +376,14 @@ var commandGrid = Command{
 		{
 			Name:    "token",
 			Hidden:  true,
-			Summary: "Print a short-lived Grid token",
-			Description: "Print a Grid token for the team a harness was set up with, or the team --team names. " +
-				"The token is scoped to you and the team and lasts four hours. It is replaced when fewer than 15 minutes remain. stdout is only the token.",
+			Summary: "Print a short-lived Grid token (PRE-RELEASE)",
+			Description: gridPrereleaseNotice +
+				"Print a Grid token for the team a harness was set up with, or the team --team names. " +
+				"Harnesses run this command for their credential. The token is scoped to you and the team, and is reused until it is about to expire. stdout is only the token.",
 			Flags: GridTokenFlags{},
 			Output: &CommandOutput[JSONUndefined]{
 				JSONOutputUnimportant: true,
-				TextDescription:       "The token followed by a newline, whatever --output says. On failure, nothing on stdout, the reason on stderr, and exit code 1.",
+				TextDescription:       "The token followed by a newline, whatever --output says.",
 				Examples: []CommandExample{
 					{
 						Description: "Print the token Codex uses.",
@@ -602,7 +604,7 @@ type GridSetupFlags struct {
 	SubagentRouteID      string `flag:"subagent-route-id" desc:"Route ID for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
 	FallbackRouteID      string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
 	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
-	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
+	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating or deleting an API key."`
 	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 

@@ -203,17 +203,17 @@ func gridLoadHarnessSetupRoutes(ctx *CommandContext, api *managementapi.Client, 
 	return team, listed, nil
 }
 
-// gridHelperPath returns the CLI the harness hooks run: the baseten on PATH
+// gridHelperPath returns the CLI the harnesses run for a credential: the baseten on PATH
 // when it is this binary, else this binary with a warning. The PATH entry is
 // kept unresolved so a Homebrew upgrade, which moves the symlink target, does
-// not break the hook.
+// not break the helper.
 func gridHelperPath() (helper, warning string, err error) {
 	if helper, err = os.Executable(); err != nil {
 		return "", "", err
 	}
 	onPath, err := exec.LookPath("baseten")
 	if err != nil {
-		return helper, fmt.Sprintf("baseten is not on your PATH; the harness hook will point at %s", helper), nil
+		return helper, fmt.Sprintf("baseten is not on your PATH; harnesses will run %s", helper), nil
 	}
 	resolve := func(path string) string {
 		if resolved, err := filepath.EvalSymlinks(path); err == nil {
@@ -224,7 +224,7 @@ func gridHelperPath() (helper, warning string, err error) {
 	if resolve(onPath) == resolve(helper) {
 		return onPath, "", nil
 	}
-	return helper, fmt.Sprintf("you are running %s, but baseten on your PATH is %s; the harness hook will point at the former", helper, onPath), nil
+	return helper, fmt.Sprintf("you are running %s, but baseten on your PATH is %s; harnesses will run the former", helper, onPath), nil
 }
 
 // gridPlanHarnessSetup builds the setup plans for targets that share one team. The
@@ -304,13 +304,13 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 	}
 	helper := ""
 	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool {
-		return t.record.CredentialSource == harness.CredentialSourceAuthCommand
+		return t.record.CredentialSource == harness.CredentialSourceHelper
 	}) {
 		var warning string
 		if helper, warning, err = gridHelperPath(); err != nil {
 			return nil, err
 		}
-		// Only setup warns; sync rewrites the same hook.
+		// Only setup warns; sync rewrites the same helper.
 		if warning != "" && !forSync {
 			ctx.Logf("warning: %s\n", warning)
 		}
@@ -340,9 +340,9 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 			ctx.Logf("warning: %s: %s %q no longer exists; using %q\n", target.Name(), d[0], d[1], using)
 		}
 		target.selection = selection
-		targetHelper := ""
-		if target.record.CredentialSource == harness.CredentialSourceAuthCommand {
-			targetHelper = helper
+		var targetHelper *harness.Helper
+		if target.record.CredentialSource == harness.CredentialSourceHelper {
+			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
 		current, err := target.Prepare(target.detection.Path, callable, selection.Selection, endpoint, targetHelper)
 		if err != nil {
@@ -377,7 +377,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if err != nil {
 		return err
 	}
-	credentialSource := harness.CredentialSourceAuthCommand
+	credentialSource := harness.CredentialSourceHelper
 	// An ephemeral session has no profile the helper could resolve inside the
 	// harness, so its key is installed instead.
 	if f.UseSessionCredential || session.IsEphemeral() {
@@ -387,9 +387,10 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	for i := range selected {
 		record := harness.Record{
 			KeyName:          f.KeyName,
+			Profile:          session.ProfileName(),
 			CredentialSource: credentialSource,
 		}
-		if credentialSource == harness.CredentialSourceAuthCommand && !selected[i].SupportsAuthCommand() {
+		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsAuthCommand() {
 			// A harness without a credential command keeps a key.
 			record.CredentialSource = ""
 		}
@@ -461,7 +462,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	var helperTargets []gridSelectedHarness
 	for _, t := range targets {
 		switch t.record.CredentialSource {
-		case harness.CredentialSourceAuthCommand:
+		case harness.CredentialSourceHelper:
 			helperTargets = append(helperTargets, t.gridSelectedHarness)
 		case "":
 			if token == "" {
@@ -650,7 +651,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		run := &runs[i]
 		// The Grid API key is only read or created once the user has confirmed.
 		token := run.token
-		if token == "" && run.targets[0].record.CredentialSource != harness.CredentialSourceAuthCommand {
+		if token == "" && run.targets[0].record.CredentialSource != harness.CredentialSourceHelper {
 			if token, err = gridEnsureHarnessToken(ctx, api, run.team, run.targets[0].record.KeyName); err != nil {
 				return err
 			}
@@ -1665,8 +1666,6 @@ func outputGridUserSettings(ctx *CommandContext, settings *managementapi.GridTea
 // replaced. Harnesses rerun the helper every few minutes.
 const gridTokenMinimumLeft = 15 * time.Minute
 
-var errGridSessionExpired = errors.New("Your Baseten session has expired. Run `baseten auth login`.")
-
 // commandGridToken prints a Grid token for the harness's recorded team, or
 // the --team named. Only the token goes to stdout.
 func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
@@ -1682,19 +1681,10 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 	if !ok {
 		return errors.New("Run `baseten grid setup` first.")
 	}
-	// The recorded profile survives `auth switch` and a BASETEN_API_KEY the
-	// harness inherits from the shell; --profile still wins.
-	if ctx.authInfo.profileFlag == "" {
-		ctx.authInfo.profileFlag = record.Profile
-	}
 	teamID := record.TeamID
 	transport, remote, err := ctx.AuthTransport()
 	if err != nil {
 		return err
-	}
-	session := transport.Session
-	if !session.IsEphemeral() && session.ProfileName() == "" {
-		return errors.New("Run `baseten auth login` to sign in to Baseten.")
 	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -1706,28 +1696,23 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 		}
 	}
 	store := auth.NewStore(auth.StoreOptions{Dir: dir})
-	scope := auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()}
-	if token := store.GetGridToken(scope, teamID); token != nil && time.Until(token.ExpiresAt) > gridTokenMinimumLeft {
+	scope := auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: transport.Session.CacheIdentity()}
+	token, err := store.GetGridToken(ctx, scope, teamID)
+	if err != nil {
+		return err
+	}
+	if token != nil && time.Until(token.ExpiresAt) > gridTokenMinimumLeft {
 		ctx.Output(token.Token + "\n")
 		return nil
 	}
-	// A gone session fails here with advice rather than as an API error.
-	if _, err := transport.Credential(ctx); err != nil {
-		ctx.VerboseLogf("session credential: %v\n", err)
-		return errGridSessionExpired
-	}
 	minted, err := cl.API().PostGridToken(ctx, managementapi.CreateGridTokenRequest{TeamId: &teamID})
 	if err != nil {
-		// 401 is a gone session. 403 is a refused credential, such as a Grid API
-		// key in BASETEN_API_KEY, which logging in would not fix.
-		if status, ok := knownHTTPStatus(err); ok && status == http.StatusUnauthorized {
-			ctx.VerboseLogf("creating a Grid token: %v\n", err)
-			return errGridSessionExpired
-		}
-		return fmt.Errorf("creating a Grid token: %v", err)
+		return fmt.Errorf("creating a Grid token: %w", err)
 	}
-	token := auth.GridToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
-	store.SetGridToken(scope, teamID, token, ctx.Log)
+	token = &auth.GridToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
+	if err := store.SetGridToken(ctx, scope, teamID, *token, ctx.Log); err != nil {
+		return err
+	}
 	ctx.Output(token.Token + "\n")
 	return nil
 }

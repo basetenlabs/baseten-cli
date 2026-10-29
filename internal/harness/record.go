@@ -15,10 +15,9 @@ const recordFileName = "harness.json"
 // API key with --use-session-credential instead of creating a routes API key.
 const CredentialSourceSession = "session"
 
-// CredentialSourceAuthCommand marks a setup that installed `baseten grid token`
-// as the credential command instead of a key. The stored value stays "helper"
-// so existing records keep working.
-const CredentialSourceAuthCommand = "helper"
+// CredentialSourceHelper marks a setup that installed `baseten grid token`
+// as the credential command instead of a key.
+const CredentialSourceHelper = "helper"
 
 // Record remembers the options of the last successful setup for one harness,
 // so sync can replay them. Explicit route selections are stored as route names;

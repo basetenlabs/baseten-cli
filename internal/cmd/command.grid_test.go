@@ -352,7 +352,7 @@ func Test_Grid_Setup_TextSummary(t *testing.T) {
 	t.Setenv("PATH", bin)
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
 	h.Require.Empty(h.Stdout.String())
-	h.Require.Contains(h.Stderr.String(), "but baseten on your PATH is "+filepath.Join(bin, "baseten")+"; the harness hook will point at the former")
+	h.Require.Contains(h.Stderr.String(), "but baseten on your PATH is "+filepath.Join(bin, "baseten")+"; harnesses will run the former")
 	h.Require.Contains(h.Stderr.String(), "Configuration saved.")
 	h.Require.Contains(h.Stderr.String(), "Undo with: baseten grid teardown --harness claude-code --config-dir '"+dir+"'")
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--verbose"))
@@ -1777,7 +1777,7 @@ func Test_Grid_Setup_RecordsSyncOptions(t *testing.T) {
 	h.Require.Equal(filepath.Join(dir, "settings.json"), record.Config)
 	h.Require.Equal(api.URL, record.ManagementURL)
 	h.Require.Equal("team-b", record.TeamID)
-	h.Require.Equal(harness.CredentialSourceAuthCommand, record.CredentialSource)
+	h.Require.Equal(harness.CredentialSourceHelper, record.CredentialSource)
 	h.Require.Equal("acme/primary", record.Route)
 	h.Require.Equal("acme/second", record.BackgroundRoute)
 	h.Require.Empty(record.SubagentRoute, "unset flags stay empty so sync follows defaults")
@@ -2816,11 +2816,11 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Empty(stdout)
 	h.Require.Equal("Run `baseten grid setup` first.\n", stderr)
 	saveHarnessRecordFile(t, harness.RecordFile{Harnesses: map[string]harness.Record{
-		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, TeamID: "team-a", CredentialSource: harness.CredentialSourceAuthCommand},
+		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, TeamID: "team-a", CredentialSource: harness.CredentialSourceHelper},
 	}})
 	_, stderr, err = run()
 	h.Require.Error(err)
-	h.Require.Equal("Run `baseten auth login` to sign in to Baseten.\n", stderr)
+	h.Require.Contains(stderr, "run `baseten auth login`")
 
 	// A cached token with time left is printed without an API call.
 	store := configDirStore(t)
@@ -2828,25 +2828,22 @@ func Test_Grid_Token(t *testing.T) {
 	session, err := auth.ResolveSession("alice", "")
 	h.Require.NoError(err)
 	scope := auth.GridTokenScope{ManagementURL: api.URL, Identity: session.CacheIdentity()}
-	store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-cached", ExpiresAt: time.Now().Add(30 * time.Minute)}, nil)
+	h.Require.NoError(store.SetGridToken(t.Context(), scope, "team-a", auth.GridToken{Token: "grid-cached", ExpiresAt: time.Now().Add(30 * time.Minute)}, nil))
 	stdout, stderr, err = run()
 	h.Require.NoError(err)
 	h.Require.Equal("grid-cached\n", stdout)
 	h.Require.Empty(stderr)
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/grid/token"))
 
-	// The recorded profile beats a BASETEN_API_KEY exported in the harness's shell.
-	saveHarnessRecordFile(t, harness.RecordFile{Harnesses: map[string]harness.Record{
-		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, Profile: "alice", TeamID: "team-a", CredentialSource: harness.CredentialSourceAuthCommand},
-	}})
+	// The --profile the hook passes beats a BASETEN_API_KEY exported in the
+	// harness's shell.
 	t.Setenv("BASETEN_API_KEY", "someone-else")
-	stdout, _, err = run()
-	h.Require.NoError(err)
-	h.Require.Equal("grid-cached\n", stdout)
+	h.Require.NoError(h.Execute("grid", "token", "--harness", "codex", "--profile", "alice"))
+	h.Require.Equal("grid-cached\n", h.Stdout.String())
 	t.Setenv("BASETEN_API_KEY", "")
 
 	// An expiring token is replaced once, and the replacement is cached.
-	store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-stale", ExpiresAt: time.Now().Add(5 * time.Minute)}, nil)
+	h.Require.NoError(store.SetGridToken(t.Context(), scope, "team-a", auth.GridToken{Token: "grid-stale", ExpiresAt: time.Now().Add(5 * time.Minute)}, nil))
 	for range 2 {
 		stdout, _, err = run()
 		h.Require.NoError(err)
@@ -2861,19 +2858,20 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Error(h.Execute("grid", "token"))
 	h.Require.Contains(h.Stderr.String(), `Required flag(s) "harness" not set`)
 
-	// A session the API rejects, a credential it refuses, then login, which
-	// forgets the cache.
-	for status, want := range map[int]string{401: "Your Baseten session has expired. Run `baseten auth login`.\n", 403: "rejected"} {
-		store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-stale", ExpiresAt: time.Now()}, nil)
-		api.SetRoute("POST", "/v1/grid/token", status, map[string]string{"message": "rejected"})
-		stdout, stderr, err = run()
-		h.Require.Error(err)
-		h.Require.Empty(stdout)
-		h.Require.Contains(stderr, want)
-		h.Require.Equal(status == 401, strings.Contains(stderr, "session has expired"))
+	// A credential the API rejects, then login and logout, which forget the cache.
+	h.Require.NoError(store.SetGridToken(t.Context(), scope, "team-a", auth.GridToken{Token: "grid-stale", ExpiresAt: time.Now()}, nil))
+	api.SetRoute("POST", "/v1/grid/token", 401, map[string]string{"message": "rejected"})
+	stdout, stderr, err = run()
+	h.Require.Error(err)
+	h.Require.Empty(stdout)
+	h.Require.Contains(stderr, "rejected")
+	h.Require.Equal(int(public.ExitAuth), h.ExitCode)
+	for _, command := range [][]string{{"auth", "login", "--with-api-key", "--profile", "alice"}, {"auth", "logout", "--profile", "alice"}} {
+		h.Require.NoError(store.SetGridToken(t.Context(), scope, "team-a", auth.GridToken{Token: "grid-cached", ExpiresAt: time.Now().Add(time.Hour)}, nil))
+		h.Stdin.WriteString("key-b\n")
+		h.Require.NoError(h.Execute(command...))
+		token, err := store.GetGridToken(t.Context(), scope, "team-a")
+		h.Require.NoError(err)
+		h.Require.Nil(token, "%s forgets the cached tokens", command[1])
 	}
-	store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-cached", ExpiresAt: time.Now().Add(time.Hour)}, nil)
-	h.Stdin.WriteString("key-b\n")
-	h.Require.NoError(h.Execute("auth", "login", "--with-api-key", "--profile", "alice"))
-	h.Require.Nil(store.GetGridToken(scope, "team-a"), "login forgets the cached tokens")
 }

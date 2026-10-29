@@ -60,9 +60,9 @@ func (claudeCodeHarness) Routes(routes []Route) []Route {
 	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Messages })
 }
 
-func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, helper string) ([]*Plan, error) {
+func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string, helper *Helper) ([]*Plan, error) {
 	credentialPath := claudeCredentialPath
-	if helper != "" {
+	if helper != nil {
 		credentialPath = nil
 	}
 	p, err := prepareSettings(path, credentialPath, func(data map[string]any) ([]setting, error) {
@@ -74,7 +74,7 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, end
 	return []*Plan{p}, nil
 }
 
-func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper string) ([]setting, error) {
+func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper) ([]setting, error) {
 	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
@@ -132,9 +132,9 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
-	if helper != "" {
+	if helper != nil {
 		// Removed, not blanked: a static token overrides the helper.
-		values = append(values, setting{Path: claudeCredentialPath}, desired(claudeHelperPath, helperShellCommand(helper, ClaudeCode)))
+		values = append(values, setting{Path: claudeCredentialPath}, desired(claudeHelperPath, helper.shellCommand(ClaudeCode)))
 	} else {
 		values = append(values, desired(claudeCredentialPath, ""))
 		if get(current, []string{"env", claudeMarker}).Data == "1" && get(current, claudeHelperPath).Exists {
