@@ -671,6 +671,27 @@ func execLookGitConfig(key string) (string, error) {
 	return strings.TrimSpace(string(value)), err
 }
 
+// cloudSessionIsLive reports whether the named session's sandbox can be
+// attached to; false when the name is free for a new session.
+func cloudSessionIsLive(ctx *CommandContext, api sandboxAPI, teamID *string, name string) (bool, error) {
+	record, err := api.GetSandbox(ctx, name, managementapi.GetSandboxParams{TeamId: teamID})
+	var responseErr *managementapi.ResponseError
+	if errors.As(err, &responseErr) && responseErr.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("describing session %s: %w", name, err)
+	}
+	switch record.Status {
+	case managementapi.SandboxStatus_DEPLOYED, managementapi.SandboxStatus_DEPLOYING:
+		return true, nil
+	case managementapi.SandboxStatus_TERMINATED:
+		return false, nil
+	default:
+		return false, fmt.Errorf("session %s is %s: delete it or pick another --name", name, record.Status)
+	}
+}
+
 func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionCreateFlags) error {
 	imageRef, err := cloudSessionResolveImage(flags)
 	if err != nil {
@@ -724,12 +745,12 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 		githubPat, githubPatIsSet = "", false
 	}
 	createRequest.Network = cloudSessionProxyNetwork(harnessHost, apiKeyValue, runlayerM2MToken, githubPat)
-	sandboxExisted, err := sandboxExistsInTeam(ctx, client.API(), teamID, name)
+	sessionIsLive, err := cloudSessionIsLive(ctx, client.API(), teamID, name)
 	if err != nil {
 		return err
 	}
-	// One session per sandbox: create on an existing one rejoins it as is.
-	if sandboxExisted {
+	// One session per sandbox: create on a live one rejoins it as is.
+	if sessionIsLive {
 		ctx.Logf("Session %s exists, attaching to it.\n", name)
 		return commandGridCloudSessionConnect(ctx, &cmd.CloudSessionConnectFlags{
 			SandboxRefFlags: cmd.SandboxRefFlags{Name: name, Team: flags.Team},
