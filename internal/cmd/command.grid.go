@@ -471,10 +471,16 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 			}
 		}
 	}
-	// Read the keys the helper replaces before the plans overwrite them.
+	// Delete the keys the helper replaces.
 	replaced, err := gridUnusedHarnessKeys(ctx, helperTargets)
 	if err != nil {
 		return err
+	}
+	var deleted []string
+	if replaced = slices.DeleteFunc(replaced, func(key string) bool { return key == token }); len(replaced) > 0 {
+		if deleted, err = gridDeleteHarnessKeys(ctx, replaced); err != nil {
+			return err
+		}
 	}
 	for i := range targets {
 		if targets[i].Name() == harness.Codex {
@@ -496,13 +502,6 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	}
 	if err := gridRecordHarnessSetup(ctx, team, targets); err != nil {
 		return err
-	}
-	// After the record is saved, so a failed delete is not reinstalled by sync.
-	var deleted []string
-	if replaced = slices.DeleteFunc(replaced, func(key string) bool { return key == token }); len(replaced) > 0 {
-		if deleted, err = gridDeleteHarnessKeys(ctx, replaced); err != nil {
-			return err
-		}
 	}
 	if ctx.JSON {
 		outputGridPlansJSON(ctx, plans, deleted)
