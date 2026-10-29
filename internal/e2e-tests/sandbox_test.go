@@ -14,12 +14,12 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/creack/pty"
 	"github.com/stretchr/testify/require"
 )
@@ -366,18 +366,12 @@ func startE2EConnect(t *testing.T, name string, rows, cols uint16) *e2eConnectSe
 	var stderr bytes.Buffer
 	done := make(chan error, 1)
 	go func() {
-		exit := 0
-		err := cmd.Execute(ctx, cmd.ExecuteOptions{
-			Args:         []string{"sandbox", "connect", "--name", name},
-			Stdin:        terminal,
-			Stdout:       terminal,
-			Stderr:       &stderr,
-			ExitWithCode: func(c int) { exit = c },
-		})
-		if err == nil && exit != 0 {
-			err = fmt.Errorf("exit %d", exit)
-		}
-		done <- err
+		done <- cliRun(ctx, cliRunOptions{
+			Args:   []string{"sandbox", "connect", "--name", name},
+			Stdin:  terminal,
+			Stdout: terminal,
+			Stderr: &stderr,
+		}).Err
 	}()
 	return &e2eConnectSession{t: t, terminal: terminal, control: control, chunks: chunks, stderr: &stderr, done: done}
 }
@@ -431,6 +425,123 @@ func (s *e2eConnectSession) waitFor(want string) string {
 			s.t.Fatalf("timed out waiting for %q; output so far:\n%s", want, s.output)
 		}
 	}
+}
+
+// Bound on each sandbox volume state change TestE2ESandboxVolume waits for:
+// deploying, resizing, becoming deletable once unmounted. Each has taken about
+// 3s in the SDK e2e suites.
+const (
+	sandboxVolumeE2EWait = 30 * time.Second
+	sandboxVolumeE2EPoll = 200 * time.Millisecond
+)
+
+// TestE2ESandboxVolume walks one sandbox volume through its life: CRUD, then
+// mounted in a sandbox and grown there. Cleanups run last-registered first, so
+// the sandbox is deleted before the volume, which cannot be deleted while
+// mounted.
+func TestE2ESandboxVolume(t *testing.T) {
+	setupSandboxE2E(t)
+	volumeName := "cli-e2e-" + randomSuffix(t)[:8]
+	volumeDeleted := false
+	// Fails only with the 409 of a volume still mounted in a sandbox being
+	// deleted; any other failure fails the test.
+	deleteVolume := func(ctx context.Context) (map[string]any, bool) {
+		result := cliRun(ctx, cliRunOptions{Args: []string{"sandbox", "volume", "delete", "--name", volumeName, "--yes", "--output", "json"}})
+		if result.Err == nil {
+			var deleted map[string]any
+			require.NoError(t, json.Unmarshal([]byte(result.Stdout), &deleted))
+			return deleted, true
+		}
+		require.Equal(t, http.StatusConflict, result.APIStatus(t), "stdout: %s\nstderr: %s", result.Stdout, result.Stderr)
+		return nil, false
+	}
+	t.Cleanup(func() {
+		if volumeDeleted {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*sandboxVolumeE2EWait)
+		defer cancel()
+		for ctx.Err() == nil {
+			if _, done := deleteVolume(ctx); done {
+				return
+			}
+			time.Sleep(sandboxVolumeE2EPoll)
+		}
+		t.Logf("deleting sandbox volume %s: still mounted", volumeName)
+	})
+
+	step(t, "create volume %s", volumeName)
+	created := cliJSON[map[string]any](t, "sandbox", "volume", "create", "--name", volumeName, "--size", "512",
+		"--region", sandboxE2ERegion, "--label", "created_by=cli-e2e")
+	// The server normalizes either size form to a size string.
+	require.Equal(t, "512Mi", created["size"])
+	elapsed := waitE2ESandboxVolume(t, "volume deployed", func() bool {
+		status := cliJSON[map[string]any](t, "sandbox", "volume", "describe", "--name", volumeName)["status"]
+		require.NotEqual(t, "FAILED", status)
+		return status == "DEPLOYED"
+	})
+	step(t, "volume deployed %v after create returned", elapsed)
+
+	described := mustCLI(t, "sandbox", "volume", "describe", "--name", volumeName)
+	require.Contains(t, described, "Labels:       created_by=cli-e2e")
+	require.Contains(t, mustCLI(t, "sandbox", "volume", "list", "--query", volumeName), volumeName)
+	updated := cliJSON[map[string]any](t, "sandbox", "volume", "update", "--name", volumeName,
+		"--label", "created_by=cli-e2e", "--label", "stage=two")
+	require.Equal(t, map[string]any{"created_by": "cli-e2e", "stage": "two"}, updated["labels"])
+	shrunk := cliRun(t.Context(), cliRunOptions{Args: []string{"sandbox", "volume", "update", "--name", volumeName, "--size", "256", "--output", "json"}})
+	require.Error(t, shrunk.Err)
+	require.Equal(t, http.StatusBadRequest, shrunk.APIStatus(t), "stdout: %s\nstderr: %s", shrunk.Stdout, shrunk.Stderr)
+
+	sandboxName := "cli-e2e-" + randomSuffix(t)[:8]
+	step(t, "create sandbox %s with volume %s", sandboxName, volumeName)
+	createE2ESandbox(t, sandboxName, "--volume", volumeName+":/data")
+	require.Contains(t, mustCLI(t, "sandbox", "describe", "--name", sandboxName), "Volume:       "+volumeName+" at /data\n")
+	require.Equal(t, sandboxName, cliJSON[map[string]any](t, "sandbox", "volume", "describe", "--name", volumeName)["attached_to"])
+	mustCLI(t, "sandbox", "exec", "--name", sandboxName, "--", "echo written > /data/written.txt")
+	require.Equal(t, "written\n", mustCLI(t, "sandbox", "exec", "--name", sandboxName, "--", "cat /data/written.txt"))
+	megabytes := func() int {
+		fields := strings.Fields(mustCLI(t, "sandbox", "exec", "--name", sandboxName, "--", "df -m /data | tail -n 1"))
+		require.GreaterOrEqual(t, len(fields), 2, "unexpected df output %q", fields)
+		value, err := strconv.Atoi(fields[1])
+		require.NoError(t, err)
+		return value
+	}
+	initial := megabytes()
+	step(t, "df reports %d MB for a 512 MB volume", initial)
+
+	_, mounted := deleteVolume(t.Context())
+	require.False(t, mounted, "volume deleted while mounted")
+
+	grown := cliJSON[map[string]any](t, "sandbox", "volume", "update", "--name", volumeName, "--size", "1Gi")
+	require.Equal(t, "1Gi", grown["size"])
+	elapsed = waitE2ESandboxVolume(t, "sandbox sees the grown volume", func() bool { return megabytes() > initial })
+	step(t, "sandbox saw the grown volume %v after update returned", elapsed)
+
+	mustCLI(t, "sandbox", "delete", "--name", sandboxName, "--yes")
+	var deleted map[string]any
+	elapsed = waitE2ESandboxVolume(t, "volume deletable", func() bool {
+		var done bool
+		deleted, done = deleteVolume(t.Context())
+		return done
+	})
+	volumeDeleted = true
+	step(t, "volume deletable %v after sandbox delete returned", elapsed)
+	require.Equal(t, "DELETING", deleted["status"])
+}
+
+// waitE2ESandboxVolume polls check until it reports true, failing once
+// sandboxVolumeE2EWait passes. A hard failure inside check fails the test at
+// once. Returns how long it took.
+func waitE2ESandboxVolume(t *testing.T, what string, check func() bool) time.Duration {
+	t.Helper()
+	started := time.Now()
+	for !check() {
+		if time.Since(started) > sandboxVolumeE2EWait {
+			t.Fatalf("%s: not within %v", what, sandboxVolumeE2EWait)
+		}
+		time.Sleep(sandboxVolumeE2EPoll)
+	}
+	return time.Since(started)
 }
 
 // TestE2ESandboxImage pushes an image from a directory with a .dockerignore,
