@@ -1666,30 +1666,24 @@ const gridTokenMinimumLeft = 15 * time.Minute
 
 var errGridSessionExpired = errors.New("Your Baseten session has expired. Run `baseten auth login`.")
 
-// commandGridToken prints a Grid token for the harness's recorded team, the
-// --team named, or the API's choice. Only the token goes to stdout.
+// commandGridToken prints a Grid token for the harness's recorded team, or
+// the --team named. Only the token goes to stdout.
 func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
-	if flags.Harness != "" && flags.Team != "" {
-		return cmd.NewErrUsagef("pass --harness or --team, not both")
-	}
 	dir, err := auth.DefaultConfigDir()
 	if err != nil {
 		return err
 	}
-	teamID := ""
-	if flags.Harness != "" {
-		file, err := harness.LoadRecords(dir)
-		if err != nil {
-			return err
-		}
-		record, ok := file.Harnesses[flags.Harness]
-		if !ok {
-			return errors.New("Run `baseten grid setup` first.")
-		}
-		// The recorded profile survives `auth switch`; --profile still wins.
-		ctx.SetDefaultProfile(record.Profile)
-		teamID = record.TeamID
+	file, err := harness.LoadRecords(dir)
+	if err != nil {
+		return err
 	}
+	record, ok := file.Harnesses[flags.Harness]
+	if !ok {
+		return errors.New("Run `baseten grid setup` first.")
+	}
+	// The recorded profile survives `auth switch`; --profile still wins.
+	ctx.SetDefaultProfile(record.Profile)
+	teamID := record.TeamID
 	transport, remote, err := ctx.AuthTransport()
 	if err != nil {
 		return err
@@ -1709,22 +1703,16 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 	}
 	store := auth.NewStore(auth.StoreOptions{Dir: dir})
 	scope := auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()}
-	if teamID != "" {
-		if token := store.GetGridToken(scope, teamID); token != nil && time.Until(token.ExpiresAt) > gridTokenMinimumLeft {
-			ctx.Output(token.Token + "\n")
-			return nil
-		}
+	if token := store.GetGridToken(scope, teamID); token != nil && time.Until(token.ExpiresAt) > gridTokenMinimumLeft {
+		ctx.Output(token.Token + "\n")
+		return nil
 	}
 	// A gone session fails here with advice rather than as an API error.
 	if _, err := transport.Credential(ctx); err != nil {
 		ctx.VerboseLogf("session credential: %v\n", err)
 		return errGridSessionExpired
 	}
-	var body managementapi.CreateGridTokenRequest
-	if teamID != "" {
-		body.TeamId = &teamID
-	}
-	minted, err := cl.API().PostGridToken(ctx, body)
+	minted, err := cl.API().PostGridToken(ctx, managementapi.CreateGridTokenRequest{TeamId: &teamID})
 	if err != nil {
 		// 401 is a gone session. 403 is a refused credential, such as a Grid API
 		// key in BASETEN_API_KEY, which logging in would not fix.
@@ -1735,7 +1723,7 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 		return fmt.Errorf("creating a Grid token: %v", err)
 	}
 	token := auth.GridToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
-	store.SetGridToken(scope, minted.TeamId, token, ctx.Log)
+	store.SetGridToken(scope, teamID, token, ctx.Log)
 	ctx.Output(token.Token + "\n")
 	return nil
 }

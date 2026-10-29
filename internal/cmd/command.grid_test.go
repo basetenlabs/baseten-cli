@@ -2845,22 +2845,11 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/grid/token"))
 	h.Require.Equal(map[string]any{"team_id": "team-a"}, api.FindCall("POST", "/v1/grid/token").BodyJSON(t))
 
-	// --team names the team without a record; without either flag the API
-	// picks the team, and the token is cached under the team it names.
-	h.Require.NoError(h.Execute("grid", "token", "--team", "Engineering"))
+	h.Require.NoError(h.Execute("grid", "token", "--harness", "codex", "--team", "Engineering"))
 	h.Require.Equal("grid-new\n", h.Stdout.String())
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/grid/token"), "the cached token serves --team")
-	store.ClearGridTokens(scope)
-	h.Require.NoError(h.Execute("grid", "token"))
-	h.Require.Equal("grid-new\n", h.Stdout.String())
-	calls := api.Calls()
-	h.Require.Equal(map[string]any{}, calls[len(calls)-1].BodyJSON(t), "no team is sent")
-	stdout, _, err = run()
-	h.Require.NoError(err)
-	h.Require.Equal("grid-new\n", stdout)
-	h.Require.Equal(2, countCalls(api, "POST", "/v1/grid/token"), "the token is cached under the team the API named")
-	h.Require.Error(h.Execute("grid", "token", "--harness", "codex", "--team", "team-a"))
-	h.Require.Contains(h.Stderr.String(), "pass --harness or --team, not both")
+	h.Require.Error(h.Execute("grid", "token"))
+	h.Require.Contains(h.Stderr.String(), `Required flag(s) "harness" not set`)
 
 	// A session the API rejects, a credential it refuses, then login, which
 	// forgets the cache.
