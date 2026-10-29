@@ -61,6 +61,9 @@ type AuthFile struct {
 	// InsecureRoutesKeys holds routes API keys by scope hash. Only populated
 	// when the keyring is unavailable.
 	InsecureRoutesKeys map[string]string `json:"routes_keys,omitempty"`
+	// InsecureGridTokens holds cached Grid tokens by scope hash, then team.
+	// Only populated when the keyring is unavailable.
+	InsecureGridTokens map[string]map[string]GridToken `json:"grid_tokens,omitempty"`
 }
 
 // Store manages reading and writing auth.json and keyring secrets.

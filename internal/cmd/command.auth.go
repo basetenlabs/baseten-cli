@@ -97,6 +97,9 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 			ctx.Logf("warning: server-side session revocation failed: %v\n", err)
 		}
 	}
+	if err := clearGridTokens(store, profileName); err != nil {
+		ctx.Logf("warning: could not clear the cached Grid tokens: %v\n", err)
+	}
 
 	if err := store.RemoveProfile(ctx, profileName); err != nil {
 		return err
@@ -141,6 +144,19 @@ func revokeOAuthSession(ctx *CommandContext, profileName string) error {
 		return fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+// clearGridTokens forgets the Grid tokens `grid token` cached for a profile.
+func clearGridTokens(store *auth.Store, profileName string) error {
+	session, err := auth.ResolveSession(profileName, "")
+	if err != nil {
+		return err
+	}
+	remote, err := NewRemote(session.RemoteURL())
+	if err != nil {
+		return err
+	}
+	return store.ClearGridTokens(auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()})
 }
 
 func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
@@ -348,6 +364,11 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 	}
 
 	warnWriter := func(msg string) { ctx.Log(msg) }
+	// The profile may have belonged to another user, whose cached Grid tokens
+	// the helper would otherwise keep serving.
+	if err := clearGridTokens(store, profileName); err != nil {
+		return err
+	}
 	cred := auth.OAuthCredential{
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
@@ -410,6 +431,10 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *
 	}
 
 	warnWriter := func(msg string) { ctx.Log(msg) }
+	// As for a browser login: the profile may have been another user's.
+	if err := clearGridTokens(store, profileName); err != nil {
+		return err
+	}
 	if err := store.SetAPIKeyProfile(ctx, profileName, remote.RemoteURL(), apiKey, !flags.NoSwitch, warnWriter); err != nil {
 		return err
 	}

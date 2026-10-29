@@ -207,6 +207,14 @@ func (codexHarness) BackgroundRoute(Selection) string { return "" }
 
 var codexCredentialPath = []string{"model_providers", providerID, "experimental_bearer_token"}
 
+// The credential helper's timeout, and how often Codex reruns it between the
+// 401s that also rerun it, so a long-running app-server daemon stays ahead of
+// token expiry.
+const (
+	codexHelperTimeout         = 5000
+	codexHelperRefreshInterval = 5 * 60 * 1000
+)
+
 func (codexHarness) SupportsSubagent() bool { return false }
 
 func (codexHarness) Credential(path string) (string, error) {
@@ -219,7 +227,7 @@ func (codexHarness) Routes(routes []Route) []Route {
 	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Responses })
 }
 
-func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
+func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, helper string) ([]*Plan, error) {
 	switch {
 	case s.Background != "":
 		return nil, errors.New("--background-route-id is supported only for Claude Code and OpenCode")
@@ -232,22 +240,33 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint s
 	if err != nil {
 		return nil, err
 	}
+	provider := map[string]any{
+		"name":                 "Baseten",
+		"base_url":             strings.TrimRight(endpoint, "/") + "/v1",
+		"wire_api":             "responses",
+		"requires_openai_auth": false,
+		"http_headers":         map[string]any{clientHeader: Codex},
+	}
+	credentialPath := codexCredentialPath
+	if helper != "" {
+		credentialPath = nil
+		// An absolute path: the app-server daemon does not share the user's PATH.
+		provider["auth"] = map[string]any{
+			"command": helper, "args": helperArgs(Codex),
+			"timeout_ms": codexHelperTimeout, "refresh_interval_ms": codexHelperRefreshInterval,
+		}
+	} else {
+		provider["experimental_bearer_token"] = ""
+	}
 	values := []setting{
 		desired([]string{"model"}, s.Primary),
 		desired([]string{"model_provider"}, providerID),
 		desired([]string{"model_catalog_json"}, catalogPath(path)),
 		desired([]string{"review_model"}, s.Primary),
 		desired([]string{"forced_login_method"}, "api"),
-		desired([]string{"model_providers", providerID}, map[string]any{
-			"name":                      "Baseten",
-			"base_url":                  strings.TrimRight(endpoint, "/") + "/v1",
-			"wire_api":                  "responses",
-			"requires_openai_auth":      false,
-			"experimental_bearer_token": "",
-			"http_headers":              map[string]any{clientHeader: Codex},
-		}),
+		desired([]string{"model_providers", providerID}, provider),
 	}
-	p, err := prepareSettings(path, codexCredentialPath, func(map[string]any) ([]setting, error) { return values, nil })
+	p, err := prepareSettings(path, credentialPath, func(map[string]any) ([]setting, error) { return values, nil })
 	if err != nil {
 		return nil, err
 	}

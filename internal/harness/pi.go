@@ -25,7 +25,12 @@ var piCredentialPath = []string{"providers", providerID, "apiKey"}
 const longContextTokens = 200000
 
 func (piHarness) Credential(path string) (string, error) {
-	return credential(path, piCredentialPath)
+	token, err := credential(path, piCredentialPath)
+	// A "!command" apiKey runs the credential helper; it is not a key.
+	if strings.HasPrefix(token, "!") {
+		return "", err
+	}
+	return token, err
 }
 
 func (piHarness) Name() string { return Pi }
@@ -45,7 +50,7 @@ func (piHarness) Routes(routes []Route) []Route { return routes }
 
 func (piHarness) SupportsSubagent() bool { return false }
 
-func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
+func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint, helper string) ([]*Plan, error) {
 	switch {
 	case s.Background != "":
 		return nil, errors.New("--background-route-id is supported only for Claude Code and OpenCode")
@@ -63,18 +68,23 @@ func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint stri
 	for _, r := range routes {
 		models = append(models, piModel(r, baseURL))
 	}
+	// Pi runs a "!command" apiKey for each request.
+	apiKey, credentialPath := "", piCredentialPath
+	if helper != "" {
+		apiKey, credentialPath = "!"+helperShellCommand(helper, Pi), nil
+	}
 	provider := desired(piProviderPath, map[string]any{
 		"name":    "Baseten",
 		"baseUrl": baseURL + "/v1",
 		"api":     "openai-completions",
-		"apiKey":  "",
+		"apiKey":  apiKey,
 		// Pi sends apiKey as x-api-key to Anthropic routes, and Baseten
 		// authenticates only Authorization.
 		"authHeader": true,
 		"headers":    map[string]any{clientHeader: Pi},
 		"models":     models,
 	})
-	p, err := prepareSettings(path, piCredentialPath, func(map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, credentialPath, func(map[string]any) ([]setting, error) {
 		return []setting{provider}, nil
 	})
 	if err != nil {
