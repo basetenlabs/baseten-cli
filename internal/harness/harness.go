@@ -78,6 +78,9 @@ type Harness interface {
 	BackgroundRoute(selection Selection) string
 	// SupportsSubagent reports whether --subagent-route-id applies to this harness.
 	SupportsSubagent() bool
+	// SupportsAuthCommand reports whether the harness can run `baseten grid token`
+	// as its credential command instead of storing a key.
+	SupportsAuthCommand() bool
 	// Credential returns the routes API key setup wrote to the settings file at
 	// path, or "" if there is none.
 	Credential(path string) (string, error)

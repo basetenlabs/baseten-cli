@@ -1777,7 +1777,7 @@ func Test_Grid_Setup_RecordsSyncOptions(t *testing.T) {
 	h.Require.Equal(filepath.Join(dir, "settings.json"), record.Config)
 	h.Require.Equal(api.URL, record.ManagementURL)
 	h.Require.Equal("team-b", record.TeamID)
-	h.Require.Equal(harness.CredentialSourceHelper, record.CredentialSource)
+	h.Require.Equal(harness.CredentialSourceAuthCommand, record.CredentialSource)
 	h.Require.Equal("acme/primary", record.Route)
 	h.Require.Equal("acme/second", record.BackgroundRoute)
 	h.Require.Empty(record.SubagentRoute, "unset flags stay empty so sync follows defaults")
@@ -2816,7 +2816,7 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Empty(stdout)
 	h.Require.Equal("Run `baseten grid setup` first.\n", stderr)
 	saveHarnessRecordFile(t, harness.RecordFile{Harnesses: map[string]harness.Record{
-		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, TeamID: "team-a", CredentialSource: harness.CredentialSourceHelper},
+		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, TeamID: "team-a", CredentialSource: harness.CredentialSourceAuthCommand},
 	}})
 	_, stderr, err = run()
 	h.Require.Error(err)
@@ -2837,7 +2837,7 @@ func Test_Grid_Token(t *testing.T) {
 
 	// The recorded profile beats a BASETEN_API_KEY exported in the harness's shell.
 	saveHarnessRecordFile(t, harness.RecordFile{Harnesses: map[string]harness.Record{
-		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, Profile: "alice", TeamID: "team-a", CredentialSource: harness.CredentialSourceHelper},
+		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, Profile: "alice", TeamID: "team-a", CredentialSource: harness.CredentialSourceAuthCommand},
 	}})
 	t.Setenv("BASETEN_API_KEY", "someone-else")
 	stdout, _, err = run()

@@ -50,6 +50,8 @@ func (piHarness) Routes(routes []Route) []Route { return routes }
 
 func (piHarness) SupportsSubagent() bool { return false }
 
+func (piHarness) SupportsAuthCommand() bool { return true }
+
 func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint, helper string) ([]*Plan, error) {
 	switch {
 	case s.Background != "":

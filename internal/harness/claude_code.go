@@ -185,6 +185,8 @@ func claudeTeardownPaths(data map[string]any) [][]string {
 
 func (claudeCodeHarness) SupportsSubagent() bool { return true }
 
+func (claudeCodeHarness) SupportsAuthCommand() bool { return true }
+
 func (claudeCodeHarness) Credential(path string) (string, error) {
 	_, data, err := readConfig(path)
 	if err != nil || get(data, []string{"env", claudeMarker}).Data != "1" {

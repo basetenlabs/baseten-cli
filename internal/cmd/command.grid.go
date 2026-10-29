@@ -303,7 +303,9 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		return nil, err
 	}
 	helper := ""
-	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool { return t.record.CredentialSource == harness.CredentialSourceHelper }) {
+	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool {
+		return t.record.CredentialSource == harness.CredentialSourceAuthCommand
+	}) {
 		var warning string
 		if helper, warning, err = gridHelperPath(); err != nil {
 			return nil, err
@@ -339,7 +341,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		}
 		target.selection = selection
 		targetHelper := ""
-		if target.record.CredentialSource == harness.CredentialSourceHelper {
+		if target.record.CredentialSource == harness.CredentialSourceAuthCommand {
 			targetHelper = helper
 		}
 		current, err := target.Prepare(target.detection.Path, callable, selection.Selection, endpoint, targetHelper)
@@ -375,7 +377,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if err != nil {
 		return err
 	}
-	credentialSource := harness.CredentialSourceHelper
+	credentialSource := harness.CredentialSourceAuthCommand
 	// An ephemeral session has no profile the helper could resolve inside the
 	// harness, so its key is installed instead.
 	if f.UseSessionCredential || session.IsEphemeral() {
@@ -387,8 +389,8 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 			KeyName:          f.KeyName,
 			CredentialSource: credentialSource,
 		}
-		if selected[i].Name() == harness.OpenCode && credentialSource == harness.CredentialSourceHelper {
-			// OpenCode has no credential command; it keeps a key.
+		if credentialSource == harness.CredentialSourceAuthCommand && !selected[i].SupportsAuthCommand() {
+			// A harness without a credential command keeps a key.
 			record.CredentialSource = ""
 		}
 		subagentID := f.SubagentRouteID
@@ -459,7 +461,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	var helperTargets []gridSelectedHarness
 	for _, t := range targets {
 		switch t.record.CredentialSource {
-		case harness.CredentialSourceHelper:
+		case harness.CredentialSourceAuthCommand:
 			helperTargets = append(helperTargets, t.gridSelectedHarness)
 		case "":
 			if token == "" {
@@ -649,7 +651,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		run := &runs[i]
 		// The Grid API key is only read or created once the user has confirmed.
 		token := run.token
-		if token == "" && run.targets[0].record.CredentialSource != harness.CredentialSourceHelper {
+		if token == "" && run.targets[0].record.CredentialSource != harness.CredentialSourceAuthCommand {
 			if token, err = gridEnsureHarnessToken(ctx, api, run.team, run.targets[0].record.KeyName); err != nil {
 				return err
 			}

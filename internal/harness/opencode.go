@@ -173,6 +173,8 @@ func (openCodeHarness) Routes(routes []Route) []Route { return routes }
 
 func (openCodeHarness) SupportsSubagent() bool { return true }
 
+func (openCodeHarness) SupportsAuthCommand() bool { return false }
+
 // Prepare ignores helper: OpenCode has no credential command.
 func (openCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint, _ string) ([]*Plan, error) {
 	if s.Fallback != "" {
