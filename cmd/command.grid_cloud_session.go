@@ -21,8 +21,8 @@ var commandGridCloudSession = Command{
 			Summary: "Create a cloud session (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
 				"Create a sandbox from a session image, wait for it to deploy, plan the 'grid setup' harness " +
-				"configuration on this machine, write it into the session, and start the harness in a tmux session. Idempotent: an existing running session is " +
-				"set up again and returned.\n\n" +
+				"configuration on this machine, write it into the session, and start the harness in a tmux session. An existing session is not changed: create " +
+				"attaches to it, like connect.\n\n" +
 				"Point at a repository with --repo owner/name and the image is resolved from it: from the session-image " +
 				"map written by the build/import step, by the backend's image service in production. --image names an " +
 				"imported image directly instead. " +
