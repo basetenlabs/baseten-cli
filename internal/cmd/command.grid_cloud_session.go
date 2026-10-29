@@ -842,7 +842,10 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	// JSON output must stay machine-readable, so only a terminal auto-attaches.
 	if !ctx.JSON && stdinStdoutAreTerminals(ctx) {
 		ctx.Logf("Reconnect later with: baseten grid cloud-session connect --name %s\n", name)
-		return cloudSessionAttach(ctx, cmd.SandboxRefFlags{Name: name, Team: flags.Team}, harnessStart)
+		return commandGridCloudSessionConnect(ctx, &cmd.CloudSessionConnectFlags{
+			SandboxRefFlags: cmd.SandboxRefFlags{Name: name, Team: flags.Team},
+			Harness:         flags.Harness,
+		})
 	}
 	ctx.Logf("Attach with: baseten grid cloud-session connect --name %s\n", name)
 	return nil
@@ -866,8 +869,9 @@ func commandGridCloudSessionConnect(ctx *CommandContext, flags *cmd.CloudSession
 func cloudSessionAttach(ctx *CommandContext, ref cmd.SandboxRefFlags, tmuxWindowCommand string) error {
 	// tmux -u: the pty's TERM=linux plus empty locale would make tmux
 	// ASCII-substitute glyphs. new -A: attach when the session exists, create
-	// it with the harness when not.
-	attachCommand := "TERM=xterm-256color tmux -u new-session -A -s " + cloudSessionTmuxSession + " " + tmuxWindowCommand + "\n"
+	// it with the harness when not. exec: tmux replaces the shell, so a detach
+	// ends the connection in one step.
+	attachCommand := "exec env TERM=xterm-256color tmux -u new-session -A -s " + cloudSessionTmuxSession + " " + tmuxWindowCommand + "\n"
 	return sandboxConnectTerminal(ctx, ref, attachCommand)
 }
 
