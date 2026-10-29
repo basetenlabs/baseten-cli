@@ -2835,6 +2835,16 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Empty(stderr)
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/grid/token"))
 
+	// The recorded profile beats a BASETEN_API_KEY exported in the harness's shell.
+	saveHarnessRecordFile(t, harness.RecordFile{Harnesses: map[string]harness.Record{
+		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, Profile: "alice", TeamID: "team-a", CredentialSource: harness.CredentialSourceHelper},
+	}})
+	t.Setenv("BASETEN_API_KEY", "someone-else")
+	stdout, _, err = run()
+	h.Require.NoError(err)
+	h.Require.Equal("grid-cached\n", stdout)
+	t.Setenv("BASETEN_API_KEY", "")
+
 	// An expiring token is replaced once, and the replacement is cached.
 	store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-stale", ExpiresAt: time.Now().Add(5 * time.Minute)}, nil)
 	for range 2 {

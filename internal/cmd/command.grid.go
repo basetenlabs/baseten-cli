@@ -1681,8 +1681,11 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 	if !ok {
 		return errors.New("Run `baseten grid setup` first.")
 	}
-	// The recorded profile survives `auth switch`; --profile still wins.
-	ctx.SetDefaultProfile(record.Profile)
+	// The recorded profile survives `auth switch` and a BASETEN_API_KEY the
+	// harness inherits from the shell; --profile still wins.
+	if ctx.authInfo.profileFlag == "" {
+		ctx.authInfo.profileFlag = record.Profile
+	}
 	teamID := record.TeamID
 	transport, remote, err := ctx.AuthTransport()
 	if err != nil {
