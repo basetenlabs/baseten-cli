@@ -447,7 +447,7 @@ func cloudSessionWriteHarnessSettings(ctx *CommandContext, instance *sandbox.San
 	if err != nil {
 		return err
 	}
-	// Setup merges into the existing file, so a re-create keeps what the session already holds.
+	// Setup merges into a settings file the image may carry.
 	existingSettings, err := instance.FS().ReadBytes(ctx, sandbox.FileSystemReadBytesOptions{Path: filepath.Join(sandboxConfigDir, settingsRelPath)})
 	var readErr *sandbox.APIError
 	switch {
@@ -728,6 +728,14 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	if err != nil {
 		return err
 	}
+	// One session per sandbox: create on an existing one rejoins it as is.
+	if sandboxExisted {
+		ctx.Logf("Session %s exists, attaching to it.\n", name)
+		return commandGridCloudSessionConnect(ctx, &cmd.CloudSessionConnectFlags{
+			SandboxRefFlags: cmd.SandboxRefFlags{Name: name, Team: flags.Team},
+			Harness:         flags.Harness,
+		})
+	}
 	creating := startSpinner(ctx, fmt.Sprintf("Creating session %s from image %s", name, imageRef))
 	record, err := client.API().CreateSandbox(ctx, managementapi.CreateSandboxParams{TeamId: teamID}, createRequest)
 	if err != nil {
@@ -743,12 +751,10 @@ func commandGridCloudSessionCreate(ctx *CommandContext, flags *cmd.CloudSessionC
 	if err != nil {
 		return err
 	}
-	if !sandboxExisted {
-		// Image builds can leave their own dirt in the baked checkout; start a fresh session at the image's HEAD.
-		restoreCheckout := "if [ -d /workspace/.git ]; then git -C /workspace checkout -- . && git -C /workspace clean -fdq; fi"
-		if err := cloudSessionExecStream(ctx, instance, restoreCheckout, "/workspace", cloudSessionInSandboxTimeout); err != nil {
-			return err
-		}
+	// Image builds can leave their own dirt in the baked checkout; start a fresh session at the image's HEAD.
+	restoreCheckout := "if [ -d /workspace/.git ]; then git -C /workspace checkout -- . && git -C /workspace clean -fdq; fi"
+	if err := cloudSessionExecStream(ctx, instance, restoreCheckout, "/workspace", cloudSessionInSandboxTimeout); err != nil {
+		return err
 	}
 	ctx.Logf("Setting up %s for session %s…\n", flags.Harness, name)
 	if err := cloudSessionWriteHarnessSettings(ctx, instance, flags, apiKeyValue); err != nil {
@@ -834,10 +840,8 @@ func commandGridCloudSessionConnect(ctx *CommandContext, flags *cmd.CloudSession
 }
 
 // cloudSessionAttach opens the session's terminal and lands it in the
-// session's tmux session, keeping the sandbox awake while attached. The
-// window command only runs when the tmux session does not exist yet.
-// The sentinel kill on detach is best effort: a hibernated sandbox wakes for the
-// kill and sleeps again right after.
+// session's tmux session. The window command only runs when the tmux session
+// does not exist yet.
 func cloudSessionAttach(ctx *CommandContext, ref cmd.SandboxRefFlags, tmuxWindowCommand string) error {
 	// tmux -u: the pty's TERM=linux plus empty locale would make tmux
 	// ASCII-substitute glyphs. new -A: attach when the session exists, create
