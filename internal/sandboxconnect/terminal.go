@@ -263,9 +263,9 @@ func (t *Terminal) Run(ctx context.Context) error {
 			return err
 		}
 		// Clear the stale sandbox screen: a frozen frame left behind would read as alive.
-		fmt.Fprintf(t.opts.Errors,
-			"\x1b[2J\x1b[H\r\nConnection lost (%v). Idle connections drop after a couple of minutes, and a suspended sandbox freezes the same way mid-work; reconnecting wakes it.\r\n"+
-				"Type any key to reconnect and wake the sandbox, or press Ctrl+C or Ctrl+D to quit.\r\n", lost)
+		io.WriteString(t.opts.Errors,
+			"\x1b[2J\x1b[H\r\nConnection lost. The sandbox hibernates after inactivity, which drops the connection.\r\n"+
+				"Type any key to reconnect and wake the sandbox, or press Ctrl+C or Ctrl+D to quit.\r\n")
 		// The input loop ends when it delivers a keystroke, so a failed
 		// reconnect must restart it: nothing else would ever read the retry.
 		disconnect := make(chan struct{})
