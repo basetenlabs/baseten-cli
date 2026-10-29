@@ -97,10 +97,6 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 			ctx.Logf("warning: server-side session revocation failed: %v\n", err)
 		}
 	}
-	if err := clearGridTokens(store, profileName); err != nil {
-		ctx.Logf("warning: could not clear the cached Grid tokens: %v\n", err)
-	}
-
 	if err := store.RemoveProfile(ctx, profileName); err != nil {
 		return err
 	}
@@ -156,7 +152,8 @@ func clearGridTokens(store *auth.Store, profileName string) error {
 	if err != nil {
 		return err
 	}
-	return store.ClearGridTokens(auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()})
+	store.ClearGridTokens(auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()})
+	return nil
 }
 
 func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {

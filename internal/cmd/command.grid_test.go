@@ -2828,7 +2828,7 @@ func Test_Grid_Token(t *testing.T) {
 	session, err := auth.ResolveSession("alice", "")
 	h.Require.NoError(err)
 	scope := auth.GridTokenScope{ManagementURL: api.URL, Identity: session.CacheIdentity()}
-	h.Require.NoError(store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-cached", ExpiresAt: time.Now().Add(30 * time.Minute)}, nil))
+	store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-cached", ExpiresAt: time.Now().Add(30 * time.Minute)}, nil)
 	stdout, stderr, err = run()
 	h.Require.NoError(err)
 	h.Require.Equal("grid-cached\n", stdout)
@@ -2836,7 +2836,7 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/grid/token"))
 
 	// An expiring token is replaced once, and the replacement is cached.
-	h.Require.NoError(store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-stale", ExpiresAt: time.Now().Add(5 * time.Minute)}, nil))
+	store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-stale", ExpiresAt: time.Now().Add(5 * time.Minute)}, nil)
 	for range 2 {
 		stdout, _, err = run()
 		h.Require.NoError(err)
@@ -2850,7 +2850,7 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "token", "--team", "Engineering"))
 	h.Require.Equal("grid-new\n", h.Stdout.String())
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/grid/token"), "the cached token serves --team")
-	h.Require.NoError(store.ClearGridTokens(scope))
+	store.ClearGridTokens(scope)
 	h.Require.NoError(h.Execute("grid", "token"))
 	h.Require.Equal("grid-new\n", h.Stdout.String())
 	calls := api.Calls()
@@ -2862,10 +2862,10 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Error(h.Execute("grid", "token", "--harness", "codex", "--team", "team-a"))
 	h.Require.Contains(h.Stderr.String(), "pass --harness or --team, not both")
 
-	// A session the API rejects, a credential it refuses, then logout, which
+	// A session the API rejects, a credential it refuses, then login, which
 	// forgets the cache.
 	for status, want := range map[int]string{401: "Your Baseten session has expired. Run `baseten auth login`.\n", 403: "rejected"} {
-		h.Require.NoError(store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-stale", ExpiresAt: time.Now()}, nil))
+		store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-stale", ExpiresAt: time.Now()}, nil)
 		api.SetRoute("POST", "/v1/grid/token", status, map[string]string{"message": "rejected"})
 		stdout, stderr, err = run()
 		h.Require.Error(err)
@@ -2873,12 +2873,8 @@ func Test_Grid_Token(t *testing.T) {
 		h.Require.Contains(stderr, want)
 		h.Require.Equal(status == 401, strings.Contains(stderr, "session has expired"))
 	}
-	for _, command := range [][]string{{"auth", "login", "--with-api-key", "--profile", "alice"}, {"auth", "logout", "--profile", "alice"}} {
-		h.Require.NoError(store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-cached", ExpiresAt: time.Now().Add(time.Hour)}, nil))
-		h.Stdin.WriteString("key-b\n")
-		h.Require.NoError(h.Execute(command...))
-		token, err := store.GetGridToken(scope, "team-a")
-		h.Require.NoError(err)
-		h.Require.Nil(token, "%v forgets the cached tokens", command)
-	}
+	store.SetGridToken(scope, "team-a", auth.GridToken{Token: "grid-cached", ExpiresAt: time.Now().Add(time.Hour)}, nil)
+	h.Stdin.WriteString("key-b\n")
+	h.Require.NoError(h.Execute("auth", "login", "--with-api-key", "--profile", "alice"))
+	h.Require.Nil(store.GetGridToken(scope, "team-a"), "login forgets the cached tokens")
 }

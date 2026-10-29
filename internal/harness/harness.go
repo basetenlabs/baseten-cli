@@ -96,14 +96,8 @@ func helperShellCommand(helper, name string) string {
 	return shellQuote(helper) + " " + strings.Join(helperArgs(name), " ")
 }
 
-// shellQuote single-quotes s for sh unless it needs no quoting.
+// shellQuote single-quotes s for sh.
 func shellQuote(s string) string {
-	plain := func(r rune) bool {
-		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._-+", r)
-	}
-	if s != "" && strings.IndexFunc(s, func(r rune) bool { return !plain(r) }) < 0 {
-		return s
-	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 

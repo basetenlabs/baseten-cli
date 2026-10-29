@@ -1718,31 +1718,13 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 	}
 	store := auth.NewStore(auth.StoreOptions{Dir: dir})
 	scope := auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()}
-	// printCached prints the cached token while it has enough life left. The
-	// cache is keyed by team, which without --harness or --team is only known
-	// once the API answers.
-	printCached := func() (bool, error) {
-		if teamID == "" {
-			return false, nil
+	// The cache is keyed by team, which without --harness or --team is only
+	// known once the API answers.
+	if teamID != "" {
+		if token := store.GetGridToken(scope, teamID); token != nil && time.Until(token.ExpiresAt) > gridTokenMinimumLeft {
+			ctx.Output(token.Token + "\n")
+			return nil
 		}
-		token, err := store.GetGridToken(scope, teamID)
-		if err != nil || token == nil || time.Until(token.ExpiresAt) <= gridTokenMinimumLeft {
-			return false, err
-		}
-		ctx.Output(token.Token + "\n")
-		return true, nil
-	}
-	if printed, err := printCached(); printed || err != nil {
-		return err
-	}
-	// Several harnesses starting at once each run the helper: one of them mints.
-	unlock, err := auth.LockGridTokens(dir)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	if printed, err := printCached(); printed || err != nil {
-		return err
 	}
 	// Refresh the session credential first, so a session that is gone fails
 	// with advice rather than as an API error.
@@ -1767,9 +1749,7 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 		return fmt.Errorf("creating a Grid token: %v", err)
 	}
 	token := auth.GridToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
-	if err := store.SetGridToken(scope, minted.TeamId, token, ctx.Log); err != nil {
-		return err
-	}
+	store.SetGridToken(scope, minted.TeamId, token, ctx.Log)
 	ctx.Output(token.Token + "\n")
 	return nil
 }

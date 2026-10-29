@@ -34,88 +34,41 @@ type GridToken struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// gridTokens reads the tokens cached for scope, by team, from the keyring,
-// else from the auth.json plaintext field.
-func (s *Store) gridTokens(scope GridTokenScope) (map[string]GridToken, error) {
+// gridTokens reads the tokens cached for scope, by team, from the keyring. A
+// missing or unparseable entry is empty; the next mint overwrites it.
+func gridTokens(scope GridTokenScope) map[string]GridToken {
 	tokens := map[string]GridToken{}
 	if secret, err := keyring.Get(gridTokenService, scope.account()); err == nil {
-		// An entry that does not parse is a miss; the next mint overwrites it.
 		if json.Unmarshal([]byte(secret), &tokens) != nil {
 			clear(tokens)
 		}
-		return tokens, nil
 	}
-	af, err := s.loadLocked()
-	if err != nil {
-		return nil, err
-	}
-	for team, token := range af.InsecureGridTokens[scope.account()] {
-		tokens[team] = token
-	}
-	return tokens, nil
+	return tokens
 }
 
 // GetGridToken returns the Grid token cached for scope and teamID, or nil if
 // there is none.
-func (s *Store) GetGridToken(scope GridTokenScope, teamID string) (*GridToken, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tokens, err := s.gridTokens(scope)
-	if err != nil {
-		return nil, err
-	}
-	token, ok := tokens[teamID]
+func (s *Store) GetGridToken(scope GridTokenScope, teamID string) *GridToken {
+	token, ok := gridTokens(scope)[teamID]
 	if !ok {
-		return nil, nil
+		return nil
 	}
-	return &token, nil
+	return &token
 }
 
-// SetGridToken caches token for scope and teamID. Tries the keyring first;
-// falls back to plaintext in auth.json with a warning written to warnWriter
-// (if non-nil).
-func (s *Store) SetGridToken(scope GridTokenScope, teamID string, token GridToken, warnWriter func(string)) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tokens, err := s.gridTokens(scope)
-	if err != nil {
-		return err
-	}
+// SetGridToken caches token for scope and teamID in the keyring. Without a
+// keyring the token is not cached, with a warning written to warnWriter (if
+// non-nil): a Grid token is short-lived and cheap to mint again.
+func (s *Store) SetGridToken(scope GridTokenScope, teamID string, token GridToken, warnWriter func(string)) {
+	tokens := gridTokens(scope)
 	tokens[teamID] = token
-	if !s.insecureStorage {
-		secret, err := json.Marshal(tokens)
-		if err != nil {
-			return fmt.Errorf("marshaling Grid tokens: %w", err)
-		}
-		if err := keyring.Set(gridTokenService, scope.account(), string(secret)); err == nil {
-			return nil
-		} else if warnWriter != nil {
-			warnWriter(fmt.Sprintf("warning: could not store the Grid token in system keyring, storing in plain text: %v\n", err))
-		}
+	secret, _ := json.Marshal(tokens)
+	if err := keyring.Set(gridTokenService, scope.account(), string(secret)); err != nil && warnWriter != nil {
+		warnWriter(fmt.Sprintf("warning: could not cache the Grid token in the system keyring: %v\n", err))
 	}
-	af, err := s.loadLocked()
-	if err != nil {
-		return err
-	}
-	if af.InsecureGridTokens == nil {
-		af.InsecureGridTokens = map[string]map[string]GridToken{}
-	}
-	af.InsecureGridTokens[scope.account()] = tokens
-	return s.saveLocked(af)
 }
 
 // ClearGridTokens forgets every Grid token cached for scope.
-func (s *Store) ClearGridTokens(scope GridTokenScope) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) ClearGridTokens(scope GridTokenScope) {
 	_ = keyring.Delete(gridTokenService, scope.account())
-	af, err := s.loadLocked()
-	if err != nil {
-		return err
-	}
-	if _, ok := af.InsecureGridTokens[scope.account()]; !ok {
-		return nil
-	}
-	delete(af.InsecureGridTokens, scope.account())
-	return s.saveLocked(af)
 }
