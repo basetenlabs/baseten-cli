@@ -113,7 +113,7 @@ type CloudSessionCreateFlags struct {
 	Image               string   `flag:"image" desc:"Image from the sandbox image store, as shown by 'sandbox image list', bypassing --repo resolution."`
 	Name                string   `flag:"name" desc:"Name of the session's sandbox. Defaults to a generated readable name."`
 	Team                string   `flag:"team" desc:"Team name or ID the session belongs to. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
-	Memory              int      `flag:"memory" desc:"Sandbox memory in MB, 1024 to 262144." default:"8192"`
+	Memory              int      `flag:"memory" desc:"Sandbox memory in MB, 1024 to 262144." default:"16384"`
 	Harness             string   `flag:"harness" desc:"Harness the session runs." enum:"claude-code,codex,opencode,pi" default:"claude-code"`
 	HarnessURL          string   `flag:"harness-url" desc:"Harness API base URL. Default https://coding.baseten.co." default:"https://coding.baseten.co"`
 	PrimaryRouteID      string   `flag:"primary-route-id" desc:"Primary route ID for the harness. Defaults to GLM 5.3 Fast for claude-code, else the team's default for the harness."`
