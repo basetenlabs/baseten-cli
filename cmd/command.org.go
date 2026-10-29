@@ -19,7 +19,7 @@ var commandOrg = Command{
 					Name:    "list",
 					Summary: "List API keys",
 					Description: "List API keys (metadata only; key values are never returned). " +
-						"Grid API keys, which grid setup creates and manages for harness inference, are listed only with --type routes.",
+						"Grid API keys, which grid setup creates and manages for harness inference, are listed only with --type grid.",
 					Flags: OrgAPIKeyListFlags{},
 					Output: &CommandOutput[managementapi.APIKeys]{
 						TextDescription: "Table with columns: NAME, KEY (prefix + ****), TYPE, TEAM. When no " +
@@ -422,7 +422,7 @@ type OrgUserDescribeFlags struct {
 
 type OrgAPIKeyListFlags struct {
 	CommandFlags
-	Type string `flag:"type" desc:"Only list keys of this category." enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all,workspace-manage-api-keys,routes"`
+	Type string `flag:"type" desc:"Only list keys of this category." enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all,workspace-manage-api-keys,grid"`
 }
 
 type OrgAPIKeyCreateFlags struct {
