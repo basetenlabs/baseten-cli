@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -126,6 +127,11 @@ type Terminal struct {
 	// pendingShellInput is pasted shell input whose send failed on a dying
 	// connection; it reaches the shell on the next one.
 	pendingShellInput []byte
+
+	lastOutputUnixNano atomic.Int64
+	freezeProbeRunning atomic.Bool
+	// sandboxUnresponsive marks a connection the freeze probe closed.
+	sandboxUnresponsive atomic.Bool
 }
 
 // TransportLostError reports the WebSocket dying without a close frame: the
@@ -147,6 +153,14 @@ const (
 	// terminalFrameReadLimit admits the reconnect replay: up to 100KB of
 	// output in one frame, which JSON escaping of control bytes grows up to 6x.
 	terminalFrameReadLimit = 1 << 20
+)
+
+// A frozen sandbox keeps the gateway connection open but silent. Pings count
+// as sandbox activity, so only a keystroke the sandbox leaves unanswered is
+// probed: an idle terminal still lets the sandbox hibernate. Variables for tests.
+var (
+	keystrokeEchoWait = 3 * time.Second
+	freezePongTimeout = 5 * time.Second
 )
 
 // Dial connects a new terminal session. Each invocation generates a random
@@ -266,10 +280,14 @@ func (t *Terminal) Run(ctx context.Context) error {
 			}
 			return err
 		}
+		lostReason := "The sandbox hibernates after inactivity, which drops the connection."
+		if t.sandboxUnresponsive.Swap(false) {
+			lostReason = "The sandbox stopped responding."
+		}
 		// Clear the stale sandbox screen: a frozen frame left behind would read as alive.
-		io.WriteString(t.opts.Errors,
-			"\x1b[2J\x1b[H\r\nConnection lost. The sandbox hibernates after inactivity, which drops the connection.\r\n"+
-				"Type any key to reconnect and wake the sandbox, or press Ctrl+C or Ctrl+D to quit.\r\n")
+		fmt.Fprintf(t.opts.Errors,
+			"\x1b[2J\x1b[H\r\nConnection lost. %s\r\n"+
+				"Type any key to reconnect and wake the sandbox, or press Ctrl+C or Ctrl+D to quit.\r\n", lostReason)
 		// The input loop ends when it delivers a keystroke, so a failed
 		// reconnect must restart it: nothing else would ever read the retry.
 		disconnect := make(chan struct{})
@@ -401,6 +419,7 @@ func (t *Terminal) send(frame message) error {
 func (t *Terminal) readLoop(ctx context.Context, disconnect chan struct{}) error {
 	for {
 		_, payload, err := t.conn.Read(ctx)
+		t.lastOutputUnixNano.Store(time.Now().UnixNano())
 		if err != nil {
 			// A normal closure or our own cancellation ends the session;
 			// anything else is a failure.
@@ -457,6 +476,7 @@ func (t *Terminal) inputLoop(ctx context.Context, disconnect <-chan struct{}) {
 				complete += size
 			}
 			if complete > 0 {
+				sentAt := time.Now()
 				if err := t.send(message{Type: "input", Data: string(pending[:complete])}); err != nil {
 					// The send failed on a dying connection: after a
 					// transport loss these bytes become the reconnection
@@ -464,6 +484,7 @@ func (t *Terminal) inputLoop(ctx context.Context, disconnect <-chan struct{}) {
 					t.deliverReconnectKeystroke(pending[:complete])
 					return
 				}
+				t.probeUnansweredKeystroke(ctx, sentAt)
 				pending = append(pending[:0], pending[complete:]...)
 			}
 		}
@@ -473,6 +494,34 @@ func (t *Terminal) inputLoop(ctx context.Context, disconnect <-chan struct{}) {
 			return
 		}
 	}
+}
+
+// probeUnansweredKeystroke pings when the sandbox sends nothing back after a
+// keystroke, and closes the connection when the pong does not come either.
+func (t *Terminal) probeUnansweredKeystroke(ctx context.Context, sentAt time.Time) {
+	if !t.freezeProbeRunning.CompareAndSwap(false, true) {
+		return
+	}
+	t.writeMu.Lock()
+	conn := t.conn
+	t.writeMu.Unlock()
+	go func() {
+		defer t.freezeProbeRunning.Store(false)
+		select {
+		case <-time.After(keystrokeEchoWait):
+		case <-ctx.Done():
+			return
+		}
+		if t.lastOutputUnixNano.Load() >= sentAt.UnixNano() {
+			return
+		}
+		pingCtx, cancel := context.WithTimeout(ctx, freezePongTimeout)
+		defer cancel()
+		if err := conn.Ping(pingCtx); err != nil && ctx.Err() == nil {
+			t.sandboxUnresponsive.Store(true)
+			conn.CloseNow()
+		}
+	}()
 }
 
 // deliverReconnectKeystroke hands one keystroke (or ended input, for a nil

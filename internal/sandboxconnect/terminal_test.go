@@ -253,6 +253,39 @@ func TestTerminal_ReadsAFullReplayFrame(t *testing.T) {
 	}
 }
 
+func TestTerminal_UnansweredKeystrokeReportsAFrozenSandbox(t *testing.T) {
+	keystrokeEchoWait, freezePongTimeout = 50*time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() { keystrokeEchoWait, freezePongTimeout = 3*time.Second, 5*time.Second })
+	// A frozen sandbox: the connection stays open, nothing reads, no pong.
+	frozen := make(chan struct{})
+	t.Cleanup(func() { close(frozen) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := websocket.Accept(w, r, nil); err != nil {
+			return
+		}
+		<-frozen
+	}))
+	t.Cleanup(server.Close)
+	input, inputWriter := io.Pipe()
+	var errs lockedBuffer
+	_, _, done := runTerminal(t, &terminalTestServer{Server: server}, input, &errs, nil)
+
+	if _, err := inputWriter.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !strings.Contains(errs.String(), "The sandbox stopped responding.") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no unresponsive report; errors %q", errs.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	inputWriter.Close()
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+}
+
 func TestTerminal_SplitMultiByteCharacter(t *testing.T) {
 	// Two inputs: the held-back character completes on the second read.
 	server := newTerminalTestServer(t, 2)
