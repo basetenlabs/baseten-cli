@@ -377,8 +377,7 @@ var commandGrid = Command{
 			Hidden:  true,
 			Summary: "Print a short-lived Grid token",
 			Description: "Print a Grid token for a team: the team a harness was set up with (--harness), a named team (--team), or your only team. " +
-				"The token is scoped to you and the team and lasts four hours. It is cached in the system keyring, with a plaintext " +
-				"fallback in the config directory, and replaced when fewer than 15 minutes remain. Messages go to stderr, so stdout is only the token.",
+				"The token is scoped to you and the team and lasts four hours. It is replaced when fewer than 15 minutes remain. stdout is only the token.",
 			Flags: GridTokenFlags{},
 			Output: &CommandOutput[JSONUndefined]{
 				JSONOutputUnimportant: true,
