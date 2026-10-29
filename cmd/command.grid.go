@@ -16,7 +16,7 @@ var commandGrid = Command{
 			Name:    "setup",
 			Summary: "Set up harness authentication and configuration (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
-				"Configure installed harnesses with your team's routes and a Grid API key. Supported harnesses will mint short lived credentials via 'baseten grid token'.\n\n" +
+				"Configure installed harnesses with your team's routes and a Grid API key.\n\n" +
 				"Setup offers a picker of installed harnesses when --harness is omitted. Repeat --harness to select several. " +
 				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code lists the routes that serve " +
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the primary route unless --primary-route-id is set. " +
