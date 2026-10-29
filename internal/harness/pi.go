@@ -26,7 +26,7 @@ const longContextTokens = 200000
 
 func (piHarness) Credential(path string) (string, error) {
 	token, err := credential(path, piCredentialPath)
-	// A "!command" apiKey runs the credential helper; it is not a key.
+	// A "!command" apiKey is the helper, not a key.
 	if strings.HasPrefix(token, "!") {
 		return "", err
 	}
@@ -68,7 +68,6 @@ func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint, hel
 	for _, r := range routes {
 		models = append(models, piModel(r, baseURL))
 	}
-	// Pi runs a "!command" apiKey for each request.
 	apiKey, credentialPath := "", piCredentialPath
 	if helper != "" {
 		apiKey, credentialPath = "!"+helperShellCommand(helper, Pi), nil

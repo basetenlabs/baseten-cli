@@ -361,8 +361,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 	}
 
 	warnWriter := func(msg string) { ctx.Log(msg) }
-	// The profile may have belonged to another user, whose cached Grid tokens
-	// the helper would otherwise keep serving.
+	// The profile may have been another user's.
 	if err := clearGridTokens(store, profileName); err != nil {
 		return err
 	}
@@ -428,7 +427,7 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *
 	}
 
 	warnWriter := func(msg string) { ctx.Log(msg) }
-	// As for a browser login: the profile may have been another user's.
+	// The profile may have been another user's.
 	if err := clearGridTokens(store, profileName); err != nil {
 		return err
 	}

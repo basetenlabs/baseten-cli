@@ -18,8 +18,8 @@ var claudeSubagentPath = []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}
 
 var claudeCredentialPath = []string{"env", "ANTHROPIC_AUTH_TOKEN"}
 
-// claudeHelperPath is the command Claude Code runs for its credential, which
-// a static ANTHROPIC_AUTH_TOKEN would override.
+// claudeHelperPath is the credential command; a static ANTHROPIC_AUTH_TOKEN
+// overrides it.
 var claudeHelperPath = []string{"apiKeyHelper"}
 
 // extendedContextWindow is the smallest context window Claude Code is told is
@@ -133,13 +133,12 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
 	if helper != "" {
-		// The helper is only consulted without a static token, so the token is
-		// removed rather than blanked.
+		// Removed, not blanked: a static token overrides the helper.
 		values = append(values, setting{Path: claudeCredentialPath}, desired(claudeHelperPath, helperShellCommand(helper, ClaudeCode)))
 	} else {
 		values = append(values, desired(claudeCredentialPath, ""))
 		if get(current, []string{"env", claudeMarker}).Data == "1" && get(current, claudeHelperPath).Exists {
-			// A static credential retires the helper an earlier setup installed.
+			// Retire the helper an earlier setup installed.
 			values = append(values, setting{Path: claudeHelperPath})
 		}
 	}

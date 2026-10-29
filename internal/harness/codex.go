@@ -207,9 +207,8 @@ func (codexHarness) BackgroundRoute(Selection) string { return "" }
 
 var codexCredentialPath = []string{"model_providers", providerID, "experimental_bearer_token"}
 
-// The credential helper's timeout, and how often Codex reruns it between the
-// 401s that also rerun it, so a long-running app-server daemon stays ahead of
-// token expiry.
+// The credential helper's timeout and refresh interval, so a long-running
+// app-server daemon stays ahead of token expiry.
 const (
 	codexHelperTimeout         = 5000
 	codexHelperRefreshInterval = 5 * 60 * 1000
@@ -250,7 +249,7 @@ func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint, 
 	credentialPath := codexCredentialPath
 	if helper != "" {
 		credentialPath = nil
-		// An absolute path: the app-server daemon does not share the user's PATH.
+		// Absolute: the app-server daemon has no user PATH.
 		provider["auth"] = map[string]any{
 			"command": helper, "args": helperArgs(Codex),
 			"timeout_ms": codexHelperTimeout, "refresh_interval_ms": codexHelperRefreshInterval,

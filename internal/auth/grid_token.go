@@ -10,13 +10,12 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-// gridTokenService namespaces cached Grid tokens in the system keyring, keyed
-// by [GridTokenScope]. One entry holds a credential's tokens for every team.
+// gridTokenService is the keyring service for cached Grid tokens, one entry
+// per [GridTokenScope] holding every team's token.
 const gridTokenService = "baseten-grid-token"
 
-// GridTokenScope identifies the Grid tokens cached for one credential: the
-// issuing endpoint and [Session.CacheIdentity], which stands for the profile
-// or the ephemeral API key, so a token is never read under another credential.
+// GridTokenScope keys the cache by issuing endpoint and credential
+// ([Session.CacheIdentity]), so no token is read under another credential.
 type GridTokenScope struct {
 	ManagementURL string `json:"management_url"`
 	Identity      string `json:"identity"`
@@ -34,8 +33,8 @@ type GridToken struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// gridTokens reads the tokens cached for scope, by team, from the keyring. A
-// missing or unparseable entry is empty; the next mint overwrites it.
+// gridTokens reads the tokens cached for scope, by team. A missing or
+// unparseable entry is empty.
 func gridTokens(scope GridTokenScope) map[string]GridToken {
 	tokens := map[string]GridToken{}
 	if secret, err := keyring.Get(gridTokenService, scope.account()); err == nil {
@@ -46,8 +45,7 @@ func gridTokens(scope GridTokenScope) map[string]GridToken {
 	return tokens
 }
 
-// GetGridToken returns the Grid token cached for scope and teamID, or nil if
-// there is none.
+// GetGridToken returns the token cached for scope and teamID, or nil.
 func (s *Store) GetGridToken(scope GridTokenScope, teamID string) *GridToken {
 	token, ok := gridTokens(scope)[teamID]
 	if !ok {
@@ -56,9 +54,8 @@ func (s *Store) GetGridToken(scope GridTokenScope, teamID string) *GridToken {
 	return &token
 }
 
-// SetGridToken caches token for scope and teamID in the keyring. Without a
-// keyring the token is not cached, with a warning written to warnWriter (if
-// non-nil): a Grid token is short-lived and cheap to mint again.
+// SetGridToken caches token in the keyring. Without a keyring it warns via
+// warnWriter (if non-nil) and skips the cache; minting again is cheap.
 func (s *Store) SetGridToken(scope GridTokenScope, teamID string, token GridToken, warnWriter func(string)) {
 	tokens := gridTokens(scope)
 	tokens[teamID] = token

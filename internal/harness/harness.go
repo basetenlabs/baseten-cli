@@ -66,10 +66,8 @@ type Harness interface {
 	// or in the harness's native configuration directory when configDir is empty.
 	Detect(ctx context.Context, execer Execer, configDir string) (Detection, error)
 	// Prepare plans setup of the settings file at path. With helper, the path
-	// of this CLI, the harness is configured to run `<helper> grid token
-	// --harness <name>` for a short-lived credential, and any static credential
-	// is dropped. Without it, the plan keeps the file's current credential and
-	// ApplyPlans inserts the real one.
+	// of this CLI, the harness runs `<helper> grid token --harness <name>` for
+	// its credential. Without it, ApplyPlans inserts a static one.
 	Prepare(path string, routes []Route, selection Selection, endpoint, helper string) ([]*Plan, error)
 	// Inspect reports the integration state of the detected settings file.
 	Inspect(d Detection) (Status, error)
@@ -87,11 +85,10 @@ type Harness interface {
 	Routes(routes []Route) []Route
 }
 
-// helperArgs are the arguments after the CLI path in the command a harness
-// runs to fetch its credential.
+// helperArgs are the credential command's arguments after the CLI path.
 func helperArgs(name string) []string { return []string{"grid", "token", "--harness", name} }
 
-// helperShellCommand is the credential command as one sh command line.
+// helperShellCommand is the credential command as one sh line.
 func helperShellCommand(helper, name string) string {
 	return shellQuote(helper) + " " + strings.Join(helperArgs(name), " ")
 }

@@ -15,8 +15,8 @@ const recordFileName = "harness.json"
 // API key with --use-session-credential instead of creating a routes API key.
 const CredentialSourceSession = "session"
 
-// CredentialSourceHelper marks a record whose setup installed a command that
-// fetches a short-lived Grid token (`baseten grid token`) instead of a key.
+// CredentialSourceHelper marks a setup that installed `baseten grid token`
+// as the credential command instead of a key.
 const CredentialSourceHelper = "helper"
 
 // Record remembers the options of the last successful setup for one harness,
