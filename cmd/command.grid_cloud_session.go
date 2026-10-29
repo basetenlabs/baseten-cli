@@ -12,7 +12,7 @@ var commandGridCloudSession = Command{
 	Description: gridPrereleaseNotice +
 		"Sandboxes that run a coding harness, created from a session image already imported into the sandbox image store " +
 		"('baseten sandbox image push'); cloud-session never builds or imports images. " +
-		"Create runs the harness setup inside the session and starts the harness in a tmux session. " +
+		"Create writes the harness setup into the session and starts the harness in a tmux session. " +
 		"Connect reattaches to that tmux session, and dispatch runs a headless prompt in it. " +
 		"A session left idle hibernates with its sandbox and resumes on the next connection, with the harness still running.",
 	Children: []Command{
@@ -20,8 +20,8 @@ var commandGridCloudSession = Command{
 			Name:    "create",
 			Summary: "Create a cloud session (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
-				"Create a sandbox from a session image, wait for it to deploy, run 'grid setup' inside with the " +
-				"session credential, and start the harness in a tmux session. Idempotent: an existing running session is " +
+				"Create a sandbox from a session image, wait for it to deploy, plan the 'grid setup' harness " +
+				"configuration on this machine, write it into the session, and start the harness in a tmux session. Idempotent: an existing running session is " +
 				"set up again and returned.\n\n" +
 				"Point at a repository with --repo owner/name and the image is resolved from it: from the session-image " +
 				"map written by the build/import step, by the backend's image service in production. --image names an " +
