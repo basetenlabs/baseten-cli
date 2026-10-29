@@ -376,7 +376,7 @@ var commandGrid = Command{
 			Name:    "token",
 			Hidden:  true,
 			Summary: "Print a short-lived Grid token",
-			Description: "Print a Grid token for a team: the team a harness was set up with (--harness), a named team (--team), or your only team. " +
+			Description: "Print a Grid token for the team a harness was set up with, or the team --team names. " +
 				"The token is scoped to you and the team and lasts four hours. It is replaced when fewer than 15 minutes remain. stdout is only the token.",
 			Flags: GridTokenFlags{},
 			Output: &CommandOutput[JSONUndefined]{
@@ -581,8 +581,8 @@ type GridHarnessFlags struct {
 // GridTokenFlags are the flags for `baseten grid token`.
 type GridTokenFlags struct {
 	CommandFlags
-	Harness string `flag:"harness" desc:"Harness whose recorded team the token is for." enum:"claude-code,codex,opencode,pi"`
-	Team    string `flag:"team" desc:"Team name or ID the token is for. Omit, with --harness, to let the API select your only team."`
+	Harness string `flag:"harness" desc:"Harness the token is for, as configured by 'grid setup'." enum:"claude-code,codex,opencode,pi" required:"true"`
+	Team    string `flag:"team" desc:"Team name or ID the token is for. Defaults to the team the harness was set up with."`
 }
 
 // GridStatusFlags are the flags for `baseten grid status`.
