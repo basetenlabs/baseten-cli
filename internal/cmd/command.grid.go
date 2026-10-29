@@ -1590,8 +1590,6 @@ func outputGridUserSettings(ctx *CommandContext, settings *managementapi.GridTea
 	ctx.Outputf("Blocked by:                 %s\n", gridSettingText(settings.BlockedBy))
 }
 
-// commandGridToken prints a short-lived Grid token for the team a harness was
-// set up with, or the team --team names. Implemented in the next PR.
 func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 	return errors.New("not implemented")
 }
