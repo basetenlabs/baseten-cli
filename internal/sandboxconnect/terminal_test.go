@@ -229,6 +229,30 @@ func TestTerminal_RoundTripAndClose(t *testing.T) {
 	}
 }
 
+func TestTerminal_ReadsAFullReplayFrame(t *testing.T) {
+	// sandbox-api replays up to 100KB of buffered output in one frame on reconnect.
+	replay := strings.Repeat("\x1b[0m", 100*1024/4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		frame, _ := json.Marshal(message{Type: "output", Data: replay})
+		if err := conn.Write(r.Context(), websocket.MessageText, frame); err != nil {
+			return
+		}
+		conn.Close(websocket.StatusNormalClosure, "")
+	}))
+	t.Cleanup(server.Close)
+	output, _, done := runTerminal(t, &terminalTestServer{Server: server}, strings.NewReader(""), &lockedBuffer{}, nil)
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if output.String() != replay {
+		t.Errorf("output length %d, want %d", len(output.String()), len(replay))
+	}
+}
+
 func TestTerminal_SplitMultiByteCharacter(t *testing.T) {
 	// Two inputs: the held-back character completes on the second read.
 	server := newTerminalTestServer(t, 2)

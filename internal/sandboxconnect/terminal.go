@@ -144,6 +144,9 @@ const (
 	// dialTimeout bounds one dial: while a hibernated sandbox resumes, the
 	// gateway can hold the upgrade open instead of refusing it.
 	dialTimeout = 5 * time.Second
+	// terminalFrameReadLimit admits the reconnect replay: up to 100KB of
+	// output in one frame, which JSON escaping of control bytes grows up to 6x.
+	terminalFrameReadLimit = 1 << 20
 )
 
 // Dial connects a new terminal session. Each invocation generates a random
@@ -217,6 +220,7 @@ func (t *Terminal) connect(ctx context.Context, token string) error {
 		// Dial failures echo the URL, which carries the token.
 		return fmt.Errorf("connecting terminal: %s", tokenInQuery.ReplaceAllString(err.Error(), "token=REDACTED"))
 	}
+	conn.SetReadLimit(terminalFrameReadLimit)
 	// The resize notifier reads conn from another goroutine: publish under
 	// the lock send uses.
 	t.writeMu.Lock()
