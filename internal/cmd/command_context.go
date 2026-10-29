@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"sync"
 	"time"
 
@@ -268,6 +270,27 @@ func (c *CommandContext) VerboseLogLine(v string) {
 func (c *CommandContext) VerboseLogf(format string, args ...any) {
 	if c.verbose {
 		panicOnOutputError(fmt.Fprintf(c.Stderr, format, args...))
+	}
+}
+
+// VerboseLogHTTPRequest writes the request method and URL to stderr if verbose
+// mode is enabled.
+func (c *CommandContext) VerboseLogHTTPRequest(method, url string) {
+	c.VerboseLogf("> %s %s\n", method, url)
+}
+
+// VerboseLogHTTPResponse writes the response status and headers to stderr if
+// verbose mode is enabled.
+func (c *CommandContext) VerboseLogHTTPResponse(resp *http.Response) {
+	// Check eagerly to skip sorting headers when not verbose.
+	if !c.verbose {
+		return
+	}
+	c.VerboseLogf("< %s %s\n", resp.Proto, resp.Status)
+	for _, k := range slices.Sorted(maps.Keys(resp.Header)) {
+		for _, v := range resp.Header[k] {
+			c.VerboseLogf("< %s: %s\n", k, v)
+		}
 	}
 }
 

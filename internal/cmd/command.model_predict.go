@@ -129,10 +129,12 @@ func doHTTPPredict(
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	ctx.VerboseLogHTTPRequest(req.Method, url)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
+	ctx.VerboseLogHTTPResponse(resp)
 	contentType := strings.TrimSpace(strings.SplitN(resp.Header.Get("Content-Type"), ";", 2)[0])
 	streaming := false
 	for _, te := range resp.TransferEncoding {
@@ -171,7 +173,12 @@ func doWebsocketPredict(
 	wsURL := wsURLFromBase(baseURL) + predictPath(flags, "ws")
 
 	client := &http.Client{Transport: roundTripperFunc(httpClient.Do)}
-	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: client})
+	ctx.VerboseLogHTTPRequest(http.MethodGet, wsURL)
+	conn, handshake, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: client})
+	// The handshake response may be present even on failure, e.g. a non-101 status.
+	if handshake != nil {
+		ctx.VerboseLogHTTPResponse(handshake)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("websocket dial: %w", err)
 	}
