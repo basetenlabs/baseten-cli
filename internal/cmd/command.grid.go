@@ -752,8 +752,10 @@ func gridHarnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
 
 const gridHarnessCodexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done to pick up the new models."
 
+const gridHarnessCodexDaemonRestartNotice = "changes are applied on next daemon restart"
+
 // gridHarnessRestartCodexDaemon restarts the codex app-server daemon after setup,
-// asking first when sessions are attached. It reports false when a restart is
+// asking first when stdin is interactive. It reports false when a restart is
 // still needed: the prompt was declined or the restart failed.
 func gridHarnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) bool {
 	socket := harness.CodexDaemonSocket(ctx, ctx.Execer(), dir)
@@ -767,9 +769,9 @@ func gridHarnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) bo
 	case clients > 0:
 		ctx.Logf("warning: restarting the codex app-server daemon will disconnect %d running codex session(s); in-progress turns will be interrupted (thread history is preserved and can be resumed with `codex resume`)\n", clients)
 	}
-	if (err != nil || clients > 0) && !yes {
+	if !yes && ctx.IsInteractive() {
 		if ctx.ConfirmYesNo("Restart the codex app-server daemon now?") != nil {
-			ctx.LogLine(gridHarnessCodexDaemonRestartHint)
+			ctx.LogLine(gridHarnessCodexDaemonRestartNotice)
 			return false
 		}
 	}
