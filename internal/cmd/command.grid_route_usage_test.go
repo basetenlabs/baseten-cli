@@ -172,9 +172,9 @@ func Test_Grid_Route_Usage_HarnessDimension(t *testing.T) {
 
 	h.Require.Equal([]string{"HARNESS"}, gridUsageLastQuery(h, m)["group_by"])
 	h.Require.Contains(h.Stdout.String(), "HARNESS")
-	h.Require.Equal([]string{"2026-09-24", "(none)", "1,000", "800", "100", "$1.25"}, gridUsageRow(h, h.Stdout.String(), "(none)"))
+	h.Require.Equal([]string{"2026-09-24", "Unknown", "1,000", "800", "100", "$1.25"}, gridUsageRow(h, h.Stdout.String(), "Unknown"))
 	h.Require.Equal([]string{"codex", "400", "0", "40", "$0.50"}, gridUsageRow(h, h.Stdout.String(), "codex"))
-	h.Require.Contains(h.Stderr.String(), `Harness "(none)" means no harness was recorded, including usage from before harness tracking.`)
+	h.Require.Contains(h.Stderr.String(), `Harness "Unknown" means no harness was recorded, including usage from before harness tracking.`)
 }
 
 func Test_Grid_Route_Usage_HarnessFilterPassesThrough(t *testing.T) {

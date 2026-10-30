@@ -162,7 +162,7 @@ buckets:
 	ctx.LogLine(fmt.Sprintf("Window: %s through %s UTC · grouped by %s · can lag by up to 15 minutes",
 		firstDate, lastDate, strings.Join(names, ", ")))
 	if table.noHarness() {
-		ctx.LogLine("Harness \"(none)\" means no harness was recorded, including usage from before harness tracking.")
+		ctx.LogLine("Harness \"Unknown\" means no harness was recorded, including usage from before harness tracking.")
 	}
 	if table.unpriced() {
 		ctx.LogLine("A cost of \"-\" means some of that usage couldn't be priced.")
@@ -293,7 +293,7 @@ func (t *gridUsageTotal) money() string {
 
 func gridUsageDimensionCell(d managementapi.GridRouteUsageDimension, r managementapi.GridRouteUsageResult) string {
 	if d == managementapi.GridRouteUsageDimension_HARNESS && r.Harness == nil {
-		return "(none)"
+		return "Unknown"
 	}
 	var v string
 	switch d {
