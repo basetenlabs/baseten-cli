@@ -283,6 +283,23 @@ var commandGrid = Command{
 					},
 				},
 				{
+					Name:        "describe",
+					Summary:     "Show a provider connection (PRE-RELEASE)",
+					Description: gridPrereleaseNotice + "Show a connection by ID. Secret values are never returned.",
+					Flags:       GridConnectionDescribeFlags{},
+					Output: &CommandOutput[managementapi.GridConnection]{
+						TextDescription: "Field-per-line summary with the connection's ID, team, provider, secret name, and timestamps.",
+						Examples: []CommandExample{{
+							Description: "Describe a connection.",
+							Command:     "baseten grid connection describe --id <id>",
+						}},
+						JQExample: CommandExample{
+							Description: "Print the connection's team.",
+							Command:     "baseten grid connection describe --id <id> --jq '.team_name'",
+						},
+					},
+				},
+				{
 					Name:        "create",
 					Summary:     "Create a provider connection using an existing team secret (PRE-RELEASE)",
 					Description: gridPrereleaseNotice + "The secret must belong to the connection's team. Requires team admin. " + gridTeamDescription,
@@ -365,23 +382,42 @@ var commandGrid = Command{
 		{
 			Name:    "classifier",
 			Summary: "Discover managed classifiers (PRE-RELEASE)",
-			Children: []Command{{
-				Name:        "list",
-				Summary:     "List classifiers available to your organization (PRE-RELEASE)",
-				Description: gridPrereleaseNotice + "Classifiers are managed by Baseten. Use their IDs when creating or updating classifier-backed routes.",
-				Flags:       GridClassifierListFlags{},
-				Output: &CommandOutput[GridClassifierList]{
-					TextDescription: "Table with ID and NAME columns. Lists all pages; an empty catalog prints a message to stderr.",
-					Examples: []CommandExample{{
-						Description: "List available classifiers.",
-						Command:     "baseten grid classifier list",
-					}},
-					JQExample: CommandExample{
-						Description: "Print classifier IDs.",
-						Command:     "baseten grid classifier list --jq '.items[].id'",
+			Children: []Command{
+				{
+					Name:        "list",
+					Summary:     "List classifiers available to your organization (PRE-RELEASE)",
+					Description: gridPrereleaseNotice + "Classifiers are managed by Baseten. Use their IDs when creating or updating classifier-backed routes.",
+					Flags:       GridClassifierListFlags{},
+					Output: &CommandOutput[GridClassifierList]{
+						TextDescription: "Table with ID and NAME columns. Lists all pages; an empty catalog prints a message to stderr.",
+						Examples: []CommandExample{{
+							Description: "List available classifiers.",
+							Command:     "baseten grid classifier list",
+						}},
+						JQExample: CommandExample{
+							Description: "Print classifier IDs.",
+							Command:     "baseten grid classifier list --jq '.items[].id'",
+						},
 					},
 				},
-			}},
+				{
+					Name:        "describe",
+					Summary:     "Show a classifier (PRE-RELEASE)",
+					Description: gridPrereleaseNotice + "Show a classifier by ID. Classifiers are managed by Baseten.",
+					Flags:       GridClassifierDescribeFlags{},
+					Output: &CommandOutput[managementapi.GridClassifier]{
+						TextDescription: "Field-per-line summary with the classifier's ID and name.",
+						Examples: []CommandExample{{
+							Description: "Describe a classifier.",
+							Command:     "baseten grid classifier describe --id <id>",
+						}},
+						JQExample: CommandExample{
+							Description: "Print the classifier name.",
+							Command:     "baseten grid classifier describe --id <id> --jq '.name'",
+						},
+					},
+				},
+			},
 		},
 	},
 }
@@ -391,6 +427,11 @@ type GridClassifierList struct {
 }
 
 type GridClassifierListFlags struct{ CommandFlags }
+
+type GridClassifierDescribeFlags struct {
+	CommandFlags
+	ID string `flag:"id" desc:"Classifier ID." required:"true"`
+}
 
 const gridTeamDescription = "Omit --team to let the API select your only team; specify a team when you belong to several."
 
@@ -458,6 +499,11 @@ type GridConnectionListFlags struct {
 type GridConnectionConfigFlags struct {
 	Provider   string `flag:"provider" desc:"Upstream provider." enum:"anthropic,openai,xai" required:"true"`
 	SecretName string `flag:"secret-name" desc:"Name of an existing secret in the connection's team." required:"true"`
+}
+
+type GridConnectionDescribeFlags struct {
+	CommandFlags
+	ID string `flag:"id" desc:"Connection ID." required:"true"`
 }
 
 type GridConnectionCreateFlags struct {

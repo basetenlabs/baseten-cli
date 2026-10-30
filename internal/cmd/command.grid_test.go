@@ -2353,6 +2353,48 @@ func Test_Grid_Classifier_List(t *testing.T) {
 	}
 }
 
+func Test_Grid_Classifier_Describe(t *testing.T) {
+	for _, output := range []string{"text", "json", "jsonl"} {
+		t.Run(output, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			m.SetRouteFunc("GET", "/v1/grid/classifiers/general-v1", func(w http.ResponseWriter, r *http.Request) {
+				h.Require.Equal("Bearer test-key", r.Header.Get("Authorization"))
+				h.Require.Empty(r.URL.RawQuery)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "general-v1", "name": "General"})
+			})
+			h.Require.NoError(h.Execute("grid", "classifier", "describe", "--id", "general-v1", "--output", output))
+			h.Require.Len(m.Calls(), 1)
+			if output == "text" {
+				h.Require.Contains(h.Stdout.String(), "general-v1")
+				h.Require.Contains(h.Stdout.String(), "General")
+			} else {
+				h.Require.JSONEq(`{"id":"general-v1","name":"General"}`, h.Stdout.String())
+			}
+		})
+	}
+}
+
+func Test_Grid_Classifier_Describe_Errors(t *testing.T) {
+	t.Run("empty id", func(t *testing.T) {
+		h := NewCommandHarness(t)
+		m := h.MockManagementAPI()
+		h.Require.Error(h.Execute("grid", "classifier", "describe", "--id", ""))
+		h.Require.Equal(2, h.ExitCode)
+		h.Require.Empty(m.Calls())
+	})
+	for _, status := range []int{401, 403, 404, 500} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			m.SetRoute("GET", "/v1/grid/classifiers/general-v1", status, map[string]string{"error": "unavailable"})
+			h.Require.Error(h.Execute("grid", "classifier", "describe", "--id", "general-v1", "--output", "json"))
+			h.Require.Equal(status, decodeJSONErrorEnvelope(h).APIStatusCode)
+		})
+	}
+}
+
 func Test_Grid_Classifier_List_Errors(t *testing.T) {
 	for _, status := range []int{401, 403, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

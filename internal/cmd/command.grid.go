@@ -32,6 +32,7 @@ func init() {
 	Register("grid teardown", commandGridTeardown)
 	Register("grid token", commandGridToken)
 	Register("grid classifier list", commandGridClassifierList)
+	Register("grid classifier describe", commandGridClassifierDescribe)
 	Register("grid team-settings describe", commandGridTeamSettingsDescribe)
 	Register("grid team-settings update", commandGridTeamSettingsUpdate)
 	Register("grid user-settings list", commandGridUserSettingsList)
@@ -1423,6 +1424,27 @@ func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFla
 		rows = append(rows, []string{classifier.Id, classifier.Name})
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME"}, Rows: rows})
+	return nil
+}
+
+func commandGridClassifierDescribe(ctx *CommandContext, f *cmd.GridClassifierDescribeFlags) error {
+	if f.ID == "" {
+		return cmd.NewErrUsagef("--id must not be empty")
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	classifier, err := cl.API().GetGridClassifiersClassifierId(ctx, f.ID)
+	if err != nil {
+		return fmt.Errorf("getting classifier: %w", err)
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(classifier)
+		return nil
+	}
+	ctx.Outputf("ID:   %s\n", classifier.Id)
+	ctx.Outputf("Name: %s\n", classifier.Name)
 	return nil
 }
 

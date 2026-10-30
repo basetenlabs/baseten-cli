@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
@@ -9,6 +10,7 @@ import (
 
 func init() {
 	Register("grid connection list", commandGridConnectionList)
+	Register("grid connection describe", commandGridConnectionDescribe)
 	Register("grid connection create", commandGridConnectionCreate)
 	Register("grid connection update", commandGridConnectionUpdate)
 	Register("grid connection delete", commandGridConnectionDelete)
@@ -36,6 +38,35 @@ func commandGridConnectionList(ctx *CommandContext, f *cmd.GridConnectionListFla
 		return nil
 	}
 	return outputGridConnections(ctx, items)
+}
+
+func commandGridConnectionDescribe(ctx *CommandContext, f *cmd.GridConnectionDescribeFlags) error {
+	if f.ID == "" {
+		return cmd.NewErrUsagef("--id must not be empty")
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	connection, err := cl.API().GetGridConnectionsConnectionId(ctx, f.ID)
+	if err != nil {
+		return fmt.Errorf("getting connection: %w", err)
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(connection)
+		return nil
+	}
+	provider, secretName, err := gridConnectionConfigFields(connection)
+	if err != nil {
+		return err
+	}
+	ctx.Outputf("ID:          %s\n", connection.Id)
+	ctx.Outputf("Team Name:   %s\n", connection.TeamName)
+	ctx.Outputf("Provider:    %s\n", enumFromAPIValue(provider))
+	ctx.Outputf("Secret Name: %s\n", secretName)
+	ctx.Outputf("Created:     %s\n", connection.CreatedAt.UTC().Format(time.RFC3339))
+	ctx.Outputf("Updated:     %s\n", connection.UpdatedAt.UTC().Format(time.RFC3339))
+	return nil
 }
 
 func setGridConnectionConfig(config interface {
@@ -135,27 +166,33 @@ func commandGridConnectionDelete(ctx *CommandContext, f *cmd.GridConnectionDelet
 func outputGridConnections(ctx *CommandContext, connections []managementapi.GridConnection) error {
 	var rows [][]string
 	for _, connection := range connections {
-		value, err := connection.Config.ValueByDiscriminator()
+		provider, secretName, err := gridConnectionConfigFields(&connection)
 		if err != nil {
-			provider, discriminatorErr := connection.Config.Discriminator()
-			// The SDK retains a typed value when a known variant fails to decode.
-			if value != nil || discriminatorErr != nil || provider == "" {
-				return fmt.Errorf("reading connection %s config: %w", connection.Id, err)
-			}
-		}
-		var provider, secretName string
-		switch config := value.(type) {
-		case managementapi.GridConnectionConfigAnthropic:
-			provider, secretName = config.Provider, config.SecretName
-		case managementapi.GridConnectionConfigOpenAI:
-			provider, secretName = config.Provider, config.SecretName
-		case managementapi.GridConnectionConfigXAI:
-			provider, secretName = config.Provider, config.SecretName
-		default:
-			provider, secretName = "<unknown>", "<unknown>"
+			return err
 		}
 		rows = append(rows, []string{connection.Id, connection.TeamId, connection.TeamName, enumFromAPIValue(provider), secretName})
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"ID", "TEAM ID", "TEAM NAME", "PROVIDER", "SECRET NAME"}, Rows: rows})
 	return nil
+}
+
+func gridConnectionConfigFields(connection *managementapi.GridConnection) (string, string, error) {
+	value, err := connection.Config.ValueByDiscriminator()
+	if err != nil {
+		provider, discriminatorErr := connection.Config.Discriminator()
+		// The SDK retains a typed value when a known variant fails to decode.
+		if value != nil || discriminatorErr != nil || provider == "" {
+			return "", "", fmt.Errorf("reading connection %s config: %w", connection.Id, err)
+		}
+	}
+	switch config := value.(type) {
+	case managementapi.GridConnectionConfigAnthropic:
+		return config.Provider, config.SecretName, nil
+	case managementapi.GridConnectionConfigOpenAI:
+		return config.Provider, config.SecretName, nil
+	case managementapi.GridConnectionConfigXAI:
+		return config.Provider, config.SecretName, nil
+	default:
+		return "<unknown>", "<unknown>", nil
+	}
 }
