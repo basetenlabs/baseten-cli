@@ -158,7 +158,8 @@ var commandModel = Command{
 				"--deployment-id, or --regional to target something else.\n\n" +
 				"Streaming responses (Transfer-Encoding: chunked) are passed through " +
 				"as they arrive. For machine-readable streaming JSON from OpenAI-compatible " +
-				"models, use --output jsonl.",
+				"models, use --output jsonl.\n\n" +
+				"Use --verbose to write the request URL and response headers to stderr.",
 			Flags: ModelPredictFlags{},
 			Output: &CommandOutput[JSONUndefined]{
 				TextDescription: "The model's response body, passed through verbatim. May be JSON, " +

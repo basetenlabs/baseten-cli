@@ -6,7 +6,8 @@ var commandAPI = Command{
 	Description: "Make raw HTTP requests to Baseten management, inference, or sandbox APIs.\n\n" +
 		"The HTTP method defaults to GET, or POST when --field, --raw-field, or --input is provided. " +
 		"JSON responses are pretty-printed by default; non-JSON responses are streamed raw. " +
-		"Use --jq to filter JSON responses.",
+		"Use --jq to filter JSON responses. Use --verbose to write the request URL and response " +
+		"headers to stderr.",
 	Children: []Command{
 		{
 			Name:    "management",

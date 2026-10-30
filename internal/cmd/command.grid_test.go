@@ -124,8 +124,8 @@ func gridAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAP
 		api.SetRoute("DELETE", "/v1/api_keys/secret-"+team, 200, map[string]string{"prefix": "secret-" + team})
 	}
 	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{
-		map[string]any{"prefix": "secret-team-a", "type": "ROUTES", "name": "laptop", "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"},
-		map[string]any{"prefix": "secret-team-b", "type": "ROUTES", "name": "laptop", "team_name": "Research", "created_at": "2026-09-02T00:00:00Z"},
+		map[string]any{"prefix": "secret-team-a", "type": "GRID", "name": "laptop", "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"},
+		map[string]any{"prefix": "secret-team-b", "type": "GRID", "name": "laptop", "team_name": "Research", "created_at": "2026-09-02T00:00:00Z"},
 	}})
 	return h, api
 }
@@ -532,21 +532,21 @@ func Test_Grid_Setup_KeyPerTeamAndUser(t *testing.T) {
 	dir := t.TempDir()
 	path := harnessSettingsFile("opencode", dir)
 	for _, team := range []string{"team-a", "team-b", "team-a"} {
-		h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", dir, "--team", team, "--yes"))
+		h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", dir, "--team", team, "--key-name", "laptop", "--yes"))
 		settings, err := os.ReadFile(path)
 		h.Require.NoError(err)
 		h.Require.Contains(string(settings), "secret-"+team)
 	}
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-b/api_keys"))
-	h.Require.Equal("ROUTES", api.FindCall("POST", "/v1/teams/team-a/api_keys").BodyJSON(t)["type"])
-	key, err := configDirStore(t).GetRoutesKey(t.Context(), auth.RoutesKeyScope{ManagementURL: api.URL, Profile: "alice", UserID: "user-a", TeamID: "team-b"})
+	h.Require.Equal(map[string]any{"type": "GRID", "name": "laptop"}, api.FindCall("POST", "/v1/teams/team-a/api_keys").BodyJSON(t))
+	key, err := configDirStore(t).GetRoutesKey(t.Context(), auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: "team-b"})
 	h.Require.NoError(err)
 	h.Require.Equal("secret-team-b", key)
 
 	// Another user gets their own key.
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-b"})
-	h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", dir, "--team", "team-a", "--yes"))
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", dir, "--team", "team-a", "--key-name", "laptop", "--yes"))
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
@@ -2149,7 +2149,7 @@ func Test_Grid_Teardown_KeepsSessionCredential(t *testing.T) {
 	// List the session's key as a routes key the caller created, so teardown
 	// could delete it if it weren't protected.
 	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{
-		map[string]any{"prefix": "test-k", "type": "ROUTES", "name": "sandbox", "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"},
+		map[string]any{"prefix": "test-k", "type": "GRID", "name": "sandbox", "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"},
 	}})
 	api.SetRoute("DELETE", "/v1/api_keys/test-k", 200, map[string]string{"prefix": "test-k"})
 	h.Require.NoError(h.Execute(setup...))

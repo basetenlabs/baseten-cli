@@ -69,7 +69,8 @@ var commandModelAPI = Command{
 				"reply. It is only valid for OpenAI chat URLs and requires --model.\n\n" +
 				"--data and --file send a request body verbatim, so any format the endpoint " +
 				"accepts works (OpenAI, Anthropic, embeddings, custom). The response is written " +
-				"as-is: JSON is pretty-printed, streams and binary bodies are passed through.",
+				"as-is: JSON is pretty-printed, streams and binary bodies are passed through.\n\n" +
+				"Use --verbose to write the request URL and response headers to stderr.",
 			Flags: ModelAPIPredictFlags{},
 			Output: &CommandOutput[JSONUndefined]{
 				TextDescription: "With --content, the assistant message text. With --data/--file, the " +

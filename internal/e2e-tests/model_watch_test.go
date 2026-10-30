@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/stretchr/testify/require"
 )
 
@@ -275,30 +274,23 @@ func (w *watchTest) requireServesVersion(b *bgWatch, want string, timeout time.D
 	return pid
 }
 
-// startWatch launches a blocking watch command in a goroutine. cmd.Execute is
-// invoked directly (not via the cli helper) so stderr is captured into a
-// concurrency-safe buffer the test can poll for the ready marker.
+// startWatch launches a blocking watch command in a goroutine, with stderr
+// captured into a concurrency-safe buffer the test can poll for the ready
+// marker.
 func (w *watchTest) startWatch(args ...string) *bgWatch {
 	w.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	stderr := &syncBuffer{}
 	done := make(chan error, 1)
 	go func() {
-		exit := 0
-		err := cmd.Execute(ctx, cmd.ExecuteOptions{
-			Args:  args,
-			Stdin: strings.NewReader(""),
+		done <- cliRun(ctx, cliRunOptions{
+			Args: args,
 			// Tee to the real streams so the watch's progress is visible live
 			// (e.g. piped to a logfile) while stderr is still scannable for the
 			// ready marker.
-			Stdout:       os.Stdout,
-			Stderr:       io.MultiWriter(stderr, os.Stderr),
-			ExitWithCode: func(c int) { exit = c },
-		})
-		if err == nil && exit != 0 {
-			err = fmt.Errorf("baseten %s: exit %d", strings.Join(args, " "), exit)
-		}
-		done <- err
+			Stdout: os.Stdout,
+			Stderr: io.MultiWriter(stderr, os.Stderr),
+		}).Err
 	}()
 	return &bgWatch{cancel: cancel, done: done, stderr: stderr}
 }
