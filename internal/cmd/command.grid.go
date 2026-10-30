@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -29,6 +30,7 @@ func init() {
 	Register("grid status", commandGridStatus)
 	Register("grid sync", commandGridSync)
 	Register("grid teardown", commandGridTeardown)
+	Register("grid token", commandGridToken)
 	Register("grid classifier list", commandGridClassifierList)
 	Register("grid team-settings describe", commandGridTeamSettingsDescribe)
 	Register("grid team-settings update", commandGridTeamSettingsUpdate)
@@ -201,6 +203,30 @@ func gridLoadHarnessSetupRoutes(ctx *CommandContext, api *managementapi.Client, 
 	return team, listed, nil
 }
 
+// gridHelperPath returns the CLI the harnesses run for a credential: the baseten on PATH
+// when it is this binary, else this binary with a warning. The PATH entry is
+// kept unresolved so a Homebrew upgrade, which moves the symlink target, does
+// not break the helper.
+func gridHelperPath() (helper, warning string, err error) {
+	if helper, err = os.Executable(); err != nil {
+		return "", "", err
+	}
+	onPath, err := exec.LookPath("baseten")
+	if err != nil {
+		return helper, fmt.Sprintf("baseten is not on your PATH; harnesses will run %s", helper), nil
+	}
+	resolve := func(path string) string {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			return resolved
+		}
+		return path
+	}
+	if resolve(onPath) == resolve(helper) {
+		return onPath, "", nil
+	}
+	return helper, fmt.Sprintf("you are running %s, but baseten on your PATH is %s; harnesses will run the former", helper, onPath), nil
+}
+
 // gridPlanHarnessSetup builds the setup plans for targets that share one team. The
 // behavior differs slightly on ineligible Route selection:
 //  1. If in `setup`, we emit a validation error.
@@ -276,6 +302,19 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 	if err != nil {
 		return nil, err
 	}
+	helper := ""
+	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool {
+		return t.record.CredentialSource == harness.CredentialSourceHelper
+	}) {
+		var warning string
+		if helper, warning, err = gridHelperPath(); err != nil {
+			return nil, err
+		}
+		// Only setup warns; sync rewrites the same helper.
+		if warning != "" && !forSync {
+			ctx.Logf("warning: %s\n", warning)
+		}
+	}
 	var plans []*harness.Plan
 	for i := range targets {
 		target := &targets[i]
@@ -301,7 +340,11 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 			ctx.Logf("warning: %s: %s %q no longer exists; using %q\n", target.Name(), d[0], d[1], using)
 		}
 		target.selection = selection
-		current, err := target.Prepare(target.detection.Path, callable, selection.Selection, endpoint)
+		var targetHelper *harness.Helper
+		if target.record.CredentialSource == harness.CredentialSourceHelper {
+			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
+		}
+		current, err := target.Prepare(target.detection.Path, callable, selection.Selection, endpoint, targetHelper)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -330,15 +373,26 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if err != nil {
 		return err
 	}
-	credentialSource := ""
-	if f.UseSessionCredential {
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return err
+	}
+	credentialSource := harness.CredentialSourceHelper
+	// An ephemeral session has no profile the helper could resolve inside the
+	// harness, so its key is installed instead.
+	if f.UseSessionCredential || session.IsEphemeral() {
 		credentialSource = harness.CredentialSourceSession
 	}
 	targets := make([]gridHarnessTarget, len(selected))
 	for i := range selected {
 		record := harness.Record{
 			KeyName:          f.KeyName,
+			Profile:          session.ProfileName(),
 			CredentialSource: credentialSource,
+		}
+		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
+			// A harness that cannot run the helper keeps a key.
+			record.CredentialSource = ""
 		}
 		subagentID := f.SubagentRouteID
 		if subagentID != "" && !selected[i].SupportsSubagent() {
@@ -375,7 +429,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		return err
 	}
 	var sessionToken string
-	if f.UseSessionCredential {
+	if credentialSource == harness.CredentialSourceSession {
 		if sessionToken, err = gridHarnessSessionAPIKey(ctx); err != nil {
 			return err
 		}
@@ -394,7 +448,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		if ctx.JSON {
 			outputGridPlansJSON(ctx, plans, nil)
 		} else {
-			ctx.LogLine("Preview only. No files changed and no Grid API key created.")
+			ctx.LogLine("Preview only. No files changed and no Grid API key created or deleted.")
 		}
 		return nil
 	}
@@ -405,11 +459,26 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	}
 	// The Grid API key is only read or created once the user has confirmed.
 	token := sessionToken
-	if token == "" {
-		if token, err = gridEnsureHarnessToken(ctx, api, team, f.KeyName); err != nil {
-			return err
+	var helperTargets []gridSelectedHarness
+	for _, t := range targets {
+		switch t.record.CredentialSource {
+		case harness.CredentialSourceHelper:
+			helperTargets = append(helperTargets, t.gridSelectedHarness)
+		case "":
+			if token == "" {
+				if token, err = gridEnsureHarnessToken(ctx, api, team, f.KeyName); err != nil {
+					return err
+				}
+			}
 		}
 	}
+	// The keys the helper replaces are read now, before ApplyPlans rewrites the
+	// harness files, and deleted only once the new setup is recorded.
+	replaced, err := gridUnusedHarnessKeys(ctx, helperTargets)
+	if err != nil {
+		return err
+	}
+	replaced = slices.DeleteFunc(replaced, func(key string) bool { return key == token })
 	for i := range targets {
 		if targets[i].Name() == harness.Codex {
 			gridHarnessLogoutCodex(ctx, filepath.Dir(targets[i].detection.Path), f.Yes)
@@ -431,8 +500,14 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if err := gridRecordHarnessSetup(ctx, team, targets); err != nil {
 		return err
 	}
+	var deleted []string
+	if len(replaced) > 0 {
+		if deleted, err = gridDeleteHarnessKeys(ctx, replaced); err != nil {
+			return err
+		}
+	}
 	if ctx.JSON {
-		outputGridPlansJSON(ctx, plans, nil)
+		outputGridPlansJSON(ctx, plans, deleted)
 		return nil
 	}
 	for i := range targets {
@@ -578,7 +653,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		run := &runs[i]
 		// The Grid API key is only read or created once the user has confirmed.
 		token := run.token
-		if token == "" {
+		if token == "" && run.targets[0].record.CredentialSource != harness.CredentialSourceHelper {
 			if token, err = gridEnsureHarnessToken(ctx, api, run.team, run.targets[0].record.KeyName); err != nil {
 				return err
 			}
@@ -1587,4 +1662,66 @@ func outputGridUserSettings(ctx *CommandContext, settings *managementapi.GridTea
 	ctx.Outputf("Team-wide limit USD:        %s\n", gridSettingText(settings.SpendLimit.TeamWideMonthlyLimitUsd))
 	ctx.Outputf("Blocked:                    %t\n", settings.IsBlocked)
 	ctx.Outputf("Blocked by:                 %s\n", gridSettingText(settings.BlockedBy))
+}
+
+// gridTokenMinimumLeft is the remaining life under which a cached token is
+// replaced. Harnesses rerun the helper every few minutes.
+const gridTokenMinimumLeft = 15 * time.Minute
+
+// commandGridToken prints a Grid token for the harness's recorded team, or
+// the --team named. Only the token goes to stdout.
+func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
+	dir, err := auth.DefaultConfigDir()
+	if err != nil {
+		return err
+	}
+	file, err := harness.LoadRecords(dir)
+	if err != nil {
+		return err
+	}
+	record, ok := file.Harnesses[flags.Harness]
+	if !ok {
+		return fmt.Errorf("%s is not set up; run `baseten grid setup`", flags.Harness)
+	}
+	teamID := record.TeamID
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return err
+	}
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return err
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	if flags.Team != "" {
+		if teamID, err = ResolveTeam(ctx, cl.API(), flags.Team); err != nil {
+			return err
+		}
+	}
+	store, err := NewAuthStore(false)
+	if err != nil {
+		return err
+	}
+	scope := auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()}
+	token, err := store.GetGridToken(ctx, scope, teamID)
+	if err != nil {
+		return err
+	}
+	if token != nil && time.Until(token.ExpiresAt) > gridTokenMinimumLeft {
+		ctx.Output(token.Token + "\n")
+		return nil
+	}
+	minted, err := cl.API().PostGridToken(ctx, managementapi.CreateGridTokenRequest{TeamId: &teamID})
+	if err != nil {
+		return fmt.Errorf("creating a Grid token: %w", err)
+	}
+	token = &auth.GridToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
+	if err := store.SetGridToken(ctx, scope, teamID, *token, ctx.Log); err != nil {
+		return err
+	}
+	ctx.Output(token.Token + "\n")
+	return nil
 }

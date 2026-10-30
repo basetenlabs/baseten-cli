@@ -18,6 +18,10 @@ var claudeSubagentPath = []string{"env", "CLAUDE_CODE_SUBAGENT_MODEL"}
 
 var claudeCredentialPath = []string{"env", "ANTHROPIC_AUTH_TOKEN"}
 
+// claudeHelperPath is the credential command; a static ANTHROPIC_AUTH_TOKEN
+// overrides it.
+var claudeHelperPath = []string{"apiKeyHelper"}
+
 // extendedContextWindow is the smallest context window Claude Code is told is
 // 1M, via a [1m] model ID suffix. Smaller windows get its 200K default.
 const extendedContextWindow = 500000
@@ -25,7 +29,7 @@ const extendedContextWindow = 500000
 var claudePaths = [][]string{
 	{"model"}, {"fallbackModel"}, {"modelPicker", "options"},
 	{"modelPicker", "replaceBuiltInOptions"}, {"availableModels"},
-	{"modelOverrides"}, {"modelSettings"},
+	{"modelOverrides"}, {"modelSettings"}, claudeHelperPath,
 	{"env", claudeMarker}, {"env", "ANTHROPIC_BASE_URL"},
 	{"env", "ANTHROPIC_AUTH_TOKEN"}, {"env", "ANTHROPIC_MODEL"},
 	{"env", "ANTHROPIC_DEFAULT_SONNET_MODEL"},
@@ -56,9 +60,13 @@ func (claudeCodeHarness) Routes(routes []Route) []Route {
 	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Messages })
 }
 
-func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string) ([]*Plan, error) {
-	p, err := prepareSettings(path, claudeCredentialPath, func(data map[string]any) ([]setting, error) {
-		return claudeSettings(routes, s, endpoint, data)
+func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string, helper *Helper) ([]*Plan, error) {
+	credentialPath := claudeCredentialPath
+	if helper != nil {
+		credentialPath = nil
+	}
+	p, err := prepareSettings(path, credentialPath, func(data map[string]any) ([]setting, error) {
+		return claudeSettings(routes, s, endpoint, data, helper)
 	})
 	if err != nil {
 		return nil, err
@@ -66,7 +74,7 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, end
 	return []*Plan{p}, nil
 }
 
-func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any) ([]setting, error) {
+func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper) ([]setting, error) {
 	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
@@ -111,7 +119,6 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 	for _, kv := range [][2]string{
 		{claudeMarker, "1"},
 		{"ANTHROPIC_BASE_URL", endpoint},
-		{"ANTHROPIC_AUTH_TOKEN", ""},
 		{"ANTHROPIC_MODEL", modelID(s.Primary)},
 		{"ANTHROPIC_DEFAULT_SONNET_MODEL", modelID(s.Primary)},
 		{"ANTHROPIC_DEFAULT_OPUS_MODEL", modelID(s.Primary)},
@@ -124,6 +131,14 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{"ENABLE_TOOL_SEARCH", "true"},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
+	}
+	if helper != nil {
+		// Removed, not blanked: a static token overrides the helper.
+		values = append(values, setting{Path: claudeCredentialPath}, desired(claudeHelperPath, helper.shellCommand(ClaudeCode)))
+	} else {
+		// The helper is removed like teardown removes it; a static token
+		// overrides it anyway.
+		values = append(values, desired(claudeCredentialPath, ""), setting{Path: claudeHelperPath})
 	}
 	// Output limits have no per-model setting, so the primary route's applies
 	// after a /model switch too.
@@ -167,6 +182,8 @@ func claudeTeardownPaths(data map[string]any) [][]string {
 }
 
 func (claudeCodeHarness) SupportsSubagent() bool { return true }
+
+func (claudeCodeHarness) SupportsHelper() bool { return true }
 
 func (claudeCodeHarness) Credential(path string) (string, error) {
 	_, data, err := readConfig(path)

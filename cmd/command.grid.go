@@ -373,6 +373,24 @@ var commandGrid = Command{
 			},
 		},
 		{
+			Name:    "token",
+			Hidden:  true,
+			Summary: "Print a short-lived Grid token",
+			Description: "Print a Grid token for the team a harness was set up with, or the team --team names. " +
+				"The token is scoped to you and the team and lasts four hours. It is replaced when fewer than 15 minutes remain. stdout is only the token.",
+			Flags: GridTokenFlags{},
+			Output: &CommandOutput[JSONUndefined]{
+				JSONOutputUnimportant: true,
+				TextDescription:       "The token followed by a newline, whatever --output says. On failure, nothing on stdout, the reason on stderr, and exit code 1.",
+				Examples: []CommandExample{
+					{
+						Description: "Print the token Codex uses.",
+						Command:     "baseten grid token --harness codex",
+					},
+				},
+			},
+		},
+		{
 			Name:    "classifier",
 			Summary: "Discover managed classifiers (PRE-RELEASE)",
 			Children: []Command{{
@@ -502,7 +520,7 @@ type GridPlan struct {
 // GridPlanList is the JSON output of `baseten grid setup` and `baseten grid teardown`.
 type GridPlanList struct {
 	Items []GridPlan `json:"items"`
-	// DeletedAPIKeys lists the prefixes of Grid API keys teardown deleted.
+	// DeletedAPIKeys lists the prefixes of Grid API keys setup or teardown deleted.
 	DeletedAPIKeys []string `json:"deleted_api_keys,omitempty"`
 }
 
@@ -558,6 +576,13 @@ type GridStatusList struct {
 type GridHarnessFlags struct {
 	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude-code,codex,opencode,pi"`
 	ConfigDir string   `flag:"config-dir" desc:"Harness configuration directory. Requires exactly one --harness. Defaults to the harness's own location."`
+}
+
+// GridTokenFlags are the flags for `baseten grid token`.
+type GridTokenFlags struct {
+	CommandFlags
+	Harness string `flag:"harness" desc:"Harness the token is for, as configured by 'grid setup'." enum:"claude-code,codex,opencode,pi" required:"true"`
+	Team    string `flag:"team" desc:"Team name or ID the token is for. Defaults to the team the harness was set up with."`
 }
 
 // GridStatusFlags are the flags for `baseten grid status`.

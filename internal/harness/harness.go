@@ -6,6 +6,9 @@
 // settings, and teardown deletes them so the harness's native defaults apply.
 // Unrelated settings are left alone, and previous values of overwritten
 // settings are not restored. Setup and teardown are idempotent.
+//
+// A harness that supports it runs `baseten grid token` for its credential
+// instead of storing a key; setup then removes any key it stored before.
 package harness
 
 import (
@@ -65,9 +68,10 @@ type Harness interface {
 	// Detect finds the harness executable and its settings file in configDir,
 	// or in the harness's native configuration directory when configDir is empty.
 	Detect(ctx context.Context, execer Execer, configDir string) (Detection, error)
-	// Prepare plans setup of the settings file at path. The plan keeps the
-	// file's current credential; ApplyPlans inserts the real one.
-	Prepare(path string, routes []Route, selection Selection, endpoint string) ([]*Plan, error)
+	// Prepare plans setup of the settings file at path. With helper, the
+	// harness runs it for its credential. Without it, ApplyPlans inserts a
+	// static one.
+	Prepare(path string, routes []Route, selection Selection, endpoint string, helper *Helper) ([]*Plan, error)
 	// Inspect reports the integration state of the detected settings file.
 	Inspect(d Detection) (Status, error)
 	// Teardown plans removal of the integration settings at path.
@@ -77,11 +81,33 @@ type Harness interface {
 	BackgroundRoute(selection Selection) string
 	// SupportsSubagent reports whether --subagent-route-id applies to this harness.
 	SupportsSubagent() bool
+	// SupportsHelper reports whether the harness can run a [Helper] for its
+	// credential instead of storing a key.
+	SupportsHelper() bool
 	// Credential returns the routes API key setup wrote to the settings file at
 	// path, or "" if there is none.
 	Credential(path string) (string, error)
 	// Routes returns the routes the harness can call, in order.
 	Routes(routes []Route) []Route
+}
+
+// Helper is the credential command a harness runs instead of storing a key:
+// this CLI, with the profile setup used pinned so the harness resolves the
+// same one regardless of its environment.
+type Helper struct {
+	Path    string
+	Profile string
+}
+
+// args are the credential command's arguments after the CLI path.
+func (h *Helper) args(name string) []string {
+	return []string{"grid", "token", "--harness", name, "--profile", h.Profile}
+}
+
+// shellCommand is the credential command as one sh line.
+func (h *Helper) shellCommand(name string) string {
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+	return quote(h.Path) + " grid token --harness " + name + " --profile " + quote(h.Profile)
 }
 
 // Supported reports whether harness settings locations are verified on this
