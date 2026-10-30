@@ -72,6 +72,17 @@ func Test_Collect_TagCommitsSinceAndDirty(t *testing.T) {
 	require.True(t, info.HasUncommittedChanges)
 }
 
+func Test_Collect_UntrackedFilesWithShowUntrackedFilesNo(t *testing.T) {
+	dir := gitRepo(t)
+	run(t, dir, "config", "status.showUntrackedFiles", "no")
+	writeFile(t, dir, "model.py", "class Model: pass\n")
+
+	info := gitinfo.Collect(t.Context(), dir)
+
+	require.NotNil(t, info)
+	require.True(t, info.HasUncommittedChanges)
+}
+
 // A model directory nested inside a repository reports the repository's state.
 func Test_Collect_Subdirectory(t *testing.T) {
 	dir := gitRepo(t)

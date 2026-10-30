@@ -34,7 +34,7 @@ func Collect(ctx context.Context, dir string) *Info {
 			}
 		}
 	}
-	status, _ := runGit(ctx, dir, "status", "--porcelain")
+	status, _ := runGit(ctx, dir, "status", "--porcelain", "--untracked-files=normal")
 	info.HasUncommittedChanges = status != ""
 	return info
 }
