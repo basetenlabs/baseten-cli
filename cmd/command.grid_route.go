@@ -209,7 +209,10 @@ var commandGridRoute = Command{
 					},
 					{
 						Description: "Compare Codex and Claude Code usage.",
-						Command:     "baseten grid route usage --harness codex --harness claude-code",
+						CommandLines: []string{
+							"baseten grid route usage --group-by harness",
+							"--harness codex --harness claude-code",
+						},
 					},
 				},
 				JQExample: CommandExample{
