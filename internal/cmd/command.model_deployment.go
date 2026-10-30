@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -504,6 +505,11 @@ func extractTar(r io.Reader, dir string) error {
 }
 
 func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeploymentPromoteFlags) error {
+	environmentSettings, err := promotionEnvironmentSettingsFromFlags(flags)
+	if err != nil {
+		return err
+	}
+	override := deploymentSettingsGroupOrNil(promotionSettingsOverrideFromFlags(flags.PromotionSettingsOverrideFlags))
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -514,7 +520,14 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	}
 
 	if !flags.Yes {
-		if err := ctx.ConfirmYesNo(fmt.Sprintf("Promote deployment %s to environment %q?", ref.DeploymentID, flags.Environment)); err != nil {
+		prompt := fmt.Sprintf("Promote deployment %s to environment %q", ref.DeploymentID, flags.Environment)
+		if changes := promotionEnvironmentSettingsChanges(environmentSettings); len(changes) > 0 {
+			prompt += " and update its " + strings.Join(changes, ", ")
+		}
+		if override != nil {
+			prompt += ", with one-time promotion settings"
+		}
+		if err := ctx.ConfirmYesNo(prompt + "?"); err != nil {
 			return err
 		}
 	}
@@ -523,8 +536,10 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	// server default, which is the opposite of this flag's.
 	dep, err := cl.API().PostModelsEnvironmentsPromote(ctx, ref.ModelID, flags.Environment,
 		managementapi.PromoteToEnvironmentRequest{
-			DeploymentId:            ref.DeploymentID,
-			PreserveEnvInstanceType: &flags.PreserveEnvInstanceType,
+			DeploymentId:              ref.DeploymentID,
+			PreserveEnvInstanceType:   &flags.PreserveEnvInstanceType,
+			EnvironmentSettingsUpdate: environmentSettings,
+			PromotionSettingsOverride: override,
 		})
 	if err != nil {
 		return fmt.Errorf("promote deployment %s to environment %s: %w", ref.DeploymentID, flags.Environment, err)
@@ -536,6 +551,120 @@ func commandModelDeploymentPromote(ctx *CommandContext, flags *cmd.ModelDeployme
 	}
 	ctx.Logf("Promoted deployment %s to environment %s\n", ref.DeploymentID, flags.Environment)
 	return nil
+}
+
+// promotionEnvironmentSettingsFromFlags builds the environment settings a
+// promotion changes, sending only the groups whose flags were passed. Nil when
+// none were, so a plain promote sends the same body as before.
+func promotionEnvironmentSettingsFromFlags(
+	flags *cmd.ModelDeploymentPromoteFlags,
+) (*managementapi.PromotionEnvironmentSettingsUpdate, error) {
+	if flags.InstanceType.IsSet() && flags.PreserveEnvInstanceType {
+		return nil, cmd.NewErrUsagef("--instance-type cannot be combined with --preserve-env-instance-type")
+	}
+	update := managementapi.PromotionEnvironmentSettingsUpdate{
+		Region:              flags.Region.Pointer(),
+		InstanceTypeId:      flags.InstanceType.Pointer(),
+		AutoscalingSettings: deploymentSettingsGroupOrNil(autoscalingSettingsFromFlags(flags.AutoscalingSettingsFlags)),
+	}
+	if flags.RequestBackpressurePolicy.IsSet() {
+		settings := requestBackpressureFromFlags(cmd.RequestBackpressureFlags{Policy: flags.RequestBackpressurePolicy})
+		update.RequestBackpressureSettings = &settings
+	}
+	if raw := flags.AutoscalingScheduleUpdateJSON.Pointer(); raw != nil {
+		schedules, err := promotionAutoscalingScheduleUpdateFromJSON(*raw)
+		if err != nil {
+			return nil, err
+		}
+		update.AutoscalingScheduleSettings = schedules
+	}
+	return deploymentSettingsGroupOrNil(update), nil
+}
+
+// promotionAutoscalingScheduleUpdateFromJSON decodes
+// --autoscaling-schedule-update-json. The server validates the content; an
+// empty update or trailing text would otherwise promote without the intended
+// schedule change.
+func promotionAutoscalingScheduleUpdateFromJSON(
+	raw string,
+) (*managementapi.UpdateAutoscalingScheduleSettings, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update-json: must be a JSON object")
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	var schedules managementapi.UpdateAutoscalingScheduleSettings
+	if err := decoder.Decode(&schedules); err != nil {
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update-json: invalid JSON: %v", err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, cmd.NewErrUsagef("--autoscaling-schedule-update-json: unexpected data after the JSON object")
+	}
+	if schedules == (managementapi.UpdateAutoscalingScheduleSettings{}) {
+		return nil, cmd.NewErrUsagef(
+			"--autoscaling-schedule-update-json: set at least one of schedules, delete_schedules, or timezone")
+	}
+	return &schedules, nil
+}
+
+// promotionSettingsOverrideFromFlags maps the --override-* flags onto the
+// request body, nesting the rolling deploy config only when one of its own
+// flags was passed.
+func promotionSettingsOverrideFromFlags(flags cmd.PromotionSettingsOverrideFlags) managementapi.UpdatePromotionSettings {
+	settings := managementapi.UpdatePromotionSettings{
+		RedeployOnPromotion: flags.OverrideRedeployOnPromotion.Pointer(),
+		RollingDeploy:       flags.OverrideRollingDeploy.Pointer(),
+	}
+	if strategy := flags.OverridePromotionCleanupStrategy.Pointer(); strategy != nil {
+		cleanup := managementapi.PromotionCleanupStrategy(enumToAPIValue(*strategy))
+		settings.PromotionCleanupStrategy = &cleanup
+	}
+	config := managementapi.UpdateRollingDeployConfig{
+		MaxSurgePercent:          flags.OverrideMaxSurgePercent.Pointer(),
+		MaxUnavailablePercent:    flags.OverrideMaxUnavailablePercent.Pointer(),
+		StabilizationTimeSeconds: flags.OverrideStabilizationTimeSeconds.Pointer(),
+		ReplicaOverheadPercent:   flags.OverrideReplicaOverheadPercent.Pointer(),
+	}
+	if strategy := flags.OverrideRollingDeployStrategy.Pointer(); strategy != nil {
+		rolling := managementapi.RollingDeployStrategy(enumToAPIValue(*strategy))
+		config.RollingDeployStrategy = &rolling
+	}
+	settings.RollingDeployConfig = deploymentSettingsGroupOrNil(config)
+	return settings
+}
+
+// promotionEnvironmentSettingsChanges names the settings a promotion changes on
+// the environment, for the confirmation prompt.
+func promotionEnvironmentSettingsChanges(update *managementapi.PromotionEnvironmentSettingsUpdate) []string {
+	if update == nil {
+		return nil
+	}
+	var changes []string
+	if update.Region != nil {
+		changes = append(changes, "region")
+	}
+	if update.InstanceTypeId != nil {
+		changes = append(changes, "instance type")
+	}
+	if update.AutoscalingSettings != nil {
+		changes = append(changes, "autoscaling settings")
+	}
+	if update.RequestBackpressureSettings != nil {
+		changes = append(changes, "request backpressure policy")
+	}
+	if update.AutoscalingScheduleSettings != nil {
+		changes = append(changes, "autoscaling schedules")
+	}
+	return changes
+}
+
+// deploymentSettingsGroupOrNil returns nil for a settings group with no fields
+// set, so an untouched group is omitted from the promote or push request.
+func deploymentSettingsGroupOrNil[T comparable](group T) *T {
+	var zero T
+	if group == zero {
+		return nil
+	}
+	return &group
 }
 
 func commandModelDeploymentRename(ctx *CommandContext, flags *cmd.ModelDeploymentRenameFlags) error {

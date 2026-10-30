@@ -145,7 +145,7 @@ func gridSelectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup 
 		options = append(options, huh.NewOption(label, s.Name()))
 	}
 	var names []string
-	err := huh.NewMultiSelect[string]().
+	err := ctx.RunPrompt(huh.NewMultiSelect[string]().
 		Title("Select harnesses to configure").
 		Options(options...).
 		// Without a height, huh takes the title's line out of the options' rows
@@ -157,8 +157,7 @@ func gridSelectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup 
 				return errors.New("choose at least one harness (space to select, enter to confirm)")
 			}
 			return nil
-		}).
-		Run()
+		}))
 	if err != nil {
 		return nil, err
 	}
@@ -702,7 +701,7 @@ func gridHarnessSessionAPIKey(ctx *CommandContext) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	key, err := session.APIKey()
+	key, err := session.APIKey(ctx)
 	if err != nil {
 		return "", fmt.Errorf("reading the session's API key: %w", err)
 	}
@@ -1220,7 +1219,7 @@ func gridProtectedHarnessCredentials(ctx *CommandContext, selected []gridSelecte
 // listGridRouteAPIKeys returns the Grid API keys the caller created, across all
 // their machines and teams.
 func listGridRouteAPIKeys(ctx context.Context, api *managementapi.Client) (*managementapi.APIKeys, error) {
-	category, mine := managementapi.APIKeyCategory_ROUTES, true
+	category, mine := managementapi.APIKeyCategory_GRID, true
 	keys, err := api.GetApiKeys(ctx, managementapi.GetV1ApiKeysParams{Type: &category, CreatedByMe: &mine})
 	if err != nil {
 		return nil, fmt.Errorf("listing Grid API keys: %w", err)
@@ -1283,7 +1282,7 @@ func gridEnsureHarnessToken(ctx *CommandContext, api *managementapi.Client, team
 		return "", err
 	}
 	scope := auth.RoutesKeyScope{ManagementURL: remote.ManagementURL(), Profile: session.ProfileName(), UserID: user.UserId, TeamID: team.Id}
-	saved, err := store.GetRoutesKey(scope)
+	saved, err := store.GetRoutesKey(ctx, scope)
 	if err != nil {
 		return "", err
 	}
@@ -1305,13 +1304,13 @@ func gridEnsureHarnessToken(ctx *CommandContext, api *managementapi.Client, team
 		name = gridDefaultHarnessKeyName(hostname)
 	}
 	created, err := api.PostTeamsApiKeys(ctx, team.Id, managementapi.CreateAPIKeyRequest{
-		Type: managementapi.APIKeyCategory_ROUTES,
+		Type: managementapi.APIKeyCategory_GRID,
 		Name: &name,
 	})
 	if err != nil {
 		return "", fmt.Errorf("creating Grid API key: %w", err)
 	}
-	if err := store.SetRoutesKey(scope, created.ApiKey, ctx.Log); err != nil {
+	if err := store.SetRoutesKey(ctx, scope, created.ApiKey, ctx.Log); err != nil {
 		return "", err
 	}
 	ctx.Logf("Created Grid API key %s\n", name)

@@ -22,7 +22,7 @@ var (
 		"workspace-invoke":          managementapi.APIKeyCategory_WORKSPACE_INVOKE,
 		"workspace-manage-all":      managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL,
 		"workspace-manage-api-keys": managementapi.APIKeyCategory_WORKSPACE_MANAGE_API_KEYS,
-		"routes":                    managementapi.APIKeyCategory_ROUTES,
+		"grid":                      managementapi.APIKeyCategory_GRID,
 	}
 	apiKeyTypeFromBackend = map[managementapi.APIKeyCategory]string{
 		managementapi.APIKeyCategory_PERSONAL:                  "personal",
@@ -30,7 +30,7 @@ var (
 		managementapi.APIKeyCategory_WORKSPACE_INVOKE:          "workspace-invoke",
 		managementapi.APIKeyCategory_WORKSPACE_MANAGE_ALL:      "workspace-manage-all",
 		managementapi.APIKeyCategory_WORKSPACE_MANAGE_API_KEYS: "workspace-manage-api-keys",
-		managementapi.APIKeyCategory_ROUTES:                    "routes",
+		managementapi.APIKeyCategory_GRID:                      "grid",
 	}
 )
 
@@ -49,11 +49,11 @@ func commandOrgAPIKeyList(ctx *CommandContext, flags *cmd.OrgAPIKeyListFlags) er
 	if err != nil {
 		return fmt.Errorf("listing API keys: %w", err)
 	}
-	// Harness setup creates and deletes routes keys, so they would only clutter
+	// Grid setup creates and deletes Grid API keys, so they would only clutter
 	// the default listing.
 	if flags.Type == "" {
 		keys.Keys = slices.DeleteFunc(keys.Keys, func(k managementapi.APIKeyInfo) bool {
-			return k.Type == managementapi.APIKeyCategory_ROUTES
+			return k.Type == managementapi.APIKeyCategory_GRID
 		})
 	}
 

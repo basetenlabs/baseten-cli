@@ -407,10 +407,10 @@ func Test_Grid_Route_Describe_ProfileAndOutputModes(t *testing.T) {
 	h := newAuthHarness(t)
 	m := h.MockManagementAPI()
 	store := configDirStore(t)
-	h.Require.NoError(store.SetAPIKeyProfile("route-profile", m.URL, "profile-fixture-key", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "route-profile", m.URL, "profile-fixture-key", true, nil))
 	m.SetRouteFunc("GET", "/v1/grid/routes/r123456", func(w http.ResponseWriter, r *http.Request) {
 		h.Require.Equal("Bearer profile-fixture-key", r.Header.Get("Authorization"))
-		h.Require.Regexp(`^baseten-cli/\S+ \(Go/\S+; [^)]+\)$`, r.Header.Get("User-Agent"))
+		h.Require.Regexp(`^baseten-cli/dev \(Go/\S+; [^)]+\)$`, r.Header.Get("User-Agent"))
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(gridRouteCases()[0].Response)
 	})

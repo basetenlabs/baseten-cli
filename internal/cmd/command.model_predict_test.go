@@ -33,6 +33,23 @@ func Test_Model_Predict_DefaultEnvironment(t *testing.T) {
 	h.Require.NotNil(call)
 	h.Require.Equal(`{"x":1}`, call.Body)
 	h.Require.Contains(h.Stdout.String(), `"result"`)
+	h.Require.NotContains(h.Stderr.String(), "> POST")
+}
+
+func Test_Model_Predict_Verbose(t *testing.T) {
+	h, m := newPredictHarness(t)
+	m.SetRouteFunc("POST", "/environments/production/predict", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-Id", "req-1")
+		_, _ = w.Write([]byte(`{"result":"ok"}`))
+	})
+
+	err := h.Execute("model", "predict", "--model-id", "m-1", "--data", `{}`, "-v")
+	h.Require.NoError(err)
+	h.Require.Contains(h.Stderr.String(), "> POST "+m.URL+"/environments/production/predict\n")
+	h.Require.Contains(h.Stderr.String(), "< HTTP/1.1 200 OK\n")
+	h.Require.Contains(h.Stderr.String(), "< X-Request-Id: req-1\n")
+	h.Require.NotContains(h.Stdout.String(), "X-Request-Id")
 }
 
 func Test_Model_Predict_NamedEnvironment(t *testing.T) {
@@ -308,6 +325,35 @@ func Test_Model_Predict_Websocket_Echo(t *testing.T) {
 	h.Require.NoError(err)
 	h.Require.Equal(`{"x":1}`, serverGot)
 	h.Require.Contains(h.Stdout.String(), `"echo"`)
+}
+
+func Test_Model_Predict_Websocket_Verbose(t *testing.T) {
+	h, m := newPredictHarness(t)
+	m.SetRouteFunc("GET", "/environments/production/websocket", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "req-1")
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusInternalError, "")
+		if _, _, err := conn.Read(r.Context()); err != nil {
+			t.Errorf("read: %v", err)
+			return
+		}
+		if err := conn.Write(r.Context(), websocket.MessageText, []byte(`{}`)); err != nil {
+			t.Errorf("write: %v", err)
+			return
+		}
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	})
+
+	err := h.Execute("model", "predict", "--model-id", "m-1", "--websocket", "--data", `{}`, "-v")
+	h.Require.NoError(err)
+	wsURL := "ws://" + strings.TrimPrefix(m.URL, "http://") + "/environments/production/websocket"
+	h.Require.Contains(h.Stderr.String(), "> GET "+wsURL+"\n")
+	h.Require.Contains(h.Stderr.String(), "< HTTP/1.1 101 Switching Protocols\n")
+	h.Require.Contains(h.Stderr.String(), "< X-Request-Id: req-1\n")
 }
 
 func Test_Model_Predict_Websocket_BinaryReply(t *testing.T) {

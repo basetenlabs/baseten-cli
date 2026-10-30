@@ -23,6 +23,7 @@ import (
 
 func init() {
 	client.SetClientName("baseten-cli")
+	client.SetClientVersion(Version)
 }
 
 // GetAPIKey returns the Baseten API key from the BASETEN_API_KEY environment

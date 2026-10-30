@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"sync"
 	"time"
 
@@ -271,6 +273,27 @@ func (c *CommandContext) VerboseLogf(format string, args ...any) {
 	}
 }
 
+// VerboseLogHTTPRequest writes the request method and URL to stderr if verbose
+// mode is enabled.
+func (c *CommandContext) VerboseLogHTTPRequest(method, url string) {
+	c.VerboseLogf("> %s %s\n", method, url)
+}
+
+// VerboseLogHTTPResponse writes the response status and headers to stderr if
+// verbose mode is enabled.
+func (c *CommandContext) VerboseLogHTTPResponse(resp *http.Response) {
+	// Check eagerly to skip sorting headers when not verbose.
+	if !c.verbose {
+		return
+	}
+	c.VerboseLogf("< %s %s\n", resp.Proto, resp.Status)
+	for _, k := range slices.Sorted(maps.Keys(resp.Header)) {
+		for _, v := range resp.Header[k] {
+			c.VerboseLogf("< %s: %s\n", k, v)
+		}
+	}
+}
+
 // JSONArrayWriter writes a JSON array to a writer incrementally.
 type JSONArrayWriter struct {
 	ctx     *CommandContext
@@ -378,17 +401,26 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 		return cmd.NewErrUsagef("cannot confirm: stdin is not a terminal; pass --yes to skip the prompt")
 	}
 	ok := false
-	if err := huh.NewSelect[bool]().
+	if err := c.RunPrompt(huh.NewSelect[bool]().
 		Title(title).
 		Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
-		Value(&ok).
-		Run(); err != nil {
+		Value(&ok)); err != nil {
 		return err
 	}
 	if !ok {
 		return fmt.Errorf("aborted")
 	}
 	return nil
+}
+
+// RunPrompt runs a single interactive prompt field, aborting it when the
+// command context is cancelled.
+func (c *CommandContext) RunPrompt(field huh.Field) error {
+	// Equivalent to the field's own Run, which ignores the context and so
+	// leaves the prompt running when the command is cancelled by a SIGTERM or
+	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
+	// signal, which huh handles itself by returning huh.ErrUserAborted.
+	return huh.NewForm(huh.NewGroup(field)).WithShowHelp(false).RunWithContext(c)
 }
 
 // OAuthConfig returns the OAuth2 configuration for the given host.

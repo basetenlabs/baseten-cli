@@ -113,8 +113,8 @@ func gridAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAP
 		api.SetRoute("DELETE", "/v1/api_keys/secret-"+team, 200, map[string]string{"prefix": "secret-" + team})
 	}
 	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{
-		map[string]any{"prefix": "secret-team-a", "type": "ROUTES", "name": "laptop", "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"},
-		map[string]any{"prefix": "secret-team-b", "type": "ROUTES", "name": "laptop", "team_name": "Research", "created_at": "2026-09-02T00:00:00Z"},
+		map[string]any{"prefix": "secret-team-a", "type": "GRID", "name": "laptop", "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"},
+		map[string]any{"prefix": "secret-team-b", "type": "GRID", "name": "laptop", "team_name": "Research", "created_at": "2026-09-02T00:00:00Z"},
 	}})
 	return h, api
 }
@@ -518,8 +518,8 @@ func Test_Grid_Setup_KeyPerTeamAndUser(t *testing.T) {
 	}
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-b/api_keys"))
-	h.Require.Equal(map[string]any{"type": "ROUTES", "name": "laptop"}, api.FindCall("POST", "/v1/teams/team-a/api_keys").BodyJSON(t))
-	key, err := configDirStore(t).GetRoutesKey(auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: "team-b"})
+	h.Require.Equal(map[string]any{"type": "GRID", "name": "laptop"}, api.FindCall("POST", "/v1/teams/team-a/api_keys").BodyJSON(t))
+	key, err := configDirStore(t).GetRoutesKey(t.Context(), auth.RoutesKeyScope{ManagementURL: api.URL, UserID: "user-a", TeamID: "team-b"})
 	h.Require.NoError(err)
 	h.Require.Equal("secret-team-b", key)
 
@@ -2045,13 +2045,13 @@ func Test_Grid_Setup_UseSessionCredentialRequiresAPIKey(t *testing.T) {
 	path := harnessSettingsFile("claude-code", dir)
 
 	// An OAuth session has no embeddable key.
-	h.Require.NoError(configDirStore(t).SetOAuthProfile("alice", api.URL, auth.OAuthCredential{AccessToken: "at", RefreshToken: "rt"}, true, nil))
+	h.Require.NoError(configDirStore(t).SetOAuthProfile(t.Context(), "alice", api.URL, auth.OAuthCredential{AccessToken: "at", RefreshToken: "rt"}, true, nil))
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--dry-run"))
 	h.Require.Contains(h.Stderr.String(), "no API key to install")
 	h.Require.NoFileExists(path)
 
 	// Neither does an unauthenticated session, which cannot list teams at all.
-	h.Require.NoError(configDirStore(t).RemoveProfile("alice"))
+	h.Require.NoError(configDirStore(t).RemoveProfile(t.Context(), "alice"))
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--dry-run"))
 	h.Require.Contains(h.Stderr.String(), "not logged in")
 	h.Require.NoFileExists(path)
@@ -2121,7 +2121,7 @@ func Test_Grid_Teardown_KeepsSessionCredential(t *testing.T) {
 	// List the session's key as a routes key the caller created, so teardown
 	// could delete it if it weren't protected.
 	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{
-		map[string]any{"prefix": "test-k", "type": "ROUTES", "name": "sandbox", "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"},
+		map[string]any{"prefix": "test-k", "type": "GRID", "name": "sandbox", "team_name": "Engineering", "created_at": "2026-09-01T00:00:00Z"},
 	}})
 	api.SetRoute("DELETE", "/v1/api_keys/test-k", 200, map[string]string{"prefix": "test-k"})
 	h.Require.NoError(h.Execute(setup...))

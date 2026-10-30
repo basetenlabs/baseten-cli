@@ -47,14 +47,13 @@ func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
 		method = "api_key"
 	} else if ctx.IsInteractive() {
 		var choice string
-		err := huh.NewSelect[string]().
+		err := ctx.RunPrompt(huh.NewSelect[string]().
 			Title("How would you like to authenticate?").
 			Options(
 				huh.NewOption("Login with Baseten credentials (browser)", "web"),
 				huh.NewOption("Paste an API key", "api_key"),
 			).
-			Value(&choice).
-			Run()
+			Value(&choice))
 		if err != nil {
 			return err
 		}
@@ -99,7 +98,7 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 		}
 	}
 
-	if err := store.RemoveProfile(profileName); err != nil {
+	if err := store.RemoveProfile(ctx, profileName); err != nil {
 		return err
 	}
 
@@ -168,11 +167,10 @@ func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
 		for _, name := range names {
 			options = append(options, huh.NewOption(name, name))
 		}
-		err = huh.NewSelect[string]().
+		err = ctx.RunPrompt(huh.NewSelect[string]().
 			Title("Switch to which profile?").
 			Options(options...).
-			Value(&profileName).
-			Run()
+			Value(&profileName))
 		if err != nil {
 			return err
 		}
@@ -355,7 +353,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 		RefreshToken: token.RefreshToken,
 		Expiry:       token.Expiry,
 	}
-	if err := store.SetOAuthProfile(profileName, remote.RemoteURL(), cred, !flags.NoSwitch, warnWriter); err != nil {
+	if err := store.SetOAuthProfile(ctx, profileName, remote.RemoteURL(), cred, !flags.NoSwitch, warnWriter); err != nil {
 		return err
 	}
 
@@ -365,11 +363,10 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) error {
 	var apiKey string
 	if ctx.IsInteractive() {
-		err := huh.NewInput().
+		err := ctx.RunPrompt(huh.NewInput().
 			Title("Paste your API key").
 			EchoMode(huh.EchoModePassword).
-			Value(&apiKey).
-			Run()
+			Value(&apiKey))
 		if err != nil {
 			return err
 		}
@@ -400,11 +397,10 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *
 		if !ctx.IsInteractive() {
 			return cmd.NewErrUsagef("--profile is required when logging in with an API key non-interactively")
 		}
-		err := huh.NewInput().
+		err := ctx.RunPrompt(huh.NewInput().
 			Title("Profile name for this credential").
 			Description("e.g. personal, deploy-bot").
-			Value(&profileName).
-			Run()
+			Value(&profileName))
 		if err != nil {
 			return err
 		}
@@ -414,7 +410,7 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *
 	}
 
 	warnWriter := func(msg string) { ctx.Log(msg) }
-	if err := store.SetAPIKeyProfile(profileName, remote.RemoteURL(), apiKey, !flags.NoSwitch, warnWriter); err != nil {
+	if err := store.SetAPIKeyProfile(ctx, profileName, remote.RemoteURL(), apiKey, !flags.NoSwitch, warnWriter); err != nil {
 		return err
 	}
 

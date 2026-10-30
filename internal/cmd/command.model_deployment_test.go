@@ -3,12 +3,15 @@ package cmd_test
 import (
 	"archive/tar"
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/basetenlabs/baseten-cli/cmd"
 )
 
 func depFixture(id, name, env, status string) map[string]any {
@@ -319,7 +322,146 @@ func Test_Model_Deployment_Promote_Default(t *testing.T) {
 	h.Require.NotNil(call)
 	h.Require.Contains(call.Body, `"deployment_id":"d-1"`)
 	h.Require.Contains(call.Body, `"preserve_env_instance_type":false`)
+	h.Require.NotContains(call.Body, "environment_settings_update")
+	h.Require.NotContains(call.Body, "promotion_settings_override")
 	h.Require.Contains(h.Stderr.String(), "Promoted deployment d-1 to environment production")
+}
+
+func Test_Model_Deployment_Promote_EnvironmentSettingsUpdate(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/environments/production/promote", 200,
+		map[string]any{"id": "d-1"})
+
+	h.Require.NoError(h.Execute("model", "deployment", "promote",
+		"--model-id", "m-1", "--deployment-id", "d-1",
+		"--region", "us-east-1", "--instance-type", "A10Gx4x16", "--min-replica", "2",
+		"--request-backpressure-policy", "queue-on-full", "--yes"))
+	body := m.FindCall("POST", "/v1/models/m-1/environments/production/promote").BodyJSON(h.T)
+	h.Require.NotContains(body, "promotion_settings_override")
+	update, ok := body["environment_settings_update"].(map[string]any)
+	h.Require.True(ok)
+	h.Require.Equal(map[string]any{
+		"region":                        "us-east-1",
+		"instance_type_id":              "A10Gx4x16",
+		"autoscaling_settings":          map[string]any{"min_replica": float64(2)},
+		"request_backpressure_settings": map[string]any{"policy": "QUEUE_ON_FULL"},
+	}, update)
+}
+
+// An empty region is the API's value for Global, so it must be sent rather than
+// dropped.
+func Test_Model_Deployment_Promote_EmptyRegionIsGlobal(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/environments/production/promote", 200,
+		map[string]any{"id": "d-1"})
+
+	h.Require.NoError(h.Execute("model", "deployment", "promote",
+		"--model-id", "m-1", "--deployment-id", "d-1", "--region", "", "--yes"))
+	body := m.FindCall("POST", "/v1/models/m-1/environments/production/promote").BodyJSON(h.T)
+	h.Require.Equal(map[string]any{"region": ""}, body["environment_settings_update"])
+}
+
+func Test_Model_Deployment_Promote_NullClearsBackpressurePolicy(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/environments/production/promote", 200,
+		map[string]any{"id": "d-1"})
+
+	h.Require.NoError(h.Execute("model", "deployment", "promote",
+		"--model-id", "m-1", "--deployment-id", "d-1",
+		"--request-backpressure-policy", "null", "--yes"))
+	body := m.FindCall("POST", "/v1/models/m-1/environments/production/promote").BodyJSON(h.T)
+	h.Require.Equal(map[string]any{
+		"request_backpressure_settings": map[string]any{"policy": nil},
+	}, body["environment_settings_update"])
+}
+
+func Test_Model_Deployment_Promote_AutoscalingScheduleUpdate(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/environments/production/promote", 200,
+		map[string]any{"id": "d-1"})
+
+	schedule := map[string]any{
+		"name": "weekday-peak", "cadence": "DAILY", "enabled": true,
+		"weekdays":   []any{"MONDAY"},
+		"start_hour": float64(8), "start_minute": float64(0), "end_hour": float64(18), "end_minute": float64(0),
+		"autoscaling_settings": map[string]any{"min_replica": float64(4)},
+	}
+	oneTime := map[string]any{
+		"name": "launch", "cadence": "ONE_TIME", "enabled": true,
+		"start_at": "2026-09-01T08:00:00-04:00", "end_at": "2026-09-01T20:00:00-04:00",
+		"autoscaling_settings": map[string]any{"min_replica": float64(10)},
+	}
+	update := map[string]any{
+		"timezone":         "America/New_York",
+		"schedules":        []any{schedule, oneTime},
+		"delete_schedules": []any{"s-old"},
+	}
+	raw, err := json.Marshal(update)
+	h.Require.NoError(err)
+
+	h.Require.NoError(h.Execute("model", "deployment", "promote",
+		"--model-id", "m-1", "--deployment-id", "d-1",
+		"--autoscaling-schedule-update-json", string(raw), "--yes"))
+	body := m.FindCall("POST", "/v1/models/m-1/environments/production/promote").BodyJSON(h.T)
+	h.Require.Equal(map[string]any{"autoscaling_schedule_settings": update},
+		body["environment_settings_update"])
+}
+
+func Test_Model_Deployment_Promote_AutoscalingScheduleUpdateRejectsInvalidInput(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, want string
+	}{
+		{"empty string", ``, "must be a JSON object"},
+		{"null", `null`, "set at least one of"},
+		{"empty object", `{}`, "set at least one of"},
+		{"trailing data", `{"timezone":"UTC"} junk`, "unexpected data after the JSON object"},
+		{"second object", `{"timezone":"UTC"}{}`, "unexpected data after the JSON object"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+
+			err := h.Execute("model", "deployment", "promote",
+				"--model-id", "m-1", "--deployment-id", "d-1",
+				"--autoscaling-schedule-update-json", tc.raw, "--yes")
+			h.Require.ErrorContains(err, tc.want)
+			h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
+			h.Require.Nil(m.FindCall("POST", "/v1/models/m-1/environments/production/promote"))
+		})
+	}
+}
+
+func Test_Model_Deployment_Promote_InstanceTypeWithPreserveIsUsageError(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+
+	err := h.Execute("model", "deployment", "promote",
+		"--model-id", "m-1", "--deployment-id", "d-1",
+		"--instance-type", "A10Gx4x16", "--preserve-env-instance-type", "--yes")
+	h.Require.ErrorContains(err, "--instance-type cannot be combined with --preserve-env-instance-type")
+	h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
+	h.Require.Nil(m.FindCall("POST", "/v1/models/m-1/environments/production/promote"))
+}
+
+func Test_Model_Deployment_Promote_PromotionSettingsOverride(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m-1/environments/production/promote", 200,
+		map[string]any{"id": "d-1"})
+
+	h.Require.NoError(h.Execute("model", "deployment", "promote",
+		"--model-id", "m-1", "--deployment-id", "d-1",
+		"--override-rolling-deploy", "true", "--override-max-surge-percent", "10", "--yes"))
+	body := m.FindCall("POST", "/v1/models/m-1/environments/production/promote").BodyJSON(h.T)
+	h.Require.NotContains(body, "environment_settings_update")
+	h.Require.Equal(map[string]any{
+		"rolling_deploy":        true,
+		"rolling_deploy_config": map[string]any{"max_surge_percent": float64(10)},
+	}, body["promotion_settings_override"])
 }
 
 func Test_Model_Deployment_Promote_PreserveInstanceType(t *testing.T) {

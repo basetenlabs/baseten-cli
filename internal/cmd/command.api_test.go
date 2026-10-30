@@ -78,7 +78,7 @@ func Test_API_Management_AuthHeader(t *testing.T) {
 	err := h.Execute("api", "management", "models")
 	h.Require.NoError(err)
 	h.Require.Equal("Bearer test-key", req.Headers.Get("Authorization"))
-	h.Require.Regexp(`^baseten-cli/\S+ \(Go/\S+; [^)]+\)$`, req.Headers.Get("User-Agent"))
+	h.Require.Regexp(`^baseten-cli/dev \(Go/\S+; [^)]+\)$`, req.Headers.Get("User-Agent"))
 }
 
 func Test_API_Management_ExplicitMethod(t *testing.T) {
@@ -178,6 +178,15 @@ func Test_API_Management_HTTPError(t *testing.T) {
 	_ = h.Execute("api", "management", "models/bad")
 	h.Require.True(h.Exited())
 	h.Require.Contains(h.Stderr.String(), "status 404")
+}
+
+func Test_API_Management_VerboseOnHTTPError(t *testing.T) {
+	h, _ := newAPIHarness(t, 404, map[string]any{"error": "not found"})
+	err := h.Execute("api", "management", "models", "-v")
+	h.Require.Error(err)
+	h.Require.Regexp(`(?m)^> GET http://\S+/v1/models$`, h.Stderr.String())
+	h.Require.Contains(h.Stderr.String(), "< HTTP/1.1 404 Not Found\n")
+	h.Require.Contains(h.Stderr.String(), "< Content-Type: application/json\n")
 }
 
 func Test_API_Management_PathNormalization(t *testing.T) {

@@ -71,11 +71,13 @@ func callAPI(ctx *CommandContext, flags *cmd.APIFlags, baseURL string, httpClien
 		}
 	}
 
+	ctx.VerboseLogHTTPRequest(req.Method, req.URL.String())
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	ctx.VerboseLogHTTPResponse(resp)
 
 	if err := outputAPIResponse(ctx, resp); err != nil {
 		return err

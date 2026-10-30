@@ -104,6 +104,10 @@ var commandSandbox = Command{
 						},
 					},
 					{
+						Description: "Create one with a sandbox volume mounted at /data.",
+						Command:     "baseten sandbox create --name worker --volume my-volume:/data",
+					},
+					{
 						Description: "Create one that is deleted after an hour idle or a day at most.",
 						CommandLines: []string{
 							"baseten sandbox create --name scratch",
@@ -123,7 +127,8 @@ var commandSandbox = Command{
 			Description: sandboxPreRelease +
 				"Updates a sandbox's environment variables, labels, or lifecycle. Omitted flags leave " +
 				"their fields unchanged. Any --env or --plain-env replaces all of the sandbox's " +
-				"environment variables, and any --label replaces all of its labels. Any of " +
+				"environment variables, and any --label replaces all of its labels, which " +
+				"--clear-labels removes instead. Any of " +
 				"--idle-ttl, --max-age, --expires-at, or --terminated-retention replaces the " +
 				"sandbox's whole lifecycle, so pass every one that should still apply.",
 			Flags: SandboxUpdateFlags{},
@@ -237,6 +242,7 @@ var commandSandbox = Command{
 		commandSandboxProcess,
 		commandSandboxImage,
 		commandSandboxPreview,
+		commandSandboxVolume,
 	},
 }
 
@@ -290,13 +296,15 @@ type SandboxCreateFlags struct {
 	SandboxEnvFlags
 	SandboxLifecycleFlags
 
-	Name        string   `flag:"name" desc:"Unique name of the sandbox. The server generates one when omitted."`
-	Team        string   `flag:"team" desc:"Team name or ID to create the sandbox in. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
-	IfNotExists bool     `flag:"if-not-exists" desc:"Return the existing sandbox with this name instead of failing, or recreate it if it is failed, terminated, or being deleted."`
-	Region      string   `flag:"region" desc:"Region to create the sandbox in."`
-	Memory      int      `flag:"memory" desc:"Memory in MB, which also sets the CPU allocation."`
-	Image       string   `flag:"image" desc:"Image to create the sandbox from, including its tag, such as my-image:latest."`
-	Label       []string `flag:"label" desc:"Label as KEY=VALUE. Repeatable."`
+	Name                     string   `flag:"name" desc:"Unique name of the sandbox. The server generates one when omitted."`
+	Team                     string   `flag:"team" desc:"Team name or ID to create the sandbox in. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
+	IfNotExists              bool     `flag:"if-not-exists" desc:"Return the existing sandbox with this name instead of failing, or recreate it if it is failed, terminated, or being deleted."`
+	Region                   string   `flag:"region" desc:"Region to create the sandbox in."`
+	Memory                   int      `flag:"memory" desc:"Memory in MB, which also sets the CPU allocation."`
+	FileSystemMaxMemoryUsage string   `flag:"filesystem-max-memory-usage" desc:"Maximum memory the filesystem can use, as a percentage of memory (80%), a size (2Gi), or Mi (2048). Defaults to 50%."`
+	Image                    string   `flag:"image" desc:"Image to create the sandbox from, including its tag, such as my-image:latest."`
+	Label                    []string `flag:"label" desc:"Label as KEY=VALUE. Repeatable."`
+	Volume                   []string `flag:"volume" desc:"Sandbox volume to mount, as NAME:MOUNT_PATH, with :ro appended to mount it read-only, such as data:/data or data:/data:ro. It must be in the sandbox's region and not mounted elsewhere. Repeatable, though at most one is currently supported."`
 }
 
 // SandboxUpdateFlags configures 'baseten sandbox update'. Unset flags leave
@@ -307,7 +315,8 @@ type SandboxUpdateFlags struct {
 	SandboxEnvFlags
 	SandboxLifecycleFlags
 
-	Label []string `flag:"label" desc:"Label as KEY=VALUE, replacing all of the sandbox's labels. Repeatable."`
+	Label       []string `flag:"label" desc:"Label as KEY=VALUE, replacing all of the sandbox's labels. Repeatable. Cannot be combined with --clear-labels."`
+	ClearLabels bool     `flag:"clear-labels" desc:"Remove all of the sandbox's labels. Cannot be combined with --label."`
 }
 
 // SandboxDeleteFlags configures 'baseten sandbox delete'.

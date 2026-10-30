@@ -25,6 +25,7 @@ E2e tests live in `internal/e2e-tests/` behind the `e2e` build tag and run again
 
 - Keep them fast and high-level smoke only; do not exhaustively cover flag permutations (that belongs in unit tests).
 - Invoke the CLI in-process via `cmd.Execute` rather than shelling out to a built binary.
+- Use the CLI as a user would: only `helpers_test.go` may import this repository's packages.
 - Tests must be idempotent and clean up resources they create.
 - Use random/unique identifiers for created resources so parallel or repeated runs don't clash.
 - Do not assume specific orgs, models, or other state exists; create or look up dynamically.

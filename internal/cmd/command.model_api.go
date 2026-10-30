@@ -167,11 +167,13 @@ func commandModelAPIPredict(ctx *CommandContext, flags *cmd.ModelAPIPredictFlags
 		return fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	ctx.VerboseLogHTTPRequest(req.Method, url)
 	resp, err := transport.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	ctx.VerboseLogHTTPResponse(resp)
 
 	// --content opts into chat-aware text output: print just the assistant's
 	// reply. Under --output json the full response is emitted via the verbatim

@@ -199,6 +199,26 @@ func TestTerminal_RoundTripAndClose(t *testing.T) {
 	}
 }
 
+func TestTerminal_DialSendsClientTerm(t *testing.T) {
+	t.Setenv("TERM", "vt100")
+	server := newTerminalTestServer(t, 1)
+	input, inputWriter := io.Pipe()
+	t.Cleanup(func() { inputWriter.Close() })
+	_, _, done := runTerminal(t, server, input, &lockedBuffer{}, nil)
+
+	if _, err := inputWriter.Write([]byte("x\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runResult(t, done); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.queries[0].Get("term") != "vt100" {
+		t.Errorf("query %v", server.queries[0])
+	}
+}
+
 func TestTerminal_SplitMultiByteCharacter(t *testing.T) {
 	// Two inputs: the held-back character completes on the second read.
 	server := newTerminalTestServer(t, 2)
