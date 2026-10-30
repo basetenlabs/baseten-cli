@@ -364,16 +364,35 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return err
+	}
+	// A first-time user signs in here instead of being sent to auth login.
+	if session.ProfileName() == "" && !session.IsEphemeral() && ctx.IsInteractive() {
+		store, err := NewAuthStore(false)
+		if err != nil {
+			return err
+		}
+		remote, err := ctx.authInfo.Remote()
+		if err != nil {
+			return err
+		}
+		ctx.LogLine("Not logged in; signing in with your browser.")
+		if err := loginWeb(ctx, store, remote, &cmd.AuthLoginFlags{}); err != nil {
+			return err
+		}
+		ctx.authInfo = authInfo{profileFlag: ctx.authInfo.profileFlag, defaultProfile: ctx.authInfo.defaultProfile}
+		if session, err = ctx.authInfo.Session(); err != nil {
+			return err
+		}
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
 	api := cl.API()
 	team, listed, err := gridLoadHarnessSetupRoutes(ctx, api, f.Team)
-	if err != nil {
-		return err
-	}
-	session, err := ctx.authInfo.Session()
 	if err != nil {
 		return err
 	}
