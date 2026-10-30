@@ -342,7 +342,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		target.selection = selection
 		var targetHelper *harness.Helper
 		if target.record.CredentialSource == harness.CredentialSourceHelper {
-			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
+			targetHelper = &harness.Helper{Path: helper}
 		}
 		current, err := target.Prepare(target.detection.Path, callable, selection.Selection, endpoint, targetHelper)
 		if err != nil {
@@ -1684,6 +1684,11 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 		return fmt.Errorf("%s is not set up; run `baseten grid setup`", flags.Harness)
 	}
 	teamID := record.TeamID
+	// The token is for the profile setup used, whatever the harness's
+	// environment holds; a BASETEN_API_KEY there belongs to some other flow.
+	if ctx.authInfo.profileFlag == "" {
+		ctx.authInfo.profileFlag = record.Profile
+	}
 	remote, err := ctx.authInfo.Remote()
 	if err != nil {
 		return err

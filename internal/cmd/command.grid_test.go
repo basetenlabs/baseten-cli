@@ -2816,7 +2816,7 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Empty(stdout)
 	h.Require.Equal("codex is not set up; run `baseten grid setup`\n", stderr)
 	saveHarnessRecordFile(t, harness.RecordFile{Harnesses: map[string]harness.Record{
-		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, TeamID: "team-a", CredentialSource: harness.CredentialSourceHelper},
+		"codex": {Config: "/x/config.toml", Profile: "alice", ManagementURL: api.URL, TeamID: "team-a", CredentialSource: harness.CredentialSourceHelper},
 	}})
 	_, stderr, err = run()
 	h.Require.Error(err)
@@ -2835,11 +2835,12 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Empty(stderr)
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/grid/token"))
 
-	// The --profile the helper passes beats a BASETEN_API_KEY exported in the
-	// harness's shell.
+	// The recorded profile beats a BASETEN_API_KEY exported in the harness's
+	// shell.
 	t.Setenv("BASETEN_API_KEY", "someone-else")
-	h.Require.NoError(h.Execute("grid", "token", "--harness", "codex", "--profile", "alice"))
-	h.Require.Equal("grid-cached\n", h.Stdout.String())
+	stdout, _, err = run()
+	h.Require.NoError(err)
+	h.Require.Equal("grid-cached\n", stdout)
 	t.Setenv("BASETEN_API_KEY", "")
 
 	// An expiring token is replaced once, and the replacement is cached.
