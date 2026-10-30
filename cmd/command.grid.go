@@ -114,34 +114,6 @@ var commandGrid = Command{
 			},
 		},
 		{
-			Name:    "harness-defaults",
-			Summary: "Show team default routes for harnesses (PRE-RELEASE)",
-			Description: gridPrereleaseNotice +
-				"Show the default routes for each harness. " +
-				"Use --harness to narrow the output; without it, every harness is shown. " +
-				"Defaults can be changed on app.baseten.co or by API by an admin; this command only reads them.",
-			Flags: GridHarnessDefaultsFlags{},
-			Output: &CommandOutput[GridHarnessDefaultsList]{
-				TextDescription: "Table with columns: HARNESS, PRIMARY, BACKGROUND. " +
-					"Each route is followed by its source in parentheses; '-' means no default is set. " +
-					"JSON includes the team and each default's full route and source.",
-				Examples: []CommandExample{
-					{
-						Description: "Show every harness's defaults for your only team.",
-						Command:     "baseten grid harness-defaults",
-					},
-					{
-						Description: "Show one team's defaults for one harness.",
-						Command:     "baseten grid harness-defaults --team Engineering --harness claude-code",
-					},
-				},
-				JQExample: CommandExample{
-					Description: "Print the primary route for Claude Code.",
-					Command:     "baseten grid harness-defaults --harness claude-code --jq '.items[0].primary.route.name'",
-				},
-			},
-		},
-		{
 			Name:    "teardown",
 			Summary: "Remove Baseten harness settings (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
@@ -524,20 +496,6 @@ type GridPlanList struct {
 	DeletedAPIKeys []string `json:"deleted_api_keys,omitempty"`
 }
 
-// GridHarnessDefault is one harness's default routes.
-type GridHarnessDefault struct {
-	Harness    string                          `json:"harness"`
-	Primary    *managementapi.GridHarnessModel `json:"primary"`
-	Background *managementapi.GridHarnessModel `json:"background"`
-}
-
-// GridHarnessDefaultsList is the JSON output of `baseten grid harness-defaults`.
-type GridHarnessDefaultsList struct {
-	TeamId   string               `json:"team_id"`
-	TeamName string               `json:"team_name"`
-	Items    []GridHarnessDefault `json:"items"`
-}
-
 // GridHarnessRoute is a route configured in a harness.
 type GridHarnessRoute struct {
 	Name        string `json:"name"`
@@ -604,13 +562,6 @@ type GridSetupFlags struct {
 	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
 	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
-}
-
-// GridHarnessDefaultsFlags are the flags for `baseten grid harness-defaults`.
-type GridHarnessDefaultsFlags struct {
-	CommandFlags
-	Team    string   `flag:"team" desc:"Team name or ID whose defaults to show. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
-	Harness []string `flag:"harness" desc:"Harness to show. May be repeated. Defaults to every harness." enum:"claude-code,codex,opencode,pi"`
 }
 
 // GridSyncFlags are the flags for `baseten grid sync`.
