@@ -12,8 +12,9 @@ import (
 )
 
 // gridTokenService is the keyring service for cached Grid tokens, one entry
-// per [GridTokenScope] holding every team's token. Tokens are never written to
-// auth.json: without a keyring, minting again is cheap.
+// per [GridTokenScope] holding every team's token. Without keychain caching,
+// Pi would get a new token on every request, since it doesn't cache. Tokens
+// are never written to auth.json: without a keyring, minting again is cheap.
 const gridTokenService = "baseten-grid-token"
 
 // GridTokenScope keys the cache by issuing endpoint and credential
