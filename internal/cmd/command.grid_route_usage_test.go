@@ -60,12 +60,13 @@ func Test_Grid_Route_Usage_KeepsRowsWithNoTokens(t *testing.T) {
 func Test_Grid_Route_Usage_FiltersPassThrough(t *testing.T) {
 	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
-	h.Require.NoError(h.Execute("grid", "route", "usage", "--user-id", "user-b", "--group-by", "user,provider", "--model", "glm-5.2", "--provider", "xai"))
+	h.Require.NoError(h.Execute("grid", "route", "usage", "--user-id", "user-b", "--group-by", "user,provider", "--model", "glm-5.2", "--provider", "xai", "--harness", "codex"))
 	q := gridUsageLastQuery(h, api)
 	h.Require.Equal([]string{"user-b"}, q["user_ids"])
 	h.Require.Equal([]string{"USER", "PROVIDER"}, q["group_by"])
 	h.Require.Equal([]string{"glm-5.2"}, q["models"])
 	h.Require.Equal([]string{"XAI"}, q["providers"])
+	h.Require.Equal([]string{"CODEX"}, q["harnesses"], "kebab flags map to the API enum")
 }
 
 func Test_Grid_Route_Usage_JSONStreamsBuckets(t *testing.T) {
@@ -158,6 +159,31 @@ func Test_Grid_Route_Usage_TeamAndRouterDimensions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_Grid_Route_Usage_HarnessDimension(t *testing.T) {
+	untracked := gridUsageModel("claude-sonnet-5", "1.25", 1000, 800, 100)
+	untracked["harness"] = nil
+	codex := gridUsageModel("gpt-5.2", "0.50", 400, 0, 40)
+	codex["harness"] = "CODEX"
+	h, m := newGridUsageHarness(t, gridUsageNow, gridUsageBody(gridUsageBucket("2026-09-24", untracked, codex)))
+
+	h.Require.NoError(h.Execute("grid", "route", "usage", "--group-by", "harness"))
+
+	h.Require.Equal([]string{"HARNESS"}, gridUsageLastQuery(h, m)["group_by"])
+	h.Require.Contains(h.Stdout.String(), "HARNESS")
+	h.Require.Equal([]string{"2026-09-24", "Unknown", "1,000", "800", "100", "$1.25"}, gridUsageRow(h, h.Stdout.String(), "Unknown"))
+	h.Require.Equal([]string{"codex", "400", "0", "40", "$0.50"}, gridUsageRow(h, h.Stdout.String(), "codex"))
+	h.Require.Contains(h.Stderr.String(), `Harness "Unknown" means no harness was recorded, including usage from before harness tracking.`)
+}
+
+func Test_Grid_Route_Usage_HarnessFilterPassesThrough(t *testing.T) {
+	h, m := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
+
+	h.Require.NoError(h.Execute("grid", "route", "usage",
+		"--harness", "codex", "--harness", "claude-code"))
+
+	h.Require.Equal([]string{"CODEX", "CLAUDE_CODE"}, gridUsageLastQuery(h, m)["harnesses"])
 }
 
 func Test_Grid_Route_Usage_OmittedTeamIsNotResolved(t *testing.T) {
