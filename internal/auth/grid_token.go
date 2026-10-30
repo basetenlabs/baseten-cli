@@ -13,12 +13,10 @@ import (
 
 // gridTokenService is the keyring service for cached Grid tokens, one entry
 // per [GridTokenScope] holding every team's token. Without keychain caching,
-// Pi would get a new token on every request, since it doesn't cache. Tokens
-// are never written to auth.json: without a keyring, minting again is cheap.
+// Pi would get a new token on every request, since it doesn't cache.
 const gridTokenService = "baseten-grid-token"
 
-// GridTokenScope keys the cache by issuing endpoint and credential
-// ([Session.CacheIdentity]), so no token is read under another credential.
+// GridTokenScope keys the cache by issuing endpoint and [Session.CacheIdentity].
 type GridTokenScope struct {
 	ManagementURL string `json:"management_url"`
 	Identity      string `json:"identity"`
@@ -30,14 +28,12 @@ func (s GridTokenScope) account() string {
 	return hex.EncodeToString(sum[:])
 }
 
-// GridToken is a short-lived Grid token and when it expires.
 type GridToken struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// gridTokens reads the tokens cached for scope, by team. A missing or
-// unparseable entry is empty.
+// gridTokens reads the tokens cached for scope, by team.
 func gridTokens(ctx context.Context, scope GridTokenScope) (map[string]GridToken, error) {
 	var secret string
 	keyringErr := keyringDo(ctx, func() (err error) {
@@ -48,8 +44,8 @@ func gridTokens(ctx context.Context, scope GridTokenScope) (map[string]GridToken
 		return nil, ctxErr
 	}
 	tokens := map[string]GridToken{}
-	if keyringErr == nil && json.Unmarshal([]byte(secret), &tokens) != nil {
-		clear(tokens)
+	if keyringErr == nil {
+		_ = json.Unmarshal([]byte(secret), &tokens)
 	}
 	return tokens, nil
 }
@@ -67,8 +63,8 @@ func (s *Store) GetGridToken(ctx context.Context, scope GridTokenScope, teamID s
 	return &token, nil
 }
 
-// SetGridToken caches token in the keyring. Without a keyring it warns via
-// warnWriter (if non-nil) and skips the cache.
+// SetGridToken caches token, warning via warnWriter (if non-nil) when the
+// keyring refuses it.
 func (s *Store) SetGridToken(ctx context.Context, scope GridTokenScope, teamID string, token GridToken, warnWriter func(string)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -89,7 +85,7 @@ func (s *Store) SetGridToken(ctx context.Context, scope GridTokenScope, teamID s
 	return nil
 }
 
-// ClearGridTokens forgets every Grid token cached for scope.
+// ClearGridTokens forgets every token cached for scope.
 func (s *Store) ClearGridTokens(ctx context.Context, scope GridTokenScope) error {
 	_ = keyringDo(ctx, func() error { return keyring.Delete(gridTokenService, scope.account()) })
 	return ctx.Err()
