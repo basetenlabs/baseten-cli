@@ -171,7 +171,7 @@ var commandGridRoute = Command{
 				"Show routes usage and estimated costs as daily UTC buckets, oldest first, broken down by the " +
 				"dimensions passed to --group-by. Defaults match the API: the previous UTC day through today, grouped " +
 				"by model. Organization admins see organization usage, team admins see teams they manage, and other members see usage from their own keys. --team narrows the scope. " +
-				"Grouping by router includes only routed usage; do not add these totals to totals from other groupings.\n\n" +
+				"Grouping by router includes only routed usage; do not add these totals to totals from other groupings. Grouping by harness includes a null group for usage with no recorded harness.\n\n" +
 				"Usage comes in whole UTC days: --start is snapped down to its day and --end is rounded up to the end of " +
 				"its day. Every bucket in the window is fetched, paging as needed, until --limit buckets are collected. " +
 				"Usage can lag by up to 15 minutes and is retained for 92 days. Model API costs use your prices and " +
@@ -202,6 +202,14 @@ var commandGridRoute = Command{
 					{
 						Description: "Break routed usage down by team and router.",
 						Command:     "baseten grid route usage --group-by team,router",
+					},
+					{
+						Description: "Show usage by coding harness over the last 7 days.",
+						Command:     "baseten grid route usage --since 7d --group-by harness",
+					},
+					{
+						Description: "Compare Codex and Claude Code usage.",
+						Command:     "baseten grid route usage --harness codex --harness claude-code",
 					},
 				},
 				JQExample: CommandExample{
@@ -271,10 +279,11 @@ type GridRouteDeleteFlags struct {
 // GridRouteUsageQueryFlags are the usage filters and paging flags of
 // `baseten grid route usage`.
 type GridRouteUsageQueryFlags struct {
-	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated." enum:"user,team,model,provider,router" default:"model"`
+	GroupBy []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated." enum:"user,team,model,provider,router,harness" default:"model"`
 
 	Models    []string `flag:"model" desc:"Only return usage for these models. May be repeated."`
 	Providers []string `flag:"provider" desc:"Only return usage for these providers. May be repeated." enum:"baseten-model-api,openai,anthropic,xai,vertex,openai-compatible"`
+	Harnesses []string `flag:"harness" desc:"Only return usage for these harnesses. May be repeated. Omit to include usage with no recorded harness." enum:"claude-code,codex,opencode,pi"`
 
 	Limit int `flag:"limit" desc:"Maximum number of daily buckets, paging as needed. 0 for no limit."`
 

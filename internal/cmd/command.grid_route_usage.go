@@ -60,6 +60,8 @@ type gridUsageTable interface {
 	empty() bool
 	// unpriced reports whether any usage came back without a cost.
 	unpriced() bool
+	// noHarness reports whether any harness grouping had no recorded harness.
+	noHarness() bool
 	render(ctx *CommandContext)
 }
 
@@ -101,6 +103,9 @@ func runGridRouteUsage(ctx *CommandContext, req gridUsageRequest) error {
 	}
 	if providers := gridUsageProviders(q.Providers); len(providers) > 0 {
 		params.Providers = &providers
+	}
+	if harnesses := gridUsageHarnesses(q.Harnesses); len(harnesses) > 0 {
+		params.Harnesses = &harnesses
 	}
 
 	var jw *JSONArrayWriter
@@ -156,6 +161,9 @@ buckets:
 	}
 	ctx.LogLine(fmt.Sprintf("Window: %s through %s UTC · grouped by %s · can lag by up to 15 minutes",
 		firstDate, lastDate, strings.Join(names, ", ")))
+	if table.noHarness() {
+		ctx.LogLine("Harness \"(none)\" means no harness was recorded, including usage from before harness tracking.")
+	}
 	if table.unpriced() {
 		ctx.LogLine("A cost of \"-\" means some of that usage couldn't be priced.")
 	}
@@ -187,6 +195,16 @@ func gridUsageProviders(values []string) []managementapi.GridProvider {
 		providers = append(providers, managementapi.GridProvider(strings.ToUpper(strings.ReplaceAll(v, "-", "_"))))
 	}
 	return providers
+}
+
+// gridUsageHarnesses maps the --harness values, already validated by the
+// flag's enum, onto the backend harness enum.
+func gridUsageHarnesses(values []string) []managementapi.GridRouteUsageHarness {
+	harnesses := make([]managementapi.GridRouteUsageHarness, 0, len(values))
+	for _, v := range values {
+		harnesses = append(harnesses, managementapi.GridRouteUsageHarness(strings.ToUpper(strings.ReplaceAll(v, "-", "_"))))
+	}
+	return harnesses
 }
 
 // gridUsageWindow resolves the query's UTC start and end dates, widened to
@@ -274,6 +292,9 @@ func (t *gridUsageTotal) money() string {
 }
 
 func gridUsageDimensionCell(d managementapi.GridRouteUsageDimension, r managementapi.GridRouteUsageResult) string {
+	if d == managementapi.GridRouteUsageDimension_HARNESS && r.Harness == nil {
+		return "(none)"
+	}
 	var v string
 	switch d {
 	case managementapi.GridRouteUsageDimension_USER:
@@ -287,6 +308,10 @@ func gridUsageDimensionCell(d managementapi.GridRouteUsageDimension, r managemen
 	case managementapi.GridRouteUsageDimension_PROVIDER:
 		if r.Provider != nil {
 			v = strings.ToLower(strings.ReplaceAll(string(*r.Provider), "_", "-"))
+		}
+	case managementapi.GridRouteUsageDimension_HARNESS:
+		if r.Harness != nil {
+			v = strings.ToLower(strings.ReplaceAll(string(*r.Harness), "_", "-"))
 		}
 	}
 	return cmp.Or(v, "(unknown)")
@@ -309,10 +334,11 @@ func gridUsageHeaders(leading []string, dims []managementapi.GridRouteUsageDimen
 // gridRouteUsageSeries renders one row per day and --group-by combination, like
 // model-api usage, with a trailing ALL row.
 type gridRouteUsageSeries struct {
-	dims     []managementapi.GridRouteUsageDimension
-	rows     [][]string
-	dataRows int
-	all      *gridUsageTotal
+	dims           []managementapi.GridRouteUsageDimension
+	rows           [][]string
+	dataRows       int
+	all            *gridUsageTotal
+	missingHarness bool
 }
 
 // addBucket appends this day's rows. A day with no usage still gets a row so
@@ -338,14 +364,18 @@ func (s *gridRouteUsageSeries) addBucket(b managementapi.GridRouteUsageBucket) e
 		s.rows = append(s.rows, append(row, t.cells()...))
 		s.dataRows++
 		s.all.add(t)
+		if slices.Contains(s.dims, managementapi.GridRouteUsageDimension_HARNESS) && r.Harness == nil {
+			s.missingHarness = true
+		}
 		// Blank the repeated date so a day's several rows read as one group.
 		stamp = ""
 	}
 	return nil
 }
 
-func (s *gridRouteUsageSeries) empty() bool    { return s.dataRows == 0 }
-func (s *gridRouteUsageSeries) unpriced() bool { return !s.all.priced }
+func (s *gridRouteUsageSeries) empty() bool     { return s.dataRows == 0 }
+func (s *gridRouteUsageSeries) unpriced() bool  { return !s.all.priced }
+func (s *gridRouteUsageSeries) noHarness() bool { return s.missingHarness }
 
 func (s *gridRouteUsageSeries) render(ctx *CommandContext) {
 	headers, rightAligned := gridUsageHeaders([]string{"DATE"}, s.dims)
