@@ -124,6 +124,7 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 func harnessEnvironmentalSetupError(msg string) bool {
 	for _, marker := range []string{
 		"/v1/grid/routes was not found",
+		"list routes: baseten API error (HTTP 403)",
 		"no routes",
 		"none of the team's routes have usable model metadata",
 		"different invoke URLs",
