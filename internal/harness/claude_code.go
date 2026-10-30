@@ -136,11 +136,9 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		// Removed, not blanked: a static token overrides the helper.
 		values = append(values, setting{Path: claudeCredentialPath}, desired(claudeHelperPath, helper.shellCommand(ClaudeCode)))
 	} else {
-		values = append(values, desired(claudeCredentialPath, ""))
-		if get(current, []string{"env", claudeMarker}).Data == "1" && get(current, claudeHelperPath).Exists {
-			// Retire the helper an earlier setup installed.
-			values = append(values, setting{Path: claudeHelperPath})
-		}
+		// The helper is removed like teardown removes it; a static token
+		// overrides it anyway.
+		values = append(values, desired(claudeCredentialPath, ""), setting{Path: claudeHelperPath})
 	}
 	// Output limits have no per-model setting, so the primary route's applies
 	// after a /model switch too.
@@ -185,7 +183,7 @@ func claudeTeardownPaths(data map[string]any) [][]string {
 
 func (claudeCodeHarness) SupportsSubagent() bool { return true }
 
-func (claudeCodeHarness) SupportsAuthCommand() bool { return true }
+func (claudeCodeHarness) SupportsHelper() bool { return true }
 
 func (claudeCodeHarness) Credential(path string) (string, error) {
 	_, data, err := readConfig(path)

@@ -50,7 +50,7 @@ func (piHarness) Routes(routes []Route) []Route { return routes }
 
 func (piHarness) SupportsSubagent() bool { return false }
 
-func (piHarness) SupportsAuthCommand() bool { return true }
+func (piHarness) SupportsHelper() bool { return true }
 
 func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint string, helper *Helper) ([]*Plan, error) {
 	switch {

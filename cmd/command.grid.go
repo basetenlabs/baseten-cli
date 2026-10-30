@@ -23,7 +23,7 @@ var commandGrid = Command{
 				"Use 'baseten grid route list' to find route IDs; harness configurations use the corresponding route names.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
 				"Claude Code, Codex, and Pi run this CLI for a short-lived credential instead of storing a key, and setup deletes a Grid API key they stored earlier once no harness on this machine uses it. " +
-				"OpenCode stores a Grid API key, created on first setup and reused afterward. With --use-session-credential, the session's API key is installed in every harness instead and never created or deleted by this CLI. " +
+				"OpenCode stores a Grid API key, created on first setup and reused afterward. With --use-session-credential, or when the session comes from BASETEN_API_KEY, the session's API key is installed in every harness instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.",
@@ -603,7 +603,7 @@ type GridSetupFlags struct {
 	BackgroundRouteID    string `flag:"background-route-id" desc:"Route ID for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
 	SubagentRouteID      string `flag:"subagent-route-id" desc:"Route ID for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
 	FallbackRouteID      string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
-	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
+	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of the helper command or a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating or deleting an API key."`
 	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }

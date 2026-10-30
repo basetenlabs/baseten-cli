@@ -55,9 +55,6 @@ func gridTokens(ctx context.Context, scope GridTokenScope) (map[string]GridToken
 
 // GetGridToken returns the token cached for scope and teamID, or nil.
 func (s *Store) GetGridToken(ctx context.Context, scope GridTokenScope, teamID string) (*GridToken, error) {
-	if s.insecureStorage {
-		return nil, nil
-	}
 	tokens, err := gridTokens(ctx, scope)
 	if err != nil {
 		return nil, err
@@ -72,9 +69,6 @@ func (s *Store) GetGridToken(ctx context.Context, scope GridTokenScope, teamID s
 // SetGridToken caches token in the keyring. Without a keyring it warns via
 // warnWriter (if non-nil) and skips the cache.
 func (s *Store) SetGridToken(ctx context.Context, scope GridTokenScope, teamID string, token GridToken, warnWriter func(string)) error {
-	if s.insecureStorage {
-		return nil
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

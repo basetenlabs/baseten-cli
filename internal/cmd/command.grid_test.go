@@ -346,7 +346,7 @@ func Test_Grid_Setup_TextSummary(t *testing.T) {
 	skipUnlessSupported(t)
 	h, _ := fakeGridAPI(t)
 	dir := t.TempDir()
-	// The hook runs this binary, which is not the baseten on PATH.
+	// The helper runs this binary, which is not the baseten on PATH.
 	bin := t.TempDir()
 	h.Require.NoError(os.WriteFile(filepath.Join(bin, "baseten"), []byte("#!/bin/sh\n"), 0o755))
 	t.Setenv("PATH", bin)
@@ -2814,7 +2814,7 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Error(err)
 	h.Require.Equal(1, h.ExitCode)
 	h.Require.Empty(stdout)
-	h.Require.Equal("Run `baseten grid setup` first.\n", stderr)
+	h.Require.Equal("codex is not set up; run `baseten grid setup`\n", stderr)
 	saveHarnessRecordFile(t, harness.RecordFile{Harnesses: map[string]harness.Record{
 		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, TeamID: "team-a", CredentialSource: harness.CredentialSourceHelper},
 	}})
@@ -2835,7 +2835,7 @@ func Test_Grid_Token(t *testing.T) {
 	h.Require.Empty(stderr)
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/grid/token"))
 
-	// The --profile the hook passes beats a BASETEN_API_KEY exported in the
+	// The --profile the helper passes beats a BASETEN_API_KEY exported in the
 	// harness's shell.
 	t.Setenv("BASETEN_API_KEY", "someone-else")
 	h.Require.NoError(h.Execute("grid", "token", "--harness", "codex", "--profile", "alice"))

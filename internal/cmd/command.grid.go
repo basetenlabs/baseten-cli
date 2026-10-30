@@ -390,8 +390,8 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 			Profile:          session.ProfileName(),
 			CredentialSource: credentialSource,
 		}
-		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsAuthCommand() {
-			// A harness without a credential command keeps a key.
+		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
+			// A harness that cannot run the helper keeps a key.
 			record.CredentialSource = ""
 		}
 		subagentID := f.SubagentRouteID
@@ -448,7 +448,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		if ctx.JSON {
 			outputGridPlansJSON(ctx, plans, nil)
 		} else {
-			ctx.LogLine("Preview only. No files changed and no Grid API key created.")
+			ctx.LogLine("Preview only. No files changed and no Grid API key created or deleted.")
 		}
 		return nil
 	}
@@ -1679,10 +1679,14 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 	}
 	record, ok := file.Harnesses[flags.Harness]
 	if !ok {
-		return errors.New("Run `baseten grid setup` first.")
+		return fmt.Errorf("%s is not set up; run `baseten grid setup`", flags.Harness)
 	}
 	teamID := record.TeamID
-	transport, remote, err := ctx.AuthTransport()
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return err
+	}
+	session, err := ctx.authInfo.Session()
 	if err != nil {
 		return err
 	}
@@ -1695,8 +1699,11 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 			return err
 		}
 	}
-	store := auth.NewStore(auth.StoreOptions{Dir: dir})
-	scope := auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: transport.Session.CacheIdentity()}
+	store, err := NewAuthStore(false)
+	if err != nil {
+		return err
+	}
+	scope := auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()}
 	token, err := store.GetGridToken(ctx, scope, teamID)
 	if err != nil {
 		return err

@@ -216,7 +216,7 @@ const (
 
 func (codexHarness) SupportsSubagent() bool { return false }
 
-func (codexHarness) SupportsAuthCommand() bool { return true }
+func (codexHarness) SupportsHelper() bool { return true }
 
 func (codexHarness) Credential(path string) (string, error) {
 	return credential(path, codexCredentialPath)
