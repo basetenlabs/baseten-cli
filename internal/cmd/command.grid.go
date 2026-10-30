@@ -1540,10 +1540,25 @@ func outputGridTeamSettings(ctx *CommandContext, settings *managementapi.GridTea
 	ctx.Outputf("Per-member monthly limit USD:  %s\n", gridSettingText(settings.SpendLimit.PerMemberMonthlyLimitUsd))
 	ctx.Outputf("Team-wide monthly limit USD:   %s\n", gridSettingText(settings.SpendLimit.TeamWideMonthlyLimitUsd))
 	var rows [][]string
-	for _, item := range gridHarnessDefaultItems(settings.HarnessDefaults, nil) {
-		rows = append(rows, []string{item.Harness, gridHarnessDefaultLabel(item.Primary, true), gridHarnessDefaultLabel(item.Background, gridHarnessSupportsBackground(item.Harness))})
+	for _, h := range harness.All() {
+		models := gridHarnessDefaultModels(&settings.HarnessDefaults, h.Name())
+		rows = append(rows, []string{
+			h.Name(),
+			gridTeamSettingsHarnessDefaultLabel(models[gridHarnessRolePrimary], true),
+			gridTeamSettingsHarnessDefaultLabel(models[gridHarnessRoleBackground], h.BackgroundRoute(harness.Selection{}) != ""),
+		})
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"HARNESS", "PRIMARY", "BACKGROUND"}, Rows: rows})
+}
+
+func gridTeamSettingsHarnessDefaultLabel(model *managementapi.GridHarnessModel, supported bool) string {
+	if !supported {
+		return "n/a"
+	}
+	if model == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%s (%s)", model.Route.Name, model.Source)
 }
 
 func commandGridUserSettingsList(ctx *CommandContext, f *cmd.GridUserSettingsListFlags) error {

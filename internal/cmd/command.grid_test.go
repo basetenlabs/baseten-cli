@@ -2185,7 +2185,6 @@ func Test_Grid_Help(t *testing.T) {
 		{"grid", "sync"},
 		{"grid", "status"},
 		{"grid", "teardown"},
-		{"grid", "harness-defaults"},
 		{"grid", "route"},
 		{"grid", "route", "list"},
 		{"grid", "route", "describe"},
