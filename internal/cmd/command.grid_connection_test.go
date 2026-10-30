@@ -174,9 +174,9 @@ func Test_Grid_Connection_List_UnknownProvider(t *testing.T) {
 				lines := strings.Split(strings.TrimSpace(h.Stdout.String()), "\n")
 				h.Require.Len(lines, len(items)+1)
 				for i, provider := range providers {
-					h.Require.Equal([]string{"c-" + provider, "t123456", "Engineering", provider, "provider-key"}, strings.Fields(lines[i+1]))
+					h.Require.Equal([]string{"c-" + provider, "Engineering", provider, "provider-key"}, strings.Fields(lines[i+1]))
 				}
-				h.Require.Equal([]string{"c-future", "t123456", "Engineering", "<unknown>", "<unknown>"}, strings.Fields(lines[len(items)]))
+				h.Require.Equal([]string{"c-future", "Engineering", "<unknown>", "<unknown>"}, strings.Fields(lines[len(items)]))
 			} else {
 				var got any
 				h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
@@ -232,7 +232,7 @@ func Test_Grid_Connection_List_TextAndJSON(t *testing.T) {
 	m.SetRoute("GET", "/v1/grid/connections", 200, gridRoutePage([]any{connection}, nil))
 
 	h.Require.NoError(h.Execute("grid", "connection", "list"))
-	h.Require.Regexp(`^ID\s+TEAM ID\s+TEAM NAME\s+PROVIDER\s+SECRET NAME\s*\n`, h.Stdout.String())
+	h.Require.Regexp(`^ID\s+TEAM\s+PROVIDER\s+SECRET NAME\s*\n`, h.Stdout.String())
 	h.Require.NotContains(h.Stdout.String(), "s123456")
 	h.Require.Contains(h.Stdout.String(), "provider-key")
 
