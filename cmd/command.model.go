@@ -398,6 +398,8 @@ type ModelPushFlags struct {
 	NoBuildCache bool   `flag:"no-build-cache" desc:"Force a full rebuild without using cached layers."`
 	Labels       string `flag:"labels" desc:"User-provided labels for the deployment as a JSON object, e.g. '{\"team\":\"ml\",\"priority\":1}'."`
 
+	IncludeGitInfo bool `flag:"include-git-info" desc:"Attach the git commit, latest tag, commits since that tag, and whether there are uncommitted changes, when the model directory is in a git repository. Ignored for --file -."`
+
 	Tail bool `flag:"tail" desc:"Stream build and runtime logs to stderr after pushing. Logs are always text-formatted; use 'baseten model deployment logs --tail' for structured log streaming."`
 	Wait bool `flag:"wait" desc:"Block until the deployment is active. Exits non-zero on a terminal-failure status."`
 

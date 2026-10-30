@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -999,4 +1000,64 @@ func Test_Model_Push_Watch_EntersLoopThenInterrupt(t *testing.T) {
 	h.Require.Equal(130, h.ExitCode)
 	h.Require.NotNil(h.API.FindCall("POST", watchSyncPath))
 	h.Require.Contains(h.Stdout.String(), "was successfully pushed")
+}
+
+// initGitRepo commits everything in dir to a new git repository.
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"add", "."},
+		{"commit", "-q", "-m", "first"},
+		{"tag", "v1.4.0"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com",
+		)
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+}
+
+func Test_Model_Push_IncludeGitInfo(t *testing.T) {
+	t.Run("in_a_repo", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		initGitRepo(t, dir)
+
+		h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--include-git-info"))
+
+		dep := h.API.FindCall("POST", "/v1/prepare_model_upload").BodyJSON(h.T)["deployment"].(map[string]any)
+		gitInfo := dep["user_env"].(map[string]any)["git_info"].(map[string]any)
+		h.Require.Len(gitInfo["latest_commit_sha"], 40)
+		h.Require.Equal("v1.4.0", gitInfo["latest_tag"])
+		h.Require.Equal(float64(0), gitInfo["commits_since_tag"])
+		h.Require.Equal(false, gitInfo["has_uncommitted_changes"])
+	})
+
+	t.Run("outside_a_repo", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+
+		h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--include-git-info"))
+
+		dep := h.API.FindCall("POST", "/v1/prepare_model_upload").BodyJSON(h.T)["deployment"].(map[string]any)
+		h.Require.NotContains(dep, "user_env")
+	})
+
+	t.Run("without_the_flag", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		initGitRepo(t, dir)
+
+		h.Require.NoError(h.Execute("model", "push", "--dir", dir))
+
+		dep := h.API.FindCall("POST", "/v1/prepare_model_upload").BodyJSON(h.T)["deployment"].(map[string]any)
+		h.Require.NotContains(dep, "user_env")
+	})
 }

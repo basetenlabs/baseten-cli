@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/deploymentpatch"
+	"github.com/basetenlabs/baseten-cli/internal/gitinfo"
 	"github.com/basetenlabs/baseten-go/client"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/basetenlabs/baseten-go/client/modelarchive"
@@ -240,6 +241,9 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 	if err := applyModelPushLabels(&opts, flags.Labels); err != nil {
 		return opts, err
 	}
+	if flags.IncludeGitInfo {
+		applyModelPushGitInfo(ctx, &opts, flags)
+	}
 	if err := applyModelPushSettings(&opts, flags); err != nil {
 		return opts, err
 	}
@@ -382,6 +386,21 @@ func applyModelPushLabels(opts *client.PushModelOptions, raw string) error {
 	}
 	opts.Labels = asMap
 	return nil
+}
+
+// applyModelPushGitInfo attaches the git state of the pushed directory.
+// Pushes outside a git repository, and config read from stdin, carry none.
+func applyModelPushGitInfo(ctx *CommandContext, opts *client.PushModelOptions, flags *cmd.ModelPushFlags) {
+	dir := flags.Dir
+	if flags.File != "" {
+		if flags.File == "-" {
+			return
+		}
+		dir = filepath.Dir(flags.File)
+	}
+	if info := gitinfo.Collect(ctx, dir); info != nil {
+		opts.UserEnv = map[string]any{"git_info": info}
+	}
 }
 
 // applyModelPushSettings maps the deployment and promotion settings flags onto
