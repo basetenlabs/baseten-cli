@@ -1535,7 +1535,6 @@ func outputGridTeamSettings(ctx *CommandContext, settings *managementapi.GridTea
 		ctx.OutputJSON(settings)
 		return
 	}
-	ctx.Outputf("Team ID:                       %s\n", settings.TeamId)
 	ctx.Outputf("Team name:                     %s\n", settings.TeamName)
 	ctx.Outputf("Per-member monthly limit USD:  %s\n", gridSettingText(settings.SpendLimit.PerMemberMonthlyLimitUsd))
 	ctx.Outputf("Team-wide monthly limit USD:   %s\n", gridSettingText(settings.SpendLimit.TeamWideMonthlyLimitUsd))
@@ -1593,10 +1592,10 @@ func commandGridUserSettingsList(ctx *CommandContext, f *cmd.GridUserSettingsLis
 	}
 	var rows [][]string
 	for _, user := range items {
-		rows = append(rows, []string{user.UserId, gridSettingText(user.Email), user.TeamId, user.TeamName, user.MonthSpendUsd,
+		rows = append(rows, []string{user.UserId, gridSettingText(user.Email), user.TeamName, user.MonthSpendUsd,
 			gridSettingText(user.SpendLimit.Effective.MonthlyLimitUsd), gridSettingText(user.BlockedBy)})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"USER", "EMAIL", "TEAM ID", "TEAM NAME", "MONTH SPEND", "EFFECTIVE LIMIT", "BLOCKED BY"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"USER", "EMAIL", "TEAM", "MONTH SPEND", "EFFECTIVE LIMIT", "BLOCKED BY"}, Rows: rows})
 	return nil
 }
 
@@ -1662,7 +1661,6 @@ func outputGridUserSettings(ctx *CommandContext, settings *managementapi.GridTea
 	}
 	ctx.Outputf("User ID:                    %s\n", settings.UserId)
 	ctx.Outputf("Email:                      %s\n", gridSettingText(settings.Email))
-	ctx.Outputf("Team ID:                    %s\n", settings.TeamId)
 	ctx.Outputf("Team name:                  %s\n", settings.TeamName)
 	ctx.Outputf("Month spend USD:            %s\n", settings.MonthSpendUsd)
 	ctx.Outputf("Standing monthly limit USD: %s\n", gridSettingText(settings.SpendLimit.UserMonthlyLimitUsd))

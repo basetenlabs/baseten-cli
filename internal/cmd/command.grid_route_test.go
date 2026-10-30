@@ -274,9 +274,9 @@ func Test_Grid_Route_List_TextAndJQ(t *testing.T) {
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/grid/routes", 200, gridRoutePage([]any{gridRouteCases()[0].Response, gridRouteCases()[1].Response}, nil))
 	h.Require.NoError(h.Execute("grid", "route", "list"))
-	h.Require.Regexp(`^ID\s+TEAM ID\s+TEAM NAME\s+DISPLAY NAME\s+NAME\s+CREATED\s*\n`, h.Stdout.String(), "team identifiers precede display name and route name")
-	h.Require.Regexp(`(?m)^r123456\s+t123456\s+Engineering\s+`, h.Stdout.String())
-	for _, text := range []string{"r123456", "t123456", "Engineering", "Assistant", "acme/assistant", "2026-09-17T10:00:00Z"} {
+	h.Require.Regexp(`^ID\s+TEAM\s+DISPLAY NAME\s+NAME\s+CREATED\s*\n`, h.Stdout.String(), "team names precede display name and route name")
+	h.Require.Regexp(`(?m)^r123456\s+Engineering\s+`, h.Stdout.String())
+	for _, text := range []string{"r123456", "Engineering", "Assistant", "acme/assistant", "2026-09-17T10:00:00Z"} {
 		h.Require.Contains(h.Stdout.String(), text)
 	}
 	for _, text := range []string{"TARGET", "test-model-api", "c123456"} {
@@ -347,7 +347,7 @@ func Test_Grid_Route_Describe_AllTargetFields(t *testing.T) {
 			m := h.MockManagementAPI()
 			m.SetRoute("GET", "/v1/grid/routes/r123456", 200, tc.Response)
 			h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
-			for _, field := range []string{"ID:", "Name:", "Display Name:", "Team ID:", "Target Type:", "Target Model:", "Invoke URL:", "Created:"} {
+			for _, field := range []string{"ID:", "Name:", "Display Name:", "Team Name:", "Target Type:", "Target Model:", "Invoke URL:", "Created:"} {
 				h.Require.Contains(h.Stdout.String(), field)
 			}
 			h.Require.Contains(h.Stdout.String(), "Target Type:      "+tc.Flags[1])
@@ -461,8 +461,8 @@ func Test_Grid_Route_Describe_TeamName(t *testing.T) {
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, gridRouteCases()[0].Response)
 	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
-	h.Require.Contains(h.Stdout.String(), "Team ID:          t123456")
 	h.Require.Contains(h.Stdout.String(), "Team Name:        Engineering")
+	h.Require.NotContains(h.Stdout.String(), "Team ID:")
 	h.Require.Contains(h.Stdout.String(), "Target Type:      baseten-model-api")
 	h.Require.Len(m.Calls(), 1, "team name comes directly from the route response")
 }
