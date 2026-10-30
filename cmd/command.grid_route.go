@@ -171,7 +171,7 @@ var commandGridRoute = Command{
 				"Show routes usage and estimated costs as daily UTC buckets, oldest first, broken down by the " +
 				"dimensions passed to --group-by. Defaults match the API: the previous UTC day through today, grouped " +
 				"by model. Organization admins see organization usage, team admins see teams they manage, and other members see usage from their own keys. --team narrows the scope. " +
-				"Grouping by router includes only routed usage; do not add these totals to totals from other groupings. Grouping by harness includes a null group for usage with no recorded harness.\n\n" +
+				"Grouping by router includes only routed usage; do not add these totals to totals from other groupings. Grouping by harness includes an Unknown group for usage with no recorded harness.\n\n" +
 				"Usage comes in whole UTC days: --start is snapped down to its day and --end is rounded up to the end of " +
 				"its day. Every bucket in the window is fetched, paging as needed, until --limit buckets are collected. " +
 				"Usage can lag by up to 15 minutes and is retained for 92 days. Model API costs use your prices and " +
