@@ -183,11 +183,13 @@ var commandGridRoute = Command{
 			Flags: GridRouteUsageFlags{},
 			Output: &CommandOutput[managementapi.GridRouteUsageBucket]{
 				JSONArrayStreamed: true,
-				TextDescription: "Table with a DATE column, one column per --group-by dimension, then INPUT, CACHED, and " +
-					"OUTPUT token counts and COST, followed by an ALL totals row. A day with no usage renders as a single " +
-					"\"(no usage)\" row. A cost of \"-\" means some of that usage couldn't be priced. The window goes to " +
-					"stderr. When no day in the window has any usage, prints \"No usage in the selected window.\" to " +
-					"stderr instead of a table.",
+				TextDescription: "The total cost, then, when stdout is a terminal and the window spans more than one " +
+					"day, a chart of cost per day for each --group-by value, then one line per value with its cost and " +
+					"share of the total, most expensive first. Values past the top five are summed into \"other\". With " +
+					"several --group-by dimensions, each line is one combination of them. A cost of \"-\" means some of " +
+					"that usage couldn't be priced. The window goes to stderr. When no day in the window has any usage, " +
+					"prints \"No usage in the selected window.\" to stderr instead. Use --output json for token counts " +
+					"and per-day detail.",
 				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-dimension usage in " +
 					"results, including days with no usage. cost_usd values are exact decimal strings.",
 				Examples: []CommandExample{

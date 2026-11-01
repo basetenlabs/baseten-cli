@@ -30,20 +30,30 @@ func Test_Grid_Route_Usage_EndOnlySpansTheDayBefore(t *testing.T) {
 	h.Require.Equal([]string{"2026-09-10"}, q["end_date"])
 }
 
-func Test_Grid_Route_Usage_TimeSeriesTable(t *testing.T) {
+func Test_Grid_Route_Usage_SpendPerGroup(t *testing.T) {
 	h, _ := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--since", "7d"))
-	lines := strings.Split(strings.TrimRight(h.Stdout.String(), "\n"), "\n")
-	fields := func(i int) []string { return strings.Fields(lines[i]) }
-	h.Require.Equal([]string{"DATE", "MODEL", "INPUT", "CACHED", "OUTPUT", "COST"}, fields(0))
-	h.Require.Equal([]string{"2026-09-01", "claude-sonnet-5", "1,000", "800", "100", "$1.25"}, fields(1))
-	h.Require.Equal([]string{"gpt-5.2", "400", "0", "40", "$0.50"}, fields(2), "a day's later rows blank the date")
-	h.Require.Equal([]string{"2026-09-02", "(no", "usage)"}, fields(3), "an empty day keeps its row")
-	h.Require.Equal([]string{"2026-09-03", "claude-sonnet-5", "100", "0", "10", "<$0.01"}, fields(4))
-	h.Require.Equal([]string{"glm-5.2", "50", "0", "5", "$0.50"}, fields(5))
-	h.Require.Equal([]string{"ALL", "1,550", "800", "155", "$2.25"}, fields(6))
+	h.Require.Equal(
+		"Total                $2.25\n"+
+			"  ● claude-sonnet-5  $1.25  (56%)\n"+
+			"  ● glm-5.2          $0.50  (22%)\n"+
+			"  ● gpt-5.2          $0.50  (22%)\n",
+		h.Stdout.String(), "most expensive first, no chart when stdout isn't a terminal")
 	h.Require.Contains(h.Stderr.String(), "Window: 2026-09-01 through 2026-09-03 UTC · grouped by model")
+}
+
+func Test_Grid_Route_Usage_FoldsPastTopFiveIntoOther(t *testing.T) {
+	h, _ := newGridUsageHarness(t, gridUsageNow, gridUsageBody(gridUsageBucket("2026-09-24",
+		gridUsageModel("m1", "70", 10, 0, 1), gridUsageModel("m2", "60", 10, 0, 1), gridUsageModel("m3", "50", 10, 0, 1),
+		gridUsageModel("m4", "40", 10, 0, 1), gridUsageModel("m5", "30", 10, 0, 1), gridUsageModel("m6", "20", 10, 0, 1),
+		gridUsageModel("m7", "10", 10, 0, 1),
+	)))
+
+	h.Require.NoError(h.Execute("grid", "route", "usage"))
+	out := h.Stdout.String()
+	h.Require.Regexp(`(?m)^  ● m5 +\$30\.00 +\(11%\)\n  ● other +\$30\.00 +\(11%\)\n$`, out, "the sixth value on is summed into a last \"other\" row")
+	h.Require.NotContains(out, "m6")
 }
 
 func Test_Grid_Route_Usage_KeepsRowsWithNoTokens(t *testing.T) {
@@ -54,7 +64,7 @@ func Test_Grid_Route_Usage_KeepsRowsWithNoTokens(t *testing.T) {
 	h, _ := newGridUsageHarness(t, gridUsageNow, body)
 
 	h.Require.NoError(h.Execute("grid", "route", "usage"))
-	h.Require.Equal([]string{"gpt-6-luna", "0", "0", "0", "$0.00"}, gridUsageRow(h, h.Stdout.String(), "gpt-6-luna"), "shows what the API returns")
+	h.Require.Equal([]string{"●", "gpt-6-luna", "$0.00", "(0%)"}, gridUsageRow(h, h.Stdout.String(), "gpt-6-luna"), "shows what the API returns")
 }
 
 func Test_Grid_Route_Usage_FiltersPassThrough(t *testing.T) {
@@ -152,8 +162,7 @@ func Test_Grid_Route_Usage_TeamAndRouterDimensions(t *testing.T) {
 			h.Require.Contains(h.Stdout.String(), "team-a")
 			h.Require.Contains(h.Stdout.String(), "acme/router")
 			if output == "text" {
-				h.Require.Contains(h.Stdout.String(), "TEAM")
-				h.Require.Contains(h.Stdout.String(), "ROUTER")
+				h.Require.Contains(h.Stdout.String(), "team-a · acme/router · ", "one line per combination of the dimensions")
 			} else {
 				h.Require.Contains(h.Stdout.String(), "Engineering")
 			}
@@ -171,9 +180,8 @@ func Test_Grid_Route_Usage_HarnessDimension(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--group-by", "harness"))
 
 	h.Require.Equal([]string{"HARNESS"}, gridUsageLastQuery(h, m)["group_by"])
-	h.Require.Contains(h.Stdout.String(), "HARNESS")
-	h.Require.Equal([]string{"2026-09-24", "Unknown", "1,000", "800", "100", "$1.25"}, gridUsageRow(h, h.Stdout.String(), "Unknown"))
-	h.Require.Equal([]string{"codex", "400", "0", "40", "$0.50"}, gridUsageRow(h, h.Stdout.String(), "codex"))
+	h.Require.Equal([]string{"●", "Unknown", "$1.25", "(71%)"}, gridUsageRow(h, h.Stdout.String(), "Unknown"))
+	h.Require.Equal([]string{"●", "codex", "$0.50", "(29%)"}, gridUsageRow(h, h.Stdout.String(), "codex"))
 	h.Require.Contains(h.Stderr.String(), `Harness "Unknown" means no harness was recorded, including usage from before harness tracking.`)
 }
 
