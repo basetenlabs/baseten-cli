@@ -246,7 +246,9 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 		return opts, err
 	}
 	if flags.IncludeGitInfo {
-		applyModelPushGitInfo(ctx, &opts, flags)
+		if err := applyModelPushGitInfo(ctx, &opts, flags); err != nil {
+			return opts, err
+		}
 	}
 	if err := applyModelPushSettings(&opts, flags); err != nil {
 		return opts, err
@@ -394,7 +396,10 @@ func applyModelPushLabels(opts *client.PushModelOptions, raw string) error {
 
 // applyModelPushGitInfo attaches the git state of the pushed directory, or of
 // the --file directory. Pushes outside a git repository carry none.
-func applyModelPushGitInfo(ctx *CommandContext, opts *client.PushModelOptions, flags *cmd.ModelPushFlags) {
+func applyModelPushGitInfo(ctx *CommandContext, opts *client.PushModelOptions, flags *cmd.ModelPushFlags) error {
+	if _, err := ctx.Execer().LookPath("git"); err != nil {
+		return cmd.NewErrUsagef("git not found on PATH, required by --include-git-info")
+	}
 	dir := flags.Dir
 	if flags.File != "" {
 		dir = filepath.Dir(flags.File)
@@ -402,6 +407,7 @@ func applyModelPushGitInfo(ctx *CommandContext, opts *client.PushModelOptions, f
 	if info := collectModelPushGitInfo(ctx, dir); info != nil {
 		opts.UserEnv = map[string]any{"git_info": info}
 	}
+	return nil
 }
 
 // modelPushGitInfo is the state of the git checkout a model is pushed from.
@@ -415,7 +421,7 @@ type modelPushGitInfo struct {
 }
 
 // collectModelPushGitInfo returns the git info for dir, or nil when dir is not
-// inside a git repository or git is not installed.
+// inside a git repository.
 func collectModelPushGitInfo(ctx context.Context, dir string) *modelPushGitInfo {
 	sha, ok := runModelPushGit(ctx, dir, "rev-parse", "HEAD")
 	if !ok || sha == "" {

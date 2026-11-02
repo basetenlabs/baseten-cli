@@ -1101,6 +1101,16 @@ func Test_Model_Push_IncludeGitInfo(t *testing.T) {
 		h.Require.NotContains(dep, "user_env")
 	})
 
+	t.Run("git_not_installed", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		t.Setenv("PATH", t.TempDir())
+
+		err := h.Execute("model", "push", "--dir", dir, "--include-git-info")
+
+		h.Require.ErrorContains(err, "git not found on PATH")
+	})
+
 	t.Run("stdin_rejected", func(t *testing.T) {
 		h := newModelPushHarness(t)
 
