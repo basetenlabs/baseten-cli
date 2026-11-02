@@ -1101,6 +1101,14 @@ func Test_Model_Push_IncludeGitInfo(t *testing.T) {
 		h.Require.NotContains(dep, "user_env")
 	})
 
+	t.Run("stdin_rejected", func(t *testing.T) {
+		h := newModelPushHarness(t)
+
+		err := h.Execute("model", "push", "--file", "-", "--include-git-info")
+
+		h.Require.ErrorContains(err, "--file - cannot be combined with --include-git-info")
+	})
+
 	t.Run("without_the_flag", func(t *testing.T) {
 		h := newModelPushHarness(t)
 		dir := h.WriteModelDir(modelPushMinimalConfig)

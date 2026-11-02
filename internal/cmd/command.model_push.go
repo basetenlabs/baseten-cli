@@ -392,14 +392,11 @@ func applyModelPushLabels(opts *client.PushModelOptions, raw string) error {
 	return nil
 }
 
-// applyModelPushGitInfo attaches the git state of the pushed directory.
-// Pushes outside a git repository, and config read from stdin, carry none.
+// applyModelPushGitInfo attaches the git state of the pushed directory, or of
+// the --file directory. Pushes outside a git repository carry none.
 func applyModelPushGitInfo(ctx *CommandContext, opts *client.PushModelOptions, flags *cmd.ModelPushFlags) {
 	dir := flags.Dir
 	if flags.File != "" {
-		if flags.File == "-" {
-			return
-		}
 		dir = filepath.Dir(flags.File)
 	}
 	if info := collectModelPushGitInfo(ctx, dir); info != nil {
