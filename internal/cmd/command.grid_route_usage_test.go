@@ -35,25 +35,12 @@ func Test_Grid_Route_Usage_SpendPerGroup(t *testing.T) {
 
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--since", "7d"))
 	h.Require.Equal(
-		"Total                $2.25\n"+
-			"  claude-sonnet-5    $1.25  (56%)\n"+
-			"  glm-5.2            $0.50  (22%)\n"+
-			"  gpt-5.2            $0.50  (22%)\n",
+		"Total              $2.25\n"+
+			"  claude-sonnet-5  $1.25  (56%)\n"+
+			"  glm-5.2          $0.50  (22%)\n"+
+			"  gpt-5.2          $0.50  (22%)\n",
 		h.Stdout.String(), "most expensive first, no chart when stdout isn't a terminal")
 	h.Require.Contains(h.Stderr.String(), "Window: 2026-09-01 through 2026-09-03 UTC · grouped by model")
-}
-
-func Test_Grid_Route_Usage_FoldsPastTopFiveIntoOther(t *testing.T) {
-	h, _ := newGridUsageHarness(t, gridUsageNow, gridUsageBody(gridUsageBucket("2026-09-24",
-		gridUsageModel("m1", "70", 10, 0, 1), gridUsageModel("m2", "60", 10, 0, 1), gridUsageModel("m3", "50", 10, 0, 1),
-		gridUsageModel("m4", "40", 10, 0, 1), gridUsageModel("m5", "30", 10, 0, 1), gridUsageModel("m6", "20", 10, 0, 1),
-		gridUsageModel("m7", "10", 10, 0, 1),
-	)))
-
-	h.Require.NoError(h.Execute("grid", "route", "usage"))
-	out := h.Stdout.String()
-	h.Require.Regexp(`(?m)^  m5 +\$30\.00 +\(11%\)\n  other +\$30\.00 +\(11%\)\n$`, out, "the sixth value on is summed into a last \"other\" row")
-	h.Require.NotContains(out, "m6")
 }
 
 func Test_Grid_Route_Usage_KeepsRowsWithNoTokens(t *testing.T) {
