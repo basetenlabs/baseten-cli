@@ -216,7 +216,11 @@ func (t *Transport) Credential(ctx context.Context) (string, error) {
 	profileName := t.Session.profileName
 	profile, ok := t.Session.store.GetProfile(profileName)
 	if !ok {
-		return "", fmt.Errorf("profile %q not found; run `baseten auth login`", profileName)
+		names, err := t.Session.store.ProfileNames()
+		if err != nil {
+			return "", err
+		}
+		return "", NewErrProfileNotFound(names, profileName)
 	}
 
 	switch profile.AuthType {

@@ -210,6 +210,41 @@ func TestStore_ProfileNames(t *testing.T) {
 	require.Equal(t, []string{profileA, profileB}, names)
 }
 
+func TestNewErrProfileNotFound_ListsExistingProfiles(t *testing.T) {
+	err := auth.NewErrProfileNotFound([]string{"a", "b"}, "the-name")
+	require.ErrorContains(t, err, "profile \"the-name\" not found; add it with")
+	require.ErrorContains(t, err, "baseten auth login --profile 'the-name' --no-switch")
+	require.ErrorContains(t, err, "(existing profiles: a, b)")
+}
+
+func TestNewErrProfileNotFound_NoExistingProfilesOmitsList(t *testing.T) {
+	err := auth.NewErrProfileNotFound(nil, "the-name")
+	require.ErrorContains(t, err, "no profiles stored")
+	require.ErrorContains(t, err, "baseten auth login --profile 'the-name' --no-switch")
+	require.NotContains(t, err.Error(), "existing profiles")
+	require.NotContains(t, err.Error(), "not found")
+}
+
+func TestNewErrProfileNotFound_ShellQuotesCommand(t *testing.T) {
+	for name, want := range map[string]string{
+		"team-$HOME": "`baseten auth login --profile 'team-$HOME' --no-switch`",
+		"a`id`":      "`baseten auth login --profile 'a`id`' --no-switch`",
+		"bob's team": "`baseten auth login --profile 'bob'\"'\"'s team' --no-switch`",
+	} {
+		require.ErrorContains(t, auth.NewErrProfileNotFound(nil, name), want)
+	}
+}
+
+func TestStore_SwitchProfile_UnknownSuggestsAddingProfile(t *testing.T) {
+	s := newKeyringStore(t)
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileB, remoteURL, "key-bob", true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
+
+	err := s.SwitchProfile("ghost@example.com")
+	require.ErrorContains(t, err, "baseten auth login --profile 'ghost@example.com'")
+	require.ErrorContains(t, err, "(existing profiles: alice@example.com, bob@example.com)")
+}
+
 func TestStore_SaveLoadRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 	keyring.MockInit()

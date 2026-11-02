@@ -234,7 +234,11 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 	}
 	profile, ok := store.GetProfile(profileName)
 	if !ok {
-		return fmt.Errorf("profile %q not found", profileName)
+		names, err := store.ProfileNames()
+		if err != nil {
+			return err
+		}
+		return auth.NewErrProfileNotFound(names, profileName)
 	}
 
 	if ctx.JSON {
