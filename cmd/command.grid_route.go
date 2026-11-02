@@ -27,7 +27,7 @@ var commandGridRoute = Command{
 				"List all available routes, newest first.",
 			Output: &CommandOutput[GridRouteList]{
 				JSONDescription: "All matching routes in items. " + gridRouteTargetJSONDescription,
-				TextDescription: "Table with columns: ID, TEAM ID, TEAM NAME, DISPLAY NAME, NAME, CREATED. " +
+				TextDescription: "Table with columns: ID, TEAM, DISPLAY NAME, NAME, CREATED. " +
 					"Use 'grid route describe' for a route's target. When no routes match, prints \"No routes found.\" to stderr.",
 				Examples: []CommandExample{
 					{

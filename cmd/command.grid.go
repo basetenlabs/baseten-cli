@@ -153,7 +153,7 @@ var commandGrid = Command{
 					Description: gridPrereleaseNotice + gridTeamDescription,
 					Flags:       GridTeamSettingsDescribeFlags{},
 					Output: &CommandOutput[managementapi.GridTeamSettings]{
-						TextDescription: "Team ID and name, monthly spend limits, and a table of harness default routes and their sources.",
+						TextDescription: "Team name, monthly spend limits, and a table of harness default routes and their sources.",
 						Examples: []CommandExample{{
 							Description: "Show your only team's settings.",
 							Command:     "baseten grid team-settings describe",
@@ -207,10 +207,10 @@ var commandGrid = Command{
 					Description: gridPrereleaseNotice + "Lists members across teams you administer; use --team to select one. Requires team admin or organization admin.",
 					Flags:       GridUserSettingsListFlags{},
 					Output: &CommandOutput[GridUserSettingsList]{
-						TextDescription: "Table with USER, EMAIL, TEAM ID, TEAM NAME, MONTH SPEND, EFFECTIVE LIMIT, and BLOCKED BY columns. Lists all pages; empty results print a message to stderr.",
+						TextDescription: "Table with USER, EMAIL, TEAM, MONTH SPEND, EFFECTIVE LIMIT, and BLOCKED BY columns. Lists all pages; empty results print a message to stderr.",
 						Examples: []CommandExample{{
 							Description: "List members' settings in a team.",
-							Command:     "baseten grid user-settings list --team <id>",
+							Command:     "baseten grid user-settings list --team <team>",
 						}},
 						JQExample: CommandExample{
 							Description: "Print each member's limits.",
@@ -224,7 +224,7 @@ var commandGrid = Command{
 					Description: gridPrereleaseNotice + "Defaults to your own settings (--user-id me). Reading other users requires team admin or organization admin. " + gridTeamDescription,
 					Flags:       GridUserSettingsDescribeFlags{},
 					Output: &CommandOutput[managementapi.GridTeamUserSettings]{
-						TextDescription: "User and team identifiers, monthly spend, standing and override limits, effective limit, and blocked status.",
+						TextDescription: "User ID, team name, monthly spend, standing and override limits, effective limit, and blocked status.",
 						Examples: []CommandExample{{
 							Description: "Show your own settings.",
 							Command:     "baseten grid user-settings describe",
@@ -246,7 +246,7 @@ var commandGrid = Command{
 						Examples: []CommandExample{{
 							Description: "Set a member's standing monthly limit.",
 							CommandLines: []string{
-								"baseten grid user-settings update --team <id> --user-id <id>",
+								"baseten grid user-settings update --team <team> --user-id <id>",
 								"--user-monthly-limit-usd 100",
 							},
 						}},
@@ -271,7 +271,7 @@ var commandGrid = Command{
 					Description: gridPrereleaseNotice + "List connections across your teams; use --team to select one.",
 					Flags:       GridConnectionListFlags{},
 					Output: &CommandOutput[GridConnectionList]{
-						TextDescription: "Table with ID, TEAM ID, TEAM NAME, PROVIDER, and SECRET NAME columns. Lists all pages; secret values are never returned.",
+						TextDescription: "Table with ID, TEAM, PROVIDER, and SECRET NAME columns. Lists all pages; secret values are never returned.",
 						Examples: []CommandExample{{
 							Description: "List connections across your teams.",
 							Command:     "baseten grid connection list",

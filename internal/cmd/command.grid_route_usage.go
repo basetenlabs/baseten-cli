@@ -300,7 +300,7 @@ func gridUsageDimensionCell(d managementapi.GridRouteUsageDimension, r managemen
 	case managementapi.GridRouteUsageDimension_USER:
 		v = deref(r.UserId)
 	case managementapi.GridRouteUsageDimension_TEAM:
-		v = deref(r.TeamId)
+		v = cmp.Or(deref(r.TeamName), deref(r.TeamId))
 	case managementapi.GridRouteUsageDimension_ROUTER:
 		v = deref(r.RouterId)
 	case managementapi.GridRouteUsageDimension_MODEL:
