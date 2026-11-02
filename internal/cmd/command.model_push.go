@@ -410,24 +410,14 @@ func applyModelPushGitInfo(ctx *CommandContext, opts *client.PushModelOptions, f
 	return nil
 }
 
-// modelPushGitInfo is the state of the git checkout a model is pushed from.
-type modelPushGitInfo struct {
-	LatestCommitSHA string `json:"latest_commit_sha"`
-	// LatestTag is the nearest tag reachable from HEAD; nil when there is none.
-	LatestTag *string `json:"latest_tag"`
-	// CommitsSinceTag is nil when there is no tag, and 0 when HEAD is the tag.
-	CommitsSinceTag       *int `json:"commits_since_tag"`
-	HasUncommittedChanges bool `json:"has_uncommitted_changes"`
-}
-
 // collectModelPushGitInfo returns the git info for dir, or nil when dir is not
 // inside a git repository.
-func collectModelPushGitInfo(ctx context.Context, dir string) *modelPushGitInfo {
+func collectModelPushGitInfo(ctx context.Context, dir string) *managementapi.GitInfo {
 	sha, ok := runModelPushGit(ctx, dir, "rev-parse", "HEAD")
 	if !ok || sha == "" {
 		return nil
 	}
-	info := &modelPushGitInfo{LatestCommitSHA: sha}
+	info := &managementapi.GitInfo{LatestCommitSha: sha}
 	if tag, ok := runModelPushGit(ctx, dir, "describe", "--tags", "--abbrev=0"); ok && tag != "" {
 		info.LatestTag = &tag
 		if count, ok := runModelPushGit(ctx, dir, "rev-list", tag+"..HEAD", "--count"); ok {
