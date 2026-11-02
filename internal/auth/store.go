@@ -61,6 +61,9 @@ type AuthFile struct {
 	// InsecureRoutesKeys holds routes API keys by scope hash. Only populated
 	// when the keyring is unavailable.
 	InsecureRoutesKeys map[string]string `json:"routes_keys,omitempty"`
+	// InsecureSandboxTokens holds cached sandbox tokens by scope hash. Only
+	// populated when the keyring is unavailable.
+	InsecureSandboxTokens map[string]SandboxToken `json:"sandbox_tokens,omitempty"`
 }
 
 // Store manages reading and writing auth.json and keyring secrets.

@@ -98,7 +98,7 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 		}
 	}
 
-	if err := clearGridTokens(ctx, store, profileName); err != nil {
+	if err := clearCachedTokens(ctx, store, profileName); err != nil {
 		return err
 	}
 	if err := store.RemoveProfile(ctx, profileName); err != nil {
@@ -146,8 +146,9 @@ func revokeOAuthSession(ctx *CommandContext, profileName string) error {
 	return nil
 }
 
-// clearGridTokens forgets the Grid tokens `grid token` cached for a profile.
-func clearGridTokens(ctx *CommandContext, store *auth.Store, profileName string) error {
+// clearCachedTokens forgets the Grid tokens `grid token` cached for a profile,
+// and the sandbox token sandbox commands cached.
+func clearCachedTokens(ctx *CommandContext, store *auth.Store, profileName string) error {
 	session, err := auth.ResolveSession(profileName, "")
 	if err != nil {
 		return err
@@ -156,7 +157,10 @@ func clearGridTokens(ctx *CommandContext, store *auth.Store, profileName string)
 	if err != nil {
 		return err
 	}
-	return store.ClearGridTokens(ctx, auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()})
+	if err := store.ClearGridTokens(ctx, auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()}); err != nil {
+		return err
+	}
+	return store.ClearSandboxToken(ctx, auth.SandboxTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()})
 }
 
 func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
@@ -365,7 +369,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 
 	warnWriter := func(msg string) { ctx.Log(msg) }
 	// The profile may have been another user's.
-	if err := clearGridTokens(ctx, store, profileName); err != nil {
+	if err := clearCachedTokens(ctx, store, profileName); err != nil {
 		return err
 	}
 	cred := auth.OAuthCredential{
@@ -431,7 +435,7 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *
 
 	warnWriter := func(msg string) { ctx.Log(msg) }
 	// The profile may have been another user's.
-	if err := clearGridTokens(ctx, store, profileName); err != nil {
+	if err := clearCachedTokens(ctx, store, profileName); err != nil {
 		return err
 	}
 	if err := store.SetAPIKeyProfile(ctx, profileName, remote.RemoteURL(), apiKey, !flags.NoSwitch, warnWriter); err != nil {
