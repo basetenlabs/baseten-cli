@@ -34,13 +34,14 @@ func TestSandboxToken_ScopeIsolation(t *testing.T) {
 func TestSandboxToken_KeyringUnavailableFallsBackToPlaintext(t *testing.T) {
 	keyring.MockInitWithError(errors.New("no keyring"))
 	t.Cleanup(keyring.MockInit)
-	store := auth.NewStore(auth.StoreOptions{Dir: t.TempDir()})
+	dir := t.TempDir()
+	store := auth.NewStore(auth.StoreOptions{Dir: dir})
 	scope := auth.SandboxTokenScope{ManagementURL: "https://api.example.com", Identity: "profile-a"}
 	saved := auth.SandboxToken{Token: "tok", ExpiresAt: time.Now().Add(time.Hour).UTC().Truncate(time.Second)}
 	require.NoError(t, store.SetSandboxToken(t.Context(), scope, saved))
-	af, err := store.Load()
-	require.NoError(t, err)
-	require.Len(t, af.InsecureSandboxTokens, 1)
+	// Its own file, never auth.json.
+	require.FileExists(t, filepath.Join(dir, "auth.sandbox.json"))
+	require.NoFileExists(t, filepath.Join(dir, "auth.json"))
 	token, err := store.GetSandboxToken(t.Context(), scope)
 	require.NoError(t, err)
 	require.Equal(t, &saved, token)
@@ -66,7 +67,7 @@ func TestSandboxToken_UnreadableCacheIsAMiss(t *testing.T) {
 	keyring.MockInitWithError(errors.New("no keyring"))
 	t.Cleanup(keyring.MockInit)
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "auth.json"), []byte("not json"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "auth.sandbox.json"), []byte("not json"), 0o600))
 	store := auth.NewStore(auth.StoreOptions{Dir: dir})
 	scope := auth.SandboxTokenScope{ManagementURL: "https://api.example.com", Identity: "profile-a"}
 	token, err := store.GetSandboxToken(t.Context(), scope)

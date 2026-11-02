@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/zalando/go-keyring"
@@ -14,6 +16,11 @@ import (
 // entry per [SandboxTokenScope]. Without it, every sandbox command would mint
 // a new token before its first call.
 const sandboxTokenService = "baseten-sandbox-token"
+
+// sandboxTokenFileName holds cached sandbox tokens by scope hash when the
+// keyring is unavailable. Kept out of auth.json, which sandbox commands would
+// otherwise rewrite on every mint while other invocations read it.
+const sandboxTokenFileName = "auth.sandbox.json"
 
 // SandboxTokenScope keys the cache by issuing endpoint and
 // [Session.CacheIdentity].
@@ -34,8 +41,8 @@ type SandboxToken struct {
 }
 
 // GetSandboxToken returns the token cached for scope, or nil. Tries the
-// keyring first, then falls back to the auth.json plaintext field. Only ctx's
-// error is returned: a cache that cannot be read is a miss.
+// keyring first, then falls back to the plaintext file. Only ctx's error is
+// returned: a cache that cannot be read is a miss.
 func (s *Store) GetSandboxToken(ctx context.Context, scope SandboxTokenScope) (*SandboxToken, error) {
 	var secret string
 	keyringErr := keyringDo(ctx, func() (err error) {
@@ -52,21 +59,16 @@ func (s *Store) GetSandboxToken(ctx context.Context, scope SandboxTokenScope) (*
 		}
 		return &token, nil
 	}
-	af, err := s.Load()
-	if err != nil {
-		// Unreadable cache is a miss.
-		return nil, nil
-	}
-	token, ok := af.InsecureSandboxTokens[scope.account()]
+	token, ok := s.loadSandboxTokens()[scope.account()]
 	if !ok {
 		return nil, nil
 	}
 	return &token, nil
 }
 
-// SetSandboxToken caches token. Tries the keyring first; falls back to
-// plaintext in auth.json. Only ctx's error is returned: failing to cache never
-// fails the caller, which still has the token.
+// SetSandboxToken caches token. Tries the keyring first; falls back to the
+// plaintext file. Only ctx's error is returned: failing to cache never fails
+// the caller, which still has the token.
 func (s *Store) SetSandboxToken(ctx context.Context, scope SandboxTokenScope, token SandboxToken) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -85,20 +87,14 @@ func (s *Store) SetSandboxToken(ctx context.Context, scope SandboxTokenScope, to
 			return nil
 		}
 	}
-	af, err := s.loadLocked()
-	if err != nil {
-		return nil
-	}
-	if af.InsecureSandboxTokens == nil {
-		af.InsecureSandboxTokens = map[string]SandboxToken{}
-	}
-	af.InsecureSandboxTokens[scope.account()] = token
-	_ = s.saveLocked(af)
+	tokens := s.loadSandboxTokens()
+	tokens[scope.account()] = token
+	_ = s.saveSandboxTokens(tokens)
 	return nil
 }
 
 // ClearSandboxToken forgets the token cached for scope, in the keyring and in
-// auth.json.
+// the plaintext file.
 func (s *Store) ClearSandboxToken(ctx context.Context, scope SandboxTokenScope) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -107,13 +103,49 @@ func (s *Store) ClearSandboxToken(ctx context.Context, scope SandboxTokenScope) 
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
-	af, err := s.loadLocked()
+	tokens := s.loadSandboxTokens()
+	if _, ok := tokens[scope.account()]; !ok {
+		return nil
+	}
+	delete(tokens, scope.account())
+	return s.saveSandboxTokens(tokens)
+}
+
+// loadSandboxTokens reads the plaintext file. One that is missing or cannot
+// be read is empty.
+func (s *Store) loadSandboxTokens() map[string]SandboxToken {
+	data, err := os.ReadFile(filepath.Join(s.dir, sandboxTokenFileName))
+	if err != nil {
+		return map[string]SandboxToken{}
+	}
+	tokens := map[string]SandboxToken{}
+	if json.Unmarshal(data, &tokens) != nil {
+		return map[string]SandboxToken{}
+	}
+	return tokens
+}
+
+// saveSandboxTokens replaces the plaintext file atomically, so a concurrent
+// invocation never reads it half-written.
+func (s *Store) saveSandboxTokens(tokens map[string]SandboxToken) error {
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return err
+	}
+	data, _ := json.Marshal(tokens)
+	// Created 0600, in the same directory so the rename stays on one
+	// filesystem.
+	file, err := os.CreateTemp(s.dir, sandboxTokenFileName+".*")
 	if err != nil {
 		return err
 	}
-	if _, ok := af.InsecureSandboxTokens[scope.account()]; !ok {
-		return nil
+	// A no-op once renamed.
+	defer os.Remove(file.Name())
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
 	}
-	delete(af.InsecureSandboxTokens, scope.account())
-	return s.saveLocked(af)
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), filepath.Join(s.dir, sandboxTokenFileName))
 }
