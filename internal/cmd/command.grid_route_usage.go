@@ -407,6 +407,7 @@ func (c *gridRouteUsageChart) render(ctx *CommandContext) {
 	right := func(s string, w int) string { return strings.Repeat(" ", w-ansi.StringWidth(s)) + s }
 
 	write(pad(bold.Styled("Total"), labelWidth) + right(c.all.money(), amountWidth))
+	charted := false
 	// A single day has no trend to chart.
 	if f, ok := ctx.Stdout.(*os.File); ok && term.IsTerminal(f.Fd()) && c.days > 1 {
 		w, _, _ := term.GetSize(f.Fd())
@@ -416,11 +417,18 @@ func (c *gridRouteUsageChart) render(ctx *CommandContext) {
 		}
 		if chart := renderGridUsageChart(c.first, daily, cmp.Or(w, 80)-2, paint); chart != "" {
 			write("\n  " + strings.ReplaceAll(strings.TrimSuffix(chart, "\n"), "\n", "\n  ") + "\n")
+			charted = true
 		}
 	}
 	all, _ := c.all.cost.Float64()
 	for i, s := range series {
-		line := pad("  "+paint("●", i)+" "+s.name, labelWidth) + right(s.total.money(), amountWidth)
+		// The colored dot is the chart's legend, so it only shows with the
+		// chart; scripts and greps see just the name.
+		label := "  " + s.name
+		if charted {
+			label = "  " + paint("●", i) + " " + s.name
+		}
+		line := pad(label, labelWidth) + right(s.total.money(), amountWidth)
 		if c.all.priced && all > 0 {
 			cost, _ := s.total.cost.Float64()
 			line += " " + dim.Styled(right("("+strconv.Itoa(int(cost/all*100+0.5))+"%)", 6))
@@ -475,9 +483,8 @@ var gridUsageChartColors = []ansi.BasicColor{ansi.Blue, ansi.Green, ansi.Magenta
 // first, as an asciichart-style step chart with a y-axis in whole dollars and
 // date labels below, fitting width columns, or "" when two columns per day
 // don't fit. Each day is a run of equal width with its date centered under
-// it, like Claude Code's, so the last day's run ends with its date, which can
-// stick out two columns past the plot. paint colors a series' characters by
-// its index. It is
+// it, so the last day's run ends with its date, which can stick out two
+// columns past the plot. paint colors a series' characters by its index. It is
 // hand-rolled rather than asciigraph's, which interpolates between points
 // instead of stepping, spaces its date ticks evenly rather than at day
 // starts, and paints with its own escapes rather than the terminal palette;

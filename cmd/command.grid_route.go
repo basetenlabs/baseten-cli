@@ -166,9 +166,9 @@ var commandGridRoute = Command{
 		},
 		{
 			Name:    "usage",
-			Summary: "Show daily routes usage and estimated costs (PRE-RELEASE)",
+			Summary: "Show routes usage and estimated costs (PRE-RELEASE)",
 			Description: gridRoutePrereleaseNotice +
-				"Show routes usage and estimated costs as daily UTC buckets, oldest first, broken down by the " +
+				"Show routes usage and estimated costs over a window of UTC days, broken down by the " +
 				"dimensions passed to --group-by. Defaults match the API: the previous UTC day through today, grouped " +
 				"by model. Organization admins see organization usage, team admins see teams they manage, and other members see usage from their own keys. --team narrows the scope. " +
 				"Grouping by router includes only routed usage; do not add these totals to totals from other groupings. Grouping by harness includes an Unknown group for usage with no recorded harness.\n\n" +
@@ -185,7 +185,7 @@ var commandGridRoute = Command{
 				JSONArrayStreamed: true,
 				TextDescription: "The total cost, then, when stdout is a terminal and the window spans more than one " +
 					"day, a chart of cost per day for each --group-by value, then one line per value with its cost and " +
-					"share of the total, most expensive first. Values past the top five are summed into \"other\". With " +
+					"share of the total, most expensive first, marked with the chart's colors when it is shown. Values past the top five are summed into \"other\". With " +
 					"several --group-by dimensions, each line is one combination of them. A cost of \"-\" means some of " +
 					"that usage couldn't be priced. The window goes to stderr. When no day in the window has any usage, " +
 					"prints \"No usage in the selected window.\" to stderr instead. Use --output json for token counts " +
