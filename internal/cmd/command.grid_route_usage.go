@@ -174,6 +174,13 @@ buckets:
 		ctx.LogLine("A cost of \"-\" means some of that usage couldn't be priced.")
 	}
 	table.render(ctx)
+	// Spend limits are per user and team, so this needs one team: the API
+	// picks yours when you belong to one and rejects the call otherwise.
+	if me, err := api.GetGridTeamSettingsUsersUserId(ctx, "me", managementapi.GetV1GridTeamSettingsUsersUserIdParams{TeamId: team}); err == nil {
+		ctx.OutputLine("\n" + gridUsageLimitLine(ctx, me))
+	} else {
+		ctx.Logf("Your spend this month against your limit isn't shown: %v\n", err)
+	}
 	if hitLimit {
 		ctx.Logf("Reached the --limit of %d buckets; more exist. Increase --limit or use --limit 0 for no limit.\n", q.Limit)
 	}
@@ -285,6 +292,42 @@ func (t *gridUsageTotal) money() string {
 		return "<$0.01"
 	}
 	return billingFormatMoney(f)
+}
+
+// gridUsageLimitLine is your spend this month in the team against your limit
+// there: yellow from 75% of the limit, red once blocked.
+func gridUsageLimitLine(ctx *CommandContext, s *managementapi.GridTeamUserSettings) string {
+	r := lipgloss.NewRenderer(ctx.Stdout)
+	red := r.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	spent, _ := strconv.ParseFloat(s.MonthSpendUsd, 64)
+	limit, hasLimit := 0.0, s.SpendLimit.Effective.MonthlyLimitUsd != nil
+	if hasLimit {
+		limit, _ = strconv.ParseFloat(*s.SpendLimit.Effective.MonthlyLimitUsd, 64)
+	}
+	amount := billingFormatMoney(spent)
+	switch {
+	case s.IsBlocked:
+		amount = red.Render(amount)
+	case hasLimit && spent >= 0.75*limit:
+		amount = r.NewStyle().Foreground(lipgloss.Color("3")).Render(amount)
+	}
+	line := "Your spend this month in " + s.TeamName + ": " + amount
+	switch {
+	case !hasLimit:
+		line += r.NewStyle().Faint(true).Render(" · no limit")
+	case limit > 0:
+		line += fmt.Sprintf(" of %s (%.0f%%)", billingFormatMoney(limit), spent/limit*100)
+	default:
+		line += " of " + billingFormatMoney(limit)
+	}
+	if s.IsBlocked {
+		what := " · limit reached"
+		if s.BlockedBy != nil && *s.BlockedBy == managementapi.GridSpendBlockedBy_team {
+			what = " · team limit reached"
+		}
+		line += red.Render(what)
+	}
+	return line
 }
 
 func gridUsageDimensionCell(d managementapi.GridRouteUsageDimension, r managementapi.GridRouteUsageResult) string {
