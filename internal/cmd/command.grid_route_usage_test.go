@@ -30,19 +30,18 @@ func Test_Grid_Route_Usage_EndOnlySpansTheDayBefore(t *testing.T) {
 	h.Require.Equal([]string{"2026-09-10"}, q["end_date"])
 }
 
-func Test_Grid_Route_Usage_TimeSeriesTable(t *testing.T) {
+func Test_Grid_Route_Usage_SpendPerGroup(t *testing.T) {
 	h, _ := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--since", "7d"))
-	lines := strings.Split(strings.TrimRight(h.Stdout.String(), "\n"), "\n")
-	fields := func(i int) []string { return strings.Fields(lines[i]) }
-	h.Require.Equal([]string{"DATE", "MODEL", "INPUT", "CACHED", "OUTPUT", "COST"}, fields(0))
-	h.Require.Equal([]string{"2026-09-01", "claude-sonnet-5", "1,000", "800", "100", "$1.25"}, fields(1))
-	h.Require.Equal([]string{"gpt-5.2", "400", "0", "40", "$0.50"}, fields(2), "a day's later rows blank the date")
-	h.Require.Equal([]string{"2026-09-02", "(no", "usage)"}, fields(3), "an empty day keeps its row")
-	h.Require.Equal([]string{"2026-09-03", "claude-sonnet-5", "100", "0", "10", "<$0.01"}, fields(4))
-	h.Require.Equal([]string{"glm-5.2", "50", "0", "5", "$0.50"}, fields(5))
-	h.Require.Equal([]string{"ALL", "1,550", "800", "155", "$2.25"}, fields(6))
+	h.Require.Equal(
+		"Total              $2.25\n"+
+			"  claude-sonnet-5  $1.25  (56%)\n"+
+			"  glm-5.2          $0.50  (22%)\n"+
+			"  gpt-5.2          $0.50  (22%)\n"+
+			"\n"+
+			"Your spend this month in Engineering: $12.50 of $100.00 (12%)\n",
+		h.Stdout.String(), "most expensive first, no chart when stdout isn't a terminal")
 	h.Require.Contains(h.Stderr.String(), "Window: 2026-09-01 through 2026-09-03 UTC · grouped by model")
 }
 
@@ -54,7 +53,7 @@ func Test_Grid_Route_Usage_KeepsRowsWithNoTokens(t *testing.T) {
 	h, _ := newGridUsageHarness(t, gridUsageNow, body)
 
 	h.Require.NoError(h.Execute("grid", "route", "usage"))
-	h.Require.Equal([]string{"gpt-6-luna", "0", "0", "0", "$0.00"}, gridUsageRow(h, h.Stdout.String(), "gpt-6-luna"), "shows what the API returns")
+	h.Require.Equal([]string{"gpt-6-luna", "$0.00", "(0%)"}, gridUsageRow(h, h.Stdout.String(), "gpt-6-luna"), "shows what the API returns")
 }
 
 func Test_Grid_Route_Usage_FiltersPassThrough(t *testing.T) {
@@ -152,8 +151,7 @@ func Test_Grid_Route_Usage_TeamAndRouterDimensions(t *testing.T) {
 			h.Require.Contains(h.Stdout.String(), "team-a")
 			h.Require.Contains(h.Stdout.String(), "acme/router")
 			if output == "text" {
-				h.Require.Contains(h.Stdout.String(), "TEAM")
-				h.Require.Contains(h.Stdout.String(), "ROUTER")
+				h.Require.Contains(h.Stdout.String(), "team-a · acme/router · ", "one line per combination of the dimensions")
 			} else {
 				h.Require.Contains(h.Stdout.String(), "Engineering")
 			}
@@ -171,9 +169,8 @@ func Test_Grid_Route_Usage_HarnessDimension(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "route", "usage", "--group-by", "harness"))
 
 	h.Require.Equal([]string{"HARNESS"}, gridUsageLastQuery(h, m)["group_by"])
-	h.Require.Contains(h.Stdout.String(), "HARNESS")
-	h.Require.Equal([]string{"2026-09-24", "Unknown", "1,000", "800", "100", "$1.25"}, gridUsageRow(h, h.Stdout.String(), "Unknown"))
-	h.Require.Equal([]string{"codex", "400", "0", "40", "$0.50"}, gridUsageRow(h, h.Stdout.String(), "codex"))
+	h.Require.Equal([]string{"Unknown", "$1.25", "(71%)"}, gridUsageRow(h, h.Stdout.String(), "Unknown"))
+	h.Require.Equal([]string{"codex", "$0.50", "(29%)"}, gridUsageRow(h, h.Stdout.String(), "codex"))
 	h.Require.Contains(h.Stderr.String(), `Harness "Unknown" means no harness was recorded, including usage from before harness tracking.`)
 }
 
@@ -222,6 +219,10 @@ func newGridUsageHarness(t *testing.T, now time.Time, body map[string]any) (*Com
 	api := h.MockManagementAPI()
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
 	api.SetRoute("GET", "/v1/grid/routes/usage", 200, body)
+	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, map[string]any{
+		"user_id": "user-a", "team_id": "team-a", "team_name": "Engineering", "month_spend_usd": "12.50", "is_blocked": false,
+		"spend_limit": map[string]any{"effective": map[string]any{"monthly_limit_usd": "100", "source": "team"}},
+	})
 	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []any{
 		map[string]any{"id": "team-a", "name": "Engineering", "default": false, "created_at": "2026-01-01T00:00:00Z"},
 	}})
