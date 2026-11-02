@@ -11,11 +11,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
-	"github.com/charmbracelet/colorprofile"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
 )
 
@@ -313,16 +313,12 @@ func gridUsageDimensionCell(d managementapi.GridRouteUsageDimension, r managemen
 	return cmp.Or(v, "(unknown)")
 }
 
-// gridRouteUsageChart renders the window's spend per --group-by value: the
-// total, a chart of spend per day when stdout is a terminal, and each value's
-// spend and share, most expensive first, with all but the top few folded into
-// "other".
+// gridRouteUsageChart renders spend per --group-by value: the total, a chart
+// of spend per day on a terminal, and one line per value, most expensive first.
 type gridRouteUsageChart struct {
-	dims []managementapi.GridRouteUsageDimension
-	// first is the first bucket's day, and days the number of days from it
-	// through the last bucket's.
-	first          time.Time
-	days           int
+	dims           []managementapi.GridRouteUsageDimension
+	first          time.Time // the first bucket's day
+	days           int       // days from first through the last bucket's
 	series         map[string]*gridUsageSeries
 	all            *gridUsageTotal
 	missingHarness bool
@@ -332,9 +328,7 @@ type gridRouteUsageChart struct {
 type gridUsageSeries struct {
 	name  string
 	total *gridUsageTotal
-	// daily is the cost by day of the window, for the chart. Whole dollars
-	// don't need the API's exact decimals.
-	daily []float64
+	daily map[int]float64 // cost by day index, for the chart
 }
 
 func (c *gridRouteUsageChart) addBucket(b managementapi.GridRouteUsageBucket) error {
@@ -359,14 +353,11 @@ func (c *gridRouteUsageChart) addBucket(b managementapi.GridRouteUsageBucket) er
 		name := strings.Join(cells, " · ")
 		s := c.series[name]
 		if s == nil {
-			s = &gridUsageSeries{name: name, total: newGridUsageTotal()}
+			s = &gridUsageSeries{name: name, total: newGridUsageTotal(), daily: map[int]float64{}}
 			c.series[name] = s
 		}
 		s.total.add(t)
 		c.all.add(t)
-		for len(s.daily) <= day {
-			s.daily = append(s.daily, 0)
-		}
 		cost, _ := t.cost.Float64()
 		s.daily[day] += cost
 		if slices.Contains(c.dims, managementapi.GridRouteUsageDimension_HARNESS) && r.Harness == nil {
@@ -380,87 +371,79 @@ func (c *gridRouteUsageChart) empty() bool     { return len(c.series) == 0 }
 func (c *gridRouteUsageChart) unpriced() bool  { return !c.all.priced }
 func (c *gridRouteUsageChart) noHarness() bool { return c.missingHarness }
 
+// gridUsageTopSeries is how many values get their own line; the rest are
+// summed into "other".
+const gridUsageTopSeries = 5
+
 func (c *gridRouteUsageChart) render(ctx *CommandContext) {
 	series := slices.SortedFunc(maps.Values(c.series), func(x, y *gridUsageSeries) int {
 		return cmp.Or(y.total.cost.Cmp(x.total.cost), strings.Compare(x.name, y.name))
 	})
-	for _, s := range series {
-		s.daily = append(s.daily, make([]float64, c.days-len(s.daily))...)
+	if len(series) > gridUsageTopSeries {
+		other := &gridUsageSeries{name: "other", total: newGridUsageTotal(), daily: map[int]float64{}}
+		for _, s := range series[gridUsageTopSeries:] {
+			other.total.add(s.total)
+			for d, v := range s.daily {
+				other.daily[d] += v
+			}
+		}
+		series = append(series[:gridUsageTopSeries], other)
 	}
-	series = gridUsageFoldSeries(series, c.days)
-
-	// One label and one amount column shared by the total and every series.
-	labelWidth, amountWidth := len("Total")+2, len(c.all.money())
-	for _, s := range series {
-		labelWidth = max(labelWidth, 4+ansi.StringWidth(s.name)+2)
+	daily := make([][]float64, len(series))
+	nameWidth, amountWidth := 0, len(c.all.money())
+	for i, s := range series {
+		daily[i] = make([]float64, c.days)
+		for d, v := range s.daily {
+			daily[i][d] = v
+		}
+		nameWidth = max(nameWidth, utf8.RuneCountInString(s.name))
 		amountWidth = max(amountWidth, len(s.total.money()))
 	}
-	// The writer drops the styling stdout can't show, so there is no need to
-	// query the terminal for it.
-	out := colorprofile.NewWriter(ctx.Stdout, os.Environ())
-	write := func(line string) { panicOnOutputError(fmt.Fprintln(out, line)) }
-	bold, dim := ansi.Style{}.Bold(), ansi.Style{}.Faint()
+
+	r := lipgloss.NewRenderer(ctx.Stdout)
 	paint := func(s string, i int) string {
-		return ansi.Style{}.ForegroundColor(gridUsageChartColors[i%len(gridUsageChartColors)]).Styled(s)
+		return r.NewStyle().Foreground(gridUsageChartColors[i%len(gridUsageChartColors)]).Render(s)
 	}
-	pad := func(s string, w int) string { return s + strings.Repeat(" ", w-ansi.StringWidth(s)) }
-	right := func(s string, w int) string { return strings.Repeat(" ", w-ansi.StringWidth(s)) + s }
-
-	write(pad(bold.Styled("Total"), labelWidth) + right(c.all.money(), amountWidth))
-	charted := false
+	chart := ""
 	// A single day has no trend to chart.
-	if f, ok := ctx.Stdout.(*os.File); ok && term.IsTerminal(f.Fd()) && c.days > 1 {
+	if f, ok := ctx.Stdout.(*os.File); ok && c.days > 1 && term.IsTerminal(f.Fd()) {
 		w, _, _ := term.GetSize(f.Fd())
-		daily := make([][]float64, len(series))
-		for i, s := range series {
-			daily[i] = s.daily
-		}
-		if chart := renderGridUsageChart(c.first, daily, cmp.Or(w, 80)-2, paint); chart != "" {
-			write("\n  " + strings.ReplaceAll(strings.TrimSuffix(chart, "\n"), "\n", "\n  ") + "\n")
-			charted = true
-		}
+		chart = renderGridUsageChart(c.first, daily, cmp.Or(w, 80)-2, paint)
 	}
-	all, _ := c.all.cost.Float64()
+	indent := "  "
+	if chart != "" {
+		indent = "    " // room for the legend dot
+	}
+	ctx.OutputLine(r.NewStyle().Bold(true).Render(fmt.Sprintf("%-*s", len(indent)+nameWidth, "Total")) +
+		fmt.Sprintf("  %*s", amountWidth, c.all.money()))
+	if chart != "" {
+		ctx.OutputLine("\n  " + strings.ReplaceAll(strings.TrimSuffix(chart, "\n"), "\n", "\n  ") + "\n")
+	}
+	total, _ := c.all.cost.Float64()
 	for i, s := range series {
-		// The colored dot is the chart's legend, so it only shows with the
-		// chart; scripts and greps see just the name.
-		label := "  " + s.name
-		if charted {
-			label = "  " + paint("●", i) + " " + s.name
+		line := indent
+		if chart != "" {
+			line = "  " + paint("●", i) + " "
 		}
-		line := pad(label, labelWidth) + right(s.total.money(), amountWidth)
-		if c.all.priced && all > 0 {
+		line += fmt.Sprintf("%-*s  %*s", nameWidth, s.name, amountWidth, s.total.money())
+		if c.all.priced && total > 0 {
 			cost, _ := s.total.cost.Float64()
-			line += " " + dim.Styled(right("("+strconv.Itoa(int(cost/all*100+0.5))+"%)", 6))
+			line += r.NewStyle().Faint(true).Render(fmt.Sprintf(" %6s", fmt.Sprintf("(%.0f%%)", cost/total*100)))
 		}
-		write(line)
+		ctx.OutputLine(line)
 	}
 }
 
-// gridUsageTopSeries is how many --group-by values the chart and list show on
-// their own; the rest are summed into one "other" row so neither grows past a
-// glance.
-const gridUsageTopSeries = 5
+const (
+	gridUsageChartHeight = 7  // rows above zero; at most one per dollar so labels never repeat
+	gridUsageChartWidth  = 48 // plot columns to aim for, so a wide terminal doesn't stretch it
+)
 
-// gridUsageFoldSeries folds every series after the top gridUsageTopSeries,
-// which are sorted most expensive first, into one "other" series with their
-// summed usage over the window's days.
-func gridUsageFoldSeries(series []*gridUsageSeries, days int) []*gridUsageSeries {
-	if len(series) <= gridUsageTopSeries {
-		return series
-	}
-	other := &gridUsageSeries{name: "other", total: newGridUsageTotal(), daily: make([]float64, days)}
-	for _, s := range series[gridUsageTopSeries:] {
-		other.total.add(s.total)
-		for d, v := range s.daily {
-			other.daily[d] += v
-		}
-	}
-	return append(series[:gridUsageTopSeries:gridUsageTopSeries], other)
-}
+// gridUsageChartColors are the series colors, in order: blue, green, magenta,
+// cyan, yellow, red.
+var gridUsageChartColors = []lipgloss.Color{"4", "2", "5", "6", "3", "1"}
 
-// gridUsageDollars renders an amount to the nearest dollar, like $1,234, keeping
-// anything under half a dollar visible as <$1.
+// gridUsageDollars renders f to the nearest dollar, like $1,234, or <$1.
 func gridUsageDollars(f float64) string {
 	if f > 0 && f < 0.5 {
 		return "<$1"
@@ -468,34 +451,14 @@ func gridUsageDollars(f float64) string {
 	return "$" + billingGroupDigits(strconv.FormatFloat(math.Round(f), 'f', 0, 64))
 }
 
-// gridUsageChartHeight is the most rows above the chart's zero row. There is at
-// most one per dollar, so the whole-dollar labels never repeat.
-const gridUsageChartHeight = 7
-
-// gridUsageChartWidth is the columns the plot aims for, so it isn't spread across
-// a wide terminal; a full month at two columns a day runs a little past it.
-const gridUsageChartWidth = 48
-
-// gridUsageChartColors are the colors of the series, in order.
-var gridUsageChartColors = []ansi.BasicColor{ansi.Blue, ansi.Green, ansi.Magenta, ansi.Cyan, ansi.Yellow, ansi.Red}
-
-// renderGridUsageChart renders series, each with one dollar amount per day from
-// first, as an asciichart-style step chart with a y-axis in whole dollars and
-// date labels below, fitting width columns, or "" when two columns per day
-// don't fit. Each day is a run of equal width with its date centered under
-// it, so the last day's run ends with its date, which can stick out two
-// columns past the plot. paint colors a series' characters by its index. It is
-// hand-rolled rather than asciigraph's, which interpolates between points
-// instead of stepping, spaces its date ticks evenly rather than at day
-// starts, and paints with its own escapes rather than the terminal palette;
-// the glue to work around that is most of this code anyway.
+// renderGridUsageChart draws series, each one amount per day from first, as a
+// step chart with whole-dollar y labels and dates below, or "" when two
+// columns per day don't fit in width. paint colors a series by index.
 func renderGridUsageChart(first time.Time, series [][]float64, width int, paint func(s string, i int) string) string {
 	days := len(series[0])
-	top := 1.0 // At least a dollar, so the top label isn't $0.
+	top := 1.0
 	for _, s := range series {
-		for _, v := range s {
-			top = max(top, v)
-		}
+		top = max(top, slices.Max(s))
 	}
 	height := min(gridUsageChartHeight, int(top))
 	labels := make([]string, height+1)
@@ -504,23 +467,22 @@ func renderGridUsageChart(first time.Time, series [][]float64, width int, paint 
 		labels[r] = gridUsageDollars(top * float64(r) / float64(height))
 		labelWidth = max(labelWidth, len(labels[r]))
 	}
-	// Each day spans step columns, its first one stepping from the day before.
-	step := max(2, min(width-labelWidth-4, gridUsageChartWidth)/days)
+	step := max(2, min(width-labelWidth-4, gridUsageChartWidth)/days) // columns per day
 	cols := days * step
 	if width < labelWidth+4+cols {
 		return ""
 	}
-	grid := make([][]string, height+1) // grid[0] is the zero row.
+	grid := make([][]string, height+1) // grid[0] is the zero row
 	for r := range grid {
 		grid[r] = slices.Repeat([]string{" "}, cols)
 	}
-	// Paint the last series first so the first, the largest, ends up on top.
+	// Draw the last series first so the largest ends up on top.
 	for i, s := range slices.Backward(series) {
 		prev := -1
 		for d, v := range s {
 			y := int(math.Round(v / top * float64(height)))
 			if v > 0 {
-				y = max(y, 1) // Keep any spend off the zero line.
+				y = max(y, 1) // keep any spend off the zero line
 			}
 			for c := d * step; c < (d+1)*step; c++ {
 				grid[y][c] = paint("─", i)
@@ -545,11 +507,9 @@ func renderGridUsageChart(first time.Time, series [][]float64, width int, paint 
 		if r == 0 {
 			tick = " ┼"
 		}
-		b.WriteString(strings.Repeat(" ", labelWidth-len(labels[r])) + labels[r] + tick)
-		b.WriteString(strings.TrimRight(strings.Join(grid[r], ""), " ") + "\n")
+		fmt.Fprintf(&b, "%*s%s%s\n", labelWidth, labels[r], tick, strings.TrimRight(strings.Join(grid[r], ""), " "))
 	}
-	// Center the date labels, at most 6 wide, under days at least 8 columns
-	// apart, counting back from the last day so it always has one.
+	// A date every 8+ columns, centered under its day, always including the last.
 	axis := []byte(strings.Repeat(" ", labelWidth+4+cols))
 	every := (8 + step - 1) / step
 	for d := (days - 1) % every; d < days; d += every {
