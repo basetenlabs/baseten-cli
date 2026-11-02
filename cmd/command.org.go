@@ -19,7 +19,7 @@ var commandOrg = Command{
 					Name:    "list",
 					Summary: "List API keys",
 					Description: "List API keys (metadata only; key values are never returned). " +
-						"Grid API keys, which grid setup creates and manages for harness inference, are listed only with --type grid.",
+						"Use --type grid to list only Grid API keys, including the ones grid setup creates for harness inference.",
 					Flags: OrgAPIKeyListFlags{},
 					Output: &CommandOutput[managementapi.APIKeys]{
 						TextDescription: "Table with columns: NAME, KEY (prefix + ****), TYPE, TEAM, EXPIRES (UTC RFC 3339, or never). When no " +
@@ -42,7 +42,8 @@ var commandOrg = Command{
 					Description: "Create a new API key. The key value is printed to stdout exactly once " +
 						"and cannot be retrieved later; capture or pipe it on creation. --model-id may be " +
 						"repeated to scope the key to specific models and is only valid with " +
-						"--type workspace-export-metrics or --type workspace-invoke.",
+						"--type workspace-export-metrics or --type workspace-invoke. --type grid creates a " +
+						"personal Grid key in --team; its usage counts against your Grid budget in that team.",
 					Flags: OrgAPIKeyCreateFlags{},
 					Output: &CommandOutput[managementapi.APIKey]{
 						TextDescription: "Prints the raw API key value on stdout (one line). Also prints " +
@@ -55,6 +56,10 @@ var commandOrg = Command{
 							{
 								Description: "Create a workspace-invoke key scoped to specific models.",
 								Command:     "baseten org api-key create --type workspace-invoke --model-id <id-1> --model-id <id-2>",
+							},
+							{
+								Description: "Create a personal Grid key for a script or agent.",
+								Command:     "baseten org api-key create --type grid --team <team> --name <label>",
 							},
 						},
 						JQExample: CommandExample{
@@ -428,7 +433,7 @@ type OrgAPIKeyListFlags struct {
 type OrgAPIKeyCreateFlags struct {
 	CommandFlags
 
-	Type      string    `flag:"type" desc:"API key category." required:"true" enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all,workspace-manage-api-keys"`
+	Type      string    `flag:"type" desc:"API key category." required:"true" enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all,workspace-manage-api-keys,grid"`
 	Name      string    `flag:"name" desc:"Optional human-readable name for the key."`
 	ModelIDs  []string  `flag:"model-id" desc:"Restrict the key to a specific model. May be repeated. Only valid with --type workspace-export-metrics or workspace-invoke."`
 	Team      string    `flag:"team" desc:"Team name or ID to create the key in. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`

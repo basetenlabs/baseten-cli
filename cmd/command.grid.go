@@ -361,6 +361,7 @@ var commandGrid = Command{
 				},
 			},
 		},
+		commandGridMachineUser,
 		{
 			Name:    "token",
 			Hidden:  true,

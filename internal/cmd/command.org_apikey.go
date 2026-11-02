@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -49,13 +48,6 @@ func commandOrgAPIKeyList(ctx *CommandContext, flags *cmd.OrgAPIKeyListFlags) er
 	keys, err := cl.API().GetApiKeys(ctx, params)
 	if err != nil {
 		return fmt.Errorf("listing API keys: %w", err)
-	}
-	// Grid setup creates and deletes Grid API keys, so they would only clutter
-	// the default listing.
-	if flags.Type == "" {
-		keys.Keys = slices.DeleteFunc(keys.Keys, func(k managementapi.APIKeyInfo) bool {
-			return k.Type == managementapi.APIKeyCategory_GRID
-		})
 	}
 
 	if ctx.JSON {
@@ -110,6 +102,15 @@ func commandOrgAPIKeyCreate(ctx *CommandContext, flags *cmd.OrgAPIKeyCreateFlags
 	if err != nil {
 		return err
 	}
+	// A Grid key spends from the creator's budget in one team, so like the other
+	// Grid commands it falls back to your only team, not the organization's default.
+	if flags.Type == "grid" && teamID == "" {
+		team, err := resolveTeamOrOnly(ctx, cl.API(), "")
+		if err != nil {
+			return err
+		}
+		teamID = team.Id
+	}
 
 	req := managementapi.CreateAPIKeyRequest{Type: apiKeyTypeToBackend[flags.Type]}
 	if flags.Name != "" {
@@ -133,13 +134,7 @@ func commandOrgAPIKeyCreate(ctx *CommandContext, flags *cmd.OrgAPIKeyCreateFlags
 		return fmt.Errorf("creating API key: %w", err)
 	}
 
-	if ctx.JSON {
-		ctx.OutputJSON(key)
-		return nil
-	}
-	// One-time warning to stderr so piping captures only the key value.
-	ctx.LogLine("Save this key now. It will not be shown again.")
-	ctx.OutputLine(key.ApiKey)
+	outputCreatedAPIKey(ctx, key, key.ApiKey)
 	return nil
 }
 
@@ -156,16 +151,8 @@ func commandOrgAPIKeyDelete(ctx *CommandContext, flags *cmd.OrgAPIKeyDeleteFlags
 		if err != nil {
 			return fmt.Errorf("listing API keys: %w", err)
 		}
-		for _, k := range keys.Keys {
-			if k.Name != nil && *k.Name == flags.Name {
-				if prefix != "" {
-					return fmt.Errorf("multiple API keys named %q; pass --prefix instead", flags.Name)
-				}
-				prefix = k.Prefix
-			}
-		}
-		if prefix == "" {
-			return fmt.Errorf("no API key named %q", flags.Name)
+		if prefix, err = apiKeyPrefixByName(keys.Keys, flags.Name); err != nil {
+			return err
 		}
 	}
 
@@ -180,4 +167,32 @@ func commandOrgAPIKeyDelete(ctx *CommandContext, flags *cmd.OrgAPIKeyDeleteFlags
 	}
 	ctx.Logf("Deleted API key %s\n", tomb.Prefix)
 	return nil
+}
+
+func apiKeyPrefixByName(keys []managementapi.APIKeyInfo, name string) (string, error) {
+	prefix := ""
+	for _, k := range keys {
+		if k.Name != nil && *k.Name == name {
+			if prefix != "" {
+				return "", fmt.Errorf("multiple API keys named %q; pass --prefix instead", name)
+			}
+			prefix = k.Prefix
+		}
+	}
+	if prefix == "" {
+		return "", fmt.Errorf("no API key named %q", name)
+	}
+	return prefix, nil
+}
+
+// outputCreatedAPIKey prints a creation response, or under text output only its
+// key value, which the API returns only once.
+func outputCreatedAPIKey(ctx *CommandContext, response any, apiKey string) {
+	if ctx.JSON {
+		ctx.OutputJSON(response)
+		return
+	}
+	// One-time warning to stderr so piping captures only the key value.
+	ctx.LogLine("Save this key now. It will not be shown again.")
+	ctx.OutputLine(apiKey)
 }
