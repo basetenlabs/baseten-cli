@@ -38,7 +38,9 @@ func Test_Grid_Route_Usage_SpendPerGroup(t *testing.T) {
 		"Total              $2.25\n"+
 			"  claude-sonnet-5  $1.25  (56%)\n"+
 			"  glm-5.2          $0.50  (22%)\n"+
-			"  gpt-5.2          $0.50  (22%)\n",
+			"  gpt-5.2          $0.50  (22%)\n"+
+			"\n"+
+			"Your spend this month in Engineering: $12.50 of $100.00 (12%)\n",
 		h.Stdout.String(), "most expensive first, no chart when stdout isn't a terminal")
 	h.Require.Contains(h.Stderr.String(), "Window: 2026-09-01 through 2026-09-03 UTC · grouped by model")
 }
@@ -218,6 +220,10 @@ func newGridUsageHarness(t *testing.T, now time.Time, body map[string]any) (*Com
 	api := h.MockManagementAPI()
 	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a"})
 	api.SetRoute("GET", "/v1/grid/routes/usage", 200, body)
+	api.SetRoute("GET", "/v1/grid/team_settings/users/me", 200, map[string]any{
+		"user_id": "user-a", "team_id": "team-a", "team_name": "Engineering", "month_spend_usd": "12.50", "is_blocked": false,
+		"spend_limit": map[string]any{"effective": map[string]any{"monthly_limit_usd": "100", "source": "team"}},
+	})
 	api.SetRoute("GET", "/v1/teams", 200, map[string]any{"teams": []any{
 		map[string]any{"id": "team-a", "name": "Engineering", "default": false, "created_at": "2026-01-01T00:00:00Z"},
 	}})
