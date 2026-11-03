@@ -419,6 +419,7 @@ var commandGrid = Command{
 				},
 			},
 		},
+		commandGridMachineUser,
 	},
 }
 
