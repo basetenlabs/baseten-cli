@@ -134,7 +134,7 @@ func Test_Auth_Status_MissingProfileSuggestsAdding(t *testing.T) {
 	err := h.Execute("auth", "status", "--profile", "ghost")
 	h.Require.Error(err)
 	h.Require.Equal(1, h.ExitCode)
-	h.Require.Contains(h.Stderr.String(), "baseten auth login --profile 'ghost' --no-switch")
+	h.Require.Contains(h.Stderr.String(), "baseten auth login --profile ghost --no-switch")
 	h.Require.Contains(h.Stderr.String(), "existing profiles: alice")
 }
 

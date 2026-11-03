@@ -388,6 +388,13 @@ func NewErrProfileNotFound(names []string, profileName string) error {
 	return fmt.Errorf("profile %q not found; add it with `baseten auth login --profile %s --no-switch` (existing profiles: %s)", profileName, shellQuote(profileName), strings.Join(names, ", "))
 }
 
+const shellSafeChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./_-"
+
 func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+	if s != "" && s[0] != '-' && strings.IndexFunc(s, func(r rune) bool {
+		return !strings.ContainsRune(shellSafeChars, r)
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

@@ -123,7 +123,7 @@ func TestTransport_MissingProfileSuggestsAddingProfile(t *testing.T) {
 	tr := &auth.Transport{Session: mustResolve(t, "ghost")}
 	_, err := tr.Credential(t.Context())
 	require.ErrorContains(t, err, "profile \"ghost\" not found; add it with")
-	require.ErrorContains(t, err, "baseten auth login --profile 'ghost' --no-switch")
+	require.ErrorContains(t, err, "baseten auth login --profile ghost --no-switch")
 	require.ErrorContains(t, err, "(existing profiles: alice@example.com, bob@example.com)")
 }
 
