@@ -10,10 +10,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-cli/internal/sandboxconnect"
+	"github.com/basetenlabs/baseten-go/client"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/basetenlabs/baseten-go/client/sandboxapi"
 	"github.com/basetenlabs/baseten-go/sandbox"
@@ -424,24 +427,19 @@ func commandSandboxConnect(ctx *CommandContext, flags *cmd.SandboxConnectFlags) 
 		return err
 	}
 	// The terminal endpoint reads the sandbox token from its URL, so connect
-	// mints its own. A reconnection after a long hibernation mints a fresh one.
+	// gets its own. A reconnection after a long hibernation may get a new one.
 	managementClient, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	newSandboxToken := func(ctx context.Context) (string, error) {
-		minted, err := managementClient.API().PostToken(ctx, managementapi.CreateTokenRequest{
-			Scopes: []managementapi.TokenScope{managementapi.TokenScope_sandboxes},
-		})
-		if err != nil {
-			return "", err
-		}
-		return minted.Token, nil
+	tokenProvider, err := sandboxTokenProvider(ctx, managementClient)
+	if err != nil {
+		return err
 	}
 	ctx.Logf("Connecting to sandbox %s. Exit the shell or press Ctrl+D to disconnect.\n\n", flags.Name)
 	terminal, err := sandboxconnect.Dial(ctx, sandboxconnect.DialOptions{
 		SandboxURL: instance.URL(),
-		NewToken:   newSandboxToken,
+		NewToken:   tokenProvider,
 		Input:      stdin,
 		Output:     stdout,
 		Errors:     ctx.Stderr,
@@ -468,6 +466,64 @@ func sandboxInstance(ctx *CommandContext, ref cmd.SandboxRefFlags) (*sandbox.San
 		return nil, fmt.Errorf("getting sandbox %s: %w", ref.Name, err)
 	}
 	return instance, nil
+}
+
+// sandboxTokenExpiryLeeway is how long before its stated expiry a cached token
+// is treated as expired, the same as baseten-go's for the tokens it caches.
+const sandboxTokenExpiryLeeway = 60 * time.Second
+
+// sandboxTokenProvider returns a provider of sandbox tokens minted through
+// managementClient. A token is cached in memory for this process and in the
+// auth store across invocations, so each command does not wait on a mint.
+// Temporary, until the sandbox APIs accept other credentials.
+func sandboxTokenProvider(ctx *CommandContext, managementClient *client.ManagementClient) (sandbox.TokenProvider, error) {
+	remote, err := ctx.authInfo.Remote()
+	if err != nil {
+		return nil, err
+	}
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return nil, err
+	}
+	store, err := NewAuthStore(false)
+	if err != nil {
+		return nil, err
+	}
+	scope := auth.SandboxTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()}
+	var mu sync.Mutex
+	var current *auth.SandboxToken
+	return func(tokenCtx context.Context, opts sandbox.TokenProviderOptions) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		// A revoked token is skipped in both layers; the mint replacing it
+		// overwrites the stored one.
+		usable := func(token *auth.SandboxToken) bool {
+			return token != nil && token.Token != opts.RevokedToken &&
+				time.Now().Before(token.ExpiresAt.Add(-sandboxTokenExpiryLeeway))
+		}
+		if usable(current) {
+			return current.Token, nil
+		}
+		stored, err := store.GetSandboxToken(tokenCtx, scope)
+		if err != nil {
+			return "", err
+		}
+		if usable(stored) {
+			current = stored
+			return current.Token, nil
+		}
+		minted, err := managementClient.API().PostToken(tokenCtx, managementapi.CreateTokenRequest{
+			Scopes: []managementapi.TokenScope{managementapi.TokenScope_sandboxes},
+		})
+		if err != nil {
+			return "", err
+		}
+		current = &auth.SandboxToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
+		if err := store.SetSandboxToken(tokenCtx, scope, *current); err != nil {
+			return "", err
+		}
+		return current.Token, nil
+	}, nil
 }
 
 // sandboxCommandLine joins the arguments after -- into one shell command

@@ -60,6 +60,8 @@ func (m *management) APIKey(t *testing.T) {
 		}
 	})
 
+	// TODO: Personal keys may soon require an expiration; pass --expires-at
+	// here when that lands.
 	createOut := mustCLI(t, "org", "api-key", "create",
 		"--type", "personal", "--name", keyName, "--output", "json")
 	var created struct {

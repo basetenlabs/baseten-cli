@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
@@ -82,10 +83,14 @@ func commandOrgAPIKeyList(ctx *CommandContext, flags *cmd.OrgAPIKeyListFlags) er
 		if keyType == "" {
 			keyType = string(k.Type)
 		}
-		rows = append(rows, []string{name, k.Prefix + "****", keyType, team})
+		expires := "never"
+		if k.ExpiresAt != nil {
+			expires = k.ExpiresAt.UTC().Format(time.RFC3339)
+		}
+		rows = append(rows, []string{name, k.Prefix + "****", keyType, team, expires})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers: []string{"NAME", "KEY", "TYPE", "TEAM"},
+		Headers: []string{"NAME", "KEY", "TYPE", "TEAM", "EXPIRES"},
 		Rows:    rows,
 	})
 	return nil
@@ -113,6 +118,9 @@ func commandOrgAPIKeyCreate(ctx *CommandContext, flags *cmd.OrgAPIKeyCreateFlags
 	if len(flags.ModelIDs) > 0 {
 		ids := append([]string(nil), flags.ModelIDs...)
 		req.ModelIds = &ids
+	}
+	if !flags.ExpiresAt.IsZero() {
+		req.ExpiresAt = &flags.ExpiresAt
 	}
 
 	var key *managementapi.APIKey

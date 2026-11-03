@@ -492,7 +492,7 @@ func (c *CommandContext) NewManagementClient() (*client.ManagementClient, error)
 
 // NewSandboxClient creates the high-level sandbox client. Sandbox tokens are
 // minted through the auth store's management client, so API keys and OAuth
-// logins both work. The team argument is a team name or ID, resolved like
+// logins both work, and cached across invocations. The team argument is a team name or ID, resolved like
 // every other command's --team; the resolved ID is also returned, nil when no
 // team was given, for calls through the client's generated API.
 func (c *CommandContext) NewSandboxClient(team string) (client *sandbox.Client, teamID *string, err error) {
@@ -508,13 +508,17 @@ func (c *CommandContext) NewSandboxClient(team string) (client *sandbox.Client, 
 	if err != nil {
 		return nil, nil, err
 	}
+	tokenProvider, err := sandboxTokenProvider(c, managementClient)
+	if err != nil {
+		return nil, nil, err
+	}
 	// The sandbox planes get the plain HTTP client: the auth transport would
 	// overwrite the sandbox token with the management credential.
 	client, err = sandbox.NewClient(sandbox.ClientOptions{
-		ManagementClient: managementClient,
-		TeamID:           resolvedTeam,
-		BaseURL:          remote.ManagementURL(),
-		HTTPClient:       c.httpClient(),
+		TokenProvider: tokenProvider,
+		TeamID:        resolvedTeam,
+		BaseURL:       remote.ManagementURL(),
+		HTTPClient:    c.httpClient(),
 	})
 	if err != nil {
 		return nil, nil, err

@@ -2,9 +2,11 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,6 +68,73 @@ func sandboxTestPage(cursor string, items ...any) map[string]any {
 		pagination["cursor"] = cursor
 	}
 	return map[string]any{"items": items, "pagination": pagination}
+}
+
+// sandboxTestTokenAPI returns the mock management API minting tok-1, tok-2,
+// and so on, each expiring after expiresIn, and serving an empty sandbox list
+// whose requests' tokens go to listTokens. revokedToken, if set, is rejected
+// as revoked.
+func sandboxTestTokenAPI(h *CommandHarness, expiresIn time.Duration, revokedToken string, listTokens *[]string) *MockManagementAPI {
+	m := h.MockManagementAPI()
+	var mu sync.Mutex
+	mints := 0
+	m.SetRouteFunc("POST", "/v1/token", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		mints++
+		token := fmt.Sprintf("tok-%d", mints)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": token, "expires_at": time.Now().Add(expiresIn).Format(time.RFC3339)})
+	})
+	m.SetRouteFunc("GET", "/v1/sandboxes/instances", func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		mu.Lock()
+		*listTokens = append(*listTokens, token)
+		mu.Unlock()
+		if token == revokedToken {
+			w.Header().Set("x-blaxel-error-code", "TOKEN_REVOKED")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sandboxTestPage(""))
+	})
+	return m
+}
+
+func Test_Sandbox_TokenCachedAcrossInvocations(t *testing.T) {
+	h := NewCommandHarness(t)
+	var listTokens []string
+	m := sandboxTestTokenAPI(h, time.Hour, "", &listTokens)
+
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.Len(sandboxTestCalls(m, "POST", "/v1/token"), 1)
+	h.Require.Equal([]string{"tok-1", "tok-1"}, listTokens)
+}
+
+func Test_Sandbox_TokenNearExpiryRemints(t *testing.T) {
+	h := NewCommandHarness(t)
+	var listTokens []string
+	// Inside the expiry leeway, so never reused.
+	m := sandboxTestTokenAPI(h, 30*time.Second, "", &listTokens)
+
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.Len(sandboxTestCalls(m, "POST", "/v1/token"), 2)
+	h.Require.Equal([]string{"tok-1", "tok-2"}, listTokens)
+}
+
+func Test_Sandbox_TokenRevokedRemintsAndReplacesCache(t *testing.T) {
+	h := NewCommandHarness(t)
+	var listTokens []string
+	m := sandboxTestTokenAPI(h, time.Hour, "tok-1", &listTokens)
+
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	// The cached replacement serves the next invocation.
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.Len(sandboxTestCalls(m, "POST", "/v1/token"), 2)
+	h.Require.Equal([]string{"tok-1", "tok-2", "tok-2"}, listTokens)
 }
 
 func Test_Sandbox_List_FollowsPages(t *testing.T) {
