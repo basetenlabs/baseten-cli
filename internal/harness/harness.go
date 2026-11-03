@@ -71,7 +71,7 @@ type Harness interface {
 	// Prepare plans setup of the settings file at path. With helper, the
 	// harness runs it for its credential. Without it, ApplyPlans inserts a
 	// static one.
-	Prepare(path string, routes []Route, selection Selection, endpoint string, helper *Helper) ([]*Plan, error)
+	Prepare(path string, routes []Route, selection Selection, endpoint string, helper *Helper, cli string) ([]*Plan, error)
 	// Inspect reports the integration state of the detected settings file.
 	Inspect(d Detection) (Status, error)
 	// Teardown plans removal of the integration settings at path.
@@ -106,9 +106,10 @@ func (h *Helper) args(name string) []string {
 
 // shellCommand is the credential command as one sh line.
 func (h *Helper) shellCommand(name string) string {
-	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-	return quote(h.Path) + " grid token --harness " + name + " --profile " + quote(h.Profile)
+	return shellQuote(h.Path) + " grid token --harness " + name + " --profile " + shellQuote(h.Profile)
 }
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // Supported reports whether harness settings locations are verified on this
 // platform.
@@ -131,6 +132,7 @@ type Route struct {
 	// unknown, as for a router that picks a route per request, and such a
 	// route is called with the Chat Completions API.
 	Provider        string
+	Router          bool
 	ContextWindow   int
 	OutputLimit     int
 	InputModalities []string
@@ -172,7 +174,7 @@ func NewProviders(connections []managementapi.GridConnection) Providers {
 // route that reaches one through a team connection. It fails if the route's
 // model metadata is missing or is not enough to configure a harness.
 func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
-	r := Route{Name: api.Name, DisplayName: api.DisplayName, Provider: routeProvider(api, providers)}
+	r := Route{Name: api.Name, DisplayName: api.DisplayName, Provider: routeProvider(api, providers), Router: routeIsRouter(api)}
 	m := api.Metadata
 	if m == nil {
 		return r, fmt.Errorf("route %q has no model metadata", r.Name)
@@ -300,6 +302,11 @@ func routeProvider(api managementapi.GridRoute, providers Providers) string {
 		}
 	}
 	return ""
+}
+
+func routeIsRouter(api managementapi.GridRoute) bool {
+	kind, _ := api.Target.Discriminator()
+	return kind != "" && kind != ProviderBaseten && kind != "CONNECTION"
 }
 
 // Selection holds the requested routes. Empty fields use each harness's default.
@@ -475,6 +482,7 @@ type Plan struct {
 	Path     string
 	Keys     []string
 	Replaced []string
+	Notes    []string
 	Managed  bool
 	Changed  bool
 

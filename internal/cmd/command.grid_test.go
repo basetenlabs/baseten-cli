@@ -1110,6 +1110,213 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 }
 
+func serveServedModelRoutes(api *MockManagementAPI, routers ...string) {
+	items := []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+		"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}}}
+	wide := maps.Clone(harnessRouteMetadata)
+	wide["context_window"] = 1000000
+	for _, name := range routers {
+		items = append(items, map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-" + name, "name": "acme/" + name, "display_name": name, "invoke_url": api.URL, "metadata": wide,
+			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}})
+	}
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
+}
+
+func claudeManagedSettings(t *testing.T, h *CommandHarness, dir string) []string {
+	t.Helper()
+	h.Require.NoError(h.Execute("grid", "status", "--harness", "claude-code", "--config-dir", dir, "--output", "json"))
+	var statuses public.GridStatusList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
+	h.Require.Len(statuses.Items, 1)
+	return statuses.Items[0].ManagedSettings
+}
+
+func Test_Grid_Setup_ServedModelStatusLine(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	h.Require.NoError(os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o600))
+	cli, err := exec.LookPath("baseten")
+	h.Require.NoError(err)
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--output", "json"}
+
+	h.Require.NoError(h.Execute(setup...))
+	settings := readHarnessSettings(t, "claude-code", path)
+	h.Require.Equal(map[string]any{"type": "command", "command": "'" + cli + "' grid served-model --router 'acme/auto'"}, settings["statusLine"])
+	h.Require.Contains(settings["availableModels"], "acme/auto[1m]")
+	h.Require.Equal("dark", settings["theme"])
+	h.Require.NotContains(settings, "hooks")
+	h.Require.NotContains(h.Stderr.String(), "Existing statusLine")
+
+	h.Require.NoError(h.Execute(setup...))
+	var rerun public.GridPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
+	h.Require.Len(rerun.Items, 1)
+	h.Require.False(rerun.Items[0].Changed, "rerunning setup changes nothing")
+	h.Require.Contains(claudeManagedSettings(t, h, dir), "statusLine")
+
+	serveServedModelRoutes(api, "auto", "code")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal("'"+cli+"' grid served-model --router 'acme/auto' --router 'acme/code'", readHarnessSettings(t, "claude-code", path)["statusLine"].(map[string]any)["command"])
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, "claude-code", path))
+}
+
+func Test_Grid_Setup_ServedModelStopHook(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	user := `{"statusLine":{"type":"command","command":"~/.claude/statusline.sh","padding":0},` +
+		`"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done","timeout":30}]}],"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard"}]}]}}`
+	h.Require.NoError(os.WriteFile(path, []byte(user), 0o600))
+	var original map[string]any
+	h.Require.NoError(json.Unmarshal([]byte(user), &original))
+	userStop := original["hooks"].(map[string]any)["Stop"].([]any)[0]
+	cli, err := exec.LookPath("baseten")
+	h.Require.NoError(err)
+	ours := func(routers string) map[string]any {
+		return map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid served-model " + routers + " --hook"}}}
+	}
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+
+	for range 2 {
+		h.Require.NoError(h.Execute(setup...))
+		h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
+		h.Require.NotContains(h.Stderr.String(), "will be overwritten")
+		settings := readHarnessSettings(t, "claude-code", path)
+		h.Require.Equal(original["statusLine"], settings["statusLine"])
+		hooks := settings["hooks"].(map[string]any)
+		h.Require.Equal([]any{userStop, ours("--router 'acme/auto'")}, hooks["Stop"])
+		h.Require.Equal(original["hooks"].(map[string]any)["PreToolUse"], hooks["PreToolUse"])
+	}
+	managed := claudeManagedSettings(t, h, dir)
+	h.Require.Contains(managed, "hooks.Stop")
+	h.Require.NotContains(managed, "statusLine")
+
+	settings := readHarnessSettings(t, "claude-code", path)
+	later := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "notify"}}}
+	settings["hooks"].(map[string]any)["Stop"] = append(settings["hooks"].(map[string]any)["Stop"].([]any), later)
+	raw, err := json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	serveServedModelRoutes(api, "auto", "code")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]any{userStop, ours("--router 'acme/auto' --router 'acme/code'"), later}, readHarnessSettings(t, "claude-code", path)["hooks"].(map[string]any)["Stop"])
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	original["hooks"].(map[string]any)["Stop"] = []any{userStop, later}
+	h.Require.Equal(original, readHarnessSettings(t, "claude-code", path))
+}
+
+func Test_Grid_Setup_ServedModelZeroRouters(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	settings := readHarnessSettings(t, "claude-code", path)
+	h.Require.NotContains(settings, "statusLine")
+	h.Require.NotContains(settings, "hooks")
+
+	serveServedModelRoutes(api, "auto")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(readHarnessSettings(t, "claude-code", path), "statusLine")
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NotContains(readHarnessSettings(t, "claude-code", path), "statusLine")
+
+	settings = readHarnessSettings(t, "claude-code", path)
+	settings["statusLine"] = map[string]any{"type": "command", "command": "my-status"}
+	settings["hooks"] = map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "say done"}}}}}
+	raw, err := json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	serveServedModelRoutes(api, "auto")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Len(readHarnessSettings(t, "claude-code", path)["hooks"].(map[string]any)["Stop"], 2)
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(settings, readHarnessSettings(t, "claude-code", path))
+}
+
+func Test_Grid_Setup_ServedModelSessionCredential(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	bin := t.TempDir()
+	h.Require.NoError(os.WriteFile(filepath.Join(bin, "baseten"), []byte("#!/bin/sh\n"), 0o755))
+	t.Setenv("PATH", bin)
+	exe, err := os.Executable()
+	h.Require.NoError(err)
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "but baseten on your PATH is "+filepath.Join(bin, "baseten")+"; harnesses will run the former")
+	settings := readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))
+	h.Require.NotContains(settings, "apiKeyHelper")
+	h.Require.Equal("'"+exe+"' grid served-model --router 'acme/auto'", settings["statusLine"].(map[string]any)["command"])
+}
+
+func Test_Grid_ServedModel(t *testing.T) {
+	h := NewCommandHarness(t)
+	dir := t.TempDir()
+	assistant := func(requested, model string) string {
+		line, err := json.Marshal(map[string]any{"type": "assistant", "requestedModel": requested, "message": map[string]any{"role": "assistant", "model": model}})
+		h.Require.NoError(err)
+		return string(line)
+	}
+	transcript := func(name string, lines ...string) string {
+		path := filepath.Join(dir, name)
+		h.Require.NoError(os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+		return path
+	}
+	run := func(stdin string, args ...string) string {
+		h.Stdin.Reset()
+		h.Stdin.WriteString(stdin)
+		h.Require.NoError(h.Execute(append([]string{"grid", "served-model", "--router", "acme/auto", "--router", "acme/code"}, args...)...))
+		h.Require.Empty(h.Stderr.String())
+		return h.Stdout.String()
+	}
+	payload := func(path string) string {
+		raw, err := json.Marshal(map[string]any{"session_id": "s", "transcript_path": path, "model": map[string]any{"id": "acme/auto[1m]"}})
+		h.Require.NoError(err)
+		return string(raw)
+	}
+	user := `{"type":"user","message":{"role":"user","content":"hi"}}`
+
+	routed := transcript("routed.jsonl", user, assistant("acme/primary", "acme/primary"), user, assistant("acme/auto[1m]", "zai-org/GLM-5.3-Flash"))
+	h.Require.Equal("acme/auto → zai-org/GLM-5.3-Flash\n", run(payload(routed)))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via acme/auto"}`+"\n", run(payload(routed), "--hook"))
+
+	direct := transcript("direct.jsonl", assistant("acme/auto", "zai-org/GLM-5.3-Flash"), user, assistant("acme/primary", "acme/primary"))
+	h.Require.Empty(run(payload(direct)))
+	h.Require.Empty(run(payload(direct), "--hook"))
+
+	synthetic := transcript("synthetic.jsonl", assistant("acme/code", "moonshotai/Kimi-K3"), assistant("acme/primary", "<synthetic>"), assistant("acme/primary", ""))
+	h.Require.Equal("acme/code → moonshotai/Kimi-K3\n", run(payload(synthetic)))
+
+	result, err := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "tool_result", "tool_use_id": "t", "content": strings.Repeat("x", 3<<20)},
+	}}})
+	h.Require.NoError(err)
+	large := transcript("large.jsonl", user, assistant("acme/auto", "zai-org/GLM-5.3-Flash"), string(result))
+	h.Require.Equal("acme/auto → zai-org/GLM-5.3-Flash\n", run(payload(large)))
+
+	h.Require.Empty(run(payload(filepath.Join(dir, "missing.jsonl"))))
+	h.Require.Empty(run(payload(dir)))
+	h.Require.Empty(run(payload(transcript("empty.jsonl"))))
+	h.Require.Empty(run("not json"))
+	h.Require.Empty(run(""))
+	h.Require.Empty(run(`{"transcript_path": 7}`))
+}
+
 // serveFirstPartyRoutes serves an Anthropic route and an OpenAI route, each
 // through a team connection, a Baseten-hosted route, and a route whose
 // connection no longer exists.

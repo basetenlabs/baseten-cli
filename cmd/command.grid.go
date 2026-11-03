@@ -25,7 +25,9 @@ var commandGrid = Command{
 				"The Grid API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
-				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.",
+				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those. " +
+				"For Claude Code, when the team has router routes, setup shows which model served the latest response of a router route in the status line. " +
+				"Setup never changes a status line you configured; it adds a Stop hook that shows the serving model after each response instead.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
@@ -118,7 +120,8 @@ var commandGrid = Command{
 			Summary: "Remove Baseten harness settings (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
-				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path.\n\n" +
+				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path. " +
+				"For Claude Code, teardown removes the served-model status line and Stop hook that setup added, and keeps your own status line and hooks.\n\n" +
 				"Teardown also deletes the Grid API key the removed harnesses use, once no other harness on this machine uses it, " +
 				"except a key installed with --use-session-credential, whose lifecycle this CLI does not own. " +
 				"It forgets the recorded setup so 'grid sync' no longer refreshes the removed harnesses. " +
@@ -363,6 +366,28 @@ var commandGrid = Command{
 			},
 		},
 		{
+			Name:    "served-model",
+			Hidden:  true,
+			Summary: "Print the model that served Claude Code's latest response",
+			Description: "Read the JSON payload Claude Code passes a status line or Stop hook on stdin, and print which model served the latest response in its transcript, " +
+				"when that response was requested through one of the --router routes. Otherwise print nothing. Always exits 0, since Claude Code shows any error to the user.",
+			Flags: GridServedModelFlags{},
+			Output: &CommandOutput[JSONUndefined]{
+				JSONOutputUnimportant: true,
+				TextDescription:       "'<route> → <model>', or with --hook a Claude Code hook JSON object with a systemMessage, whatever --output says. Nothing when the latest response is not from a router route.",
+				Examples: []CommandExample{
+					{
+						Description: "Show the serving model in a Claude Code status line.",
+						Command:     "baseten grid served-model --router acme/auto",
+					},
+					{
+						Description: "Show the serving model after each response from a Claude Code Stop hook.",
+						Command:     "baseten grid served-model --router acme/auto --hook",
+					},
+				},
+			},
+		},
+		{
 			Name:    "classifier",
 			Summary: "Discover managed classifiers (PRE-RELEASE)",
 			Children: []Command{{
@@ -541,6 +566,12 @@ type GridTokenFlags struct {
 	CommandFlags
 	Harness string `flag:"harness" desc:"Harness the token is for, as configured by 'grid setup'." enum:"claude-code,codex,opencode,pi" required:"true"`
 	Team    string `flag:"team" desc:"Team name or ID the token is for. Defaults to the team the harness was set up with."`
+}
+
+type GridServedModelFlags struct {
+	CommandFlags
+	Router []string `flag:"router" desc:"Model ID of a router route as Claude Code settings name it, without a [1m] suffix. May be repeated."`
+	Hook   bool     `flag:"hook" desc:"Print Claude Code hook JSON with a systemMessage instead of a status line."`
 }
 
 // GridStatusFlags are the flags for `baseten grid status`.

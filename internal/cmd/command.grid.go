@@ -3,6 +3,7 @@ package cmd
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -31,6 +32,7 @@ func init() {
 	Register("grid sync", commandGridSync)
 	Register("grid teardown", commandGridTeardown)
 	Register("grid token", commandGridToken)
+	Register("grid served-model", commandGridServedModel)
 	Register("grid classifier list", commandGridClassifierList)
 	Register("grid team-settings describe", commandGridTeamSettingsDescribe)
 	Register("grid team-settings update", commandGridTeamSettingsUpdate)
@@ -303,8 +305,9 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		return nil, err
 	}
 	helper := ""
+	routers := slices.ContainsFunc(routes, func(r harness.Route) bool { return r.Router })
 	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool {
-		return t.record.CredentialSource == harness.CredentialSourceHelper
+		return t.record.CredentialSource == harness.CredentialSourceHelper || (routers && t.Name() == harness.ClaudeCode)
 	}) {
 		var warning string
 		if helper, warning, err = gridHelperPath(); err != nil {
@@ -344,7 +347,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		if target.record.CredentialSource == harness.CredentialSourceHelper {
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
-		current, err := target.Prepare(target.detection.Path, callable, selection.Selection, endpoint, targetHelper)
+		current, err := target.Prepare(target.detection.Path, callable, selection.Selection, endpoint, targetHelper, helper)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -427,6 +430,11 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	plans, err := gridPlanHarnessSetup(ctx, api, team, listed, targets, false)
 	if err != nil {
 		return err
+	}
+	for _, p := range plans {
+		for _, note := range p.Notes {
+			ctx.LogLine(note)
+		}
 	}
 	var sessionToken string
 	if credentialSource == harness.CredentialSourceSession {
@@ -1736,5 +1744,25 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 		return err
 	}
 	ctx.Output(token.Token + "\n")
+	return nil
+}
+
+func commandGridServedModel(ctx *CommandContext, flags *cmd.GridServedModelFlags) error {
+	var payload struct {
+		TranscriptPath string `json:"transcript_path"`
+	}
+	if json.NewDecoder(ctx.Stdin).Decode(&payload) != nil || payload.TranscriptPath == "" {
+		return nil
+	}
+	requested, served := harness.ClaudeServedModel(payload.TranscriptPath)
+	switch {
+	case served == "" || !slices.Contains(flags.Router, requested):
+	case flags.Hook:
+		if message, err := json.Marshal(map[string]string{"systemMessage": "Served by " + served + " via " + requested}); err == nil {
+			ctx.OutputLine(string(message))
+		}
+	default:
+		ctx.OutputLine(requested + " → " + served)
+	}
 	return nil
 }
