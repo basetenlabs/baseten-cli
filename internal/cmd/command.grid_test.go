@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -1453,6 +1454,134 @@ func Test_Grid_ServedModel(t *testing.T) {
 	h.Require.Empty(run("not json"))
 	h.Require.Empty(run(""))
 	h.Require.Empty(run(`{"transcript_path": 7}`))
+}
+
+func Test_Grid_ServedModel_HookProcess(t *testing.T) {
+	if os.Getenv("BASETEN_TEST_RUN_CLI") != "1" {
+		t.Skip("runs the CLI as the Claude Code Stop hook of Test_Grid_ServedModel_RealClaudeCode")
+	}
+	if internalcmd.Execute(context.Background(), internalcmd.ExecuteOptions{Args: flag.Args()}) != nil {
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func Test_Grid_ServedModel_RealClaudeCode(t *testing.T) {
+	skipUnlessSupported(t)
+	binary, err := exec.LookPath("claude")
+	if err != nil {
+		t.Skip("claude is not on PATH")
+	}
+	var mu sync.Mutex
+	var requested []string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		requested = append(requested, body.Model)
+		mu.Unlock()
+		texts := []string{"Checking.", "OK from served-x."}
+		message := map[string]any{"id": "msg_served", "type": "message", "role": "assistant", "model": "acme/served-x",
+			"stop_reason": "end_turn", "stop_sequence": nil, "usage": map[string]any{"input_tokens": 5, "output_tokens": 5}}
+		switch {
+		case r.URL.Path == "/v1/messages/count_tokens":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"input_tokens": 5})
+		case r.URL.Path != "/v1/messages":
+			http.NotFound(w, r)
+		case !body.Stream:
+			var content []any
+			for _, text := range texts {
+				content = append(content, map[string]any{"type": "text", "text": text})
+			}
+			message["content"] = content
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(message)
+		default:
+			w.Header().Set("Content-Type", "text/event-stream")
+			event := func(name string, data map[string]any) {
+				raw, _ := json.Marshal(data)
+				_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, raw)
+			}
+			message["content"], message["stop_reason"] = []any{}, nil
+			event("message_start", map[string]any{"type": "message_start", "message": message})
+			for i, text := range texts {
+				event("content_block_start", map[string]any{"type": "content_block_start", "index": i, "content_block": map[string]any{"type": "text", "text": ""}})
+				event("content_block_delta", map[string]any{"type": "content_block_delta", "index": i, "delta": map[string]any{"type": "text_delta", "text": text}})
+				event("content_block_stop", map[string]any{"type": "content_block_stop", "index": i})
+			}
+			event("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": map[string]any{"output_tokens": 5}})
+			event("message_stop", map[string]any{"type": "message_stop"})
+		}
+	}))
+	t.Cleanup(gateway.Close)
+	h, api := gridAPI(t, gateway.URL)
+	wide := maps.Clone(harnessRouteMetadata)
+	wide["context_window"] = 1000000
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
+		"items": []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-auto", "name": "acme/auto", "display_name": "Auto", "invoke_url": gateway.URL, "metadata": wide,
+			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-auto", "slug": "acme/auto"}, "allowed_routes": []any{}}}},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	configDir := filepath.Join(root, ".claude")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", configDir, "--use-session-credential", "--yes"))
+
+	exe, err := os.Executable()
+	h.Require.NoError(err)
+	payloadPath, hookOutput, hook := filepath.Join(root, "stop-payload.json"), filepath.Join(root, "stop-hook.out"), filepath.Join(root, "stop-hook.sh")
+	h.Require.NoError(os.WriteFile(hook, []byte("#!/bin/sh\ntee '"+payloadPath+"' | BASETEN_TEST_RUN_CLI=1 '"+exe+
+		"' -test.run='^Test_Grid_ServedModel_HookProcess$' -- grid served-model --router 'acme/auto=Auto' --hook | tee '"+hookOutput+"'\n"), 0o700))
+	settingsPath := harnessSettingsFile("claude-code", configDir)
+	settings := readHarnessSettings(t, "claude-code", settingsPath)
+	settings["hooks"] = map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hook}}}}}
+	raw, err := json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(settingsPath, raw, 0o600))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	run := exec.CommandContext(ctx, binary, "-p", "Reply with OK.")
+	run.Dir = t.TempDir()
+	run.Env = []string{
+		"HOME=" + root, "CLAUDE_CONFIG_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + t.TempDir(), "DISABLE_AUTOUPDATER=1",
+		"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+		"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+	}
+	run.WaitDelay = 5 * time.Second
+	output, err := run.CombinedOutput()
+	h.Require.NoError(err, string(output))
+	mu.Lock()
+	h.Require.Contains(requested, "acme/auto", string(output))
+	mu.Unlock()
+
+	var stop struct {
+		HookEventName        string `json:"hook_event_name"`
+		TranscriptPath       string `json:"transcript_path"`
+		LastAssistantMessage string `json:"last_assistant_message"`
+	}
+	captured, err := os.ReadFile(payloadPath)
+	h.Require.NoError(err, "claude -p ran the Stop hook\n%s", output)
+	h.Require.NoError(json.Unmarshal(captured, &stop))
+	h.Require.Equal("Stop", stop.HookEventName)
+	h.Require.Equal("OK from served-x.", stop.LastAssistantMessage, "last_assistant_message is the final text block")
+	printed, err := os.ReadFile(hookOutput)
+	h.Require.NoError(err)
+	h.Require.Equal(`{"systemMessage":"Served by acme/served-x via Auto"}`+"\n", string(printed))
+
+	transcripts, err := filepath.Glob(filepath.Join(configDir, "projects", "*", "*.jsonl"))
+	h.Require.NoError(err)
+	h.Require.Equal([]string{stop.TranscriptPath}, transcripts)
+	statusLine, err := json.Marshal(map[string]any{"transcript_path": transcripts[0]})
+	h.Require.NoError(err)
+	h.Stdin.Reset()
+	h.Stdin.Write(statusLine)
+	h.Require.NoError(h.Execute("grid", "served-model", "--router", "acme/auto=Auto"))
+	h.Require.Equal("Auto → acme/served-x\n", h.Stdout.String())
 }
 
 // serveFirstPartyRoutes serves an Anthropic route and an OpenAI route, each
