@@ -17,7 +17,7 @@ func init() {
 	Register("grid machine-user delete", commandGridMachineUserDelete)
 	Register("grid machine-user api-key list", commandGridMachineUserAPIKeyList)
 	Register("grid machine-user api-key create", commandGridMachineUserAPIKeyCreate)
-	Register("grid machine-user api-key revoke", commandGridMachineUserAPIKeyRevoke)
+	Register("grid machine-user api-key delete", commandGridMachineUserAPIKeyDelete)
 }
 
 func commandGridMachineUserList(ctx *CommandContext, f *cmd.GridMachineUserListFlags) error {
@@ -69,7 +69,7 @@ func commandGridMachineUserCreate(ctx *CommandContext, f *cmd.GridMachineUserCre
 		return cmd.NewErrUsagef("--name must not be empty")
 	}
 	if f.NoAPIKey && f.APIKeyName != "" {
-		return cmd.NewErrUsagef("--api-key-name cannot be combined with --no-api-key")
+		return cmd.NewErrUsagef("--api-key-name and --no-api-key are mutually exclusive")
 	}
 	body := managementapi.CreateGridMachineUserRequest{Name: f.Name}
 	if !f.NoAPIKey {
@@ -107,6 +107,9 @@ func commandGridMachineUserCreate(ctx *CommandContext, f *cmd.GridMachineUserCre
 }
 
 func commandGridMachineUserDescribe(ctx *CommandContext, f *cmd.GridMachineUserDescribeFlags) error {
+	if f.ID == "" {
+		return cmd.NewErrUsagef("--id must not be empty")
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -120,6 +123,9 @@ func commandGridMachineUserDescribe(ctx *CommandContext, f *cmd.GridMachineUserD
 }
 
 func commandGridMachineUserUpdate(ctx *CommandContext, f *cmd.GridMachineUserUpdateFlags) error {
+	if f.ID == "" {
+		return cmd.NewErrUsagef("--id must not be empty")
+	}
 	if f.Name == "" {
 		return cmd.NewErrUsagef("--name must not be empty")
 	}
@@ -136,6 +142,9 @@ func commandGridMachineUserUpdate(ctx *CommandContext, f *cmd.GridMachineUserUpd
 }
 
 func commandGridMachineUserDelete(ctx *CommandContext, f *cmd.GridMachineUserDeleteFlags) error {
+	if f.ID == "" {
+		return cmd.NewErrUsagef("--id must not be empty")
+	}
 	if !f.Yes {
 		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete machine user %s and revoke its API keys?", f.ID)); err != nil {
 			return err
@@ -170,6 +179,9 @@ func outputGridMachineUser(ctx *CommandContext, user *managementapi.GridMachineU
 }
 
 func commandGridMachineUserAPIKeyList(ctx *CommandContext, f *cmd.GridMachineUserAPIKeyListFlags) error {
+	if f.MachineUserID == "" {
+		return cmd.NewErrUsagef("--machine-user-id must not be empty")
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -199,6 +211,9 @@ func commandGridMachineUserAPIKeyList(ctx *CommandContext, f *cmd.GridMachineUse
 }
 
 func commandGridMachineUserAPIKeyCreate(ctx *CommandContext, f *cmd.GridMachineUserAPIKeyCreateFlags) error {
+	if f.MachineUserID == "" {
+		return cmd.NewErrUsagef("--machine-user-id must not be empty")
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -215,7 +230,10 @@ func commandGridMachineUserAPIKeyCreate(ctx *CommandContext, f *cmd.GridMachineU
 	return nil
 }
 
-func commandGridMachineUserAPIKeyRevoke(ctx *CommandContext, f *cmd.GridMachineUserAPIKeyRevokeFlags) error {
+func commandGridMachineUserAPIKeyDelete(ctx *CommandContext, f *cmd.GridMachineUserAPIKeyDeleteFlags) error {
+	if f.MachineUserID == "" {
+		return cmd.NewErrUsagef("--machine-user-id must not be empty")
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -232,12 +250,12 @@ func commandGridMachineUserAPIKeyRevoke(ctx *CommandContext, f *cmd.GridMachineU
 	}
 	tomb, err := cl.API().DeleteGridMachineUsersApiKeys(ctx, f.MachineUserID, prefix)
 	if err != nil {
-		return fmt.Errorf("revoking API key: %w", err)
+		return fmt.Errorf("deleting API key: %w", err)
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(tomb)
 		return nil
 	}
-	ctx.Logf("Revoked API key %s\n", tomb.Prefix)
+	ctx.Logf("Deleted API key %s\n", tomb.Prefix)
 	return nil
 }

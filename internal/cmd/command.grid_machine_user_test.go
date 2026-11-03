@@ -50,7 +50,7 @@ func Test_Grid_MachineUser_Create_APIKeyNameConflictsWithNoAPIKey(t *testing.T) 
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	err := h.Execute("grid", "machine-user", "create", "--name", "review-bot", "--no-api-key", "--api-key-name", "ci")
-	h.Require.ErrorContains(err, "--api-key-name cannot be combined with --no-api-key")
+	h.Require.ErrorContains(err, "--api-key-name and --no-api-key are mutually exclusive")
 	h.Require.Empty(m.Calls())
 }
 
@@ -172,19 +172,41 @@ func Test_Grid_MachineUser_APIKey_Create_PrintsKeyOnce(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Save this key now.")
 }
 
-func Test_Grid_MachineUser_APIKey_Revoke_ByName(t *testing.T) {
+func Test_Grid_MachineUser_APIKey_Delete_ByName(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := gridMachineUserKeys(h)
 	m.SetRoute("DELETE", "/v1/grid/machine_users/u123456/api_keys/bsnt_ci", 200, map[string]any{"prefix": "bsnt_ci"})
-	h.Require.NoError(h.Execute("grid", "machine-user", "api-key", "revoke", "--machine-user-id", "u123456", "--name", "ci"))
+	h.Require.NoError(h.Execute("grid", "machine-user", "api-key", "delete", "--machine-user-id", "u123456", "--name", "ci"))
 	h.Require.NotNil(m.FindCall("DELETE", "/v1/grid/machine_users/u123456/api_keys/bsnt_ci"))
-	h.Require.Contains(h.Stderr.String(), "Revoked API key bsnt_ci")
+	h.Require.Contains(h.Stderr.String(), "Deleted API key bsnt_ci")
 }
 
-func Test_Grid_MachineUser_APIKey_Revoke_ByPrefixSkipsList(t *testing.T) {
+func Test_Grid_MachineUser_APIKey_Delete_ByPrefixSkipsList(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("DELETE", "/v1/grid/machine_users/u123456/api_keys/bsnt_ci", 200, map[string]any{"prefix": "bsnt_ci"})
-	h.Require.NoError(h.Execute("grid", "machine-user", "api-key", "revoke", "--machine-user-id", "u123456", "--prefix", "bsnt_ci"))
+	h.Require.NoError(h.Execute("grid", "machine-user", "api-key", "delete", "--machine-user-id", "u123456", "--prefix", "bsnt_ci"))
 	h.Require.Len(m.Calls(), 1)
+}
+
+func Test_Grid_MachineUser_EmptyIDIsUsageError(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"describe", "--id", ""}, "--id must not be empty"},
+		{[]string{"update", "--id", "", "--name", "night-shift"}, "--id must not be empty"},
+		{[]string{"delete", "--id", "", "--yes"}, "--id must not be empty"},
+		{[]string{"api-key", "list", "--machine-user-id", ""}, "--machine-user-id must not be empty"},
+		{[]string{"api-key", "create", "--machine-user-id", ""}, "--machine-user-id must not be empty"},
+		{[]string{"api-key", "delete", "--machine-user-id", "", "--prefix", "bsnt_ci"}, "--machine-user-id must not be empty"},
+	} {
+		t.Run(tc.args[0]+" "+tc.args[1], func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			err := h.Execute(append([]string{"grid", "machine-user"}, tc.args...)...)
+			h.Require.ErrorContains(err, tc.want)
+			h.Require.Empty(m.Calls())
+		})
+	}
 }

@@ -436,7 +436,7 @@ type OrgAPIKeyCreateFlags struct {
 	Type      string    `flag:"type" desc:"API key category." required:"true" enum:"personal,workspace-export-metrics,workspace-invoke,workspace-manage-all,workspace-manage-api-keys,grid"`
 	Name      string    `flag:"name" desc:"Optional human-readable name for the key."`
 	ModelIDs  []string  `flag:"model-id" desc:"Restrict the key to a specific model. May be repeated. Only valid with --type workspace-export-metrics or workspace-invoke."`
-	Team      string    `flag:"team" desc:"Team name or ID to create the key in. Defaults to the organization's default team. Run 'baseten org team list' to see teams."`
+	Team      string    `flag:"team" desc:"Team name or ID to create the key in. Defaults to the organization's default team, or with --type grid to your only team. Run 'baseten org team list' to see teams."`
 	ExpiresAt time.Time `flag:"expires-at" desc:"Expiration time, ISO 8601 (for example 2026-12-01T18:00). Must be in the future. Omit for a key that never expires."`
 }
 

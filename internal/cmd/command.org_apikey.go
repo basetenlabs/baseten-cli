@@ -102,8 +102,8 @@ func commandOrgAPIKeyCreate(ctx *CommandContext, flags *cmd.OrgAPIKeyCreateFlags
 	if err != nil {
 		return err
 	}
-	// A Grid key spends from the creator's budget in one team, so like the other
-	// Grid commands it falls back to your only team, not the organization's default.
+	// A Grid key spends from the creator's budget in one team, so it falls back
+	// to your only team rather than the organization's default.
 	if flags.Type == "grid" && teamID == "" {
 		team, err := resolveTeamOrOnly(ctx, cl.API(), "")
 		if err != nil {

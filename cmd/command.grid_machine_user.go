@@ -146,21 +146,21 @@ var commandGridMachineUser = Command{
 					},
 				},
 				{
-					Name:    "revoke",
-					Summary: "Revoke a machine user's API key (PRE-RELEASE)",
-					Description: gridPrereleaseNotice + "Revokes one key; the machine user and its other keys are unchanged. " +
+					Name:    "delete",
+					Summary: "Delete a machine user's API key (PRE-RELEASE)",
+					Description: gridPrereleaseNotice + "Deletes one key; the machine user and its other keys are unchanged. " +
 						"Exactly one of --name or --prefix is required. Requires team admin.",
-					Flags: GridMachineUserAPIKeyRevokeFlags{},
+					Flags: GridMachineUserAPIKeyDeleteFlags{},
 					Output: &CommandOutput[managementapi.APIKeyTombstone]{
-						TextDescription: "Prints \"Revoked API key <prefix>\" to stderr on success; no stdout output.",
+						TextDescription: "Prints \"Deleted API key <prefix>\" to stderr on success; no stdout output.",
 						Examples: []CommandExample{{
-							Description: "Revoke a key by name.",
-							Command:     "baseten grid machine-user api-key revoke --machine-user-id <id> --name ci",
+							Description: "Delete a key by name.",
+							Command:     "baseten grid machine-user api-key delete --machine-user-id <id> --name ci",
 						}},
 						JQExample: CommandExample{
-							Description: "Print the revoked key's prefix.",
+							Description: "Print the deleted key's prefix.",
 							CommandLines: []string{
-								"baseten grid machine-user api-key revoke --machine-user-id <id>",
+								"baseten grid machine-user api-key delete --machine-user-id <id>",
 								"--prefix <prefix> --jq '.prefix'",
 							},
 						},
@@ -224,9 +224,9 @@ type GridMachineUserAPIKeyCreateFlags struct {
 	Name string `flag:"name" desc:"Name of the API key."`
 }
 
-type GridMachineUserAPIKeyRevokeFlags struct {
+type GridMachineUserAPIKeyDeleteFlags struct {
 	CommandFlags
 	GridMachineUserKeyOwnerFlags
-	Name   string `flag:"name" desc:"Name of the API key to revoke." oneof:"identifier"`
-	Prefix string `flag:"prefix" desc:"Prefix of the API key to revoke (as shown in list)." oneof:"identifier"`
+	Name   string `flag:"name" desc:"Name of the API key to delete." oneof:"identifier"`
+	Prefix string `flag:"prefix" desc:"Prefix of the API key to delete (as shown in list)." oneof:"identifier"`
 }
