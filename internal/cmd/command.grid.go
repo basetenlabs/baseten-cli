@@ -1778,21 +1778,22 @@ func commandGridServedModel(ctx *CommandContext, flags *cmd.GridServedModelFlags
 	var payload struct {
 		TranscriptPath       string `json:"transcript_path"`
 		LastAssistantMessage string `json:"last_assistant_message"`
+		PromptID             string `json:"prompt_id"`
 	}
 	if json.NewDecoder(ctx.Stdin).Decode(&payload) != nil || payload.TranscriptPath == "" {
 		return nil
 	}
-	message := ""
+	message, prompt := "", ""
 	if flags.Hook {
-		message = payload.LastAssistantMessage
+		message, prompt = payload.LastAssistantMessage, payload.PromptID
 	}
-	requested, served := gridAwaitServedModel(ctx, payload.TranscriptPath, message, cmp.Or(flags.Wait, gridServedModelWait))
+	requested, served := gridAwaitServedModel(ctx, payload.TranscriptPath, message, prompt, cmp.Or(flags.Wait, gridServedModelWait))
 	label, ok := gridServedModelRouterLabel(flags.Router, requested)
 	switch {
 	case served == "" || !ok:
 	case flags.Hook:
-		if message, err := json.Marshal(map[string]string{"systemMessage": "Served by " + served + " via " + label}); err == nil {
-			ctx.OutputLine(string(message))
+		if out, err := json.Marshal(map[string]string{"systemMessage": "Served by " + served + " via " + label}); err == nil {
+			ctx.OutputLine(string(out))
 		}
 	default:
 		ctx.OutputLine(label + " → " + served)
@@ -1800,10 +1801,10 @@ func commandGridServedModel(ctx *CommandContext, flags *cmd.GridServedModelFlags
 	return nil
 }
 
-func gridAwaitServedModel(ctx context.Context, transcript, message string, wait time.Duration) (requested, served string) {
+func gridAwaitServedModel(ctx context.Context, transcript, message, prompt string, wait time.Duration) (requested, served string) {
 	deadline := time.Now().Add(wait)
 	for {
-		requested, served = harness.ClaudeServedModel(transcript, message)
+		requested, served = harness.ClaudeServedModel(transcript, message, prompt)
 		if served != "" || message == "" || time.Now().After(deadline) {
 			return requested, served
 		}

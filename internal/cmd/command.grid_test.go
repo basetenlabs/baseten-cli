@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1390,19 +1391,19 @@ func Test_Grid_ServedModel(t *testing.T) {
 		h.Require.NoError(err)
 		return string(line)
 	}
-	stop := func(path, message string) string {
-		raw, err := json.Marshal(map[string]any{"session_id": "s", "transcript_path": path, "hook_event_name": "Stop", "last_assistant_message": message})
+	stop := func(path, message, prompt string) string {
+		raw, err := json.Marshal(map[string]any{"session_id": "s", "transcript_path": path, "hook_event_name": "Stop", "last_assistant_message": message, "prompt_id": prompt})
 		h.Require.NoError(err)
 		return string(raw)
 	}
 
 	turns := transcript("turns.jsonl", user, reply("acme/auto[1m]", "zai-org/GLM-5.3-Flash", "Thinking.", false),
 		reply("acme/auto[1m]", "zai-org/GLM-5.3-Flash", "\n\nFirst answer.\n", false), user, reply("acme/code", "moonshotai/Kimi-K3", "Second answer.", false))
-	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(turns, "First answer."), "--hook"))
-	h.Require.Equal(`{"systemMessage":"Served by moonshotai/Kimi-K3 via x=y's"}`+"\n", run(stop(turns, ""), "--hook"))
-	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", run(stop(turns, "First answer.")))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(turns, "First answer.", ""), "--hook"))
+	h.Require.Equal(`{"systemMessage":"Served by moonshotai/Kimi-K3 via x=y's"}`+"\n", run(stop(turns, "", ""), "--hook"))
+	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", run(stop(turns, "First answer.", "")))
 	started := time.Now()
-	h.Require.Empty(run(stop(turns, "Never said."), "--hook", "--wait", "300ms"))
+	h.Require.Empty(run(stop(turns, "Never said.", ""), "--hook", "--wait", "300ms"))
 	h.Require.GreaterOrEqual(time.Since(started), 300*time.Millisecond)
 	h.Require.Less(time.Since(started), 2*time.Second)
 
@@ -1417,12 +1418,41 @@ func Test_Grid_ServedModel(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(lagging, "Late answer."), "--hook"))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(lagging, "Late answer.", ""), "--hook"))
+
+	prompted := func(id string) string {
+		line, err := json.Marshal(map[string]any{"type": "user", "promptId": id, "message": map[string]any{"role": "user", "content": "hi"}})
+		h.Require.NoError(err)
+		return string(line)
+	}
+	repeated := transcript("repeated.jsonl", prompted("p1"), reply("acme/auto", "zai-org/GLM-5.3-Flash", "Done.", false), prompted("p2"))
+	h.Require.Empty(run(stop(repeated, "Done.", "p2"), "--hook", "--wait", "300ms"))
+	h.Require.Empty(run(stop(repeated, "Done.", "p-unknown"), "--hook", "--wait", "100ms"))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(repeated, "Done.", ""), "--hook"))
+	time.AfterFunc(200*time.Millisecond, func() {
+		f, err := os.OpenFile(repeated, os.O_APPEND|os.O_WRONLY, 0)
+		if err == nil {
+			_, err = f.WriteString(reply("acme/code", "moonshotai/Kimi-K3", "Done.", false) + "\n")
+			err = errors.Join(err, f.Close())
+		}
+		if err != nil {
+			t.Error(err)
+		}
+	})
+	h.Require.Equal(`{"systemMessage":"Served by moonshotai/Kimi-K3 via x=y's"}`+"\n", run(stop(repeated, "Done.", "p2"), "--hook"))
+
+	filler, err := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "tool_result", "tool_use_id": "t", "content": strings.Repeat("y", 200<<10)},
+	}}})
+	h.Require.NoError(err)
+	distant := transcript("distant.jsonl", prompted("p1"), reply("acme/code", "moonshotai/Kimi-K3", "Found it.", false),
+		prompted("p2"), reply("acme/auto", "zai-org/GLM-5.3-Flash", "Looking.", false), string(filler), reply("acme/auto", "zai-org/GLM-5.3-Flash", "Found it.", false))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(distant, "Found it.", "p2"), "--hook"))
 
 	sidechain := transcript("sidechain.jsonl", user, reply("acme/auto", "zai-org/GLM-5.3-Flash", "Main answer.", false), reply("acme/code", "moonshotai/Kimi-K3", "Subagent answer.", true))
-	h.Require.Equal("Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash\n", run(stop(sidechain, "")))
-	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(sidechain, "Main answer."), "--hook"))
-	h.Require.Empty(run(stop(sidechain, "Subagent answer."), "--hook", "--wait", "100ms"))
+	h.Require.Equal("Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash\n", run(stop(sidechain, "", "")))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(sidechain, "Main answer.", ""), "--hook"))
+	h.Require.Empty(run(stop(sidechain, "Subagent answer.", ""), "--hook", "--wait", "100ms"))
 
 	routed := transcript("routed.jsonl", user, assistant("acme/primary", "acme/primary"), user, assistant("acme/auto[1m]", "zai-org/GLM-5.3-Flash"))
 	h.Require.Equal("Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash\n", run(payload(routed)))
@@ -1484,8 +1514,11 @@ func Test_Grid_ServedModel_RealClaudeCode(t *testing.T) {
 		mu.Lock()
 		requested = append(requested, body.Model)
 		mu.Unlock()
-		texts := []string{"Checking.", "OK from served-x."}
-		message := map[string]any{"id": "msg_served", "type": "message", "role": "assistant", "model": "acme/served-x",
+		texts, model := []string{"Checking.", "Done."}, "acme/served-x"
+		if bytes.Contains(raw, []byte("Reply again.")) {
+			model = "acme/served-y"
+		}
+		message := map[string]any{"id": "msg_served", "type": "message", "role": "assistant", "model": model,
 			"stop_reason": "end_turn", "stop_sequence": nil, "usage": map[string]any{"input_tokens": 5, "output_tokens": 5}}
 		switch {
 		case r.URL.Path == "/v1/messages/count_tokens":
@@ -1533,9 +1566,9 @@ func Test_Grid_ServedModel_RealClaudeCode(t *testing.T) {
 
 	exe, err := os.Executable()
 	h.Require.NoError(err)
-	payloadPath, hookOutput, hook := filepath.Join(root, "stop-payload.json"), filepath.Join(root, "stop-hook.out"), filepath.Join(root, "stop-hook.sh")
-	h.Require.NoError(os.WriteFile(hook, []byte("#!/bin/sh\ntee '"+payloadPath+"' | BASETEN_TEST_RUN_CLI=1 '"+exe+
-		"' -test.run='^Test_Grid_ServedModel_HookProcess$' -- grid served-model --router 'acme/auto=Auto' --hook | tee '"+hookOutput+"'\n"), 0o700))
+	payloadPath, hookOutput, hook := filepath.Join(root, "stop-payloads.jsonl"), filepath.Join(root, "stop-hook.out"), filepath.Join(root, "stop-hook.sh")
+	h.Require.NoError(os.WriteFile(hook, []byte("#!/bin/sh\ntee -a '"+payloadPath+"' | BASETEN_TEST_RUN_CLI=1 '"+exe+
+		"' -test.run='^Test_Grid_ServedModel_HookProcess$' -- grid served-model --router 'acme/auto=Auto' --hook | tee -a '"+hookOutput+"'\n"), 0o700))
 	settingsPath := harnessSettingsFile("claude-code", configDir)
 	settings := readHarnessSettings(t, "claude-code", settingsPath)
 	settings["hooks"] = map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hook}}}}}
@@ -1545,43 +1578,56 @@ func Test_Grid_ServedModel_RealClaudeCode(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	run := exec.CommandContext(ctx, binary, "-p", "Reply with OK.")
-	run.Dir = t.TempDir()
-	run.Env = []string{
-		"HOME=" + root, "CLAUDE_CONFIG_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + t.TempDir(), "DISABLE_AUTOUPDATER=1",
-		"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
-		"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+	work, tmp := t.TempDir(), t.TempDir()
+	for _, args := range [][]string{{"-p", "Reply with OK."}, {"-p", "--continue", "Reply again."}} {
+		run := exec.CommandContext(ctx, binary, args...)
+		run.Dir = work
+		run.Env = []string{
+			"HOME=" + root, "CLAUDE_CONFIG_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + tmp, "DISABLE_AUTOUPDATER=1",
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}
+		run.WaitDelay = 5 * time.Second
+		output, err := run.CombinedOutput()
+		h.Require.NoError(err, string(output))
 	}
-	run.WaitDelay = 5 * time.Second
-	output, err := run.CombinedOutput()
-	h.Require.NoError(err, string(output))
 	mu.Lock()
-	h.Require.Contains(requested, "acme/auto", string(output))
+	h.Require.Contains(requested, "acme/auto")
 	mu.Unlock()
 
-	var stop struct {
+	type stopPayload struct {
 		HookEventName        string `json:"hook_event_name"`
 		TranscriptPath       string `json:"transcript_path"`
 		LastAssistantMessage string `json:"last_assistant_message"`
+		PromptID             string `json:"prompt_id"`
 	}
 	captured, err := os.ReadFile(payloadPath)
-	h.Require.NoError(err, "claude -p ran the Stop hook\n%s", output)
-	h.Require.NoError(json.Unmarshal(captured, &stop))
-	h.Require.Equal("Stop", stop.HookEventName)
-	h.Require.Equal("OK from served-x.", stop.LastAssistantMessage, "last_assistant_message is the final text block")
+	h.Require.NoError(err, "claude -p ran the Stop hook")
+	var stops []stopPayload
+	for _, line := range strings.Split(strings.TrimSpace(string(captured)), "\n") {
+		var stop stopPayload
+		h.Require.NoError(json.Unmarshal([]byte(line), &stop))
+		h.Require.Equal("Stop", stop.HookEventName)
+		h.Require.Equal("Done.", stop.LastAssistantMessage, "last_assistant_message is the final text block")
+		h.Require.NotEmpty(stop.PromptID)
+		stops = append(stops, stop)
+	}
+	h.Require.Len(stops, 2)
+	h.Require.NotEqual(stops[0].PromptID, stops[1].PromptID)
+	h.Require.Equal(stops[0].TranscriptPath, stops[1].TranscriptPath)
 	printed, err := os.ReadFile(hookOutput)
 	h.Require.NoError(err)
-	h.Require.Equal(`{"systemMessage":"Served by acme/served-x via Auto"}`+"\n", string(printed))
+	h.Require.Equal(`{"systemMessage":"Served by acme/served-x via Auto"}`+"\n"+`{"systemMessage":"Served by acme/served-y via Auto"}`+"\n", string(printed))
 
 	transcripts, err := filepath.Glob(filepath.Join(configDir, "projects", "*", "*.jsonl"))
 	h.Require.NoError(err)
-	h.Require.Equal([]string{stop.TranscriptPath}, transcripts)
+	h.Require.Equal([]string{stops[0].TranscriptPath}, transcripts)
 	statusLine, err := json.Marshal(map[string]any{"transcript_path": transcripts[0]})
 	h.Require.NoError(err)
 	h.Stdin.Reset()
 	h.Stdin.Write(statusLine)
 	h.Require.NoError(h.Execute("grid", "served-model", "--router", "acme/auto=Auto"))
-	h.Require.Equal("Auto → acme/served-x\n", h.Stdout.String())
+	h.Require.Equal("Auto → acme/served-y\n", h.Stdout.String())
 }
 
 // serveFirstPartyRoutes serves an Anthropic route and an OpenAI route, each

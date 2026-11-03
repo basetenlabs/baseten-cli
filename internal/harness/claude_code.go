@@ -314,8 +314,11 @@ func claudeHasServedModelHook(data map[string]any) bool {
 	return slices.ContainsFunc(stop, claudeServedModelHook)
 }
 
-func ClaudeServedModel(transcript, message string) (requested, served string) {
+func ClaudeServedModel(transcript, message, prompt string) (requested, served string) {
 	message = strings.TrimSpace(message)
+	if message == "" {
+		prompt = ""
+	}
 	f, err := os.Open(transcript)
 	if err != nil {
 		return "", ""
@@ -331,17 +334,18 @@ func ClaudeServedModel(transcript, message string) (requested, served string) {
 		if _, err := f.ReadAt(buf, size-window); err != nil {
 			return "", ""
 		}
-		var ok bool
-		if requested, served, ok = claudeLastServed(buf, window < size, message); ok || window == size {
+		var done bool
+		if requested, served, done = claudeLastServed(buf, window < size, message, prompt); done || window == size {
 			return requested, served
 		}
 	}
 }
 
-func claudeLastServed(window []byte, partial bool, message string) (requested, served string, ok bool) {
+func claudeLastServed(window []byte, partial bool, message, prompt string) (requested, served string, done bool) {
 	if partial {
 		_, window, _ = bytes.Cut(window, []byte("\n"))
 	}
+	found := false
 	for len(window) > 0 {
 		i := bytes.LastIndexByte(window, '\n')
 		line := window[i+1:]
@@ -349,19 +353,28 @@ func claudeLastServed(window []byte, partial bool, message string) (requested, s
 		var entry struct {
 			Type           string `json:"type"`
 			IsSidechain    bool   `json:"isSidechain"`
+			PromptID       string `json:"promptId"`
 			RequestedModel any    `json:"requestedModel"`
 			Message        struct {
 				Model   string          `json:"model"`
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
-		if !bytes.Contains(line, []byte(`"assistant"`)) || json.Unmarshal(line, &entry) != nil || entry.IsSidechain {
+		relevant := bytes.Contains(line, []byte(`"assistant"`)) || (prompt != "" && bytes.Contains(line, []byte(prompt)))
+		if !relevant || json.Unmarshal(line, &entry) != nil || entry.IsSidechain {
 			continue
 		}
-		if entry.Type == "assistant" && entry.Message.Model != "" && entry.Message.Model != "<synthetic>" &&
-			(message == "" || claudeLastText(entry.Message.Content) == message) {
+		switch {
+		case prompt != "" && entry.Type == "user" && entry.PromptID == prompt:
+			return requested, served, true
+		case found:
+		case entry.Type == "assistant" && entry.Message.Model != "" && entry.Message.Model != "<synthetic>" &&
+			(message == "" || claudeLastText(entry.Message.Content) == message):
 			alias, _ := entry.RequestedModel.(string)
-			return strings.TrimSuffix(alias, "[1m]"), entry.Message.Model, true
+			requested, served, found = strings.TrimSuffix(alias, "[1m]"), entry.Message.Model, true
+			if prompt == "" {
+				return requested, served, true
+			}
 		}
 	}
 	return "", "", false
