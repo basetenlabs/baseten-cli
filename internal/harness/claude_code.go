@@ -313,7 +313,8 @@ func claudeHasServedModelHook(data map[string]any) bool {
 	return slices.ContainsFunc(stop, claudeServedModelHook)
 }
 
-func ClaudeServedModel(transcript string) (requested, served string) {
+func ClaudeServedModel(transcript, message string) (requested, served string) {
+	message = strings.TrimSpace(message)
 	f, err := os.Open(transcript)
 	if err != nil {
 		return "", ""
@@ -330,13 +331,13 @@ func ClaudeServedModel(transcript string) (requested, served string) {
 			return "", ""
 		}
 		var ok bool
-		if requested, served, ok = claudeLastServed(buf, window < size); ok || window == size {
+		if requested, served, ok = claudeLastServed(buf, window < size, message); ok || window == size {
 			return requested, served
 		}
 	}
 }
 
-func claudeLastServed(window []byte, partial bool) (requested, served string, ok bool) {
+func claudeLastServed(window []byte, partial bool, message string) (requested, served string, ok bool) {
 	if partial {
 		_, window, _ = bytes.Cut(window, []byte("\n"))
 	}
@@ -346,20 +347,39 @@ func claudeLastServed(window []byte, partial bool) (requested, served string, ok
 		window = window[:max(i, 0)]
 		var entry struct {
 			Type           string `json:"type"`
+			IsSidechain    bool   `json:"isSidechain"`
 			RequestedModel any    `json:"requestedModel"`
 			Message        struct {
-				Model string `json:"model"`
+				Model   string          `json:"model"`
+				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
-		if !bytes.Contains(line, []byte(`"assistant"`)) || json.Unmarshal(line, &entry) != nil {
+		if !bytes.Contains(line, []byte(`"assistant"`)) || json.Unmarshal(line, &entry) != nil || entry.IsSidechain {
 			continue
 		}
-		if entry.Type == "assistant" && entry.Message.Model != "" && entry.Message.Model != "<synthetic>" {
+		if entry.Type == "assistant" && entry.Message.Model != "" && entry.Message.Model != "<synthetic>" &&
+			(message == "" || claudeLastText(entry.Message.Content) == message) {
 			alias, _ := entry.RequestedModel.(string)
 			return strings.TrimSuffix(alias, "[1m]"), entry.Message.Model, true
 		}
 	}
 	return "", "", false
+}
+
+func claudeLastText(content json.RawMessage) string {
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(content, &blocks) != nil {
+		return ""
+	}
+	for _, block := range slices.Backward(blocks) {
+		if block.Type == "text" {
+			return strings.TrimSpace(block.Text)
+		}
+	}
+	return ""
 }
 
 func claudeRoutes(data map[string]any) map[string]string {

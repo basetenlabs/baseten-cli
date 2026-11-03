@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"time"
+
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -616,8 +618,9 @@ type GridTokenFlags struct {
 
 type GridServedModelFlags struct {
 	CommandFlags
-	Router []string `flag:"router" desc:"Router route as <model id>=<display name>. The model ID is as Claude Code settings name it, without a [1m] suffix; the display name labels the output, and without one the model ID does. May be repeated."`
-	Hook   bool     `flag:"hook" desc:"Print Claude Code hook JSON with a systemMessage instead of a status line."`
+	Router []string      `flag:"router" desc:"Router route as <model id>=<display name>. The model ID is as Claude Code settings name it, without a [1m] suffix; the display name labels the output, and without one the model ID does. May be repeated."`
+	Hook   bool          `flag:"hook" desc:"Print Claude Code hook JSON with a systemMessage instead of a status line. The response is the one whose text is the payload's last_assistant_message, when it has one."`
+	Wait   time.Duration `flag:"wait" hidden:"true" desc:"Longest time --hook waits for the transcript to record last_assistant_message. Defaults to 2s."`
 }
 
 // GridStatusFlags are the flags for `baseten grid status`.

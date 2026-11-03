@@ -1769,14 +1769,24 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 	return nil
 }
 
+const (
+	gridServedModelWait         = 2 * time.Second
+	gridServedModelPollInterval = 100 * time.Millisecond
+)
+
 func commandGridServedModel(ctx *CommandContext, flags *cmd.GridServedModelFlags) error {
 	var payload struct {
-		TranscriptPath string `json:"transcript_path"`
+		TranscriptPath       string `json:"transcript_path"`
+		LastAssistantMessage string `json:"last_assistant_message"`
 	}
 	if json.NewDecoder(ctx.Stdin).Decode(&payload) != nil || payload.TranscriptPath == "" {
 		return nil
 	}
-	requested, served := harness.ClaudeServedModel(payload.TranscriptPath)
+	message := ""
+	if flags.Hook {
+		message = payload.LastAssistantMessage
+	}
+	requested, served := gridAwaitServedModel(ctx, payload.TranscriptPath, message, cmp.Or(flags.Wait, gridServedModelWait))
 	label, ok := gridServedModelRouterLabel(flags.Router, requested)
 	switch {
 	case served == "" || !ok:
@@ -1788,6 +1798,21 @@ func commandGridServedModel(ctx *CommandContext, flags *cmd.GridServedModelFlags
 		ctx.OutputLine(label + " → " + served)
 	}
 	return nil
+}
+
+func gridAwaitServedModel(ctx context.Context, transcript, message string, wait time.Duration) (requested, served string) {
+	deadline := time.Now().Add(wait)
+	for {
+		requested, served = harness.ClaudeServedModel(transcript, message)
+		if served != "" || message == "" || time.Now().After(deadline) {
+			return requested, served
+		}
+		select {
+		case <-ctx.Done():
+			return "", ""
+		case <-time.After(gridServedModelPollInterval):
+		}
+	}
 }
 
 func gridServedModelRouterLabel(routers []string, model string) (string, bool) {

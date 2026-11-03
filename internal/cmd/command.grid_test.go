@@ -1383,6 +1383,45 @@ func Test_Grid_ServedModel(t *testing.T) {
 		return string(raw)
 	}
 	user := `{"type":"user","message":{"role":"user","content":"hi"}}`
+	reply := func(requested, model, text string, sidechain bool) string {
+		line, err := json.Marshal(map[string]any{"type": "assistant", "isSidechain": sidechain, "requestedModel": requested,
+			"message": map[string]any{"role": "assistant", "model": model, "content": []any{map[string]any{"type": "text", "text": text}}}})
+		h.Require.NoError(err)
+		return string(line)
+	}
+	stop := func(path, message string) string {
+		raw, err := json.Marshal(map[string]any{"session_id": "s", "transcript_path": path, "hook_event_name": "Stop", "last_assistant_message": message})
+		h.Require.NoError(err)
+		return string(raw)
+	}
+
+	turns := transcript("turns.jsonl", user, reply("acme/auto[1m]", "zai-org/GLM-5.3-Flash", "Thinking.", false),
+		reply("acme/auto[1m]", "zai-org/GLM-5.3-Flash", "\n\nFirst answer.\n", false), user, reply("acme/code", "moonshotai/Kimi-K3", "Second answer.", false))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(turns, "First answer."), "--hook"))
+	h.Require.Equal(`{"systemMessage":"Served by moonshotai/Kimi-K3 via x=y's"}`+"\n", run(stop(turns, ""), "--hook"))
+	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", run(stop(turns, "First answer.")))
+	started := time.Now()
+	h.Require.Empty(run(stop(turns, "Never said."), "--hook", "--wait", "300ms"))
+	h.Require.GreaterOrEqual(time.Since(started), 300*time.Millisecond)
+	h.Require.Less(time.Since(started), 2*time.Second)
+
+	lagging := transcript("lagging.jsonl", user, reply("acme/code", "moonshotai/Kimi-K3", "Earlier answer.", false), user)
+	time.AfterFunc(200*time.Millisecond, func() {
+		f, err := os.OpenFile(lagging, os.O_APPEND|os.O_WRONLY, 0)
+		if err == nil {
+			_, err = f.WriteString(reply("acme/auto", "zai-org/GLM-5.3-Flash", "Late answer.", false) + "\n")
+			err = errors.Join(err, f.Close())
+		}
+		if err != nil {
+			t.Error(err)
+		}
+	})
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(lagging, "Late answer."), "--hook"))
+
+	sidechain := transcript("sidechain.jsonl", user, reply("acme/auto", "zai-org/GLM-5.3-Flash", "Main answer.", false), reply("acme/code", "moonshotai/Kimi-K3", "Subagent answer.", true))
+	h.Require.Equal("Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash\n", run(stop(sidechain, "")))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(sidechain, "Main answer."), "--hook"))
+	h.Require.Empty(run(stop(sidechain, "Subagent answer."), "--hook", "--wait", "100ms"))
 
 	routed := transcript("routed.jsonl", user, assistant("acme/primary", "acme/primary"), user, assistant("acme/auto[1m]", "zai-org/GLM-5.3-Flash"))
 	h.Require.Equal("Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash\n", run(payload(routed)))
