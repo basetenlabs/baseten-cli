@@ -49,14 +49,19 @@ func commandOrgAPIKeyList(ctx *CommandContext, flags *cmd.OrgAPIKeyListFlags) er
 	if err != nil {
 		return fmt.Errorf("listing API keys: %w", err)
 	}
+	outputAPIKeys(ctx, keys)
+	return nil
+}
 
+// outputAPIKeys prints API key metadata, shared by every API key list command.
+func outputAPIKeys(ctx *CommandContext, keys *managementapi.APIKeys) {
 	if ctx.JSON {
 		ctx.OutputJSON(keys)
-		return nil
+		return
 	}
 	if len(keys.Keys) == 0 {
 		ctx.LogLine("No API keys found.")
-		return nil
+		return
 	}
 
 	rows := make([][]string, 0, len(keys.Keys))
@@ -75,17 +80,20 @@ func commandOrgAPIKeyList(ctx *CommandContext, flags *cmd.OrgAPIKeyListFlags) er
 		if keyType == "" {
 			keyType = string(k.Type)
 		}
+		lastUsed := "-"
+		if k.LastUsedAt != nil {
+			lastUsed = k.LastUsedAt.UTC().Format(time.RFC3339)
+		}
 		expires := "never"
 		if k.ExpiresAt != nil {
 			expires = k.ExpiresAt.UTC().Format(time.RFC3339)
 		}
-		rows = append(rows, []string{name, k.Prefix + "****", keyType, team, expires})
+		rows = append(rows, []string{name, k.Prefix + "****", keyType, team, k.CreatedAt.UTC().Format(time.RFC3339), lastUsed, expires})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers: []string{"NAME", "KEY", "TYPE", "TEAM", "EXPIRES"},
+		Headers: []string{"NAME", "KEY", "TYPE", "TEAM", "CREATED", "LAST USED", "EXPIRES"},
 		Rows:    rows,
 	})
-	return nil
 }
 
 func commandOrgAPIKeyCreate(ctx *CommandContext, flags *cmd.OrgAPIKeyCreateFlags) error {
@@ -101,15 +109,6 @@ func commandOrgAPIKeyCreate(ctx *CommandContext, flags *cmd.OrgAPIKeyCreateFlags
 	teamID, err := ResolveTeam(ctx, cl.API(), flags.Team)
 	if err != nil {
 		return err
-	}
-	// A Grid key spends from the creator's budget in one team, so it falls back
-	// to your only team rather than the organization's default.
-	if flags.Type == "grid" && teamID == "" {
-		team, err := resolveTeamOrOnly(ctx, cl.API(), "")
-		if err != nil {
-			return err
-		}
-		teamID = team.Id
 	}
 
 	req := managementapi.CreateAPIKeyRequest{Type: apiKeyTypeToBackend[flags.Type]}

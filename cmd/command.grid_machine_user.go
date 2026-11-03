@@ -78,11 +78,11 @@ var commandGridMachineUser = Command{
 				TextDescription: "The updated machine user, in the same format as describe.",
 				Examples: []CommandExample{{
 					Description: "Rename a machine user.",
-					Command:     "baseten grid machine-user update --id <id> --name night-shift",
+					Command:     "baseten grid machine-user update --id <id> --new-name night-shift",
 				}},
 				JQExample: CommandExample{
 					Description: "Print the new name.",
-					Command:     "baseten grid machine-user update --id <id> --name night-shift --jq '.name'",
+					Command:     "baseten grid machine-user update --id <id> --new-name night-shift --jq '.name'",
 				},
 			},
 		},
@@ -114,8 +114,8 @@ var commandGridMachineUser = Command{
 					Description: gridPrereleaseNotice + "Lists key metadata; key values are never returned. Requires team admin.",
 					Flags:       GridMachineUserAPIKeyListFlags{},
 					Output: &CommandOutput[managementapi.APIKeys]{
-						TextDescription: "Table with NAME, KEY (prefix + ****), CREATED, and LAST USED columns. " +
-							"When the machine user has no keys, prints \"No API keys found.\" to stderr.",
+						TextDescription: "Table with columns: NAME, KEY (prefix + ****), TYPE, TEAM, CREATED, LAST USED, EXPIRES, as in " +
+							"'baseten org api-key list'. When the machine user has no keys, prints \"No API keys found.\" to stderr.",
 						Examples: []CommandExample{{
 							Description: "List a machine user's keys.",
 							Command:     "baseten grid machine-user api-key list --machine-user-id <id>",
@@ -200,7 +200,7 @@ type GridMachineUserDescribeFlags struct {
 type GridMachineUserUpdateFlags struct {
 	CommandFlags
 	GridMachineUserIDFlags
-	Name string `flag:"name" desc:"New name, unique within the team." required:"true"`
+	NewName string `flag:"new-name" desc:"New name for the machine user, unique within the team." required:"true"`
 }
 
 type GridMachineUserDeleteFlags struct {

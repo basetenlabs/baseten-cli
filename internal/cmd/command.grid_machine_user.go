@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -29,9 +28,18 @@ func commandGridMachineUserList(ctx *CommandContext, f *cmd.GridMachineUserListF
 	if err != nil {
 		return err
 	}
-	items, err := listGridMachineUsers(ctx, cl.API(), managementapi.GetV1GridMachineUsersParams{TeamId: team})
-	if err != nil {
-		return err
+	params := managementapi.GetV1GridMachineUsersParams{TeamId: team}
+	var items []managementapi.GridMachineUser
+	for {
+		page, err := cl.API().GetGridMachineUsers(ctx, params)
+		if err != nil {
+			return fmt.Errorf("listing machine users: %w", err)
+		}
+		items = append(items, page.Items...)
+		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
+			break
+		}
+		params.Cursor = page.Pagination.Cursor
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(cmd.GridMachineUserList{Items: normalizeJSONSlice(items)})
@@ -47,21 +55,6 @@ func commandGridMachineUserList(ctx *CommandContext, f *cmd.GridMachineUserListF
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME", "TEAM", "CREATED"}, Rows: rows})
 	return nil
-}
-
-func listGridMachineUsers(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridMachineUsersParams) ([]managementapi.GridMachineUser, error) {
-	var users []managementapi.GridMachineUser
-	for {
-		resp, err := api.GetGridMachineUsers(ctx, params)
-		if err != nil {
-			return nil, fmt.Errorf("listing machine users: %w", err)
-		}
-		users = append(users, resp.Items...)
-		if !resp.Pagination.HasMore || resp.Pagination.Cursor == nil {
-			return users, nil
-		}
-		params.Cursor = resp.Pagination.Cursor
-	}
 }
 
 func commandGridMachineUserCreate(ctx *CommandContext, f *cmd.GridMachineUserCreateFlags) error {
@@ -107,9 +100,6 @@ func commandGridMachineUserCreate(ctx *CommandContext, f *cmd.GridMachineUserCre
 }
 
 func commandGridMachineUserDescribe(ctx *CommandContext, f *cmd.GridMachineUserDescribeFlags) error {
-	if f.ID == "" {
-		return cmd.NewErrUsagef("--id must not be empty")
-	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -123,17 +113,14 @@ func commandGridMachineUserDescribe(ctx *CommandContext, f *cmd.GridMachineUserD
 }
 
 func commandGridMachineUserUpdate(ctx *CommandContext, f *cmd.GridMachineUserUpdateFlags) error {
-	if f.ID == "" {
-		return cmd.NewErrUsagef("--id must not be empty")
-	}
-	if f.Name == "" {
-		return cmd.NewErrUsagef("--name must not be empty")
+	if f.NewName == "" {
+		return cmd.NewErrUsagef("--new-name must not be empty")
 	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	user, err := cl.API().PatchGridMachineUsers(ctx, f.ID, managementapi.UpdateGridMachineUserRequest{Name: &f.Name})
+	user, err := cl.API().PatchGridMachineUsers(ctx, f.ID, managementapi.UpdateGridMachineUserRequest{Name: &f.NewName})
 	if err != nil {
 		return fmt.Errorf("updating machine user: %w", err)
 	}
@@ -142,9 +129,6 @@ func commandGridMachineUserUpdate(ctx *CommandContext, f *cmd.GridMachineUserUpd
 }
 
 func commandGridMachineUserDelete(ctx *CommandContext, f *cmd.GridMachineUserDeleteFlags) error {
-	if f.ID == "" {
-		return cmd.NewErrUsagef("--id must not be empty")
-	}
 	if !f.Yes {
 		if err := ctx.ConfirmYesNo(fmt.Sprintf("Delete machine user %s and revoke its API keys?", f.ID)); err != nil {
 			return err
@@ -179,9 +163,6 @@ func outputGridMachineUser(ctx *CommandContext, user *managementapi.GridMachineU
 }
 
 func commandGridMachineUserAPIKeyList(ctx *CommandContext, f *cmd.GridMachineUserAPIKeyListFlags) error {
-	if f.MachineUserID == "" {
-		return cmd.NewErrUsagef("--machine-user-id must not be empty")
-	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -190,30 +171,11 @@ func commandGridMachineUserAPIKeyList(ctx *CommandContext, f *cmd.GridMachineUse
 	if err != nil {
 		return fmt.Errorf("listing API keys: %w", err)
 	}
-	if ctx.JSON {
-		ctx.OutputJSON(keys)
-		return nil
-	}
-	if len(keys.Keys) == 0 {
-		ctx.LogLine("No API keys found.")
-		return nil
-	}
-	rows := make([][]string, 0, len(keys.Keys))
-	for _, k := range keys.Keys {
-		lastUsed := "-"
-		if k.LastUsedAt != nil {
-			lastUsed = k.LastUsedAt.UTC().Format(time.RFC3339)
-		}
-		rows = append(rows, []string{gridSettingText(k.Name), k.Prefix + "****", k.CreatedAt.UTC().Format(time.RFC3339), lastUsed})
-	}
-	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "KEY", "CREATED", "LAST USED"}, Rows: rows})
+	outputAPIKeys(ctx, keys)
 	return nil
 }
 
 func commandGridMachineUserAPIKeyCreate(ctx *CommandContext, f *cmd.GridMachineUserAPIKeyCreateFlags) error {
-	if f.MachineUserID == "" {
-		return cmd.NewErrUsagef("--machine-user-id must not be empty")
-	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -231,9 +193,6 @@ func commandGridMachineUserAPIKeyCreate(ctx *CommandContext, f *cmd.GridMachineU
 }
 
 func commandGridMachineUserAPIKeyDelete(ctx *CommandContext, f *cmd.GridMachineUserAPIKeyDeleteFlags) error {
-	if f.MachineUserID == "" {
-		return cmd.NewErrUsagef("--machine-user-id must not be empty")
-	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err

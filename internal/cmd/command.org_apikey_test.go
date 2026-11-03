@@ -43,6 +43,8 @@ func Test_Org_APIKey_List_Rows(t *testing.T) {
 	h.Require.Contains(out, "KEY")
 	h.Require.Contains(out, "TYPE")
 	h.Require.Contains(out, "TEAM")
+	h.Require.Contains(out, "CREATED")
+	h.Require.Contains(out, "LAST USED")
 	h.Require.Contains(out, "EXPIRES")
 	h.Require.Contains(out, "2099-01-15T12:00:00Z")
 	h.Require.Contains(out, "never")
@@ -211,15 +213,4 @@ func Test_Org_APIKey_Create_GridPersonalKey(t *testing.T) {
 	h.Require.NoError(h.Execute("org", "api-key", "create", "--type", "grid", "--team", "Engineering", "--name", "review-bot"))
 	h.Require.Equal(map[string]any{"type": "GRID", "name": "review-bot"}, m.FindCall("POST", "/v1/teams/t123456/api_keys").BodyJSON(t))
 	h.Require.Equal("bsnt_grid.secret\n", h.Stdout.String())
-}
-
-func Test_Org_APIKey_Create_GridDefaultsToOnlyTeam(t *testing.T) {
-	h := NewCommandHarness(t)
-	gridRouteTeams(h)
-	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/teams/t123456/api_keys", 200, map[string]any{"api_key": "bsnt_grid.secret"})
-
-	h.Require.NoError(h.Execute("org", "api-key", "create", "--type", "grid"))
-	h.Require.NotNil(m.FindCall("POST", "/v1/teams/t123456/api_keys"))
-	h.Require.Nil(m.FindCall("POST", "/v1/api_keys"))
 }

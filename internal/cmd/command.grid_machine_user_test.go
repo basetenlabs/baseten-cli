@@ -120,7 +120,7 @@ func Test_Grid_MachineUser_Update_SendsName(t *testing.T) {
 	renamed := gridMachineUserFixture()
 	renamed["name"] = "night-shift"
 	m.SetRoute("PATCH", "/v1/grid/machine_users/u123456", 200, renamed)
-	h.Require.NoError(h.Execute("grid", "machine-user", "update", "--id", "u123456", "--name", "night-shift", "--output", "json"))
+	h.Require.NoError(h.Execute("grid", "machine-user", "update", "--id", "u123456", "--new-name", "night-shift", "--output", "json"))
 	h.Require.Equal(map[string]any{"name": "night-shift"}, m.FindCall("PATCH", "/v1/grid/machine_users/u123456").BodyJSON(t))
 	var got map[string]any
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
@@ -187,26 +187,4 @@ func Test_Grid_MachineUser_APIKey_Delete_ByPrefixSkipsList(t *testing.T) {
 	m.SetRoute("DELETE", "/v1/grid/machine_users/u123456/api_keys/bsnt_ci", 200, map[string]any{"prefix": "bsnt_ci"})
 	h.Require.NoError(h.Execute("grid", "machine-user", "api-key", "delete", "--machine-user-id", "u123456", "--prefix", "bsnt_ci"))
 	h.Require.Len(m.Calls(), 1)
-}
-
-func Test_Grid_MachineUser_EmptyIDIsUsageError(t *testing.T) {
-	for _, tc := range []struct {
-		args []string
-		want string
-	}{
-		{[]string{"describe", "--id", ""}, "--id must not be empty"},
-		{[]string{"update", "--id", "", "--name", "night-shift"}, "--id must not be empty"},
-		{[]string{"delete", "--id", "", "--yes"}, "--id must not be empty"},
-		{[]string{"api-key", "list", "--machine-user-id", ""}, "--machine-user-id must not be empty"},
-		{[]string{"api-key", "create", "--machine-user-id", ""}, "--machine-user-id must not be empty"},
-		{[]string{"api-key", "delete", "--machine-user-id", "", "--prefix", "bsnt_ci"}, "--machine-user-id must not be empty"},
-	} {
-		t.Run(tc.args[0]+" "+tc.args[1], func(t *testing.T) {
-			h := NewCommandHarness(t)
-			m := h.MockManagementAPI()
-			err := h.Execute(append([]string{"grid", "machine-user"}, tc.args...)...)
-			h.Require.ErrorContains(err, tc.want)
-			h.Require.Empty(m.Calls())
-		})
-	}
 }
