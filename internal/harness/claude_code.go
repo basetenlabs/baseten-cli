@@ -176,31 +176,71 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 	return append(values, claudeServedModelSettings(routes, current, cli)...), nil
 }
 
+// claudeServedModelSettings plans how Claude Code shows which model served a
+// router route. With no router routes, it removes whatever setup added before.
+// Otherwise, if the status line is unset or already setup's, it writes setup's
+// status line there and drops any Stop hook setup added. If the user configured
+// their own status line, it leaves that line untouched and keeps exactly one
+// Stop hook of setup's instead.
 func claudeServedModelSettings(routes []Route, current map[string]any, cli string) []setting {
-	command := shellQuote(cli) + claudeServedModelCommand
-	routers := 0
+	routers := claudeRouterNames(routes)
+	if len(routers) == 0 {
+		return claudeServedModelRemoval(current)
+	}
+	command := claudeServedModelCommandLine(cli, routers)
+	if claudeStatusLineAvailable(current) {
+		return append([]setting{desired(claudeStatusLinePath, claudeCommandEntry(command))}, claudeStopHookRemoval(current)...)
+	}
+	return claudeStopHookInstall(current, command+" --hook")
+}
+
+func claudeRouterNames(routes []Route) []string {
+	var names []string
 	for _, r := range routes {
 		if r.Router {
-			command += " --router " + shellQuote(r.Name)
-			routers++
+			names = append(names, r.Name)
 		}
 	}
+	return names
+}
+
+func claudeServedModelCommandLine(cli string, routers []string) string {
+	command := shellQuote(cli) + claudeServedModelCommand
+	for _, router := range routers {
+		command += " --router " + shellQuote(router)
+	}
+	return command
+}
+
+func claudeCommandEntry(command string) map[string]any {
+	return map[string]any{"type": "command", "command": command}
+}
+
+func claudeStatusLineAvailable(current map[string]any) bool {
 	statusLine := get(current, claudeStatusLinePath)
-	ours := !statusLine.Exists || claudeServedModelOwned(statusLine.Data)
+	return !statusLine.Exists || claudeServedModelOwned(statusLine.Data)
+}
+
+func claudeServedModelRemoval(current map[string]any) []setting {
 	var values []setting
-	var hook map[string]any
-	switch {
-	case routers > 0 && ours:
-		values = append(values, desired(claudeStatusLinePath, map[string]any{"type": "command", "command": command}))
-	case routers > 0:
-		hook = map[string]any{"type": "command", "command": command + " --hook"}
-	case statusLine.Exists && ours:
+	if claudeServedModelOwned(get(current, claudeStatusLinePath).Data) {
 		values = append(values, setting{Path: claudeStatusLinePath})
 	}
-	if stop, ok := claudeStopHooksSetting(current, hook); ok {
-		values = append(values, stop)
+	return append(values, claudeStopHookRemoval(current)...)
+}
+
+func claudeStopHookInstall(current map[string]any, command string) []setting {
+	if stop, ok := claudeStopHooksSetting(current, claudeCommandEntry(command)); ok {
+		return []setting{stop}
 	}
-	return values
+	return nil
+}
+
+func claudeStopHookRemoval(current map[string]any) []setting {
+	if stop, ok := claudeStopHooksSetting(current, nil); ok {
+		return []setting{stop}
+	}
+	return nil
 }
 
 func claudeStopHooksSetting(current, own map[string]any) (setting, bool) {
@@ -215,20 +255,11 @@ func claudeStopHooksSetting(current, own map[string]any) (setting, bool) {
 			entries = append(entries, entry)
 			continue
 		}
-		group, _ := entry.(map[string]any)
-		hooks, _ := group["hooks"].([]any)
-		var kept []any
-		for _, hook := range hooks {
-			switch {
-			case !claudeServedModelOwned(hook):
-				kept = append(kept, hook)
-			case own != nil:
-				kept, own = append(kept, own), nil
-			}
+		group, placed := claudeRewrittenStopGroup(entry, own)
+		if placed {
+			own = nil
 		}
-		if len(kept) > 0 {
-			group = maps.Clone(group)
-			group["hooks"] = kept
+		if group != nil {
 			entries = append(entries, group)
 		}
 	}
@@ -239,6 +270,27 @@ func claudeStopHooksSetting(current, own map[string]any) (setting, bool) {
 		return setting{Path: claudeStopHooksPath}, true
 	}
 	return desired(claudeStopHooksPath, entries), true
+}
+
+func claudeRewrittenStopGroup(entry any, own map[string]any) (map[string]any, bool) {
+	group, _ := entry.(map[string]any)
+	hooks, _ := group["hooks"].([]any)
+	var kept []any
+	placed := false
+	for _, hook := range hooks {
+		switch {
+		case !claudeServedModelOwned(hook):
+			kept = append(kept, hook)
+		case own != nil && !placed:
+			kept, placed = append(kept, own), true
+		}
+	}
+	if len(kept) == 0 {
+		return nil, placed
+	}
+	group = maps.Clone(group)
+	group["hooks"] = kept
+	return group, placed
 }
 
 func claudeServedModelOwned(v any) bool {
