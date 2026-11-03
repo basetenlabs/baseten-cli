@@ -132,6 +132,7 @@ type Route struct {
 	// unknown, as for a router that picks a route per request, and such a
 	// route is called with the Chat Completions API.
 	Provider        string
+	UpstreamModel   string
 	Router          bool
 	ContextWindow   int
 	OutputLimit     int
@@ -174,7 +175,8 @@ func NewProviders(connections []managementapi.GridConnection) Providers {
 // route that reaches one through a team connection. It fails if the route's
 // model metadata is missing or is not enough to configure a harness.
 func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
-	r := Route{Name: api.Name, DisplayName: api.DisplayName, Provider: routeProvider(api, providers), Router: routeIsRouter(api)}
+	r := Route{Name: api.Name, DisplayName: api.DisplayName, Router: routeIsRouter(api)}
+	r.Provider, r.UpstreamModel = routeTarget(api, providers)
 	m := api.Metadata
 	if m == nil {
 		return r, fmt.Errorf("route %q has no model metadata", r.Name)
@@ -291,17 +293,17 @@ const (
 	ProviderBaseten   = "BASETEN_MODEL_API"
 )
 
-// routeProvider is the provider behind a route's target, or "" if unknown.
-func routeProvider(api managementapi.GridRoute, providers Providers) string {
+// routeTarget resolves the upstream provider and, for connections, the model ID.
+func routeTarget(api managementapi.GridRoute, providers Providers) (string, string) {
 	switch kind, _ := api.Target.Discriminator(); kind {
 	case ProviderBaseten:
-		return ProviderBaseten
+		return ProviderBaseten, ""
 	case "CONNECTION":
 		if t, err := api.Target.AsGridRouteTargetConnection(); err == nil {
-			return providers[t.ConnectionId]
+			return providers[t.ConnectionId], t.Model
 		}
 	}
-	return ""
+	return "", ""
 }
 
 func routeIsRouter(api managementapi.GridRoute) bool {

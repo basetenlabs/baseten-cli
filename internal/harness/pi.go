@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -127,8 +128,9 @@ func piModel(r Route, baseURL string) map[string]any {
 	case ProviderAnthropic:
 		// Pi's Anthropic client appends /v1/messages itself.
 		model["api"], model["baseUrl"] = "anthropic-messages", baseURL
-		// Anthropic Messages models use adaptive thinking, not a token budget.
-		model["compat"] = map[string]any{"forceAdaptiveThinking": true}
+		if piAdaptiveThinking(r.UpstreamModel) {
+			model["compat"] = map[string]any{"forceAdaptiveThinking": true}
+		}
 	case ProviderOpenAI:
 		model["api"] = "openai-responses"
 	default:
@@ -146,6 +148,17 @@ func piModel(r Route, baseURL string) map[string]any {
 		}
 	}
 	return model
+}
+
+var piModelSnapshotSuffix = regexp.MustCompile(`-(?:[0-9]{8}|latest)$`)
+
+func piAdaptiveThinking(upstreamModel string) bool {
+	switch piModelSnapshotSuffix.ReplaceAllString(upstreamModel, "") {
+	case "claude-opus-4-5", "claude-haiku-4-5", "claude-sonnet-4-5":
+		return false
+	default:
+		return true
+	}
 }
 
 // piThinkingLevels maps each of Pi's thinking levels to the route's effort

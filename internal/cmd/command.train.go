@@ -86,7 +86,7 @@ func resolveTrainJob(ctx *CommandContext, api *managementapi.Client, jobID strin
 // resolveTrainProject translates a --project value (project name or ID) into a
 // project ID. An exact ID match wins over a name match, matching ResolveTeam.
 func resolveTrainProject(ctx *CommandContext, api *managementapi.Client, input string) (string, error) {
-	resp, err := api.GetTrainingProjects(ctx)
+	resp, err := api.GetTrainingProjects(ctx, managementapi.GetV1TrainingProjectsParams{})
 	if err != nil {
 		return "", fmt.Errorf("list training projects: %w", err)
 	}
@@ -877,7 +877,7 @@ func commandTrainProjectList(ctx *CommandContext, flags *cmd.TrainProjectListFla
 	if err != nil {
 		return err
 	}
-	resp, err := cl.API().GetTrainingProjects(ctx)
+	resp, err := cl.API().GetTrainingProjects(ctx, managementapi.GetV1TrainingProjectsParams{})
 	if err != nil {
 		return fmt.Errorf("list training projects: %w", err)
 	}
