@@ -2133,8 +2133,10 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 		h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", configDir, "--use-session-credential", "--primary-route-id", primary, "--yes"))
 		h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, configDir), "setup detects OpenCode 2 and writes the plugin")
 	}
-	work, tmp := filepath.Join(root, "w"), t.TempDir()
-	h.Require.NoError(os.Mkdir(work, 0o700))
+	work, err := os.MkdirTemp("/tmp", "oc")
+	h.Require.NoError(err)
+	t.Cleanup(func() { _ = os.RemoveAll(work) })
+	tmp := t.TempDir()
 	label := "Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash"
 	tui := func(env ...string) (string, []string) {
 		t.Helper()
@@ -2151,7 +2153,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
 			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
 		}, env...)
-		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 50, Cols: 220})
+		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 50, Cols: 260})
 		h.Require.NoError(err)
 		var screenMu sync.Mutex
 		var screen strings.Builder
