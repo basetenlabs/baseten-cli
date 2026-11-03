@@ -1803,7 +1803,7 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 }
 
 const (
-	gridClaudeServedModelWait         = 2 * time.Second
+	gridClaudeServedModelWait         = 500 * time.Millisecond
 	gridClaudeServedModelPollInterval = 100 * time.Millisecond
 )
 
