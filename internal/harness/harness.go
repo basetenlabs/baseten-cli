@@ -92,22 +92,20 @@ type Harness interface {
 }
 
 // Helper is the credential command a harness runs instead of storing a key:
-// this CLI, with the profile setup used pinned so the harness resolves the
-// same one regardless of its environment.
+// this CLI, which mints for the profile recorded at setup.
 type Helper struct {
-	Path    string
-	Profile string
+	Path string
 }
 
 // args are the credential command's arguments after the CLI path.
 func (h *Helper) args(name string) []string {
-	return []string{"grid", "token", "--harness", name, "--profile", h.Profile}
+	return []string{"grid", "token", "--harness", name}
 }
 
 // shellCommand is the credential command as one sh line.
 func (h *Helper) shellCommand(name string) string {
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-	return quote(h.Path) + " grid token --harness " + name + " --profile " + quote(h.Profile)
+	return quote(h.Path) + " grid token --harness " + name
 }
 
 // Supported reports whether harness settings locations are verified on this

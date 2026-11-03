@@ -345,7 +345,7 @@ func TestHelperCredential(t *testing.T) {
 		t.Run(h.Name(), func(t *testing.T) {
 			path := settingsPath(t, h)
 			setup(t, h, path, testRoutes(), Selection{})
-			cli := &Helper{Path: "/opt/my tools/baseten", Profile: "alice"}
+			cli := &Helper{Path: "/opt/my tools/baseten"}
 			plans, err := h.Prepare(path, testRoutes(), Selection{}, testEndpoint, cli)
 			require.NoError(t, err)
 			require.NoError(t, ApplyPlans(plans, ""))
@@ -353,7 +353,6 @@ func TestHelperCredential(t *testing.T) {
 			require.NoError(t, err)
 			require.NotContains(t, string(raw), testToken, "the static key is dropped")
 			require.Contains(t, string(raw), cli.Path)
-			require.Contains(t, string(raw), "--profile")
 			token, err := h.Credential(path)
 			require.NoError(t, err)
 			require.Empty(t, token, "a helper command is not a key")
