@@ -3,6 +3,7 @@ package cmd
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +33,7 @@ func init() {
 	Register("grid sync", commandGridSync)
 	Register("grid teardown", commandGridTeardown)
 	Register("grid token", commandGridToken)
+	Register("grid claude-served-model", commandGridClaudeServedModel)
 	Register("grid classifier list", commandGridClassifierList)
 	Register("grid classifier describe", commandGridClassifierDescribe)
 	Register("grid team-settings describe", commandGridTeamSettingsDescribe)
@@ -304,8 +307,9 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		return nil, err
 	}
 	helper := ""
+	routers := slices.ContainsFunc(routes, func(r harness.Route) bool { return r.Router })
 	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool {
-		return t.record.CredentialSource == harness.CredentialSourceHelper
+		return t.record.CredentialSource == harness.CredentialSourceHelper || (routers && t.Name() == harness.ClaudeCode && !t.record.NoClaudeServedModel)
 	}) {
 		var warning string
 		if helper, warning, err = gridHelperPath(); err != nil {
@@ -345,7 +349,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		if target.record.CredentialSource == harness.CredentialSourceHelper {
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
-		current, err := target.Prepare(target.detection.Path, callable, selection.Selection, endpoint, targetHelper)
+		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, NoClaudeServedModel: target.record.NoClaudeServedModel})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -384,12 +388,21 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if f.UseSessionCredential || session.IsEphemeral() {
 		credentialSource = harness.CredentialSourceSession
 	}
+	noServedModel := f.NoClaudeServedModel
+	if !noServedModel && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersClaudeServedModel(selected, listed) {
+		show, err := gridAskClaudeServedModel(ctx)
+		if err != nil {
+			return err
+		}
+		noServedModel = !show
+	}
 	targets := make([]gridHarnessTarget, len(selected))
 	for i := range selected {
 		record := harness.Record{
-			KeyName:          f.KeyName,
-			Profile:          session.ProfileName(),
-			CredentialSource: credentialSource,
+			KeyName:             f.KeyName,
+			Profile:             session.ProfileName(),
+			CredentialSource:    credentialSource,
+			NoClaudeServedModel: noServedModel,
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
 			// A harness that cannot run the helper keeps a key.
@@ -428,6 +441,11 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	plans, err := gridPlanHarnessSetup(ctx, api, team, listed, targets, false)
 	if err != nil {
 		return err
+	}
+	for _, p := range plans {
+		for _, note := range p.Notes {
+			ctx.LogLine(note)
+		}
 	}
 	var sessionToken string
 	if credentialSource == harness.CredentialSourceSession {
@@ -515,6 +533,29 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		ctx.Logf("Undo with: %s\n", gridFollowupCommand("teardown", targets[i].gridSelectedHarness, f.ConfigDir))
 	}
 	return nil
+}
+
+func gridOffersClaudeServedModel(selected []gridSelectedHarness, listed []managementapi.GridRoute) bool {
+	i := slices.IndexFunc(selected, func(s gridSelectedHarness) bool { return s.Name() == harness.ClaudeCode })
+	if i < 0 {
+		return false
+	}
+	var routes []harness.Route
+	for _, l := range listed {
+		if r, err := harness.NewRoute(l, nil); err == nil {
+			routes = append(routes, r)
+		}
+	}
+	return slices.ContainsFunc(selected[i].Routes(routes), func(r harness.Route) bool { return r.Router })
+}
+
+func gridAskClaudeServedModel(ctx *CommandContext) (bool, error) {
+	show := true
+	err := ctx.RunPrompt(huh.NewSelect[bool]().
+		Title("Show which model served each response on auto routes in Claude Code?").
+		Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
+		Value(&show))
+	return show, err
 }
 
 // commandGridSync refreshes the harnesses configured on this machine with
@@ -1759,4 +1800,63 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 	}
 	ctx.Output(token.Token + "\n")
 	return nil
+}
+
+const (
+	gridClaudeServedModelWait         = 500 * time.Millisecond
+	gridClaudeServedModelPollInterval = 100 * time.Millisecond
+)
+
+func commandGridClaudeServedModel(ctx *CommandContext, flags *cmd.GridClaudeServedModelFlags) error {
+	if on, err := strconv.ParseBool(os.Getenv("BASETEN_CLAUDE_SERVED_MODEL")); err == nil && !on {
+		return nil
+	}
+	var payload struct {
+		TranscriptPath       string `json:"transcript_path"`
+		LastAssistantMessage string `json:"last_assistant_message"`
+		PromptID             string `json:"prompt_id"`
+	}
+	if json.NewDecoder(ctx.Stdin).Decode(&payload) != nil || payload.TranscriptPath == "" {
+		return nil
+	}
+	message, prompt := "", ""
+	if flags.Hook {
+		message, prompt = payload.LastAssistantMessage, payload.PromptID
+	}
+	requested, served := gridAwaitClaudeServedModel(ctx, payload.TranscriptPath, message, prompt, cmp.Or(flags.Wait, gridClaudeServedModelWait))
+	label, ok := gridClaudeServedModelRouterLabel(flags.Router, requested)
+	switch {
+	case served == "" || !ok:
+	case flags.Hook:
+		if out, err := json.Marshal(map[string]string{"systemMessage": "Served by " + served + " via " + label}); err == nil {
+			ctx.OutputLine(string(out))
+		}
+	default:
+		ctx.OutputLine(label + " → " + served)
+	}
+	return nil
+}
+
+func gridAwaitClaudeServedModel(ctx context.Context, transcript, message, prompt string, wait time.Duration) (requested, served string) {
+	deadline := time.Now().Add(wait)
+	for {
+		requested, served = harness.ClaudeServedModel(transcript, message, prompt)
+		if served != "" || message == "" || time.Now().After(deadline) {
+			return requested, served
+		}
+		select {
+		case <-ctx.Done():
+			return "", ""
+		case <-time.After(gridClaudeServedModelPollInterval):
+		}
+	}
+}
+
+func gridClaudeServedModelRouterLabel(routers []string, model string) (string, bool) {
+	for _, router := range routers {
+		if id, label, _ := strings.Cut(router, "="); id == model {
+			return cmp.Or(label, id), true
+		}
+	}
+	return "", false
 }

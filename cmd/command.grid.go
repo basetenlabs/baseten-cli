@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"time"
+
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -25,7 +27,11 @@ var commandGrid = Command{
 				"The Grid API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
-				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.",
+				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those. " +
+				"For Claude Code, when the team has router routes, setup shows which model served the latest response of a router route in the status line. " +
+				"Setup never changes a status line you configured; it adds a Stop hook that shows the serving model after each response instead. " +
+				"Interactive setup asks whether to show it, defaulting to yes; --no-claude-served-model leaves it out and removes it without asking, and --yes shows it unless that flag is set. " +
+				"To turn it off without rerunning setup, set BASETEN_CLAUDE_SERVED_MODEL=0 in Claude Code's settings env.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
@@ -118,7 +124,8 @@ var commandGrid = Command{
 			Summary: "Remove Baseten harness settings (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
-				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path.\n\n" +
+				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path. " +
+				"For Claude Code, teardown removes the served-model status line and Stop hook that setup added, and keeps your own status line and hooks.\n\n" +
 				"Teardown also deletes the Grid API key the removed harnesses use, once no other harness on this machine uses it, " +
 				"except a key installed with --use-session-credential, whose lifecycle this CLI does not own. " +
 				"It forgets the recorded setup so 'grid sync' no longer refreshes the removed harnesses. " +
@@ -380,6 +387,29 @@ var commandGrid = Command{
 			},
 		},
 		{
+			Name:    "claude-served-model",
+			Hidden:  true,
+			Summary: "Print the model that served Claude Code's latest response",
+			Description: "Read the JSON payload Claude Code passes a status line or Stop hook on stdin, and print which model served the latest response in its transcript, " +
+				"when that response was requested through one of the --router routes, labeled with that route's display name. Otherwise print nothing. Always exits 0, since Claude Code shows any error to the user. " +
+				"When BASETEN_CLAUDE_SERVED_MODEL is false, such as 0, print nothing without reading stdin; set it in Claude Code's settings env to turn the display off without rerunning setup.",
+			Flags: GridClaudeServedModelFlags{},
+			Output: &CommandOutput[JSONUndefined]{
+				JSONOutputUnimportant: true,
+				TextDescription:       "'<display name> → <model>', or with --hook a Claude Code hook JSON object with a systemMessage, whatever --output says. Nothing when the latest response is not from a router route.",
+				Examples: []CommandExample{
+					{
+						Description: "Show the serving model in a Claude Code status line.",
+						Command:     "baseten grid claude-served-model --router 'acme/auto=Auto'",
+					},
+					{
+						Description: "Show the serving model after each response from a Claude Code Stop hook.",
+						Command:     "baseten grid claude-served-model --router 'acme/auto=Auto' --hook",
+					},
+				},
+			},
+		},
+		{
 			Name:    "classifier",
 			Summary: "Discover managed classifiers (PRE-RELEASE)",
 			Children: []Command{
@@ -590,6 +620,13 @@ type GridTokenFlags struct {
 	Team    string `flag:"team" desc:"Team name or ID the token is for. Defaults to the team the harness was set up with."`
 }
 
+type GridClaudeServedModelFlags struct {
+	CommandFlags
+	Router []string      `flag:"router" desc:"Router route as <model id>=<display name>. The model ID is as Claude Code settings name it, without a [1m] suffix; the display name labels the output, and without one the model ID does. May be repeated."`
+	Hook   bool          `flag:"hook" desc:"Print Claude Code hook JSON with a systemMessage instead of a status line. The response is the one whose text is the payload's last_assistant_message, when it has one."`
+	Wait   time.Duration `flag:"wait" hidden:"true" desc:"Longest time --hook waits for the transcript to record last_assistant_message. Defaults to 500ms."`
+}
+
 // GridStatusFlags are the flags for `baseten grid status`.
 type GridStatusFlags struct {
 	CommandFlags
@@ -606,6 +643,7 @@ type GridSetupFlags struct {
 	BackgroundRouteID    string `flag:"background-route-id" desc:"Route ID for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
 	SubagentRouteID      string `flag:"subagent-route-id" desc:"Route ID for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
 	FallbackRouteID      string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
+	NoClaudeServedModel  bool   `flag:"no-claude-served-model" desc:"For Claude Code, leave out the status line or Stop hook that shows which model served a router route's response, and remove it if setup added it before, without asking."`
 	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
 	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`

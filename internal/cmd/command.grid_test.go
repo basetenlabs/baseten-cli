@@ -1,9 +1,11 @@
 package cmd_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -1108,6 +1110,669 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 
 	h.Require.Equal("acme/auto", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
 	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
+}
+
+func serveServedModelRoutes(api *MockManagementAPI, routers ...string) {
+	items := []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+		"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}}}
+	wide := maps.Clone(harnessRouteMetadata)
+	wide["context_window"] = 1000000
+	for _, router := range routers {
+		name, display, labeled := strings.Cut(router, "=")
+		if !labeled {
+			display = name
+		}
+		items = append(items, map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-" + name, "name": "acme/" + name, "display_name": display, "invoke_url": api.URL, "metadata": wide,
+			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}})
+	}
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
+}
+
+func claudeManagedSettings(t *testing.T, h *CommandHarness, dir string) []string {
+	t.Helper()
+	h.Require.NoError(h.Execute("grid", "status", "--harness", "claude-code", "--config-dir", dir, "--output", "json"))
+	var statuses public.GridStatusList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
+	h.Require.Len(statuses.Items, 1)
+	return statuses.Items[0].ManagedSettings
+}
+
+func Test_Grid_Setup_ServedModelStatusLine(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	h.Require.NoError(os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o600))
+	cli, err := exec.LookPath("baseten")
+	h.Require.NoError(err)
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--output", "json"}
+
+	h.Require.NoError(h.Execute(setup...))
+	settings := readHarnessSettings(t, "claude-code", path)
+	h.Require.Equal(map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --router 'acme/auto=auto'"}, settings["statusLine"])
+	h.Require.Contains(settings["availableModels"], "acme/auto[1m]")
+	h.Require.Equal("dark", settings["theme"])
+	h.Require.NotContains(settings, "hooks")
+	h.Require.NotContains(h.Stderr.String(), "Existing statusLine")
+
+	h.Require.NoError(h.Execute(setup...))
+	var rerun public.GridPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
+	h.Require.Len(rerun.Items, 1)
+	h.Require.False(rerun.Items[0].Changed, "rerunning setup changes nothing")
+	h.Require.Contains(claudeManagedSettings(t, h, dir), "statusLine")
+
+	serveServedModelRoutes(api, "auto", "code")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal("'"+cli+"' grid claude-served-model --router 'acme/auto=auto' --router 'acme/code=code'", readHarnessSettings(t, "claude-code", path)["statusLine"].(map[string]any)["command"])
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, "claude-code", path))
+}
+
+func Test_Grid_Setup_ServedModelStopHook(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	user := `{"statusLine":{"type":"command","command":"~/.claude/statusline.sh","padding":0},` +
+		`"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done","timeout":30}]}],"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard"}]}]}}`
+	h.Require.NoError(os.WriteFile(path, []byte(user), 0o600))
+	var original map[string]any
+	h.Require.NoError(json.Unmarshal([]byte(user), &original))
+	userStop := original["hooks"].(map[string]any)["Stop"].([]any)[0]
+	cli, err := exec.LookPath("baseten")
+	h.Require.NoError(err)
+	ours := func(routers string) map[string]any {
+		return map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model " + routers + " --hook"}}}
+	}
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+
+	for range 2 {
+		h.Require.NoError(h.Execute(setup...))
+		h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
+		h.Require.NotContains(h.Stderr.String(), "will be overwritten")
+		settings := readHarnessSettings(t, "claude-code", path)
+		h.Require.Equal(original["statusLine"], settings["statusLine"])
+		hooks := settings["hooks"].(map[string]any)
+		h.Require.Equal([]any{userStop, ours("--router 'acme/auto=auto'")}, hooks["Stop"])
+		h.Require.Equal(original["hooks"].(map[string]any)["PreToolUse"], hooks["PreToolUse"])
+	}
+	managed := claudeManagedSettings(t, h, dir)
+	h.Require.Contains(managed, "hooks.Stop")
+	h.Require.NotContains(managed, "statusLine")
+
+	settings := readHarnessSettings(t, "claude-code", path)
+	later := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "notify"}}}
+	settings["hooks"].(map[string]any)["Stop"] = append(settings["hooks"].(map[string]any)["Stop"].([]any), later)
+	raw, err := json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	serveServedModelRoutes(api, "auto", "code")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]any{userStop, ours("--router 'acme/auto=auto' --router 'acme/code=code'"), later}, readHarnessSettings(t, "claude-code", path)["hooks"].(map[string]any)["Stop"])
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	original["hooks"].(map[string]any)["Stop"] = []any{userStop, later}
+	h.Require.Equal(original, readHarnessSettings(t, "claude-code", path))
+}
+
+func Test_Grid_Setup_ServedModelSharedStopGroup(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	statusLine := map[string]any{"type": "command", "command": "my-status"}
+	h.Require.NoError(os.WriteFile(path, []byte(`{"statusLine":{"type":"command","command":"my-status"}}`), 0o600))
+	cli, err := exec.LookPath("baseten")
+	h.Require.NoError(err)
+	ours := func(routers string) map[string]any {
+		return map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model " + routers + " --hook"}
+	}
+	notify := map[string]any{"type": "command", "command": "notify"}
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+
+	h.Require.NoError(h.Execute(setup...))
+	settings := readHarnessSettings(t, "claude-code", path)
+	h.Require.Equal([]any{map[string]any{"hooks": []any{ours("--router 'acme/auto=auto'")}}}, settings["hooks"].(map[string]any)["Stop"])
+	settings["hooks"].(map[string]any)["Stop"] = []any{
+		map[string]any{"matcher": "*", "hooks": []any{ours("--router 'acme/auto=auto'"), notify}},
+		map[string]any{"hooks": []any{ours("--router 'acme/old'")}},
+	}
+	raw, err := json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+
+	serveServedModelRoutes(api, "auto", "code")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]any{map[string]any{"matcher": "*", "hooks": []any{ours("--router 'acme/auto=auto' --router 'acme/code=code'"), notify}}},
+		readHarnessSettings(t, "claude-code", path)["hooks"].(map[string]any)["Stop"])
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	h.Require.Equal(map[string]any{"statusLine": statusLine, "hooks": map[string]any{"Stop": []any{map[string]any{"matcher": "*", "hooks": []any{notify}}}}},
+		readHarnessSettings(t, "claude-code", path))
+}
+
+func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
+	skipUnlessSupported(t)
+	for name, command := range map[string]func(cli string) string{
+		"composed": func(string) string {
+			return `echo "$(baseten grid claude-served-model --router acme/auto) | custom stats"`
+		},
+		"suffixed": func(cli string) string {
+			return "'" + cli + "' grid claude-served-model --router 'acme/auto=auto' ; echo hi"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			serveServedModelRoutes(api, "auto")
+			dir := t.TempDir()
+			path := harnessSettingsFile("claude-code", dir)
+			cli, err := exec.LookPath("baseten")
+			h.Require.NoError(err)
+			user := map[string]any{"statusLine": map[string]any{"type": "command", "command": command(cli)}}
+			raw, err := json.Marshal(user)
+			h.Require.NoError(err)
+			h.Require.NoError(os.WriteFile(path, raw, 0o600))
+
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+			h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
+			settings := readHarnessSettings(t, "claude-code", path)
+			h.Require.Equal(user["statusLine"], settings["statusLine"])
+			h.Require.Equal([]any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --router 'acme/auto=auto' --hook"}}}},
+				settings["hooks"].(map[string]any)["Stop"])
+
+			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+			h.Require.Equal(user, readHarnessSettings(t, "claude-code", path))
+		})
+	}
+}
+
+func Test_Grid_Setup_ServedModelZeroRouters(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	settings := readHarnessSettings(t, "claude-code", path)
+	h.Require.NotContains(settings, "statusLine")
+	h.Require.NotContains(settings, "hooks")
+
+	serveServedModelRoutes(api, "auto")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(readHarnessSettings(t, "claude-code", path), "statusLine")
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NotContains(readHarnessSettings(t, "claude-code", path), "statusLine")
+
+	settings = readHarnessSettings(t, "claude-code", path)
+	settings["statusLine"] = map[string]any{"type": "command", "command": "my-status"}
+	settings["hooks"] = map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "say done"}}}}}
+	raw, err := json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	serveServedModelRoutes(api, "auto")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Len(readHarnessSettings(t, "claude-code", path)["hooks"].(map[string]any)["Stop"], 2)
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(settings, readHarnessSettings(t, "claude-code", path))
+}
+
+func Test_Grid_Setup_ServedModelSessionCredential(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	bin := t.TempDir()
+	h.Require.NoError(os.WriteFile(filepath.Join(bin, "baseten"), []byte("#!/bin/sh\n"), 0o755))
+	t.Setenv("PATH", bin)
+	exe, err := os.Executable()
+	h.Require.NoError(err)
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--use-session-credential", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "but baseten on your PATH is "+filepath.Join(bin, "baseten")+"; harnesses will run the former")
+	settings := readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))
+	h.Require.NotContains(settings, "apiKeyHelper")
+	h.Require.Equal("'"+exe+"' grid claude-served-model --router 'acme/auto=auto'", settings["statusLine"].(map[string]any)["command"])
+}
+
+func Test_Grid_Setup_ServedModelOptOut(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	cli, err := exec.LookPath("baseten")
+	h.Require.NoError(err)
+	ours := "'" + cli + "' grid claude-served-model --router 'acme/auto=auto'"
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	guard := map[string]any{"PreToolUse": []any{map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "guard"}}}}}
+	raw, err := json.Marshal(map[string]any{"theme": "dark", "hooks": guard})
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+	record := func() string {
+		raw, err := os.ReadFile(filepath.Join(recordDir(t), "harness.json"))
+		h.Require.NoError(err)
+		return string(raw)
+	}
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(ours, readHarnessSettings(t, "claude-code", path)["statusLine"].(map[string]any)["command"])
+	h.Require.NoError(h.Execute(append(setup, "--no-claude-served-model")...))
+	settings := readHarnessSettings(t, "claude-code", path)
+	h.Require.NotContains(settings, "statusLine")
+	h.Require.Equal(guard, settings["hooks"])
+	h.Require.Equal("dark", settings["theme"])
+	h.Require.True(harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel)
+	h.Require.Contains(record(), `"no_claude_served_model": true`)
+
+	settings["statusLine"] = map[string]any{"type": "command", "command": ours}
+	raw, err = json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NotContains(readHarnessSettings(t, "claude-code", path), "statusLine", "sync replays the recorded opt-out")
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(ours, readHarnessSettings(t, "claude-code", path)["statusLine"].(map[string]any)["command"], "setup without the flag turns it back on")
+	h.Require.False(harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel)
+	h.Require.NotContains(record(), "no_claude_served_model")
+
+	userStatusLine := map[string]any{"type": "command", "command": "my-status"}
+	userStop := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "say done"}}}
+	raw, err = json.Marshal(map[string]any{"statusLine": userStatusLine, "hooks": map[string]any{"Stop": []any{userStop}}})
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Len(readHarnessSettings(t, "claude-code", path)["hooks"].(map[string]any)["Stop"], 2)
+	h.Require.NoError(h.Execute(append(setup, "--no-claude-served-model")...))
+	settings = readHarnessSettings(t, "claude-code", path)
+	h.Require.Equal(userStatusLine, settings["statusLine"])
+	h.Require.Equal(map[string]any{"Stop": []any{userStop}}, settings["hooks"])
+}
+
+func Test_Grid_Setup_ServedModelPrompt(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	base := h.Context
+	answer := func(answers ...string) { h.Context = internalcmd.WithPromptAnswers(base, answers...) }
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir}
+	question := "Show which model served each response on auto routes in Claude Code?"
+	shown := func() bool {
+		_, ok := readHarnessSettings(t, "claude-code", path)["statusLine"]
+		return ok
+	}
+	recorded := func() bool { return harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel }
+
+	answer("1", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), question)
+	h.Require.True(shown())
+
+	answer("2", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), question)
+	h.Require.False(shown(), "answering no removes the display")
+	h.Require.True(recorded())
+	h.Context = base
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.False(shown(), "sync replays the answer without asking")
+
+	answer("", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.True(shown(), "the default answer is yes")
+	h.Require.False(recorded())
+
+	answer("2")
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--no-claude-served-model")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.False(shown())
+	h.Require.True(recorded())
+	h.Require.NoError(h.Execute(append(setup, "--yes")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.True(shown(), "--yes shows it without asking")
+	h.Require.False(recorded())
+	h.Context = base
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--no-claude-served-model")...))
+	h.Require.False(shown(), "without a terminal the flag decides")
+	h.Require.NoError(h.Execute(append(setup, "--yes")...))
+	h.Require.True(shown())
+
+	answer()
+	h.Require.NoError(h.Execute(append(setup, "--dry-run")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+
+	serveServedModelRoutes(api)
+	answer("1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NotContains(h.Stderr.String(), question, "no router routes, no question")
+	serveServedModelRoutes(api, "auto")
+	answer("1")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", t.TempDir()))
+	h.Require.NotContains(h.Stderr.String(), question, "Claude Code is not a target")
+}
+
+func Test_Grid_Setup_ServedModelDisplayNames(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto=Auto (Baseten Internal Dogfooding)", "eq=x=y's", "bare=")
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	cli, err := exec.LookPath("baseten")
+	h.Require.NoError(err)
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--output", "json"}
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal("'"+cli+`' grid claude-served-model --router 'acme/auto=Auto (Baseten Internal Dogfooding)' --router 'acme/eq=x=y'\''s' --router 'acme/bare'`,
+		readHarnessSettings(t, "claude-code", path)["statusLine"].(map[string]any)["command"])
+	h.Require.NoError(h.Execute(setup...))
+	var rerun public.GridPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
+	h.Require.False(rerun.Items[0].Changed, "setup recognizes its own command with display names")
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	h.Require.NotContains(readHarnessSettings(t, "claude-code", path), "statusLine")
+}
+
+func Test_Grid_ClaudeServedModel(t *testing.T) {
+	h := NewCommandHarness(t)
+	dir := t.TempDir()
+	assistant := func(requested, model string) string {
+		line, err := json.Marshal(map[string]any{"type": "assistant", "requestedModel": requested, "message": map[string]any{"role": "assistant", "model": model}})
+		h.Require.NoError(err)
+		return string(line)
+	}
+	transcript := func(name string, lines ...string) string {
+		path := filepath.Join(dir, name)
+		h.Require.NoError(os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+		return path
+	}
+	run := func(stdin string, args ...string) string {
+		h.Stdin.Reset()
+		h.Stdin.WriteString(stdin)
+		routers := []string{"--router", "acme/auto=Auto (Baseten Internal Dogfooding)", "--router", "acme/code=x=y's", "--router", "acme/bare", "--router", "acme/empty="}
+		h.Require.NoError(h.Execute(append(append([]string{"grid", "claude-served-model"}, routers...), args...)...))
+		h.Require.Empty(h.Stderr.String())
+		return h.Stdout.String()
+	}
+	payload := func(path string) string {
+		raw, err := json.Marshal(map[string]any{"session_id": "s", "transcript_path": path, "model": map[string]any{"id": "acme/auto[1m]"}})
+		h.Require.NoError(err)
+		return string(raw)
+	}
+	user := `{"type":"user","message":{"role":"user","content":"hi"}}`
+	reply := func(requested, model, text string, sidechain bool) string {
+		line, err := json.Marshal(map[string]any{"type": "assistant", "isSidechain": sidechain, "requestedModel": requested,
+			"message": map[string]any{"role": "assistant", "model": model, "content": []any{map[string]any{"type": "text", "text": text}}}})
+		h.Require.NoError(err)
+		return string(line)
+	}
+	stop := func(path, message, prompt string) string {
+		raw, err := json.Marshal(map[string]any{"session_id": "s", "transcript_path": path, "hook_event_name": "Stop", "last_assistant_message": message, "prompt_id": prompt})
+		h.Require.NoError(err)
+		return string(raw)
+	}
+
+	turns := transcript("turns.jsonl", user, reply("acme/auto[1m]", "zai-org/GLM-5.3-Flash", "Thinking.", false),
+		reply("acme/auto[1m]", "zai-org/GLM-5.3-Flash", "\n\nFirst answer.\n", false), user, reply("acme/code", "moonshotai/Kimi-K3", "Second answer.", false))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(turns, "First answer.", ""), "--hook"))
+	h.Require.Equal(`{"systemMessage":"Served by moonshotai/Kimi-K3 via x=y's"}`+"\n", run(stop(turns, "", ""), "--hook"))
+	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", run(stop(turns, "First answer.", "")))
+	started := time.Now()
+	h.Require.Empty(run(stop(turns, "Never said.", ""), "--hook", "--wait", "300ms"))
+	h.Require.GreaterOrEqual(time.Since(started), 300*time.Millisecond)
+	h.Require.Less(time.Since(started), 2*time.Second)
+
+	lagging := transcript("lagging.jsonl", user, reply("acme/code", "moonshotai/Kimi-K3", "Earlier answer.", false), user)
+	time.AfterFunc(200*time.Millisecond, func() {
+		f, err := os.OpenFile(lagging, os.O_APPEND|os.O_WRONLY, 0)
+		if err == nil {
+			_, err = f.WriteString(reply("acme/auto", "zai-org/GLM-5.3-Flash", "Late answer.", false) + "\n")
+			err = errors.Join(err, f.Close())
+		}
+		if err != nil {
+			t.Error(err)
+		}
+	})
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(lagging, "Late answer.", ""), "--hook"))
+
+	prompted := func(id string) string {
+		line, err := json.Marshal(map[string]any{"type": "user", "promptId": id, "message": map[string]any{"role": "user", "content": "hi"}})
+		h.Require.NoError(err)
+		return string(line)
+	}
+	repeated := transcript("repeated.jsonl", prompted("p1"), reply("acme/auto", "zai-org/GLM-5.3-Flash", "Done.", false), prompted("p2"))
+	h.Require.Empty(run(stop(repeated, "Done.", "p2"), "--hook", "--wait", "300ms"))
+	h.Require.Empty(run(stop(repeated, "Done.", "p-unknown"), "--hook", "--wait", "100ms"))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(repeated, "Done.", ""), "--hook"))
+	time.AfterFunc(200*time.Millisecond, func() {
+		f, err := os.OpenFile(repeated, os.O_APPEND|os.O_WRONLY, 0)
+		if err == nil {
+			_, err = f.WriteString(reply("acme/code", "moonshotai/Kimi-K3", "Done.", false) + "\n")
+			err = errors.Join(err, f.Close())
+		}
+		if err != nil {
+			t.Error(err)
+		}
+	})
+	h.Require.Equal(`{"systemMessage":"Served by moonshotai/Kimi-K3 via x=y's"}`+"\n", run(stop(repeated, "Done.", "p2"), "--hook"))
+
+	filler, err := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "tool_result", "tool_use_id": "t", "content": strings.Repeat("y", 200<<10)},
+	}}})
+	h.Require.NoError(err)
+	distant := transcript("distant.jsonl", prompted("p1"), reply("acme/code", "moonshotai/Kimi-K3", "Found it.", false),
+		prompted("p2"), reply("acme/auto", "zai-org/GLM-5.3-Flash", "Looking.", false), string(filler), reply("acme/auto", "zai-org/GLM-5.3-Flash", "Found it.", false))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(distant, "Found it.", "p2"), "--hook"))
+
+	sidechain := transcript("sidechain.jsonl", user, reply("acme/auto", "zai-org/GLM-5.3-Flash", "Main answer.", false), reply("acme/code", "moonshotai/Kimi-K3", "Subagent answer.", true))
+	h.Require.Equal("Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash\n", run(stop(sidechain, "", "")))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(sidechain, "Main answer.", ""), "--hook"))
+	h.Require.Empty(run(stop(sidechain, "Subagent answer.", ""), "--hook", "--wait", "100ms"))
+
+	routed := transcript("routed.jsonl", user, assistant("acme/primary", "acme/primary"), user, assistant("acme/auto[1m]", "zai-org/GLM-5.3-Flash"))
+	h.Require.Equal("Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash\n", run(payload(routed)))
+	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(payload(routed), "--hook"))
+
+	direct := transcript("direct.jsonl", assistant("acme/auto", "zai-org/GLM-5.3-Flash"), user, assistant("acme/primary", "acme/primary"))
+	h.Require.Empty(run(payload(direct)))
+	h.Require.Empty(run(payload(direct), "--hook"))
+
+	synthetic := transcript("synthetic.jsonl", assistant("acme/code", "moonshotai/Kimi-K3"), assistant("acme/primary", "<synthetic>"), assistant("acme/primary", ""))
+	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", run(payload(synthetic)))
+	h.Require.Equal(`{"systemMessage":"Served by moonshotai/Kimi-K3 via x=y's"}`+"\n", run(payload(synthetic), "--hook"))
+
+	h.Require.Equal("acme/bare → zai-org/GLM-5.3-Flash\n", run(payload(transcript("bare.jsonl", assistant("acme/bare", "zai-org/GLM-5.3-Flash")))))
+	h.Require.Equal("acme/empty → zai-org/GLM-5.3-Flash\n", run(payload(transcript("unlabeled.jsonl", assistant("acme/empty[1m]", "zai-org/GLM-5.3-Flash")))))
+	h.Require.Empty(run(payload(transcript("label.jsonl", assistant("Auto (Baseten Internal Dogfooding)", "zai-org/GLM-5.3-Flash")))))
+	h.Require.Empty(run(payload(transcript("flag.jsonl", assistant("acme/code=x=y's", "zai-org/GLM-5.3-Flash")))))
+
+	result, err := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "tool_result", "tool_use_id": "t", "content": strings.Repeat("x", 3<<20)},
+	}}})
+	h.Require.NoError(err)
+	large := transcript("large.jsonl", user, assistant("acme/auto", "zai-org/GLM-5.3-Flash"), string(result))
+	h.Require.Equal("Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash\n", run(payload(large)))
+
+	for _, off := range []string{"0", "false", "f"} {
+		t.Setenv("BASETEN_CLAUDE_SERVED_MODEL", off)
+		started := time.Now()
+		h.Require.Empty(run(stop(turns, "Never said.", ""), "--hook"))
+		h.Require.Less(time.Since(started), 100*time.Millisecond)
+		h.Require.Empty(run(stop(turns, "", "")))
+	}
+	t.Setenv("BASETEN_CLAUDE_SERVED_MODEL", "1")
+	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", run(stop(turns, "", "")))
+	t.Setenv("BASETEN_CLAUDE_SERVED_MODEL", "")
+
+	h.Require.Empty(run(payload(filepath.Join(dir, "missing.jsonl"))))
+	h.Require.Empty(run(payload(dir)))
+	h.Require.Empty(run(payload(transcript("empty.jsonl"))))
+	h.Require.Empty(run("not json"))
+	h.Require.Empty(run(""))
+	h.Require.Empty(run(`{"transcript_path": 7}`))
+}
+
+func Test_Grid_ClaudeServedModel_HookProcess(t *testing.T) {
+	if os.Getenv("BASETEN_TEST_RUN_CLI") != "1" {
+		t.Skip("runs the CLI as the Claude Code Stop hook of Test_Grid_ClaudeServedModel_RealClaudeCode")
+	}
+	if internalcmd.Execute(context.Background(), internalcmd.ExecuteOptions{Args: flag.Args()}) != nil {
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
+	skipUnlessSupported(t)
+	binary, err := exec.LookPath("claude")
+	if err != nil {
+		t.Skip("claude is not on PATH")
+	}
+	var mu sync.Mutex
+	var requested []string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		requested = append(requested, body.Model)
+		mu.Unlock()
+		texts, model := []string{"Checking.", "Done."}, "acme/served-x"
+		if bytes.Contains(raw, []byte("Reply again.")) {
+			model = "acme/served-y"
+		}
+		message := map[string]any{"id": "msg_served", "type": "message", "role": "assistant", "model": model,
+			"stop_reason": "end_turn", "stop_sequence": nil, "usage": map[string]any{"input_tokens": 5, "output_tokens": 5}}
+		switch {
+		case r.URL.Path == "/v1/messages/count_tokens":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"input_tokens": 5})
+		case r.URL.Path != "/v1/messages":
+			http.NotFound(w, r)
+		case !body.Stream:
+			var content []any
+			for _, text := range texts {
+				content = append(content, map[string]any{"type": "text", "text": text})
+			}
+			message["content"] = content
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(message)
+		default:
+			w.Header().Set("Content-Type", "text/event-stream")
+			event := func(name string, data map[string]any) {
+				raw, _ := json.Marshal(data)
+				_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, raw)
+			}
+			message["content"], message["stop_reason"] = []any{}, nil
+			event("message_start", map[string]any{"type": "message_start", "message": message})
+			for i, text := range texts {
+				event("content_block_start", map[string]any{"type": "content_block_start", "index": i, "content_block": map[string]any{"type": "text", "text": ""}})
+				event("content_block_delta", map[string]any{"type": "content_block_delta", "index": i, "delta": map[string]any{"type": "text_delta", "text": text}})
+				event("content_block_stop", map[string]any{"type": "content_block_stop", "index": i})
+			}
+			event("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": map[string]any{"output_tokens": 5}})
+			event("message_stop", map[string]any{"type": "message_stop"})
+		}
+	}))
+	t.Cleanup(gateway.Close)
+	h, api := gridAPI(t, gateway.URL)
+	wide := maps.Clone(harnessRouteMetadata)
+	wide["context_window"] = 1000000
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
+		"items": []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-auto", "name": "acme/auto", "display_name": "Auto", "invoke_url": gateway.URL, "metadata": wide,
+			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-auto", "slug": "acme/auto"}, "allowed_routes": []any{}}}},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	configDir := filepath.Join(root, ".claude")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", configDir, "--use-session-credential", "--yes"))
+
+	exe, err := os.Executable()
+	h.Require.NoError(err)
+	payloadPath, hookOutput, hook := filepath.Join(root, "stop-payloads.jsonl"), filepath.Join(root, "stop-hook.out"), filepath.Join(root, "stop-hook.sh")
+	h.Require.NoError(os.WriteFile(hook, []byte("#!/bin/sh\ntee -a '"+payloadPath+"' | BASETEN_TEST_RUN_CLI=1 '"+exe+
+		"' -test.run='^Test_Grid_ClaudeServedModel_HookProcess$' -- grid claude-served-model --router 'acme/auto=Auto' --hook | tee -a '"+hookOutput+"'\n"), 0o700))
+	settingsPath := harnessSettingsFile("claude-code", configDir)
+	settings := readHarnessSettings(t, "claude-code", settingsPath)
+	settings["hooks"] = map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hook}}}}}
+	raw, err := json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(settingsPath, raw, 0o600))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	work, tmp := t.TempDir(), t.TempDir()
+	turn := func(args ...string) {
+		run := exec.CommandContext(ctx, binary, args...)
+		run.Dir = work
+		run.Env = []string{
+			"HOME=" + root, "CLAUDE_CONFIG_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + tmp, "DISABLE_AUTOUPDATER=1",
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}
+		run.WaitDelay = 5 * time.Second
+		output, err := run.CombinedOutput()
+		h.Require.NoError(err, string(output))
+	}
+	turn("-p", "Reply with OK.")
+	turn("-p", "--continue", "Reply again.")
+	settings = readHarnessSettings(t, "claude-code", settingsPath)
+	settings["env"].(map[string]any)["BASETEN_CLAUDE_SERVED_MODEL"] = "0"
+	raw, err = json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(settingsPath, raw, 0o600))
+	turn("-p", "--continue", "Reply once more.")
+	mu.Lock()
+	h.Require.Contains(requested, "acme/auto")
+	mu.Unlock()
+
+	type stopPayload struct {
+		HookEventName        string `json:"hook_event_name"`
+		TranscriptPath       string `json:"transcript_path"`
+		LastAssistantMessage string `json:"last_assistant_message"`
+		PromptID             string `json:"prompt_id"`
+	}
+	captured, err := os.ReadFile(payloadPath)
+	h.Require.NoError(err, "claude -p ran the Stop hook")
+	var stops []stopPayload
+	for _, line := range strings.Split(strings.TrimSpace(string(captured)), "\n") {
+		var stop stopPayload
+		h.Require.NoError(json.Unmarshal([]byte(line), &stop))
+		h.Require.Equal("Stop", stop.HookEventName)
+		h.Require.Equal("Done.", stop.LastAssistantMessage, "last_assistant_message is the final text block")
+		h.Require.NotEmpty(stop.PromptID)
+		stops = append(stops, stop)
+	}
+	h.Require.Len(stops, 3)
+	h.Require.NotEqual(stops[0].PromptID, stops[1].PromptID)
+	h.Require.NotEqual(stops[1].PromptID, stops[2].PromptID)
+	h.Require.Equal(stops[0].TranscriptPath, stops[1].TranscriptPath)
+	h.Require.Equal(stops[1].TranscriptPath, stops[2].TranscriptPath)
+	printed, err := os.ReadFile(hookOutput)
+	h.Require.NoError(err)
+	h.Require.Equal(`{"systemMessage":"Served by acme/served-x via Auto"}`+"\n"+`{"systemMessage":"Served by acme/served-y via Auto"}`+"\n", string(printed))
+
+	transcripts, err := filepath.Glob(filepath.Join(configDir, "projects", "*", "*.jsonl"))
+	h.Require.NoError(err)
+	h.Require.Equal([]string{stops[0].TranscriptPath}, transcripts)
+	statusLine, err := json.Marshal(map[string]any{"transcript_path": transcripts[0]})
+	h.Require.NoError(err)
+	h.Stdin.Reset()
+	h.Stdin.Write(statusLine)
+	h.Require.NoError(h.Execute("grid", "claude-served-model", "--router", "acme/auto=Auto"))
+	h.Require.Equal("Auto → acme/served-y\n", h.Stdout.String())
 }
 
 // serveFirstPartyRoutes serves an Anthropic route and an OpenAI route, each

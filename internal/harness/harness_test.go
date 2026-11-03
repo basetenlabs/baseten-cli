@@ -56,6 +56,57 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 	require.ErrorContains(t, err, "no usable context and output limits")
 }
 
+func TestNewRouteMarksRouters(t *testing.T) {
+	tools, ctx, out := true, 128000, 4096
+	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools}
+	for _, tc := range []struct {
+		target string
+		want   bool
+	}{
+		{`{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, true},
+		{`{"type": "INTELLIGENT"}`, true},
+		{`{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, false},
+		{`{"type": "CONNECTION", "connection_id": "conn-a", "model": "claude"}`, false},
+		{`{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, false},
+	} {
+		api := managementapi.GridRoute{Name: "acme/route", Metadata: metadata}
+		require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
+		r, err := NewRoute(api, Providers{"conn-a": ProviderAnthropic})
+		require.NoError(t, err)
+		require.Equal(t, tc.want, r.Router, tc.target)
+	}
+	r, err := NewRoute(managementapi.GridRoute{Name: "acme/untyped", Metadata: metadata}, nil)
+	require.NoError(t, err)
+	require.False(t, r.Router, "a route without a target type is not a router")
+}
+
+func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
+	routes := []Route{
+		{Name: "acme/o'brien", Router: true}, {Name: "acme/plain", DisplayName: "Plain"},
+		{Name: "b10-internal/auto-XP9WlBD", DisplayName: "Auto (Baseten Internal Dogfooding)", Router: true},
+		{Name: "acme/it's", DisplayName: "x=y's", Router: true},
+	}
+	values := claudeServedModelSettings(routes, map[string]any{}, "/opt/it's/baseten")
+	require.Len(t, values, 1)
+	command := values[0].Installed.Data.(map[string]any)["command"].(string)
+	require.Equal(t, `'/opt/it'\''s/baseten' grid claude-served-model --router 'acme/o'\''brien' --router 'b10-internal/auto-XP9WlBD=Auto (Baseten Internal Dogfooding)' --router 'acme/it'\''s=x=y'\''s'`, command)
+	for _, tc := range []struct {
+		command string
+		want    bool
+	}{
+		{command, true},
+		{command + " --hook", true},
+		{command + " ; echo hi", false},
+		{"echo " + command, false},
+		{command + " --hook --hook", false},
+		{`'/opt/it'\''s/baseten' grid claude-served-model`, false},
+		{`'/opt/it's/baseten' grid claude-served-model --router 'acme/auto'`, false},
+		{`echo "$(baseten grid claude-served-model --router acme/auto) | custom stats"`, false},
+	} {
+		require.Equal(t, tc.want, claudeServedModelOwned(map[string]any{"command": tc.command}), tc.command)
+	}
+}
+
 func testRoutes() []Route {
 	return []Route{
 		testRoute("acme/primary", "Primary"),
@@ -248,7 +299,7 @@ func settingsPath(t *testing.T, h Harness) string {
 
 func setup(t *testing.T, h Harness, path string, routes []Route, s Selection) []*Plan {
 	t.Helper()
-	plans, err := h.Prepare(path, routes, s, testEndpoint, nil)
+	plans, err := h.Prepare(path, routes, PrepareOptions{Selection: s, Endpoint: testEndpoint})
 	require.NoError(t, err)
 	require.NoError(t, ApplyPlans(plans, testToken))
 	return plans
@@ -291,7 +342,7 @@ func TestSetupRefreshAndTeardownKeepUnrelatedSettings(t *testing.T) {
 				}
 				setup(t, h, path, testRoutes(), Selection{Primary: testRoutes()[i%2].Name})
 			}
-			plans, err := h.Prepare(path, testRoutes(), Selection{Primary: "acme/background"}, testEndpoint, nil)
+			plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Selection: Selection{Primary: "acme/background"}, Endpoint: testEndpoint})
 			require.NoError(t, err)
 			require.NoError(t, ApplyPlans(plans, testToken))
 			for _, p := range plans {
@@ -346,7 +397,7 @@ func TestHelperCredential(t *testing.T) {
 			path := settingsPath(t, h)
 			setup(t, h, path, testRoutes(), Selection{})
 			cli := &Helper{Path: "/opt/my tools/baseten", Profile: "alice"}
-			plans, err := h.Prepare(path, testRoutes(), Selection{}, testEndpoint, cli)
+			plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, Helper: cli})
 			require.NoError(t, err)
 			require.NoError(t, ApplyPlans(plans, ""))
 			raw, err := os.ReadFile(path)
@@ -527,18 +578,18 @@ func TestUnsupportedSelectionsAreRejected(t *testing.T) {
 		{piHarness{}, Selection{Fallback: "acme/fallback"}},
 	} {
 		t.Run(fmt.Sprintf("%s/%+v", tc.h.Name(), tc.s), func(t *testing.T) {
-			_, err := tc.h.Prepare(settingsPath(t, tc.h), testRoutes(), tc.s, testEndpoint, nil)
+			_, err := tc.h.Prepare(settingsPath(t, tc.h), testRoutes(), PrepareOptions{Selection: tc.s, Endpoint: testEndpoint})
 			require.ErrorContains(t, err, "supported only")
 		})
 	}
-	_, err := claudeCodeHarness{}.Prepare(settingsPath(t, claudeCodeHarness{}), testRoutes(), Selection{Primary: "acme/missing"}, testEndpoint, nil)
+	_, err := claudeCodeHarness{}.Prepare(settingsPath(t, claudeCodeHarness{}), testRoutes(), PrepareOptions{Selection: Selection{Primary: "acme/missing"}, Endpoint: testEndpoint})
 	require.ErrorContains(t, err, "not one of the team's routes")
 }
 
 func TestCodexOrphanedCatalog(t *testing.T) {
 	h := codexHarness{}
 	path := settingsPath(t, h)
-	plans, err := h.Prepare(path, testRoutes(), Selection{}, testEndpoint, nil)
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint})
 	require.NoError(t, err)
 	// Only the catalog is written, as when setup is interrupted.
 	require.NoError(t, ApplyPlans(plans[:1], testToken))
@@ -576,7 +627,7 @@ func TestOpenCodeJSONC(t *testing.T) {
 
 	invalid := []byte("{ // comment\n invalid }")
 	require.NoError(t, os.WriteFile(path, invalid, 0o644))
-	_, err = openCodeHarness{}.Prepare(path, testRoutes(), Selection{}, testEndpoint, nil)
+	_, err = openCodeHarness{}.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint})
 	require.ErrorContains(t, err, "invalid settings JSON")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -901,7 +952,7 @@ func TestPiTeardownPreservesAnotherProviderSelection(t *testing.T) {
 func TestPiIncomplete(t *testing.T) {
 	h := piHarness{}
 	path := settingsPath(t, h)
-	plans, err := h.Prepare(path, testRoutes(), Selection{}, testEndpoint, nil)
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint})
 	require.NoError(t, err)
 	// Only the default model is written, as when models.json is removed by hand.
 	require.NoError(t, ApplyPlans(plans[1:], testToken))

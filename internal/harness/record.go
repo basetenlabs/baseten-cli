@@ -40,6 +40,7 @@ type Record struct {
 	// a restart, because the last one was declined or failed. Retried on the
 	// next sync.
 	CodexRestartPending bool `json:"codex_restart_pending,omitempty"`
+	NoClaudeServedModel bool `json:"no_claude_served_model,omitempty"`
 }
 
 // RecordFile is the on-disk harness.json structure. Unrecognized keys are

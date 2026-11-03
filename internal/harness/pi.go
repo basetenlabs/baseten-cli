@@ -53,7 +53,8 @@ func (piHarness) SupportsSubagent() bool { return false }
 
 func (piHarness) SupportsHelper() bool { return true }
 
-func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint string, helper *Helper) ([]*Plan, error) {
+func (piHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([]*Plan, error) {
+	s, endpoint, helper := opts.Selection, opts.Endpoint, opts.Helper
 	switch {
 	case s.Background != "":
 		return nil, errors.New("--background-route-id is supported only for Claude Code and OpenCode")

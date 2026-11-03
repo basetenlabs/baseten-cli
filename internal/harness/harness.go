@@ -68,10 +68,10 @@ type Harness interface {
 	// Detect finds the harness executable and its settings file in configDir,
 	// or in the harness's native configuration directory when configDir is empty.
 	Detect(ctx context.Context, execer Execer, configDir string) (Detection, error)
-	// Prepare plans setup of the settings file at path. With helper, the
+	// Prepare plans setup of the settings file at path. With opts.Helper, the
 	// harness runs it for its credential. Without it, ApplyPlans inserts a
 	// static one.
-	Prepare(path string, routes []Route, selection Selection, endpoint string, helper *Helper) ([]*Plan, error)
+	Prepare(path string, routes []Route, opts PrepareOptions) ([]*Plan, error)
 	// Inspect reports the integration state of the detected settings file.
 	Inspect(d Detection) (Status, error)
 	// Teardown plans removal of the integration settings at path.
@@ -91,6 +91,14 @@ type Harness interface {
 	Routes(routes []Route) []Route
 }
 
+type PrepareOptions struct {
+	Selection           Selection
+	Endpoint            string
+	Helper              *Helper
+	CLI                 string
+	NoClaudeServedModel bool
+}
+
 // Helper is the credential command a harness runs instead of storing a key:
 // this CLI, with the profile setup used pinned so the harness resolves the
 // same one regardless of its environment.
@@ -106,9 +114,10 @@ func (h *Helper) args(name string) []string {
 
 // shellCommand is the credential command as one sh line.
 func (h *Helper) shellCommand(name string) string {
-	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-	return quote(h.Path) + " grid token --harness " + name + " --profile " + quote(h.Profile)
+	return shellQuote(h.Path) + " grid token --harness " + name + " --profile " + shellQuote(h.Profile)
 }
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // Supported reports whether harness settings locations are verified on this
 // platform.
@@ -132,6 +141,7 @@ type Route struct {
 	// route is called with the Chat Completions API.
 	Provider        string
 	UpstreamModel   string
+	Router          bool
 	ContextWindow   int
 	OutputLimit     int
 	InputModalities []string
@@ -173,7 +183,7 @@ func NewProviders(connections []managementapi.GridConnection) Providers {
 // route that reaches one through a team connection. It fails if the route's
 // model metadata is missing or is not enough to configure a harness.
 func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
-	r := Route{Name: api.Name, DisplayName: api.DisplayName}
+	r := Route{Name: api.Name, DisplayName: api.DisplayName, Router: routeIsRouter(api)}
 	r.Provider, r.UpstreamModel = routeTarget(api, providers)
 	m := api.Metadata
 	if m == nil {
@@ -302,6 +312,11 @@ func routeTarget(api managementapi.GridRoute, providers Providers) (string, stri
 		}
 	}
 	return "", ""
+}
+
+func routeIsRouter(api managementapi.GridRoute) bool {
+	kind, _ := api.Target.Discriminator()
+	return kind != "" && kind != ProviderBaseten && kind != "CONNECTION"
 }
 
 // Selection holds the requested routes. Empty fields use each harness's default.
@@ -477,6 +492,7 @@ type Plan struct {
 	Path     string
 	Keys     []string
 	Replaced []string
+	Notes    []string
 	Managed  bool
 	Changed  bool
 
