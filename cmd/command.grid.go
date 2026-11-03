@@ -29,7 +29,9 @@ var commandGrid = Command{
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those. " +
 				"For Claude Code, when the team has router routes, setup shows which model served the latest response of a router route in the status line. " +
-				"Setup never changes a status line you configured; it adds a Stop hook that shows the serving model after each response instead.",
+				"Setup never changes a status line you configured; it adds a Stop hook that shows the serving model after each response instead. " +
+				"Interactive setup asks whether to show it, defaulting to yes; --no-claude-served-model leaves it out and removes it without asking, and --yes shows it unless that flag is set. " +
+				"To turn it off without rerunning setup, set BASETEN_CLAUDE_SERVED_MODEL=0 in Claude Code's settings env.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
@@ -389,7 +391,8 @@ var commandGrid = Command{
 			Hidden:  true,
 			Summary: "Print the model that served Claude Code's latest response",
 			Description: "Read the JSON payload Claude Code passes a status line or Stop hook on stdin, and print which model served the latest response in its transcript, " +
-				"when that response was requested through one of the --router routes, labeled with that route's display name. Otherwise print nothing. Always exits 0, since Claude Code shows any error to the user.",
+				"when that response was requested through one of the --router routes, labeled with that route's display name. Otherwise print nothing. Always exits 0, since Claude Code shows any error to the user. " +
+				"When BASETEN_CLAUDE_SERVED_MODEL is false, such as 0, print nothing without reading stdin; set it in Claude Code's settings env to turn the display off without rerunning setup.",
 			Flags: GridClaudeServedModelFlags{},
 			Output: &CommandOutput[JSONUndefined]{
 				JSONOutputUnimportant: true,
@@ -639,6 +642,7 @@ type GridSetupFlags struct {
 	BackgroundRouteID    string `flag:"background-route-id" desc:"Route ID for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
 	SubagentRouteID      string `flag:"subagent-route-id" desc:"Route ID for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
 	FallbackRouteID      string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
+	NoClaudeServedModel  bool   `flag:"no-claude-served-model" desc:"For Claude Code, leave out the status line or Stop hook that shows which model served a router route's response, and remove it if setup added it before, without asking."`
 	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
 	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`

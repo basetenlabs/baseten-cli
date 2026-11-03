@@ -92,10 +92,11 @@ type Harness interface {
 }
 
 type PrepareOptions struct {
-	Selection Selection
-	Endpoint  string
-	Helper    *Helper
-	CLI       string
+	Selection           Selection
+	Endpoint            string
+	Helper              *Helper
+	CLI                 string
+	NoClaudeServedModel bool
 }
 
 // Helper is the credential command a harness runs instead of storing a key:

@@ -83,7 +83,7 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, opts PrepareOpti
 		credentialPath = nil
 	}
 	p, err := prepareSettings(path, credentialPath, func(data map[string]any) ([]setting, error) {
-		return claudeSettings(routes, s, endpoint, data, helper, cli)
+		return claudeSettings(routes, s, endpoint, data, helper, cli, opts.NoClaudeServedModel)
 	})
 	if err != nil {
 		return nil, err
@@ -95,7 +95,7 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, opts PrepareOpti
 	return []*Plan{p}, nil
 }
 
-func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string) ([]setting, error) {
+func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string, noServedModel bool) ([]setting, error) {
 	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
@@ -174,7 +174,11 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 			values = append(values, setting{Path: claudeSubagentPath})
 		}
 	}
-	return append(values, claudeServedModelSettings(routes, current, cli)...), nil
+	served := routes
+	if noServedModel {
+		served = nil
+	}
+	return append(values, claudeServedModelSettings(served, current, cli)...), nil
 }
 
 // claudeServedModelSettings plans how Claude Code shows which model served a

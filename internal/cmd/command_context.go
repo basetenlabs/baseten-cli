@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -386,6 +387,9 @@ const oauthClientID = "baseten-cli"
 // /dev/null is a character device without being a terminal, and redirecting
 // stdin from it is how cron and CI usually run.
 func (c *CommandContext) IsInteractive() bool {
+	if _, ok := c.promptAnswers(); ok {
+		return true
+	}
 	f, ok := c.Stdin.(*os.File)
 	if !ok {
 		return false
@@ -416,6 +420,14 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 // RunPrompt runs a single interactive prompt field, aborting it when the
 // command context is cancelled.
 func (c *CommandContext) RunPrompt(field huh.Field) error {
+	if answers, ok := c.promptAnswers(); ok {
+		if len(*answers) == 0 {
+			return errors.New("no answer for the prompt")
+		}
+		answer := (*answers)[0]
+		*answers = (*answers)[1:]
+		return huh.NewForm(huh.NewGroup(field)).WithAccessible(true).WithInput(strings.NewReader(answer + "\n")).WithOutput(c.Stderr).RunWithContext(c)
+	}
 	// Equivalent to the field's own Run, which ignores the context and so
 	// leaves the prompt running when the command is cancelled by a SIGTERM or
 	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
@@ -577,6 +589,20 @@ func (c *CommandContext) httpClient() *http.Client {
 }
 
 type httpClientKey struct{}
+
+type promptAnswersKey struct{}
+
+func WithPromptAnswers(ctx context.Context, answers ...string) context.Context {
+	return context.WithValue(ctx, promptAnswersKey{}, &answers)
+}
+
+func (c *CommandContext) promptAnswers() (*[]string, bool) {
+	if c.Context == nil {
+		return nil, false
+	}
+	answers, ok := c.Value(promptAnswersKey{}).(*[]string)
+	return answers, ok
+}
 
 // WithHTTPClient returns a context that overrides the HTTP client used by
 // CommandContext and therefore all SDK clients created from it.

@@ -1342,6 +1342,126 @@ func Test_Grid_Setup_ServedModelSessionCredential(t *testing.T) {
 	h.Require.Equal("'"+exe+"' grid claude-served-model --router 'acme/auto=auto'", settings["statusLine"].(map[string]any)["command"])
 }
 
+func Test_Grid_Setup_ServedModelOptOut(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	cli, err := exec.LookPath("baseten")
+	h.Require.NoError(err)
+	ours := "'" + cli + "' grid claude-served-model --router 'acme/auto=auto'"
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	guard := map[string]any{"PreToolUse": []any{map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "guard"}}}}}
+	raw, err := json.Marshal(map[string]any{"theme": "dark", "hooks": guard})
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+	record := func() string {
+		raw, err := os.ReadFile(filepath.Join(recordDir(t), "harness.json"))
+		h.Require.NoError(err)
+		return string(raw)
+	}
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(ours, readHarnessSettings(t, "claude-code", path)["statusLine"].(map[string]any)["command"])
+	h.Require.NoError(h.Execute(append(setup, "--no-claude-served-model")...))
+	settings := readHarnessSettings(t, "claude-code", path)
+	h.Require.NotContains(settings, "statusLine")
+	h.Require.Equal(guard, settings["hooks"])
+	h.Require.Equal("dark", settings["theme"])
+	h.Require.True(harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel)
+	h.Require.Contains(record(), `"no_claude_served_model": true`)
+
+	settings["statusLine"] = map[string]any{"type": "command", "command": ours}
+	raw, err = json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NotContains(readHarnessSettings(t, "claude-code", path), "statusLine", "sync replays the recorded opt-out")
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(ours, readHarnessSettings(t, "claude-code", path)["statusLine"].(map[string]any)["command"], "setup without the flag turns it back on")
+	h.Require.False(harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel)
+	h.Require.NotContains(record(), "no_claude_served_model")
+
+	userStatusLine := map[string]any{"type": "command", "command": "my-status"}
+	userStop := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "say done"}}}
+	raw, err = json.Marshal(map[string]any{"statusLine": userStatusLine, "hooks": map[string]any{"Stop": []any{userStop}}})
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Len(readHarnessSettings(t, "claude-code", path)["hooks"].(map[string]any)["Stop"], 2)
+	h.Require.NoError(h.Execute(append(setup, "--no-claude-served-model")...))
+	settings = readHarnessSettings(t, "claude-code", path)
+	h.Require.Equal(userStatusLine, settings["statusLine"])
+	h.Require.Equal(map[string]any{"Stop": []any{userStop}}, settings["hooks"])
+}
+
+func Test_Grid_Setup_ServedModelPrompt(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	base := h.Context
+	answer := func(answers ...string) { h.Context = internalcmd.WithPromptAnswers(base, answers...) }
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir}
+	question := "Show which model served each response on auto routes in Claude Code?"
+	shown := func() bool {
+		_, ok := readHarnessSettings(t, "claude-code", path)["statusLine"]
+		return ok
+	}
+	recorded := func() bool { return harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel }
+
+	answer("1", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), question)
+	h.Require.True(shown())
+
+	answer("2", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), question)
+	h.Require.False(shown(), "answering no removes the display")
+	h.Require.True(recorded())
+	h.Context = base
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.False(shown(), "sync replays the answer without asking")
+
+	answer("", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.True(shown(), "the default answer is yes")
+	h.Require.False(recorded())
+
+	answer("2")
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--no-claude-served-model")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.False(shown())
+	h.Require.True(recorded())
+	h.Require.NoError(h.Execute(append(setup, "--yes")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.True(shown(), "--yes shows it without asking")
+	h.Require.False(recorded())
+	h.Context = base
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--no-claude-served-model")...))
+	h.Require.False(shown(), "without a terminal the flag decides")
+	h.Require.NoError(h.Execute(append(setup, "--yes")...))
+	h.Require.True(shown())
+
+	answer()
+	h.Require.NoError(h.Execute(append(setup, "--dry-run")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+
+	serveServedModelRoutes(api)
+	answer("1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NotContains(h.Stderr.String(), question, "no router routes, no question")
+	serveServedModelRoutes(api, "auto")
+	answer("1")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", t.TempDir()))
+	h.Require.NotContains(h.Stderr.String(), question, "Claude Code is not a target")
+}
+
 func Test_Grid_Setup_ServedModelDisplayNames(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
@@ -1482,6 +1602,17 @@ func Test_Grid_ClaudeServedModel(t *testing.T) {
 	large := transcript("large.jsonl", user, assistant("acme/auto", "zai-org/GLM-5.3-Flash"), string(result))
 	h.Require.Equal("Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash\n", run(payload(large)))
 
+	for _, off := range []string{"0", "false", "f"} {
+		t.Setenv("BASETEN_CLAUDE_SERVED_MODEL", off)
+		started := time.Now()
+		h.Require.Empty(run(stop(turns, "Never said.", ""), "--hook"))
+		h.Require.Less(time.Since(started), 100*time.Millisecond)
+		h.Require.Empty(run(stop(turns, "", "")))
+	}
+	t.Setenv("BASETEN_CLAUDE_SERVED_MODEL", "1")
+	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", run(stop(turns, "", "")))
+	t.Setenv("BASETEN_CLAUDE_SERVED_MODEL", "")
+
 	h.Require.Empty(run(payload(filepath.Join(dir, "missing.jsonl"))))
 	h.Require.Empty(run(payload(dir)))
 	h.Require.Empty(run(payload(transcript("empty.jsonl"))))
@@ -1583,7 +1714,7 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	work, tmp := t.TempDir(), t.TempDir()
-	for _, args := range [][]string{{"-p", "Reply with OK."}, {"-p", "--continue", "Reply again."}} {
+	turn := func(args ...string) {
 		run := exec.CommandContext(ctx, binary, args...)
 		run.Dir = work
 		run.Env = []string{
@@ -1595,6 +1726,14 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 		output, err := run.CombinedOutput()
 		h.Require.NoError(err, string(output))
 	}
+	turn("-p", "Reply with OK.")
+	turn("-p", "--continue", "Reply again.")
+	settings = readHarnessSettings(t, "claude-code", settingsPath)
+	settings["env"].(map[string]any)["BASETEN_CLAUDE_SERVED_MODEL"] = "0"
+	raw, err = json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(settingsPath, raw, 0o600))
+	turn("-p", "--continue", "Reply once more.")
 	mu.Lock()
 	h.Require.Contains(requested, "acme/auto")
 	mu.Unlock()
@@ -1616,9 +1755,11 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 		h.Require.NotEmpty(stop.PromptID)
 		stops = append(stops, stop)
 	}
-	h.Require.Len(stops, 2)
+	h.Require.Len(stops, 3)
 	h.Require.NotEqual(stops[0].PromptID, stops[1].PromptID)
+	h.Require.NotEqual(stops[1].PromptID, stops[2].PromptID)
 	h.Require.Equal(stops[0].TranscriptPath, stops[1].TranscriptPath)
+	h.Require.Equal(stops[1].TranscriptPath, stops[2].TranscriptPath)
 	printed, err := os.ReadFile(hookOutput)
 	h.Require.NoError(err)
 	h.Require.Equal(`{"systemMessage":"Served by acme/served-x via Auto"}`+"\n"+`{"systemMessage":"Served by acme/served-y via Auto"}`+"\n", string(printed))
