@@ -979,6 +979,57 @@ func TestPiIncomplete(t *testing.T) {
 	require.ErrorContains(t, err, "invalid settings JSON")
 }
 
+func TestPiWebSearchExtension(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	target := piWebSearchPath(path)
+	plans := setup(t, h, path, testRoutes(), Selection{})
+	paths := []string{}
+	for _, p := range plans {
+		paths = append(paths, p.Path)
+	}
+	require.Equal(t, []string{path, piSettingsPath(path), target}, paths)
+	plan := plans[len(plans)-1]
+	require.True(t, plan.Managed)
+	require.True(t, plan.Changed)
+	require.Contains(t, string(plan.data), "baseten_web_search")
+	raw, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.True(t, piExtensionOwned(raw))
+	status, err := h.Inspect(Detection{Name: Pi, Path: path})
+	require.NoError(t, err)
+	require.Contains(t, status.Managed, "extensions/baseten-web-search.ts")
+	teardown(t, h, path)
+	require.NoFileExists(t, target)
+}
+
+func TestPiWebSearchExtensionUserFile(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	target := piWebSearchPath(path)
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
+	user := []byte("export default function () {};\n")
+	require.NoError(t, os.WriteFile(target, user, 0o644))
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint})
+	require.NoError(t, err)
+	plan := plans[len(plans)-1]
+	require.Equal(t, target, plan.Path)
+	require.False(t, plan.Managed)
+	require.False(t, plan.Changed)
+	require.Equal(t, []string{"warning: existing " + target + " left unchanged; Pi will not declare the baseten_web_search tool"}, plan.Notes)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	raw, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, user, raw, "the user's file is left alone")
+	status, err := h.Inspect(Detection{Name: Pi, Path: path})
+	require.NoError(t, err)
+	require.NotContains(t, status.Managed, "extensions/baseten-web-search.ts")
+	teardown(t, h, path)
+	raw, err = os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, user, raw, "the user's file survives teardown")
+}
+
 func TestClientHeaderNamesHarness(t *testing.T) {
 	paths := map[string][]string{
 		ClaudeCode: {"env", "ANTHROPIC_CUSTOM_HEADERS"},

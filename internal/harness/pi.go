@@ -20,6 +20,9 @@ type piHarness struct{}
 //go:embed pi_served_model.ts
 var piServedModelTemplate string
 
+//go:embed pi_web_search.ts
+var piWebSearchTemplate string
+
 const piServedModelRoutersSlot = "Object.entries({})"
 
 // piSettingsPath is Pi's settings file, next to the models.json that holds
@@ -121,35 +124,58 @@ func (piHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([]*P
 	if err != nil {
 		return nil, err
 	}
+	webSearch, err := piWebSearchPlans(path)
+	if err != nil {
+		return nil, err
+	}
 	// The models precede the settings that select one.
-	return append([]*Plan{p, settings}, extension...), nil
+	return append([]*Plan{p, settings}, slices.Concat(extension, webSearch)...), nil
 }
 
 func piServedModelPath(path string) string {
 	return filepath.Join(filepath.Dir(path), "extensions", "baseten-served-model.ts")
 }
 
+func piWebSearchPath(path string) string {
+	return filepath.Join(filepath.Dir(path), "extensions", "baseten-web-search.ts")
+}
+
 func piServedModelPlans(path string, routes []Route) ([]*Plan, error) {
 	routers := piServedModelRouters(routes)
-	if len(routers) == 0 {
-		return piServedModelRemoval(path)
-	}
 	target := piServedModelPath(path)
+	if len(routers) == 0 {
+		return piExtensionRemoval(target)
+	}
+	return piExtensionPlans(target, func() []byte { return piServedModelSource(routers) },
+		"warning: existing "+target+" left unchanged; Pi will not show which model served auto-route responses")
+}
+
+func piWebSearchPlans(path string) ([]*Plan, error) {
+	target := piWebSearchPath(path)
+	return piExtensionPlans(target, piWebSearchSource,
+		"warning: existing "+target+" left unchanged; Pi will not declare the baseten_web_search tool")
+}
+
+func piWebSearchSource() []byte {
+	body := []byte(piWebSearchTemplate)
+	return append(body, piExtensionSeal(body)...)
+}
+
+func piExtensionPlans(target string, source func() []byte, warning string) ([]*Plan, error) {
 	f, err := readFile(target)
 	if err != nil {
 		return nil, err
 	}
-	if f.exists && !piServedModelOwned(f.data) {
-		return []*Plan{{Path: target, Notes: []string{"warning: existing " + target + " left unchanged; Pi will not show which model served auto-route responses"}, file: f, data: f.data}}, nil
+	if f.exists && !piExtensionOwned(f.data) {
+		return []*Plan{{Path: target, Notes: []string{warning}, file: f, data: f.data}}, nil
 	}
-	data := piServedModelSource(routers)
+	data := source()
 	return []*Plan{{Path: target, Managed: true, Changed: !bytes.Equal(data, f.data), file: f, data: data}}, nil
 }
 
-func piServedModelRemoval(path string) ([]*Plan, error) {
-	target := piServedModelPath(path)
+func piExtensionRemoval(target string) ([]*Plan, error) {
 	f, err := readFile(target)
-	if err != nil || !f.exists || !piServedModelOwned(f.data) {
+	if err != nil || !f.exists || !piExtensionOwned(f.data) {
 		return nil, err
 	}
 	return []*Plan{{Path: target, Managed: true, Changed: true, file: f, teardown: true, remove: true}}, nil
@@ -168,16 +194,16 @@ func piServedModelRouters(routes []Route) map[string]string {
 func piServedModelSource(routers map[string]string) []byte {
 	encoded, _ := json.Marshal(routers)
 	body := []byte(strings.Replace(piServedModelTemplate, piServedModelRoutersSlot, "Object.entries("+string(encoded)+")", 1))
-	return append(body, piServedModelSeal(body)...)
+	return append(body, piExtensionSeal(body)...)
 }
 
-func piServedModelSeal(body []byte) string {
+func piExtensionSeal(body []byte) string {
 	return fmt.Sprintf("export const basetenGridSetupSha256 = \"%x\";\n", sha256.Sum256(body))
 }
 
-func piServedModelOwned(data []byte) bool {
+func piExtensionOwned(data []byte) bool {
 	i := bytes.LastIndexByte(bytes.TrimSuffix(data, []byte("\n")), '\n')
-	return string(data[i+1:]) == piServedModelSeal(data[:i+1])
+	return string(data[i+1:]) == piExtensionSeal(data[:i+1])
 }
 
 // piModel describes a route to Pi. A model's api overrides the provider's, so
@@ -288,12 +314,16 @@ func (piHarness) Teardown(path string) ([]*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	extension, err := piServedModelRemoval(path)
+	served, err := piExtensionRemoval(piServedModelPath(path))
+	if err != nil {
+		return nil, err
+	}
+	webSearch, err := piExtensionRemoval(piWebSearchPath(path))
 	if err != nil {
 		return nil, err
 	}
 	// The settings that select a model precede the models.
-	return append([]*Plan{settings, models}, extension...), nil
+	return append([]*Plan{settings, models}, slices.Concat(served, webSearch)...), nil
 }
 
 func (piHarness) Inspect(d Detection) (Status, error) {
@@ -315,6 +345,13 @@ func (piHarness) Inspect(d Detection) (Status, error) {
 		r.State = StateIncomplete
 	case settings["defaultProvider"] != providerID:
 		r.State = StateInactive
+	}
+	extension, err := readFile(piWebSearchPath(d.Path))
+	if err != nil {
+		return r, err
+	}
+	if extension.exists && piExtensionOwned(extension.data) {
+		r.Managed = append(r.Managed, "extensions/baseten-web-search.ts")
 	}
 	labels := map[string]string{}
 	entries, _ := get(models, []string{"providers", providerID, "models"}).Data.([]any)
