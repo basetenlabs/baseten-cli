@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -240,4 +241,79 @@ func Test_Grid_Connection_List_TextAndJSON(t *testing.T) {
 	var got any
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 	h.Require.Equal(map[string]any{"items": []any{connection}}, got)
+}
+
+func Test_Grid_Connection_Describe(t *testing.T) {
+	for _, output := range []string{"text", "json", "jsonl"} {
+		t.Run(output, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			m.SetRouteFunc("GET", "/v1/grid/connections/c123456", func(w http.ResponseWriter, r *http.Request) {
+				h.Require.Equal("Bearer test-key", r.Header.Get("Authorization"))
+				h.Require.Empty(r.URL.RawQuery)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(gridConnectionFixture("anthropic"))
+			})
+			h.Require.NoError(h.Execute("grid", "connection", "describe", "--id", "c123456", "--output", output))
+			h.Require.Len(m.Calls(), 1)
+			if output == "text" {
+				want := []string{"c123456", "Engineering", "anthropic", "provider-key", "2026-10-19T10:00:00Z"}
+				for _, field := range want {
+					h.Require.Contains(h.Stdout.String(), field)
+				}
+			} else {
+				var got any
+				h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+				h.Require.Equal(gridConnectionFixture("anthropic"), got)
+			}
+		})
+	}
+}
+
+func Test_Grid_Connection_Describe_UnknownProvider(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	connection := gridConnectionFixture("future_provider")
+	connection["config"] = map[string]any{"provider": "FUTURE_PROVIDER", "credential": map[string]any{"name": "future-key"}}
+	m.SetRoute("GET", "/v1/grid/connections/c123456", 200, connection)
+	h.Require.NoError(h.Execute("grid", "connection", "describe", "--id", "c123456"))
+	h.Require.Contains(h.Stdout.String(), "<unknown>")
+	h.Require.NotContains(h.Stdout.String(), "future-key")
+}
+
+func Test_Grid_Connection_Describe_Errors(t *testing.T) {
+	t.Run("empty id", func(t *testing.T) {
+		h := NewCommandHarness(t)
+		m := h.MockManagementAPI()
+		h.Require.Error(h.Execute("grid", "connection", "describe", "--id", ""))
+		h.Require.Equal(2, h.ExitCode)
+		h.Require.Empty(m.Calls())
+	})
+	for _, status := range []int{401, 403, 404, 500} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			m.SetRoute("GET", "/v1/grid/connections/c123456", status, map[string]string{"error": "unavailable"})
+			h.Require.Error(h.Execute("grid", "connection", "describe", "--id", "c123456", "--output", "json"))
+			h.Require.Equal(status, decodeJSONErrorEnvelope(h).APIStatusCode)
+		})
+	}
+	t.Run("malformed", func(t *testing.T) {
+		h := NewCommandHarness(t)
+		m := h.MockManagementAPI()
+		m.SetRouteFunc("GET", "/v1/grid/connections/c123456", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":`))
+		})
+		h.Require.ErrorContains(h.Execute("grid", "connection", "describe", "--id", "c123456"), "unexpected end of JSON input")
+	})
+	t.Run("malformed config", func(t *testing.T) {
+		h := NewCommandHarness(t)
+		m := h.MockManagementAPI()
+		connection := gridConnectionFixture("anthropic")
+		connection["config"] = map[string]any{"provider": "ANTHROPIC", "secret_id": 42, "secret_name": "provider-key"}
+		m.SetRoute("GET", "/v1/grid/connections/c123456", 200, connection)
+		h.Require.ErrorContains(h.Execute("grid", "connection", "describe", "--id", "c123456"), "reading connection c123456 config")
+		h.Require.Empty(h.Stdout.String())
+	})
 }
