@@ -149,11 +149,12 @@ func Test_Grid_Route_Usage_TeamAndRouterDimensions(t *testing.T) {
 			query := gridUsageLastQuery(h, m)
 			h.Require.Equal([]string{"TEAM", "ROUTER", "MODEL"}, query["group_by"])
 			h.Require.Equal([]string{"team-a"}, query["team_id"])
-			h.Require.Contains(h.Stdout.String(), "team-a")
+			h.Require.Contains(h.Stdout.String(), "Engineering")
 			h.Require.Contains(h.Stdout.String(), "acme/router")
 			if output == "text" {
 				h.Require.Contains(h.Stdout.String(), "TEAM")
 				h.Require.Contains(h.Stdout.String(), "ROUTER")
+				h.Require.NotContains(h.Stdout.String(), "team-a")
 			} else {
 				h.Require.Contains(h.Stdout.String(), "Engineering")
 			}

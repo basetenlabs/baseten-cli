@@ -170,9 +170,9 @@ func outputGridConnections(ctx *CommandContext, connections []managementapi.Grid
 		if err != nil {
 			return err
 		}
-		rows = append(rows, []string{connection.Id, connection.TeamId, connection.TeamName, enumFromAPIValue(provider), secretName})
+		rows = append(rows, []string{connection.Id, connection.TeamName, enumFromAPIValue(provider), secretName})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"ID", "TEAM ID", "TEAM NAME", "PROVIDER", "SECRET NAME"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"ID", "TEAM", "PROVIDER", "SECRET NAME"}, Rows: rows})
 	return nil
 }
 

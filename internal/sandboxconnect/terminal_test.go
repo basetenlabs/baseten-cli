@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/basetenlabs/baseten-go/sandbox"
 	"github.com/coder/websocket"
 )
 
@@ -120,14 +122,14 @@ func newTerminalTestServer(t *testing.T, inputsBeforeClose int) *terminalTestSer
 }
 
 // staticTestToken is a NewToken that always returns the same token.
-func staticTestToken(token string) func(context.Context) (string, error) {
-	return func(context.Context) (string, error) { return token, nil }
+func staticTestToken(token string) sandbox.TokenProvider {
+	return func(context.Context, sandbox.TokenProviderOptions) (string, error) { return token, nil }
 }
 
 // mintCountingTestToken counts mints, failing the failAt-th, so tests can
 // assert how many mints a session needs.
-func mintCountingTestToken(mints *int, failAt int) func(context.Context) (string, error) {
-	return func(context.Context) (string, error) {
+func mintCountingTestToken(mints *int, failAt int) sandbox.TokenProvider {
+	return func(context.Context, sandbox.TokenProviderOptions) (string, error) {
 		*mints++
 		if *mints == failAt {
 			return "", fmt.Errorf("rate limited")
@@ -140,7 +142,7 @@ func mintCountingTestToken(mints *int, failAt int) func(context.Context) (string
 // it input, returning what it wrote and a channel with Run's result.
 func runTerminal(
 	t *testing.T, server *terminalTestServer, input io.Reader, errors *lockedBuffer,
-	newToken func(context.Context) (string, error),
+	newToken sandbox.TokenProvider,
 ) (*lockedBuffer, *Terminal, <-chan error) {
 	t.Helper()
 	if newToken == nil {
@@ -409,7 +411,9 @@ func TestTerminal_RemintsARejectedToken(t *testing.T) {
 	errors := &lockedBuffer{}
 	mints := 0
 	tokens := []string{"tok", "stale", "tok"}
-	newToken := func(context.Context) (string, error) {
+	var revoked []string
+	newToken := func(_ context.Context, opts sandbox.TokenProviderOptions) (string, error) {
+		revoked = append(revoked, opts.RevokedToken)
 		token := tokens[min(mints, len(tokens)-1)]
 		mints++
 		return token, nil
@@ -433,6 +437,31 @@ func TestTerminal_RemintsARejectedToken(t *testing.T) {
 	}
 	if mints != 3 {
 		t.Errorf("token mints %d, want 3: connect, the rejected wake token, the re-mint", mints)
+	}
+	if !slices.Equal(revoked, []string{"", "", "stale"}) {
+		t.Errorf("revoked tokens %q, want only the re-mint told of the rejected one", revoked)
+	}
+}
+
+func TestTerminal_DialRemintsARejectedToken(t *testing.T) {
+	// The first token, possibly cached, is rejected; the re-mint connects.
+	server := newTerminalTestServer(t, 1)
+	server.rejectToken = "stale"
+	var revoked []string
+	newToken := func(_ context.Context, opts sandbox.TokenProviderOptions) (string, error) {
+		revoked = append(revoked, opts.RevokedToken)
+		if opts.RevokedToken == "" {
+			return "stale", nil
+		}
+		return "tok", nil
+	}
+	terminal, err := Dial(t.Context(), DialOptions{SandboxURL: server.URL, NewToken: newToken})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	terminal.conn.CloseNow()
+	if !slices.Equal(revoked, []string{"", "stale"}) {
+		t.Errorf("revoked tokens %q, want the re-mint told of the rejected one", revoked)
 	}
 }
 

@@ -45,10 +45,10 @@ func commandGridRouteList(ctx *CommandContext, flags *cmd.GridRouteListFlags) er
 	}
 	rows := make([][]string, 0, len(items))
 	for _, r := range items {
-		rows = append(rows, []string{r.Id, r.TeamId, r.TeamName, r.DisplayName, r.Name, r.CreatedAt.UTC().Format(time.RFC3339)})
+		rows = append(rows, []string{r.Id, r.TeamName, r.DisplayName, r.Name, r.CreatedAt.UTC().Format(time.RFC3339)})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers: []string{"ID", "TEAM ID", "TEAM NAME", "DISPLAY NAME", "NAME", "CREATED"},
+		Headers: []string{"ID", "TEAM", "DISPLAY NAME", "NAME", "CREATED"},
 		Rows:    rows,
 	})
 	return nil
@@ -100,7 +100,6 @@ func commandGridRouteDescribe(ctx *CommandContext, flags *cmd.GridRouteDescribeF
 	ctx.Outputf("Name:             %s\n", route.Name)
 	ctx.Outputf("Display Name:     %s\n", route.DisplayName)
 	ctx.Outputf("Description:      %s\n", route.Description)
-	ctx.Outputf("Team ID:          %s\n", route.TeamId)
 	ctx.Outputf("Team Name:        %s\n", route.TeamName)
 	value, err := route.Target.ValueByDiscriminator()
 	var t gridRouteTargetInfo

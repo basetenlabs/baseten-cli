@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -111,6 +113,31 @@ func TestTransport_NotLoggedInErrors(t *testing.T) {
 	tr := &auth.Transport{Session: mustResolve(t, "")}
 	_, err := tr.Do(mustRequest(t, "http://127.0.0.1:1"))
 	require.ErrorContains(t, err, "not logged in")
+}
+
+func TestTransport_MissingProfileSuggestsAddingProfile(t *testing.T) {
+	s := storeWithConfigDir(t)
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileB, remoteURL, "key-bob", false, nil))
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
+
+	tr := &auth.Transport{Session: mustResolve(t, "ghost")}
+	_, err := tr.Credential(t.Context())
+	require.ErrorContains(t, err, "profile \"ghost\" not found; add it with")
+	require.ErrorContains(t, err, "baseten auth login --profile ghost --no-switch")
+	require.ErrorContains(t, err, "(existing profiles: alice@example.com, bob@example.com)")
+}
+
+func TestTransport_CorruptAuthFileSurfacesLoadError(t *testing.T) {
+	storeWithConfigDir(t)
+	dir, err := auth.DefaultConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "auth.json"), []byte("{"), 0o600))
+
+	tr := &auth.Transport{Session: mustResolve(t, "ghost")}
+	_, err = tr.Credential(t.Context())
+	require.ErrorContains(t, err, "parsing")
+	require.ErrorContains(t, err, "auth.json")
+	require.NotContains(t, err.Error(), "not found")
 }
 
 func TestTransport_OAuthRefreshRotatesStoredToken(t *testing.T) {

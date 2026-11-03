@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -999,4 +1000,133 @@ func Test_Model_Push_Watch_EntersLoopThenInterrupt(t *testing.T) {
 	h.Require.Equal(130, h.ExitCode)
 	h.Require.NotNil(h.API.FindCall("POST", watchSyncPath))
 	h.Require.Contains(h.Stdout.String(), "was successfully pushed")
+}
+
+// runGit runs git in dir with a fixed author, failing the test on error.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	c.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com",
+	)
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// initGitRepo commits everything in dir to a new git repository.
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-q", "-m", "first")
+}
+
+// pushedGitInfo returns the git_info sent with the push.
+func (h *modelPushHarness) pushedGitInfo() map[string]any {
+	h.T.Helper()
+	dep := h.API.FindCall("POST", "/v1/prepare_model_upload").BodyJSON(h.T)["deployment"].(map[string]any)
+	return dep["user_env"].(map[string]any)["git_info"].(map[string]any)
+}
+
+func Test_Model_Push_IncludeGitInfo(t *testing.T) {
+	t.Run("on_a_tag", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		initGitRepo(t, dir)
+		runGit(t, dir, "tag", "v1.4.0")
+
+		h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--include-git-info"))
+
+		gitInfo := h.pushedGitInfo()
+		h.Require.Len(gitInfo["latest_commit_sha"], 40)
+		h.Require.Equal("v1.4.0", gitInfo["latest_tag"])
+		h.Require.Equal(float64(0), gitInfo["commits_since_tag"])
+		h.Require.Equal(false, gitInfo["has_uncommitted_changes"])
+	})
+
+	t.Run("untagged", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		initGitRepo(t, dir)
+
+		h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--include-git-info"))
+
+		gitInfo := h.pushedGitInfo()
+		h.Require.Nil(gitInfo["latest_tag"])
+		h.Require.Nil(gitInfo["commits_since_tag"])
+	})
+
+	t.Run("commits_since_tag_and_uncommitted_changes", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		initGitRepo(t, dir)
+		runGit(t, dir, "tag", "v1.4.0")
+		h.Require.NoError(os.WriteFile(filepath.Join(dir, "model.py"), []byte("class Model: pass\n"), 0o644))
+		runGit(t, dir, "commit", "-q", "-am", "second")
+		h.Require.NoError(os.WriteFile(filepath.Join(dir, "model.py"), []byte("class Model:\n    pass\n"), 0o644))
+
+		h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--include-git-info"))
+
+		gitInfo := h.pushedGitInfo()
+		h.Require.Equal("v1.4.0", gitInfo["latest_tag"])
+		h.Require.Equal(float64(1), gitInfo["commits_since_tag"])
+		h.Require.Equal(true, gitInfo["has_uncommitted_changes"])
+	})
+
+	// A config file nested inside a repository reports the repository's state.
+	t.Run("file_in_a_subdirectory", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		repo := t.TempDir()
+		sub := filepath.Join(repo, "models", "llama")
+		h.Require.NoError(os.MkdirAll(sub, 0o755))
+		file := filepath.Join(sub, "config.yaml")
+		h.Require.NoError(os.WriteFile(file, []byte(modelPushMinimalConfig), 0o644))
+		initGitRepo(t, repo)
+
+		h.Require.NoError(h.Execute("model", "push", "--file", file, "--include-git-info"))
+
+		h.Require.Len(h.pushedGitInfo()["latest_commit_sha"], 40)
+	})
+
+	t.Run("outside_a_repo", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+
+		h.Require.NoError(h.Execute("model", "push", "--dir", dir, "--include-git-info"))
+
+		dep := h.API.FindCall("POST", "/v1/prepare_model_upload").BodyJSON(h.T)["deployment"].(map[string]any)
+		h.Require.NotContains(dep, "user_env")
+	})
+
+	t.Run("git_not_installed", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		t.Setenv("PATH", t.TempDir())
+
+		err := h.Execute("model", "push", "--dir", dir, "--include-git-info")
+
+		h.Require.ErrorContains(err, "git not found on PATH")
+	})
+
+	t.Run("stdin_rejected", func(t *testing.T) {
+		h := newModelPushHarness(t)
+
+		err := h.Execute("model", "push", "--file", "-", "--include-git-info")
+
+		h.Require.ErrorContains(err, "--file - cannot be combined with --include-git-info")
+	})
+
+	t.Run("without_the_flag", func(t *testing.T) {
+		h := newModelPushHarness(t)
+		dir := h.WriteModelDir(modelPushMinimalConfig)
+		initGitRepo(t, dir)
+
+		h.Require.NoError(h.Execute("model", "push", "--dir", dir))
+
+		dep := h.API.FindCall("POST", "/v1/prepare_model_upload").BodyJSON(h.T)["deployment"].(map[string]any)
+		h.Require.NotContains(dep, "user_env")
+	})
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -332,7 +333,7 @@ func (s *Store) SwitchProfile(profileName string) error {
 		return err
 	}
 	if _, ok := af.Profiles[profileName]; !ok {
-		return fmt.Errorf("profile %q not found", profileName)
+		return NewErrProfileNotFound(profileNames(af), profileName)
 	}
 	af.Current = profileName
 	return s.saveLocked(af)
@@ -367,10 +368,33 @@ func (s *Store) ProfileNames() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return profileNames(af), nil
+}
+
+func profileNames(af *AuthFile) []string {
 	names := make([]string, 0, len(af.Profiles))
 	for name := range af.Profiles {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return names, nil
+	return names
+}
+
+// NewErrProfileNotFound returns the error for a named profile that is not in the store, suggesting how to add it.
+func NewErrProfileNotFound(names []string, profileName string) error {
+	if len(names) == 0 {
+		return fmt.Errorf("no profiles stored; create one with `baseten auth login --profile %s --no-switch`", shellQuote(profileName))
+	}
+	return fmt.Errorf("profile %q not found; add it with `baseten auth login --profile %s --no-switch` (existing profiles: %s)", profileName, shellQuote(profileName), strings.Join(names, ", "))
+}
+
+const shellSafeChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./_-"
+
+func shellQuote(s string) string {
+	if s != "" && s[0] != '-' && strings.IndexFunc(s, func(r rune) bool {
+		return !strings.ContainsRune(shellSafeChars, r)
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
