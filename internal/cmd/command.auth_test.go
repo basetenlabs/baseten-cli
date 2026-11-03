@@ -125,6 +125,19 @@ func Test_Auth_Status_ProfileFlagSelects(t *testing.T) {
 	h.Require.Equal("bob", got["profile"])
 }
 
+func Test_Auth_Status_MissingProfileSuggestsAdding(t *testing.T) {
+	h := newAuthHarness(t)
+
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-a", true, nil))
+
+	err := h.Execute("auth", "status", "--profile", "ghost")
+	h.Require.Error(err)
+	h.Require.Equal(1, h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), "baseten auth login --profile ghost --no-switch")
+	h.Require.Contains(h.Stderr.String(), "existing profiles: alice")
+}
+
 // authListLine returns the text-table line for the named profile.
 func authListLine(h *CommandHarness, name string) string {
 	for line := range strings.Lines(h.Stdout.String()) {
