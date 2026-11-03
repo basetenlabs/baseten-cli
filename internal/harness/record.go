@@ -41,6 +41,7 @@ type Record struct {
 	// next sync.
 	CodexRestartPending bool `json:"codex_restart_pending,omitempty"`
 	NoClaudeServedModel bool `json:"no_claude_served_model,omitempty"`
+	NoPiServedModel     bool `json:"no_pi_served_model,omitempty"`
 }
 
 // RecordFile is the on-disk harness.json structure. Unrecognized keys are
