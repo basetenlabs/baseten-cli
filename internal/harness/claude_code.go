@@ -5,8 +5,10 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,6 +33,8 @@ var claudeStatusLinePath = []string{"statusLine"}
 var claudeStopHooksPath = []string{"hooks", "Stop"}
 
 const claudeServedModelCommand = " grid served-model"
+
+var claudeServedModelPattern = regexp.MustCompile(`^'(?:[^']|'\\'')*'` + claudeServedModelCommand + `(?: --router '(?:[^']|'\\'')*')+(?: --hook)?$`)
 
 const claudeTranscriptWindow = 64 << 10
 
@@ -189,7 +193,7 @@ func claudeServedModelSettings(routes []Route, current map[string]any, cli strin
 	case routers > 0 && ours:
 		values = append(values, desired(claudeStatusLinePath, map[string]any{"type": "command", "command": command}))
 	case routers > 0:
-		hook = map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command + " --hook"}}}
+		hook = map[string]any{"type": "command", "command": command + " --hook"}
 	case statusLine.Exists && ours:
 		values = append(values, setting{Path: claudeStatusLinePath})
 	}
@@ -207,15 +211,29 @@ func claudeStopHooksSetting(current, own map[string]any) (setting, bool) {
 	}
 	var entries []any
 	for _, entry := range existing {
-		switch {
-		case !claudeServedModelHook(entry):
+		if !claudeServedModelHook(entry) {
 			entries = append(entries, entry)
-		case own != nil:
-			entries, own = append(entries, own), nil
+			continue
+		}
+		group, _ := entry.(map[string]any)
+		hooks, _ := group["hooks"].([]any)
+		var kept []any
+		for _, hook := range hooks {
+			switch {
+			case !claudeServedModelOwned(hook):
+				kept = append(kept, hook)
+			case own != nil:
+				kept, own = append(kept, own), nil
+			}
+		}
+		if len(kept) > 0 {
+			group = maps.Clone(group)
+			group["hooks"] = kept
+			entries = append(entries, group)
 		}
 	}
 	if own != nil {
-		entries = append(entries, own)
+		entries = append(entries, map[string]any{"hooks": []any{own}})
 	}
 	if len(entries) == 0 {
 		return setting{Path: claudeStopHooksPath}, true
@@ -226,7 +244,7 @@ func claudeStopHooksSetting(current, own map[string]any) (setting, bool) {
 func claudeServedModelOwned(v any) bool {
 	entry, _ := v.(map[string]any)
 	command, _ := entry["command"].(string)
-	return strings.Contains(command, claudeServedModelCommand)
+	return claudeServedModelPattern.MatchString(command)
 }
 
 func claudeServedModelHook(entry any) bool {

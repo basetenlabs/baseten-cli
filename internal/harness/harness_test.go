@@ -80,6 +80,29 @@ func TestNewRouteMarksRouters(t *testing.T) {
 	require.False(t, r.Router, "a route without a target type is not a router")
 }
 
+func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
+	routes := []Route{{Name: "acme/o'brien", Router: true}, {Name: "acme/plain"}, {Name: "acme/it's", Router: true}}
+	values := claudeServedModelSettings(routes, map[string]any{}, "/opt/it's/baseten")
+	require.Len(t, values, 1)
+	command := values[0].Installed.Data.(map[string]any)["command"].(string)
+	require.Equal(t, `'/opt/it'\''s/baseten' grid served-model --router 'acme/o'\''brien' --router 'acme/it'\''s'`, command)
+	for _, tc := range []struct {
+		command string
+		want    bool
+	}{
+		{command, true},
+		{command + " --hook", true},
+		{command + " ; echo hi", false},
+		{"echo " + command, false},
+		{command + " --hook --hook", false},
+		{`'/opt/it'\''s/baseten' grid served-model`, false},
+		{`'/opt/it's/baseten' grid served-model --router 'acme/auto'`, false},
+		{`echo "$(baseten grid served-model --router acme/auto) | custom stats"`, false},
+	} {
+		require.Equal(t, tc.want, claudeServedModelOwned(map[string]any{"command": tc.command}), tc.command)
+	}
+}
+
 func testRoutes() []Route {
 	return []Route{
 		testRoute("acme/primary", "Primary"),

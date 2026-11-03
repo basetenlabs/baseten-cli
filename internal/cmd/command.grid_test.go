@@ -1213,6 +1213,74 @@ func Test_Grid_Setup_ServedModelStopHook(t *testing.T) {
 	h.Require.Equal(original, readHarnessSettings(t, "claude-code", path))
 }
 
+func Test_Grid_Setup_ServedModelSharedStopGroup(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	path := harnessSettingsFile("claude-code", dir)
+	statusLine := map[string]any{"type": "command", "command": "my-status"}
+	h.Require.NoError(os.WriteFile(path, []byte(`{"statusLine":{"type":"command","command":"my-status"}}`), 0o600))
+	cli, err := exec.LookPath("baseten")
+	h.Require.NoError(err)
+	ours := func(routers string) map[string]any {
+		return map[string]any{"type": "command", "command": "'" + cli + "' grid served-model " + routers + " --hook"}
+	}
+	notify := map[string]any{"type": "command", "command": "notify"}
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
+
+	h.Require.NoError(h.Execute(setup...))
+	settings := readHarnessSettings(t, "claude-code", path)
+	h.Require.Equal([]any{map[string]any{"hooks": []any{ours("--router 'acme/auto'")}}}, settings["hooks"].(map[string]any)["Stop"])
+	settings["hooks"].(map[string]any)["Stop"] = []any{
+		map[string]any{"matcher": "*", "hooks": []any{ours("--router 'acme/auto'"), notify}},
+		map[string]any{"hooks": []any{ours("--router 'acme/old'")}},
+	}
+	raw, err := json.Marshal(settings)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+
+	serveServedModelRoutes(api, "auto", "code")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]any{map[string]any{"matcher": "*", "hooks": []any{ours("--router 'acme/auto' --router 'acme/code'"), notify}}},
+		readHarnessSettings(t, "claude-code", path)["hooks"].(map[string]any)["Stop"])
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+	h.Require.Equal(map[string]any{"statusLine": statusLine, "hooks": map[string]any{"Stop": []any{map[string]any{"matcher": "*", "hooks": []any{notify}}}}},
+		readHarnessSettings(t, "claude-code", path))
+}
+
+func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
+	skipUnlessSupported(t)
+	for name, command := range map[string]func(cli string) string{
+		"composed": func(string) string { return `echo "$(baseten grid served-model --router acme/auto) | custom stats"` },
+		"suffixed": func(cli string) string { return "'" + cli + "' grid served-model --router 'acme/auto' ; echo hi" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			serveServedModelRoutes(api, "auto")
+			dir := t.TempDir()
+			path := harnessSettingsFile("claude-code", dir)
+			cli, err := exec.LookPath("baseten")
+			h.Require.NoError(err)
+			user := map[string]any{"statusLine": map[string]any{"type": "command", "command": command(cli)}}
+			raw, err := json.Marshal(user)
+			h.Require.NoError(err)
+			h.Require.NoError(os.WriteFile(path, raw, 0o600))
+
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+			h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
+			settings := readHarnessSettings(t, "claude-code", path)
+			h.Require.Equal(user["statusLine"], settings["statusLine"])
+			h.Require.Equal([]any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid served-model --router 'acme/auto' --hook"}}}},
+				settings["hooks"].(map[string]any)["Stop"])
+
+			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
+			h.Require.Equal(user, readHarnessSettings(t, "claude-code", path))
+		})
+	}
+}
+
 func Test_Grid_Setup_ServedModelZeroRouters(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
