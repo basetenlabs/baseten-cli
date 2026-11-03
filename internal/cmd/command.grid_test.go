@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/harness"
+	"github.com/creack/pty"
 	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 )
@@ -1773,6 +1775,433 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 	h.Stdin.Write(statusLine)
 	h.Require.NoError(h.Execute("grid", "claude-served-model", "--router", "acme/auto=Auto"))
 	h.Require.Equal("Auto → acme/served-y\n", h.Stdout.String())
+}
+
+var openCode2Execer = versionedHarnessExecer{"claude": "2.1.272 (Claude Code)", "opencode": "opencode v2.2.5"}
+
+func openCodePluginDir(dir string) string {
+	return filepath.Join(dir, "plugins", "baseten-served-model")
+}
+
+func openCodePluginFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(openCodePluginDir(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	require.NoError(t, err)
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+func openCodePluginRoutes(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(openCodePluginDir(dir), "routes.json"))
+	require.NoError(t, err)
+	var routes map[string]any
+	require.NoError(t, json.Unmarshal(raw, &routes))
+	return routes
+}
+
+func openCodePluginRouters(routers map[string]any) map[string]any {
+	return map[string]any{"managedBy": "baseten grid setup", "provider": "baseten-harness", "routers": routers}
+}
+
+var openCodePluginSources = []string{"routes.json", "server.js", "shared.js", "tui.tsx"}
+
+func Test_Grid_Setup_OpenCodeServedModel(t *testing.T) {
+	skipUnlessSupported(t)
+	for name, seed := range map[string]string{"original": `{"theme":"dark"}`, "native": `{"providers":{"other":{"name":"Other"}},"theme":"dark"}`} {
+		t.Run(name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+			serveServedModelRoutes(api, "auto=Auto (Baseten Internal Dogfooding)")
+			dir := t.TempDir()
+			path := harnessSettingsFile("opencode", dir)
+			h.Require.NoError(os.WriteFile(path, []byte(seed), 0o600))
+			mine := filepath.Join(dir, "plugins", "mine", "server.js")
+			h.Require.NoError(os.MkdirAll(filepath.Dir(mine), 0o700))
+			h.Require.NoError(os.WriteFile(mine, []byte("export default {}\n"), 0o600))
+			setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes", "--output", "json"}
+
+			h.Require.NoError(h.Execute(setup...))
+			h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir))
+			h.Require.Equal(openCodePluginRouters(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)"}), openCodePluginRoutes(t, dir))
+			settings := readHarnessSettings(t, "opencode", path)
+			h.Require.NotContains(settings, "plugins")
+			h.Require.NotContains(settings, "plugin")
+			h.Require.Equal("dark", settings["theme"])
+			_, native := settings["providers"]
+			h.Require.Equal(name == "native", native)
+			h.Require.NotContains(h.Stderr.String(), "already exists")
+
+			h.Require.NoError(h.Execute(setup...))
+			var rerun public.GridPlanList
+			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
+			h.Require.Len(rerun.Items, 2)
+			h.Require.Equal(openCodePluginDir(dir), rerun.Items[1].Config)
+			h.Require.Equal(openCodePluginSources, rerun.Items[1].Settings)
+			for _, item := range rerun.Items {
+				h.Require.False(item.Changed, "rerunning setup changes nothing")
+			}
+
+			server := filepath.Join(openCodePluginDir(dir), "server.js")
+			written, err := os.ReadFile(server)
+			h.Require.NoError(err)
+			h.Require.NoError(os.WriteFile(server, []byte("stale"), 0o600))
+			serveServedModelRoutes(api, "auto=Auto (Baseten Internal Dogfooding)", "code")
+			h.Require.NoError(h.Execute(setup...))
+			h.Require.Equal(openCodePluginRouters(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/code": "code"}), openCodePluginRoutes(t, dir))
+			refreshed, err := os.ReadFile(server)
+			h.Require.NoError(err)
+			h.Require.Equal(written, refreshed, "setup refreshes the plugin source")
+			h.Require.NotContains(readHarnessSettings(t, "opencode", path), "plugins")
+
+			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "opencode", "--config-dir", dir, "--yes"))
+			h.Require.NoDirExists(openCodePluginDir(dir))
+			h.Require.FileExists(mine)
+			var original map[string]any
+			h.Require.NoError(json.Unmarshal([]byte(seed), &original))
+			h.Require.Equal(original, readHarnessSettings(t, "opencode", path))
+		})
+	}
+}
+
+func Test_Grid_Setup_OpenCodeServedModelForeignPlugin(t *testing.T) {
+	skipUnlessSupported(t)
+	for name, files := range map[string]map[string]string{
+		"unmarked":    {"server.js": "export default {}\n"},
+		"other owner": {"routes.json": `{"managedBy":"someone else","routers":{}}`, "server.js": "export default {}\n"},
+		"file":        {"": "not a directory\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+			serveServedModelRoutes(api, "auto")
+			dir := t.TempDir()
+			h.Require.NoError(os.MkdirAll(filepath.Join(dir, "plugins"), 0o700))
+			if _, ok := files[""]; !ok {
+				h.Require.NoError(os.Mkdir(openCodePluginDir(dir), 0o700))
+			}
+			for file, content := range files {
+				h.Require.NoError(os.WriteFile(filepath.Join(openCodePluginDir(dir), file), []byte(content), 0o600))
+			}
+			unchanged := func() {
+				t.Helper()
+				for file, content := range files {
+					raw, err := os.ReadFile(filepath.Join(openCodePluginDir(dir), file))
+					h.Require.NoError(err)
+					h.Require.Equal(content, string(raw))
+				}
+				if _, ok := files[""]; !ok {
+					h.Require.Len(openCodePluginFiles(t, dir), len(files))
+				}
+			}
+			setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"}
+
+			h.Require.NoError(h.Execute(setup...))
+			h.Require.Contains(h.Stderr.String(), "warning: "+openCodePluginDir(dir)+" already exists and was not written by baseten grid setup; leaving it unchanged")
+			h.Require.Equal("baseten-harness/acme/primary", readHarnessSettings(t, "opencode", harnessSettingsFile("opencode", dir))["model"])
+			unchanged()
+			h.Require.NoError(h.Execute(append(setup, "--no-opencode-served-model")...))
+			h.Require.NotContains(h.Stderr.String(), "already exists")
+			unchanged()
+			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "opencode", "--config-dir", dir, "--yes"))
+			unchanged()
+		})
+	}
+}
+
+func Test_Grid_Setup_OpenCodeServedModelZeroRoutersAndOpenCode1(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	base := h.Context
+	h.Context = internalcmd.WithExecer(base, openCode2Execer)
+	dir := t.TempDir()
+	setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"}
+
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Empty(openCodePluginFiles(t, dir))
+	serveServedModelRoutes(api, "auto")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir))
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NoDirExists(openCodePluginDir(dir), "no router routes removes the plugin")
+
+	serveServedModelRoutes(api, "auto")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir))
+	h.Context = internalcmd.WithExecer(base, versionedHarnessExecer{"opencode": "1.19.5"})
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NoDirExists(openCodePluginDir(dir), "OpenCode 1 removes the plugin")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NoDirExists(openCodePluginDir(dir), "OpenCode 1 never writes the plugin")
+
+	desktop := "/Applications/OpenCode.app/Contents/Resources/opencode-cli"
+	if runtime.GOOS == "linux" {
+		desktop = "/opt/OpenCode/resources/opencode-cli"
+	}
+	h.Context = internalcmd.WithExecer(base, versionedHarnessExecer{"opencode": "1.19.5", desktop: "opencode v2.0.27"})
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir), "an OpenCode 2 install sharing the settings gets the plugin")
+}
+
+func Test_Grid_Setup_OpenCodeServedModelOptOut(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	path := harnessSettingsFile("opencode", dir)
+	h.Require.NoError(os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o600))
+	setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"}
+	record := func() string {
+		raw, err := os.ReadFile(filepath.Join(recordDir(t), "harness.json"))
+		h.Require.NoError(err)
+		return string(raw)
+	}
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir))
+	plugin := map[string][]byte{}
+	for _, file := range openCodePluginSources {
+		raw, err := os.ReadFile(filepath.Join(openCodePluginDir(dir), file))
+		h.Require.NoError(err)
+		plugin[file] = raw
+	}
+	h.Require.NoError(h.Execute(append(setup, "--no-opencode-served-model")...))
+	h.Require.NoDirExists(openCodePluginDir(dir))
+	h.Require.Equal("dark", readHarnessSettings(t, "opencode", path)["theme"])
+	h.Require.True(harnessRecordFile(t).Harnesses["opencode"].NoOpenCodeServedModel)
+	h.Require.Contains(record(), `"no_opencode_served_model": true`)
+
+	h.Require.NoError(os.MkdirAll(openCodePluginDir(dir), 0o700))
+	for file, raw := range plugin {
+		h.Require.NoError(os.WriteFile(filepath.Join(openCodePluginDir(dir), file), raw, 0o600))
+	}
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NoDirExists(openCodePluginDir(dir), "sync replays the recorded opt-out")
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir), "setup without the flag turns it back on")
+	h.Require.False(harnessRecordFile(t).Harnesses["opencode"].NoOpenCodeServedModel)
+	h.Require.NotContains(record(), "no_opencode_served_model")
+	h.Require.NoError(os.RemoveAll(openCodePluginDir(dir)))
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir), "sync restores the plugin")
+}
+
+func Test_Grid_Setup_OpenCodeServedModelPrompt(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+	serveServedModelRoutes(api, "auto")
+	base := h.Context
+	answer := func(answers ...string) { h.Context = internalcmd.WithPromptAnswers(base, answers...) }
+	dir := t.TempDir()
+	setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir}
+	question := "Show which model served each response on auto routes in OpenCode?"
+	shown := func() bool { return fileExists(filepath.Join(openCodePluginDir(dir), "routes.json")) }
+	recorded := func() bool { return harnessRecordFile(t).Harnesses["opencode"].NoOpenCodeServedModel }
+
+	answer("1", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), question)
+	h.Require.True(shown())
+
+	answer("2", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), question)
+	h.Require.False(shown(), "answering no removes the plugin")
+	h.Require.True(recorded())
+	h.Context = base
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.False(shown(), "sync replays the answer without asking")
+
+	answer("", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.True(shown(), "the default answer is yes")
+	h.Require.False(recorded())
+
+	answer("2")
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--no-opencode-served-model")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.False(shown())
+	h.Require.True(recorded())
+	h.Require.NoError(h.Execute(append(setup, "--yes")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.True(shown(), "--yes shows it without asking")
+	h.Require.False(recorded())
+	h.Context = base
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--no-opencode-served-model")...))
+	h.Require.False(shown(), "without a terminal the flag decides")
+	h.Require.NoError(h.Execute(append(setup, "--yes")...))
+	h.Require.True(shown())
+
+	answer()
+	h.Require.NoError(h.Execute(append(setup, "--dry-run")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+
+	serveServedModelRoutes(api)
+	answer("1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NotContains(h.Stderr.String(), question, "no router routes, no question")
+	serveServedModelRoutes(api, "auto")
+	h.Context = internalcmd.WithPromptAnswers(internalcmd.WithExecer(base, versionedHarnessExecer{"opencode": "1.19.5"}), "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NotContains(h.Stderr.String(), question, "OpenCode 1 is not asked")
+
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("XDG_CONFIG_HOME", root)
+	answer("1", "2", "1")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--harness", "opencode"))
+	claudeQuestion := strings.Index(h.Stderr.String(), "Show which model served each response on auto routes in Claude Code?")
+	h.Require.GreaterOrEqual(claudeQuestion, 0)
+	h.Require.Greater(strings.Index(h.Stderr.String(), question), claudeQuestion, "Claude Code is asked first")
+	h.Require.Contains(readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json")), "statusLine")
+	h.Require.NoDirExists(openCodePluginDir(filepath.Join(root, "opencode")))
+	h.Require.False(harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel)
+	h.Require.True(harnessRecordFile(t).Harnesses["opencode"].NoOpenCodeServedModel)
+}
+
+var terminalEscape = regexp.MustCompile(`\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]`)
+
+func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
+	skipUnlessSupported(t)
+	binary := os.Getenv("BASETEN_TEST_OPENCODE2")
+	if binary == "" {
+		t.Skip("BASETEN_TEST_OPENCODE2 does not name an OpenCode 2 binary")
+	}
+	if _, err := exec.LookPath(binary); err != nil {
+		t.Skipf("%s is not installed", binary)
+	}
+	var mu sync.Mutex
+	var requested []string
+	var answered time.Time
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+			Tools []any  `json:"tools"`
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, choice := range []map[string]any{
+			{"index": 0, "delta": map[string]any{"role": "assistant", "content": ""}, "finish_reason": nil},
+			{"index": 0, "delta": map[string]any{"content": "Served reply."}, "finish_reason": nil},
+			{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"},
+		} {
+			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": "zai-org/GLM-5.3-Flash",
+				"choices": []any{choice}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		mu.Lock()
+		defer mu.Unlock()
+		requested = append(requested, body.Model)
+		if len(body.Tools) > 0 {
+			answered = time.Now()
+		}
+	}))
+	t.Cleanup(gateway.Close)
+	h, api := gridAPI(t, gateway.URL)
+	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	route := func(id, name, display string, target map[string]any) map[string]any {
+		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": target}
+	}
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
+		"items": []any{
+			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}),
+			route("route-primary", "acme/primary", "Primary", map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	configDir := filepath.Join(root, ".config", "opencode")
+	setup := func(primary string) {
+		h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", configDir, "--use-session-credential", "--primary-route-id", primary, "--yes"))
+		h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, configDir), "setup detects OpenCode 2 and writes the plugin")
+	}
+	work, tmp := filepath.Join(root, "w"), t.TempDir()
+	h.Require.NoError(os.Mkdir(work, 0o700))
+	label := "Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash"
+	tui := func(env ...string) (string, []string) {
+		t.Helper()
+		started := time.Now()
+		mu.Lock()
+		before := len(requested)
+		mu.Unlock()
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		run := exec.CommandContext(ctx, binary, "--standalone", "--prompt", "Reply with OK.")
+		run.Dir = work
+		run.Env = append([]string{
+			"HOME=" + root, "PATH=" + os.Getenv("PATH"), "TERM=xterm-256color", "TMPDIR=" + tmp,
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}, env...)
+		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 50, Cols: 220})
+		h.Require.NoError(err)
+		var screenMu sync.Mutex
+		var screen strings.Builder
+		go func() {
+			buf := make([]byte, 32<<10)
+			for {
+				n, err := terminal.Read(buf)
+				screenMu.Lock()
+				screen.Write(buf[:n])
+				screenMu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}()
+		shown := func() string {
+			screenMu.Lock()
+			defer screenMu.Unlock()
+			return terminalEscape.ReplaceAllString(screen.String(), "")
+		}
+		settled := func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return answered.After(started) && time.Since(answered) > 3*time.Second
+		}
+		for ctx.Err() == nil && !strings.Contains(shown(), label) && !settled() {
+			time.Sleep(100 * time.Millisecond)
+		}
+		_ = run.Process.Kill()
+		_ = run.Wait()
+		_ = terminal.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		h.Require.True(answered.After(started), "OpenCode answered the prompt; requested %v\n%s", requested, shown())
+		return shown(), slices.Clone(requested[before:])
+	}
+
+	setup("route-auto")
+	screen, models := tui()
+	h.Require.Contains(screen, label, "the TUI shows the router route and the model that served it")
+	h.Require.Contains(models, "acme/auto")
+
+	screen, models = tui("BASETEN_OPENCODE_SERVED_MODEL=0")
+	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
+	h.Require.Contains(models, "acme/auto")
+
+	setup("route-primary")
+	screen, models = tui()
+	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "a route that is not a router shows nothing")
+	h.Require.Contains(models, "acme/primary")
 }
 
 // serveFirstPartyRoutes serves an Anthropic route and an OpenAI route, each
