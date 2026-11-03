@@ -48,12 +48,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: chainguard-actions/actions-setup-go@320f6f2294d8e82641a27424fb8def0a2a1e80e6 # v5.6.0
         with:
           go-version-file: go.mod
       - name: Generate a token scoped to homebrew-baseten
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: chainguard-actions/actions-create-github-app-token@387ce95896db9bd19c93aefb9c4fbb67c1e90235 # v3.3.0
         with:
           client-id: ${{ secrets.APP_HOMEBREW_UPDATER_CLIENT_ID }}
           private-key: ${{ secrets.APP_HOMEBREW_UPDATER_PRIVATE_KEY }}
