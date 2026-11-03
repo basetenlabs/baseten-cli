@@ -32,7 +32,7 @@ var claudeStatusLinePath = []string{"statusLine"}
 
 var claudeStopHooksPath = []string{"hooks", "Stop"}
 
-const claudeServedModelCommand = " grid served-model"
+const claudeServedModelCommand = " grid claude-served-model"
 
 var claudeServedModelPattern = regexp.MustCompile(`^'(?:[^']|'\\'')*'` + claudeServedModelCommand + `(?: --router '(?:[^']|'\\'')*')+(?: --hook)?$`)
 

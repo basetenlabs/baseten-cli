@@ -32,7 +32,7 @@ func init() {
 	Register("grid sync", commandGridSync)
 	Register("grid teardown", commandGridTeardown)
 	Register("grid token", commandGridToken)
-	Register("grid served-model", commandGridServedModel)
+	Register("grid claude-served-model", commandGridClaudeServedModel)
 	Register("grid classifier list", commandGridClassifierList)
 	Register("grid classifier describe", commandGridClassifierDescribe)
 	Register("grid team-settings describe", commandGridTeamSettingsDescribe)
@@ -1770,11 +1770,11 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 }
 
 const (
-	gridServedModelWait         = 2 * time.Second
-	gridServedModelPollInterval = 100 * time.Millisecond
+	gridClaudeServedModelWait         = 2 * time.Second
+	gridClaudeServedModelPollInterval = 100 * time.Millisecond
 )
 
-func commandGridServedModel(ctx *CommandContext, flags *cmd.GridServedModelFlags) error {
+func commandGridClaudeServedModel(ctx *CommandContext, flags *cmd.GridClaudeServedModelFlags) error {
 	var payload struct {
 		TranscriptPath       string `json:"transcript_path"`
 		LastAssistantMessage string `json:"last_assistant_message"`
@@ -1787,8 +1787,8 @@ func commandGridServedModel(ctx *CommandContext, flags *cmd.GridServedModelFlags
 	if flags.Hook {
 		message, prompt = payload.LastAssistantMessage, payload.PromptID
 	}
-	requested, served := gridAwaitServedModel(ctx, payload.TranscriptPath, message, prompt, cmp.Or(flags.Wait, gridServedModelWait))
-	label, ok := gridServedModelRouterLabel(flags.Router, requested)
+	requested, served := gridAwaitClaudeServedModel(ctx, payload.TranscriptPath, message, prompt, cmp.Or(flags.Wait, gridClaudeServedModelWait))
+	label, ok := gridClaudeServedModelRouterLabel(flags.Router, requested)
 	switch {
 	case served == "" || !ok:
 	case flags.Hook:
@@ -1801,7 +1801,7 @@ func commandGridServedModel(ctx *CommandContext, flags *cmd.GridServedModelFlags
 	return nil
 }
 
-func gridAwaitServedModel(ctx context.Context, transcript, message, prompt string, wait time.Duration) (requested, served string) {
+func gridAwaitClaudeServedModel(ctx context.Context, transcript, message, prompt string, wait time.Duration) (requested, served string) {
 	deadline := time.Now().Add(wait)
 	for {
 		requested, served = harness.ClaudeServedModel(transcript, message, prompt)
@@ -1811,12 +1811,12 @@ func gridAwaitServedModel(ctx context.Context, transcript, message, prompt strin
 		select {
 		case <-ctx.Done():
 			return "", ""
-		case <-time.After(gridServedModelPollInterval):
+		case <-time.After(gridClaudeServedModelPollInterval):
 		}
 	}
 }
 
-func gridServedModelRouterLabel(routers []string, model string) (string, bool) {
+func gridClaudeServedModelRouterLabel(routers []string, model string) (string, bool) {
 	for _, router := range routers {
 		if id, label, _ := strings.Cut(router, "="); id == model {
 			return cmp.Or(label, id), true

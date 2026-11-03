@@ -385,23 +385,23 @@ var commandGrid = Command{
 			},
 		},
 		{
-			Name:    "served-model",
+			Name:    "claude-served-model",
 			Hidden:  true,
 			Summary: "Print the model that served Claude Code's latest response",
 			Description: "Read the JSON payload Claude Code passes a status line or Stop hook on stdin, and print which model served the latest response in its transcript, " +
 				"when that response was requested through one of the --router routes, labeled with that route's display name. Otherwise print nothing. Always exits 0, since Claude Code shows any error to the user.",
-			Flags: GridServedModelFlags{},
+			Flags: GridClaudeServedModelFlags{},
 			Output: &CommandOutput[JSONUndefined]{
 				JSONOutputUnimportant: true,
 				TextDescription:       "'<display name> → <model>', or with --hook a Claude Code hook JSON object with a systemMessage, whatever --output says. Nothing when the latest response is not from a router route.",
 				Examples: []CommandExample{
 					{
 						Description: "Show the serving model in a Claude Code status line.",
-						Command:     "baseten grid served-model --router 'acme/auto=Auto'",
+						Command:     "baseten grid claude-served-model --router 'acme/auto=Auto'",
 					},
 					{
 						Description: "Show the serving model after each response from a Claude Code Stop hook.",
-						Command:     "baseten grid served-model --router 'acme/auto=Auto' --hook",
+						Command:     "baseten grid claude-served-model --router 'acme/auto=Auto' --hook",
 					},
 				},
 			},
@@ -616,7 +616,7 @@ type GridTokenFlags struct {
 	Team    string `flag:"team" desc:"Team name or ID the token is for. Defaults to the team the harness was set up with."`
 }
 
-type GridServedModelFlags struct {
+type GridClaudeServedModelFlags struct {
 	CommandFlags
 	Router []string      `flag:"router" desc:"Router route as <model id>=<display name>. The model ID is as Claude Code settings name it, without a [1m] suffix; the display name labels the output, and without one the model ID does. May be repeated."`
 	Hook   bool          `flag:"hook" desc:"Print Claude Code hook JSON with a systemMessage instead of a status line. The response is the one whose text is the payload's last_assistant_message, when it has one."`

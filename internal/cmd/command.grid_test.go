@@ -1150,7 +1150,7 @@ func Test_Grid_Setup_ServedModelStatusLine(t *testing.T) {
 
 	h.Require.NoError(h.Execute(setup...))
 	settings := readHarnessSettings(t, "claude-code", path)
-	h.Require.Equal(map[string]any{"type": "command", "command": "'" + cli + "' grid served-model --router 'acme/auto=auto'"}, settings["statusLine"])
+	h.Require.Equal(map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --router 'acme/auto=auto'"}, settings["statusLine"])
 	h.Require.Contains(settings["availableModels"], "acme/auto[1m]")
 	h.Require.Equal("dark", settings["theme"])
 	h.Require.NotContains(settings, "hooks")
@@ -1165,7 +1165,7 @@ func Test_Grid_Setup_ServedModelStatusLine(t *testing.T) {
 
 	serveServedModelRoutes(api, "auto", "code")
 	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal("'"+cli+"' grid served-model --router 'acme/auto=auto' --router 'acme/code=code'", readHarnessSettings(t, "claude-code", path)["statusLine"].(map[string]any)["command"])
+	h.Require.Equal("'"+cli+"' grid claude-served-model --router 'acme/auto=auto' --router 'acme/code=code'", readHarnessSettings(t, "claude-code", path)["statusLine"].(map[string]any)["command"])
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
 	h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, "claude-code", path))
@@ -1186,7 +1186,7 @@ func Test_Grid_Setup_ServedModelStopHook(t *testing.T) {
 	cli, err := exec.LookPath("baseten")
 	h.Require.NoError(err)
 	ours := func(routers string) map[string]any {
-		return map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid served-model " + routers + " --hook"}}}
+		return map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model " + routers + " --hook"}}}
 	}
 	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
 
@@ -1230,7 +1230,7 @@ func Test_Grid_Setup_ServedModelSharedStopGroup(t *testing.T) {
 	cli, err := exec.LookPath("baseten")
 	h.Require.NoError(err)
 	ours := func(routers string) map[string]any {
-		return map[string]any{"type": "command", "command": "'" + cli + "' grid served-model " + routers + " --hook"}
+		return map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model " + routers + " --hook"}
 	}
 	notify := map[string]any{"type": "command", "command": "notify"}
 	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes"}
@@ -1259,8 +1259,12 @@ func Test_Grid_Setup_ServedModelSharedStopGroup(t *testing.T) {
 func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
 	skipUnlessSupported(t)
 	for name, command := range map[string]func(cli string) string{
-		"composed": func(string) string { return `echo "$(baseten grid served-model --router acme/auto) | custom stats"` },
-		"suffixed": func(cli string) string { return "'" + cli + "' grid served-model --router 'acme/auto=auto' ; echo hi" },
+		"composed": func(string) string {
+			return `echo "$(baseten grid claude-served-model --router acme/auto) | custom stats"`
+		},
+		"suffixed": func(cli string) string {
+			return "'" + cli + "' grid claude-served-model --router 'acme/auto=auto' ; echo hi"
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, api := fakeGridAPI(t)
@@ -1278,7 +1282,7 @@ func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
 			h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
 			settings := readHarnessSettings(t, "claude-code", path)
 			h.Require.Equal(user["statusLine"], settings["statusLine"])
-			h.Require.Equal([]any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid served-model --router 'acme/auto=auto' --hook"}}}},
+			h.Require.Equal([]any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --router 'acme/auto=auto' --hook"}}}},
 				settings["hooks"].(map[string]any)["Stop"])
 
 			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-code", "--config-dir", dir, "--yes"))
@@ -1335,7 +1339,7 @@ func Test_Grid_Setup_ServedModelSessionCredential(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "but baseten on your PATH is "+filepath.Join(bin, "baseten")+"; harnesses will run the former")
 	settings := readHarnessSettings(t, "claude-code", harnessSettingsFile("claude-code", dir))
 	h.Require.NotContains(settings, "apiKeyHelper")
-	h.Require.Equal("'"+exe+"' grid served-model --router 'acme/auto=auto'", settings["statusLine"].(map[string]any)["command"])
+	h.Require.Equal("'"+exe+"' grid claude-served-model --router 'acme/auto=auto'", settings["statusLine"].(map[string]any)["command"])
 }
 
 func Test_Grid_Setup_ServedModelDisplayNames(t *testing.T) {
@@ -1348,7 +1352,7 @@ func Test_Grid_Setup_ServedModelDisplayNames(t *testing.T) {
 	h.Require.NoError(err)
 	setup := []string{"grid", "setup", "--harness", "claude-code", "--config-dir", dir, "--yes", "--output", "json"}
 	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal("'"+cli+`' grid served-model --router 'acme/auto=Auto (Baseten Internal Dogfooding)' --router 'acme/eq=x=y'\''s' --router 'acme/bare'`,
+	h.Require.Equal("'"+cli+`' grid claude-served-model --router 'acme/auto=Auto (Baseten Internal Dogfooding)' --router 'acme/eq=x=y'\''s' --router 'acme/bare'`,
 		readHarnessSettings(t, "claude-code", path)["statusLine"].(map[string]any)["command"])
 	h.Require.NoError(h.Execute(setup...))
 	var rerun public.GridPlanList
@@ -1358,7 +1362,7 @@ func Test_Grid_Setup_ServedModelDisplayNames(t *testing.T) {
 	h.Require.NotContains(readHarnessSettings(t, "claude-code", path), "statusLine")
 }
 
-func Test_Grid_ServedModel(t *testing.T) {
+func Test_Grid_ClaudeServedModel(t *testing.T) {
 	h := NewCommandHarness(t)
 	dir := t.TempDir()
 	assistant := func(requested, model string) string {
@@ -1375,7 +1379,7 @@ func Test_Grid_ServedModel(t *testing.T) {
 		h.Stdin.Reset()
 		h.Stdin.WriteString(stdin)
 		routers := []string{"--router", "acme/auto=Auto (Baseten Internal Dogfooding)", "--router", "acme/code=x=y's", "--router", "acme/bare", "--router", "acme/empty="}
-		h.Require.NoError(h.Execute(append(append([]string{"grid", "served-model"}, routers...), args...)...))
+		h.Require.NoError(h.Execute(append(append([]string{"grid", "claude-served-model"}, routers...), args...)...))
 		h.Require.Empty(h.Stderr.String())
 		return h.Stdout.String()
 	}
@@ -1486,9 +1490,9 @@ func Test_Grid_ServedModel(t *testing.T) {
 	h.Require.Empty(run(`{"transcript_path": 7}`))
 }
 
-func Test_Grid_ServedModel_HookProcess(t *testing.T) {
+func Test_Grid_ClaudeServedModel_HookProcess(t *testing.T) {
 	if os.Getenv("BASETEN_TEST_RUN_CLI") != "1" {
-		t.Skip("runs the CLI as the Claude Code Stop hook of Test_Grid_ServedModel_RealClaudeCode")
+		t.Skip("runs the CLI as the Claude Code Stop hook of Test_Grid_ClaudeServedModel_RealClaudeCode")
 	}
 	if internalcmd.Execute(context.Background(), internalcmd.ExecuteOptions{Args: flag.Args()}) != nil {
 		os.Exit(1)
@@ -1496,7 +1500,7 @@ func Test_Grid_ServedModel_HookProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func Test_Grid_ServedModel_RealClaudeCode(t *testing.T) {
+func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 	skipUnlessSupported(t)
 	binary, err := exec.LookPath("claude")
 	if err != nil {
@@ -1568,7 +1572,7 @@ func Test_Grid_ServedModel_RealClaudeCode(t *testing.T) {
 	h.Require.NoError(err)
 	payloadPath, hookOutput, hook := filepath.Join(root, "stop-payloads.jsonl"), filepath.Join(root, "stop-hook.out"), filepath.Join(root, "stop-hook.sh")
 	h.Require.NoError(os.WriteFile(hook, []byte("#!/bin/sh\ntee -a '"+payloadPath+"' | BASETEN_TEST_RUN_CLI=1 '"+exe+
-		"' -test.run='^Test_Grid_ServedModel_HookProcess$' -- grid served-model --router 'acme/auto=Auto' --hook | tee -a '"+hookOutput+"'\n"), 0o700))
+		"' -test.run='^Test_Grid_ClaudeServedModel_HookProcess$' -- grid claude-served-model --router 'acme/auto=Auto' --hook | tee -a '"+hookOutput+"'\n"), 0o700))
 	settingsPath := harnessSettingsFile("claude-code", configDir)
 	settings := readHarnessSettings(t, "claude-code", settingsPath)
 	settings["hooks"] = map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hook}}}}}
@@ -1626,7 +1630,7 @@ func Test_Grid_ServedModel_RealClaudeCode(t *testing.T) {
 	h.Require.NoError(err)
 	h.Stdin.Reset()
 	h.Stdin.Write(statusLine)
-	h.Require.NoError(h.Execute("grid", "served-model", "--router", "acme/auto=Auto"))
+	h.Require.NoError(h.Execute("grid", "claude-served-model", "--router", "acme/auto=Auto"))
 	h.Require.Equal("Auto → acme/served-y\n", h.Stdout.String())
 }
 
