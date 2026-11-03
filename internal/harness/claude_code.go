@@ -183,7 +183,7 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 // their own status line, it leaves that line untouched and keeps exactly one
 // Stop hook of setup's instead.
 func claudeServedModelSettings(routes []Route, current map[string]any, cli string) []setting {
-	routers := claudeRouterNames(routes)
+	routers := claudeRouterFlagValues(routes)
 	if len(routers) == 0 {
 		return claudeServedModelRemoval(current)
 	}
@@ -194,14 +194,17 @@ func claudeServedModelSettings(routes []Route, current map[string]any, cli strin
 	return claudeStopHookInstall(current, command+" --hook")
 }
 
-func claudeRouterNames(routes []Route) []string {
-	var names []string
+func claudeRouterFlagValues(routes []Route) []string {
+	var values []string
 	for _, r := range routes {
-		if r.Router {
-			names = append(names, r.Name)
+		switch {
+		case r.Router && r.DisplayName != "":
+			values = append(values, r.Name+"="+r.DisplayName)
+		case r.Router:
+			values = append(values, r.Name)
 		}
 	}
-	return names
+	return values
 }
 
 func claudeServedModelCommandLine(cli string, routers []string) string {

@@ -81,11 +81,15 @@ func TestNewRouteMarksRouters(t *testing.T) {
 }
 
 func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
-	routes := []Route{{Name: "acme/o'brien", Router: true}, {Name: "acme/plain"}, {Name: "acme/it's", Router: true}}
+	routes := []Route{
+		{Name: "acme/o'brien", Router: true}, {Name: "acme/plain", DisplayName: "Plain"},
+		{Name: "b10-internal/auto-XP9WlBD", DisplayName: "Auto (Baseten Internal Dogfooding)", Router: true},
+		{Name: "acme/it's", DisplayName: "x=y's", Router: true},
+	}
 	values := claudeServedModelSettings(routes, map[string]any{}, "/opt/it's/baseten")
 	require.Len(t, values, 1)
 	command := values[0].Installed.Data.(map[string]any)["command"].(string)
-	require.Equal(t, `'/opt/it'\''s/baseten' grid served-model --router 'acme/o'\''brien' --router 'acme/it'\''s'`, command)
+	require.Equal(t, `'/opt/it'\''s/baseten' grid served-model --router 'acme/o'\''brien' --router 'b10-internal/auto-XP9WlBD=Auto (Baseten Internal Dogfooding)' --router 'acme/it'\''s=x=y'\''s'`, command)
 	for _, tc := range []struct {
 		command string
 		want    bool

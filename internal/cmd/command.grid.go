@@ -1755,14 +1755,24 @@ func commandGridServedModel(ctx *CommandContext, flags *cmd.GridServedModelFlags
 		return nil
 	}
 	requested, served := harness.ClaudeServedModel(payload.TranscriptPath)
+	label, ok := gridServedModelRouterLabel(flags.Router, requested)
 	switch {
-	case served == "" || !slices.Contains(flags.Router, requested):
+	case served == "" || !ok:
 	case flags.Hook:
-		if message, err := json.Marshal(map[string]string{"systemMessage": "Served by " + served + " via " + requested}); err == nil {
+		if message, err := json.Marshal(map[string]string{"systemMessage": "Served by " + served + " via " + label}); err == nil {
 			ctx.OutputLine(string(message))
 		}
 	default:
-		ctx.OutputLine(requested + " → " + served)
+		ctx.OutputLine(label + " → " + served)
 	}
 	return nil
+}
+
+func gridServedModelRouterLabel(routers []string, model string) (string, bool) {
+	for _, router := range routers {
+		if id, label, _ := strings.Cut(router, "="); id == model {
+			return cmp.Or(label, id), true
+		}
+	}
+	return "", false
 }
