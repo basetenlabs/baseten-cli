@@ -432,8 +432,14 @@ func (c *CommandContext) RunPrompt(field huh.Field) error {
 	// leaves the prompt running when the command is cancelled by a SIGTERM or
 	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
 	// signal, which huh handles itself by returning huh.ErrUserAborted.
-	return huh.NewForm(huh.NewGroup(field)).WithShowHelp(false).RunWithContext(c)
+	return huh.NewForm(huh.NewGroup(field)).WithShowHelp(false).WithTheme(promptTheme).RunWithContext(c)
 }
+
+// promptTheme is huh's base theme: titles and options keep the terminal's
+// default foreground and the rest is plain ANSI, so prompts follow the user's
+// terminal palette. huh's default Charm theme draws options in ANSI-256 color
+// 252 on light backgrounds, which is near-white on white.
+var promptTheme = huh.ThemeFunc(huh.ThemeBase)
 
 // OAuthConfig returns the OAuth2 configuration for the given host.
 func OAuthConfig(host string) *oauth2.Config {
