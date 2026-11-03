@@ -348,7 +348,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		if target.record.CredentialSource == harness.CredentialSourceHelper {
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
-		current, err := target.Prepare(target.detection.Path, callable, selection.Selection, endpoint, targetHelper, helper)
+		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}

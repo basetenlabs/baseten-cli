@@ -68,10 +68,10 @@ type Harness interface {
 	// Detect finds the harness executable and its settings file in configDir,
 	// or in the harness's native configuration directory when configDir is empty.
 	Detect(ctx context.Context, execer Execer, configDir string) (Detection, error)
-	// Prepare plans setup of the settings file at path. With helper, the
+	// Prepare plans setup of the settings file at path. With opts.Helper, the
 	// harness runs it for its credential. Without it, ApplyPlans inserts a
 	// static one.
-	Prepare(path string, routes []Route, selection Selection, endpoint string, helper *Helper, cli string) ([]*Plan, error)
+	Prepare(path string, routes []Route, opts PrepareOptions) ([]*Plan, error)
 	// Inspect reports the integration state of the detected settings file.
 	Inspect(d Detection) (Status, error)
 	// Teardown plans removal of the integration settings at path.
@@ -89,6 +89,13 @@ type Harness interface {
 	Credential(path string) (string, error)
 	// Routes returns the routes the harness can call, in order.
 	Routes(routes []Route) []Route
+}
+
+type PrepareOptions struct {
+	Selection Selection
+	Endpoint  string
+	Helper    *Helper
+	CLI       string
 }
 
 // Helper is the credential command a harness runs instead of storing a key:

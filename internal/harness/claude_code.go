@@ -76,7 +76,8 @@ func (claudeCodeHarness) Routes(routes []Route) []Route {
 	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Messages })
 }
 
-func (h claudeCodeHarness) Prepare(path string, routes []Route, s Selection, endpoint string, helper *Helper, cli string) ([]*Plan, error) {
+func (h claudeCodeHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([]*Plan, error) {
+	s, endpoint, helper, cli := opts.Selection, opts.Endpoint, opts.Helper, opts.CLI
 	credentialPath := claudeCredentialPath
 	if helper != nil {
 		credentialPath = nil
