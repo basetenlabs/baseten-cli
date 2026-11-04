@@ -35,4 +35,5 @@ export default function (pi: ExtensionAPI) {
 	};
 	pi.on("session_start", (_event, ctx) => sync(ctx));
 	pi.on("model_select", (_event, ctx) => sync(ctx));
+	pi.on("session_tree", (_event, ctx) => sync(ctx));
 }
