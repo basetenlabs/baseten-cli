@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2586,13 +2587,22 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		served := "zai-org/GLM-5.3-Flash"
+		switch {
+		case bytes.Contains(raw, []byte("this session again")):
+			served = "deepseek-ai/DeepSeek-V4.2"
+		case bytes.Contains(raw, []byte("another session")):
+			served = "moonshotai/Kimi-K2.6"
+		case bytes.Contains(raw, []byte("Start quietly.")):
+			served = ""
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, choice := range []map[string]any{
 			{"index": 0, "delta": map[string]any{"role": "assistant", "content": ""}, "finish_reason": nil},
 			{"index": 0, "delta": map[string]any{"content": "Served reply."}, "finish_reason": nil},
 			{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"},
 		} {
-			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": "zai-org/GLM-5.3-Flash",
+			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": served,
 				"choices": []any{choice}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
 		}
@@ -2631,21 +2641,17 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	toasted := func(screen string) bool {
 		return !slices.ContainsFunc(toast, func(part string) bool { return !strings.Contains(screen, part) })
 	}
-	tui := func(env ...string) (string, []string) {
-		t.Helper()
-		started := time.Now()
-		mu.Lock()
-		before := len(requested)
-		mu.Unlock()
-		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-		defer cancel()
-		run := exec.CommandContext(ctx, binary, "--standalone", "--prompt", "Reply with OK.")
-		run.Dir = work
-		run.Env = append([]string{
+	environment := func(env ...string) []string {
+		return append([]string{
 			"HOME=" + root, "PATH=" + os.Getenv("PATH"), "TERM=xterm-256color", "TMPDIR=" + tmp,
 			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
 			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
 		}, env...)
+	}
+	launch := func(ctx context.Context, args []string, env ...string) (*os.File, func() string, func()) {
+		run := exec.CommandContext(ctx, binary, args...)
+		run.Dir = work
+		run.Env = environment(env...)
 		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 50, Cols: 260})
 		h.Require.NoError(err)
 		var screenMu sync.Mutex
@@ -2667,6 +2673,21 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			defer screenMu.Unlock()
 			return terminalEscape.ReplaceAllString(screen.String(), "")
 		}
+		return terminal, shown, sync.OnceFunc(func() {
+			_ = run.Process.Kill()
+			_ = run.Wait()
+			_ = terminal.Close()
+		})
+	}
+	tui := func(env ...string) (string, []string) {
+		t.Helper()
+		started := time.Now()
+		mu.Lock()
+		before := len(requested)
+		mu.Unlock()
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		_, shown, stop := launch(ctx, []string{"--standalone", "--prompt", "Reply with OK."}, env...)
 		settled := func() bool {
 			mu.Lock()
 			defer mu.Unlock()
@@ -2675,9 +2696,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 		for ctx.Err() == nil && !toasted(shown()) && !settled() {
 			time.Sleep(100 * time.Millisecond)
 		}
-		_ = run.Process.Kill()
-		_ = run.Wait()
-		_ = terminal.Close()
+		stop()
 		mu.Lock()
 		defer mu.Unlock()
 		h.Require.True(answered.After(started), "OpenCode answered the prompt; requested %v\n%s", requested, shown())
@@ -2695,6 +2714,44 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	h.Require.NotContains(screen, "Served model", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.Contains(models, "acme/auto")
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	h.Require.NoError(err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	h.Require.NoError(listener.Close())
+	h.Require.NoError(os.WriteFile(filepath.Join(configDir, "service.json"), fmt.Appendf(nil, `{"port":%d}`, port), 0o600))
+	t.Cleanup(func() {
+		service := exec.Command(binary, "service", "stop")
+		service.Dir = work
+		service.Env = environment()
+		_ = service.Run()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	terminal, shown, stop := launch(ctx, []string{"--prompt", "Start quietly."})
+	defer stop()
+	await := func(text string) {
+		for ctx.Err() == nil && !strings.Contains(shown(), text) {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	await("Served reply.")
+	other := exec.CommandContext(ctx, binary, "run", "Reply in another session.")
+	other.Dir = work
+	other.Env = environment()
+	output, err := other.CombinedOutput()
+	h.Require.NoError(err, string(output))
+	h.Require.Contains(string(output), "Served reply.")
+	time.Sleep(3 * time.Second)
+	h.Require.NotContains(shown(), "moonshotai/Kimi-K2.6", "a response in another session on the same background server does not toast")
+	_, err = terminal.WriteString("Reply in this session again.")
+	h.Require.NoError(err)
+	time.Sleep(500 * time.Millisecond)
+	_, err = terminal.WriteString("\r")
+	h.Require.NoError(err)
+	await("→ deepseek-ai/DeepSeek-V4.2")
+	h.Require.Contains(shown(), "→ deepseek-ai/DeepSeek-V4.2", "a response in the session on screen toasts")
+	stop()
 
 	setup("route-primary")
 	screen, models = tui()
