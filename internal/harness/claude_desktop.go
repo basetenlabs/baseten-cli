@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -21,8 +22,10 @@ type claudeDesktopHarness struct{}
 // Desktop lists no others. Baseten resolves claude-desktop-<route id> to the route.
 const claudeDesktopModelPrefix = "claude-desktop-"
 
-// claudeDesktopDenied are the substrings Claude Desktop rejects in a model ID.
-var claudeDesktopDenied = []string{"glm", "gpt", "kimi", "deepseek", "qwen", "llama", "minimax", "mistral", "openai", "codex", "gemini", "grok"}
+// claudeDesktopDenied is Claude Desktop's own model ID denylist, which it
+// matches against the lowercased ID before the Claude-name check; an ID it
+// matches never reaches the picker.
+var claudeDesktopDenied = regexp.MustCompile(`ark-code|astron|command-r|deepseek|doubao|gemini|gemma|glm|gpt|grok|hermes|hy3|kimi|lfm|\bling\b|llama|longcat|mimo|minimax|mistral|mixtral|moonshot|nemotron|openai|phi-|qianfan|qwen|tc-code|\bunic\b|yi-|stepfun|step-3|seed-|bytedance|hunyuan|granite|amazon\.nova|nova-|devstral|ministral|ernie|codex|arcee|trinity|abab|phi\d|\bk2\.|\bm2\.|jamba|arctic|solar|mercury|zamba|kat-coder|\bds-|dpsk`)
 
 // claudeDesktopMarkerPath identifies Baseten's config in the library.
 var claudeDesktopMarkerPath = []string{"inferenceCustomHeaders", clientHeader}
@@ -37,8 +40,10 @@ var claudeDesktopPaths = append([][]string{
 	{"modelDiscoveryEnabled"}, {"autoModeEnabled"}, {"inferenceModels"},
 }, claudeDesktopHelperPaths...)
 
-// claudeDesktopHelperTTL is how long, in seconds, Claude Desktop keeps a helper token.
-const claudeDesktopHelperTTL = 3000
+// claudeDesktopHelperTTL is how long, in seconds, Claude Desktop keeps a helper
+// token. 'grid token' replaces its token once under 15 minutes remain, so the
+// app must ask again sooner than that.
+const claudeDesktopHelperTTL = 600
 
 // claudeDesktopSealedPrefix marks a static key Claude Desktop has encrypted in place.
 const claudeDesktopSealedPrefix = "__sealed__:"
@@ -48,15 +53,17 @@ func (claudeDesktopHarness) Name() string { return ClaudeDesktop }
 // Detect finds the app bundle without running it, since running the app
 // opens it rather than printing a version.
 func (h claudeDesktopHarness) Detect(_ context.Context, execer Execer, dir string) (Detection, error) {
-	rel := []string{".config", "Claude-3p"}
+	// dir is the config library, the directory that holds the config, as
+	// --config-dir and sync name it.
+	rel := []string{".config", "Claude-3p", "configLibrary"}
 	if runtime.GOOS == "darwin" {
-		rel = []string{"Library", "Application Support", "Claude-3p"}
+		rel = []string{"Library", "Application Support", "Claude-3p", "configLibrary"}
 	}
-	dir, err := configDir(dir, "", rel...)
+	library, err := configDir(dir, "", rel...)
 	if err != nil {
 		return Detection{}, err
 	}
-	path, err := filepath.Abs(claudeDesktopConfigPath(filepath.Join(dir, "configLibrary")))
+	path, err := filepath.Abs(claudeDesktopConfigPath(library))
 	if err != nil {
 		return Detection{}, err
 	}
@@ -118,9 +125,8 @@ func claudeDesktopAppConfigPath(path string) string {
 	return filepath.Join(filepath.Dir(filepath.Dir(path)), "claude_desktop_config.json")
 }
 
-func claudeDesktopDeniedID(id string) bool {
-	id = strings.ToLower(id)
-	return slices.ContainsFunc(claudeDesktopDenied, func(s string) bool { return strings.Contains(id, s) })
+func claudeDesktopDeniedID(name string) bool {
+	return claudeDesktopDenied.MatchString(strings.ToLower(name))
 }
 
 func claudeDesktopModel(r Route) map[string]any {
@@ -150,7 +156,7 @@ func (claudeDesktopHarness) Prepare(path string, routes []Route, opts PrepareOpt
 	}
 	var notes []string
 	allowed := slices.DeleteFunc(slices.Clone(routes), func(r Route) bool {
-		denied := claudeDesktopDeniedID(r.ID)
+		denied := claudeDesktopDeniedID(claudeDesktopModelPrefix + r.ID)
 		if denied {
 			notes = append(notes, fmt.Sprintf("warning: skipping route %s: Claude Desktop rejects the model ID %s", r.Name, claudeDesktopModelPrefix+r.ID))
 			if r.Name == s.Primary {

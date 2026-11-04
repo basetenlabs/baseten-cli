@@ -1067,6 +1067,20 @@ func TestDetect(t *testing.T) {
 	}
 }
 
+func TestClaudeDesktopDetectDir(t *testing.T) {
+	// sync hands Detect the directory of the recorded config, which is the
+	// library itself, so the config must sit directly in it.
+	dir := t.TempDir()
+	d, err := claudeDesktopHarness{}.Detect(t.Context(), fakeExecer{missing: true}, dir)
+	require.NoError(t, err)
+	require.Equal(t, dir, filepath.Dir(d.Path))
+	require.Regexp(t, `^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}\.json$`, filepath.Base(d.Path))
+	for _, name := range []string{"claude-desktop-b0dgYBn", "claude-desktop-XP9WlBD"} {
+		require.False(t, claudeDesktopDeniedID(name), name)
+	}
+	require.True(t, claudeDesktopDeniedID("claude-desktop-aGLMbcd"))
+}
+
 func TestMalformedSettingsAreReported(t *testing.T) {
 	for _, h := range All() {
 		t.Run(h.Name(), func(t *testing.T) {
