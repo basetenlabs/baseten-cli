@@ -368,7 +368,8 @@ func TestSetupRefreshAndTeardownKeepUnrelatedSettings(t *testing.T) {
 			teardown(t, h, path)
 			want := map[string]any{"theme": "light", "user-added": "keep"}
 			if h.Name() == Pi || h.Name() == ClaudeDesktop {
-				// Pi's default model is in settings.json, so setup leaves models.json's alone.
+				// Pi's default model is in settings.json and Claude Desktop's config is
+				// its own library file, so setup leaves this file's model alone.
 				want["model"] = "original-model"
 			}
 			require.Equal(t, want, load(t, path))

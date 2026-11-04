@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -42,8 +43,8 @@ var claudeDesktopPaths = append([][]string{
 
 // claudeDesktopHelperTTL is how long, in seconds, Claude Desktop keeps a helper
 // token. 'grid token' replaces its token once under 15 minutes remain, so the
-// app must ask again sooner than that.
-const claudeDesktopHelperTTL = 600
+// app must ask again sooner than that; 5 minutes matches Claude Code's helper.
+const claudeDesktopHelperTTL = 300
 
 // claudeDesktopSealedPrefix marks a static key Claude Desktop has encrypted in place.
 const claudeDesktopSealedPrefix = "__sealed__:"
@@ -130,14 +131,18 @@ func claudeDesktopDeniedID(name string) bool {
 }
 
 func claudeDesktopModel(r Route) map[string]any {
-	return map[string]any{"name": claudeDesktopModelPrefix + r.ID, "labelOverride": r.DisplayName}
+	return map[string]any{"name": claudeDesktopModelPrefix + r.ID, "labelOverride": cmp.Or(r.DisplayName, r.Name)}
 }
 
 func (claudeDesktopHarness) BackgroundRoute(Selection) string { return "" }
 
-// Routes keeps the routes that serve the Anthropic Messages API.
+// Routes keeps the routes that serve the Anthropic Messages API under a model
+// ID Claude Desktop accepts, so a denied route is absent everywhere, and an
+// explicit choice of one fails like any other unlisted route.
 func (claudeDesktopHarness) Routes(routes []Route) []Route {
-	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Messages })
+	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool {
+		return !r.Messages || claudeDesktopDeniedID(claudeDesktopModelPrefix+r.ID)
+	})
 }
 
 func (claudeDesktopHarness) SupportsSubagent() bool { return false }
@@ -154,32 +159,21 @@ func (claudeDesktopHarness) Prepare(path string, routes []Route, opts PrepareOpt
 	case s.Fallback != "":
 		return nil, errors.New("--fallback-route-id is supported only for Claude Code")
 	}
-	var notes []string
-	allowed := slices.DeleteFunc(slices.Clone(routes), func(r Route) bool {
-		denied := claudeDesktopDeniedID(claudeDesktopModelPrefix + r.ID)
-		if denied {
-			notes = append(notes, fmt.Sprintf("warning: skipping route %s: Claude Desktop rejects the model ID %s", r.Name, claudeDesktopModelPrefix+r.ID))
-			if r.Name == s.Primary {
-				s.Primary = ""
-			}
-		}
-		return denied
-	})
-	s, err := s.Resolve(allowed)
+	s, err := s.Resolve(routes)
 	if err != nil {
 		return nil, err
 	}
 	// The first model is Claude Desktop's default.
-	primary, _ := routeByName(allowed, s.Primary)
+	primary, _ := routeByName(routes, s.Primary)
 	models := []any{claudeDesktopModel(primary)}
-	for _, r := range allowed {
+	for _, r := range routes {
 		if r.Name != primary.Name {
 			models = append(models, claudeDesktopModel(r))
 		}
 	}
 	values := []setting{
 		desired([]string{"inferenceProvider"}, "gateway"),
-		desired([]string{"inferenceGatewayBaseUrl"}, strings.TrimRight(opts.Endpoint, "/")),
+		desired([]string{"inferenceGatewayBaseUrl"}, opts.Endpoint),
 		desired([]string{"inferenceGatewayAuthScheme"}, "bearer"),
 		desired([]string{"inferenceCustomHeaders"}, map[string]any{clientHeader: ClaudeDesktop}),
 		desired([]string{"modelDiscoveryEnabled"}, false),
@@ -189,14 +183,10 @@ func (claudeDesktopHarness) Prepare(path string, routes []Route, opts PrepareOpt
 	credentialPath := claudeDesktopCredentialPath
 	if helper != nil {
 		credentialPath = nil
-		args := helper.args(ClaudeDesktop)
-		if helper.Profile == "" {
-			args = args[:len(args)-2]
-		}
 		values = append(values,
 			desired([]string{"inferenceCredentialKind"}, "helper-script"),
 			desired(claudeDesktopHelperPaths[0], helper.Path),
-			desired(claudeDesktopHelperPaths[1], args),
+			desired(claudeDesktopHelperPaths[1], helper.args(ClaudeDesktop)),
 			desired(claudeDesktopHelperPaths[2], claudeDesktopHelperTTL),
 			setting{Path: claudeDesktopCredentialPath},
 		)
@@ -210,7 +200,6 @@ func (claudeDesktopHarness) Prepare(path string, routes []Route, opts PrepareOpt
 	if err != nil {
 		return nil, err
 	}
-	config.Notes = notes
 	meta, err := prepareSettings(claudeDesktopMetaPath(path), nil, func(map[string]any) ([]setting, error) {
 		return []setting{desired([]string{"appliedId"}, claudeDesktopID(path))}, nil
 	})
@@ -245,8 +234,15 @@ func (claudeDesktopHarness) Teardown(path string) ([]*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	id := claudeDesktopID(path)
+	_, applied, err := readConfig(claudeDesktopMetaPath(path))
+	if err != nil {
+		return nil, err
+	}
 	var plans []*Plan
-	if claudeDesktopOwned(data) {
+	// 1p mode comes back only while the app still applies Baseten's config; a
+	// config the user applied since stays in charge.
+	if claudeDesktopOwned(data) && applied["appliedId"] == id {
 		mode, err := prepareSettings(claudeDesktopAppConfigPath(path), nil, func(map[string]any) ([]setting, error) {
 			return []setting{desired([]string{"deploymentMode"}, "1p")}, nil
 		})
@@ -256,7 +252,6 @@ func (claudeDesktopHarness) Teardown(path string) ([]*Plan, error) {
 		mode.teardown, mode.Replaced = true, nil
 		plans = append(plans, mode)
 	}
-	id := claudeDesktopID(path)
 	meta, err := prepareTeardown(claudeDesktopMetaPath(path), func(d map[string]any) [][]string {
 		if d["appliedId"] != id {
 			return nil
