@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2578,8 +2579,12 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	var answered time.Time
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Model string `json:"model"`
-			Tools []any  `json:"tools"`
+			Model    string `json:"model"`
+			Tools    []any  `json:"tools"`
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
@@ -2587,20 +2592,29 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		served := "zai-org/GLM-5.3-Flash"
+		last := body.Messages[len(body.Messages)-1]
+		step := len(body.Tools) > 0 && last.Role == "user" && bytes.Contains(last.Content, []byte("notes.txt"))
+		delta, finish := map[string]any{"content": "Served reply."}, "stop"
+		if step {
+			delta, finish = map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
+				"function": map[string]any{"name": "read", "arguments": `{"path":"notes.txt"}`}}}}, "tool_calls"
+		}
+		served := "qwen/Qwen3.6-Coder"
 		switch {
+		case step:
+			served = "zai-org/GLM-5.3-Flash"
 		case bytes.Contains(raw, []byte("this session again")):
 			served = "deepseek-ai/DeepSeek-V4.2"
 		case bytes.Contains(raw, []byte("another session")):
 			served = "moonshotai/Kimi-K2.6"
-		case bytes.Contains(raw, []byte("Start quietly.")):
+		case bytes.Contains(raw, []byte("Start quietly")):
 			served = ""
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, choice := range []map[string]any{
 			{"index": 0, "delta": map[string]any{"role": "assistant", "content": ""}, "finish_reason": nil},
-			{"index": 0, "delta": map[string]any{"content": "Served reply."}, "finish_reason": nil},
-			{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"},
+			{"index": 0, "delta": delta, "finish_reason": nil},
+			{"index": 0, "delta": map[string]any{}, "finish_reason": finish},
 		} {
 			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": served,
 				"choices": []any{choice}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
@@ -2636,8 +2650,9 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	work, err := os.MkdirTemp("/tmp", "oc")
 	h.Require.NoError(err)
 	t.Cleanup(func() { _ = os.RemoveAll(work) })
+	h.Require.NoError(os.WriteFile(filepath.Join(work, "notes.txt"), []byte("hello\n"), 0o600))
 	tmp := t.TempDir()
-	toast := []string{"Served model", "Auto (Baseten Internal Dogfooding)", "→ zai-org/GLM-5.3-Flash"}
+	toast := []string{"Served model", "Auto (Baseten Internal Dogfooding)", "→ qwen/Qwen3.6-Coder"}
 	toasted := func(screen string) bool {
 		return !slices.ContainsFunc(toast, func(part string) bool { return !strings.Contains(screen, part) })
 	}
@@ -2649,7 +2664,10 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 		}, env...)
 	}
 	launch := func(ctx context.Context, args []string, env ...string) (*os.File, func() string, func()) {
+		ctx, cancel := context.WithCancel(ctx)
 		run := exec.CommandContext(ctx, binary, args...)
+		run.Cancel = func() error { return run.Process.Signal(syscall.SIGTERM) }
+		run.WaitDelay = 10 * time.Second
 		run.Dir = work
 		run.Env = environment(env...)
 		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 50, Cols: 260})
@@ -2674,7 +2692,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			return terminalEscape.ReplaceAllString(screen.String(), "")
 		}
 		return terminal, shown, sync.OnceFunc(func() {
-			_ = run.Process.Kill()
+			cancel()
 			_ = run.Wait()
 			_ = terminal.Close()
 		})
@@ -2687,7 +2705,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 		mu.Unlock()
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 		defer cancel()
-		_, shown, stop := launch(ctx, []string{"--standalone", "--prompt", "Reply with OK."}, env...)
+		_, shown, stop := launch(ctx, []string{"--standalone", "--prompt", "Read notes.txt and reply."}, env...)
 		settled := func() bool {
 			mu.Lock()
 			defer mu.Unlock()
@@ -2705,14 +2723,15 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 
 	setup("route-auto")
 	screen, models := tui()
+	h.Require.NotContains(screen, "zai-org/GLM-5.3-Flash", "the intermediate tool step does not toast")
 	for _, part := range toast {
-		h.Require.Contains(screen, part, "the TUI toasts the router route and the model that served it")
+		h.Require.Contains(screen, part, "the TUI toasts the router route and the model that served the final response")
 	}
-	h.Require.Contains(models, "acme/auto")
+	h.Require.Equal([]string{"acme/auto", "acme/auto"}, slices.DeleteFunc(models, func(model string) bool { return model != "acme/auto" }))
 
 	screen, models = tui("BASETEN_OPENCODE_SERVED_MODEL=0")
 	h.Require.NotContains(screen, "Served model", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
-	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
+	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.Contains(models, "acme/auto")
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -2728,7 +2747,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	terminal, shown, stop := launch(ctx, []string{"--prompt", "Start quietly."})
+	terminal, shown, stop := launch(ctx, []string{"--prompt", "Start quietly from notes.txt."})
 	defer stop()
 	await := func(text string) {
 		for ctx.Err() == nil && !strings.Contains(shown(), text) {
@@ -2743,10 +2762,11 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	h.Require.NoError(err, string(output))
 	h.Require.Contains(string(output), "Served reply.")
 	time.Sleep(3 * time.Second)
+	h.Require.NotContains(shown(), "zai-org/GLM-5.3-Flash", "a run whose final response names no served model does not toast an earlier step's")
 	h.Require.NotContains(shown(), "moonshotai/Kimi-K2.6", "a response in another session on the same background server does not toast")
 	_, err = terminal.WriteString("Reply in this session again.")
 	h.Require.NoError(err)
-	time.Sleep(500 * time.Millisecond)
+	await("Reply in this session again.")
 	_, err = terminal.WriteString("\r")
 	h.Require.NoError(err)
 	await("→ deepseek-ai/DeepSeek-V4.2")
@@ -2756,7 +2776,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	setup("route-primary")
 	screen, models = tui()
 	h.Require.NotContains(screen, "Served model", "a route that is not a router shows nothing")
-	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "a route that is not a router shows nothing")
+	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "a route that is not a router shows nothing")
 	h.Require.Contains(models, "acme/primary")
 }
 

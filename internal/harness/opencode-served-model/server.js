@@ -40,18 +40,24 @@ export default {
   async setup(ctx) {
     if (!enabled) return
     const registration = await ctx.rpc.register(ServedModel, {})
-    const emit = (event, label) =>
-      registration.events.emit("served", { sessionID: event.sessionID, route: event.model.id, label }).catch(() => {})
+    const latest = new Map()
+    await ctx.session.hook("model.request", (event) => {
+      if (event.kind === "primary") latest.delete(event.sessionID)
+    })
     await ctx.session.hook(
       "http.response",
       (event) => {
         if (event.kind !== "primary") return
         const display = routers.get(event.model.id)
-        if (!display) return void emit(event, "")
-        if (!event.response.ok || !event.response.body) return
-        event.response = watchServedModel(event.response, (model) => emit(event, `${display} → ${model}`))
+        if (!display || !event.response.ok || !event.response.body) return
+        event.response = watchServedModel(event.response, (model) => latest.set(event.sessionID, { route: event.model.id, label: `${display} → ${model}` }))
       },
       { providerID: routes.provider },
     )
+    await ctx.session.hook("experimental.idle", (event) => {
+      const served = latest.get(event.sessionID)
+      latest.delete(event.sessionID)
+      if (served) registration.events.emit("served", { sessionID: event.sessionID, ...served }).catch(() => {})
+    })
   },
 }
