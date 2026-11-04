@@ -28,9 +28,8 @@ var commandGrid = Command{
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.\n\n" +
-				"When the team has router routes, setup also shows which model served each response on them: in Claude Code's status line, or a Stop hook if you have your own status line, in Pi's footer, and in OpenCode 2's prompt footer. " +
-				"It never changes a status line, file, or plugin you wrote. " +
-				"Interactive setup asks first, and --no-claude-served-model, --no-pi-served-model, or --no-opencode-served-model, or the matching BASETEN_CLAUDE_SERVED_MODEL, BASETEN_PI_SERVED_MODEL, or BASETEN_OPENCODE_SERVED_MODEL set to 0, turns it off.",
+				"Setup also adds a served-model indicator for intelligent routes in Claude Code, Pi, and OpenCode 2. " +
+				"To turn it off, set BASETEN_CLAUDE_SERVED_MODEL, BASETEN_PI_SERVED_MODEL, or BASETEN_OPENCODE_SERVED_MODEL to 0.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
