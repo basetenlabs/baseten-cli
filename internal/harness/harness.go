@@ -55,7 +55,7 @@ const providerID = "baseten-harness"
 
 // clientHeader names the harness on each request. Baseten's /v1/models answers
 // with a harness-specific catalog for claude-code and codex.
-const clientHeader = "X-Baseten-Client"
+const clientHeader = "X-Baseten-Grid-Client"
 
 // TODO: Make the default background route server-driven.
 const defaultBackgroundRoute = "deepseek-ai/DeepSeek-V4.1-Flash"
