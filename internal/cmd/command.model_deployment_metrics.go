@@ -25,7 +25,7 @@ func commandModelDeploymentMetrics(ctx *CommandContext, flags *cmd.ModelDeployme
 	if err != nil {
 		return err
 	}
-	fetch := func(q metricsQuery) (*managementapi.GetModelMetricsResponse, error) {
+	fetch := func(q metricsQuery) (*managementapi.GetMetricsResponse, error) {
 		return api.API().GetModelsDeploymentsMetrics(ctx, ref.ModelID, ref.DeploymentID,
 			managementapi.GetV1ModelsModelIdDeploymentsDeploymentIdMetricsParams{
 				Mode:             &q.Mode,
@@ -41,21 +41,21 @@ func commandModelDeploymentMetrics(ctx *CommandContext, flags *cmd.ModelDeployme
 // the deployment and environment metrics endpoints. Each command maps it onto
 // its own generated query-params type.
 type metricsQuery struct {
-	Mode             managementapi.ModelMetricMode
+	Mode             managementapi.MetricMode
 	StartEpochMillis *int
 	EndEpochMillis   *int
 	Metrics          *[]string
 }
 
 // metricsFetcher fetches metrics for the given query.
-type metricsFetcher func(q metricsQuery) (*managementapi.GetModelMetricsResponse, error)
+type metricsFetcher func(q metricsQuery) (*managementapi.GetMetricsResponse, error)
 
 // runMetricsCommand implements the shared metrics command flow for both
 // deployment and environment metrics. It validates the flags, resolves the mode
 // and time window into a metricsQuery, fetches via the supplied fetcher, and
 // renders the response.
 func runMetricsCommand(ctx *CommandContext, flags *cmd.MetricsFlags, fetch metricsFetcher) error {
-	mode := managementapi.ModelMetricMode(strings.ToUpper(flags.Mode))
+	mode := managementapi.MetricMode(strings.ToUpper(flags.Mode))
 
 	hasStart := !flags.Start.IsZero()
 	hasEnd := !flags.End.IsZero()
@@ -63,7 +63,7 @@ func runMetricsCommand(ctx *CommandContext, flags *cmd.MetricsFlags, fetch metri
 	// positive-duration check below instead of being silently dropped.
 	hasSince := ctx.Command.Flags().Changed("since")
 
-	if mode == managementapi.ModelMetricMode_CURRENT && (hasStart || hasEnd || hasSince) {
+	if mode == managementapi.MetricMode_CURRENT && (hasStart || hasEnd || hasSince) {
 		return cmd.NewErrUsagef("--start, --end, and --since are only valid with --mode summary or series")
 	}
 	if hasSince && (hasStart || hasEnd) {
@@ -124,12 +124,12 @@ func runMetricsCommand(ctx *CommandContext, flags *cmd.MetricsFlags, fetch metri
 	// current is a point-in-time snapshot with no window. For the windowed modes,
 	// report the resolved window (the server backfills a missing bound and it may
 	// be historical) on stderr so it stays out of the table on stdout.
-	if resp.Mode != managementapi.ModelMetricMode_CURRENT {
+	if resp.Mode != managementapi.MetricMode_CURRENT {
 		ctx.LogLine(deploymentMetricsWindowLine(resp))
 	}
 
 	switch resp.Mode {
-	case managementapi.ModelMetricMode_SERIES:
+	case managementapi.MetricMode_SERIES:
 		if flags.NoChart {
 			headers, rows, rightAligned := deploymentMetricsSeriesTable(resp)
 			ctx.OutputTable(TableOutput{Headers: headers, Rows: rows, RightAlignedColumns: rightAligned})
@@ -139,7 +139,7 @@ func runMetricsCommand(ctx *CommandContext, flags *cmd.MetricsFlags, fetch metri
 			ctx.OutputLine(line)
 		}
 		return nil
-	case managementapi.ModelMetricMode_CURRENT, managementapi.ModelMetricMode_SUMMARY:
+	case managementapi.MetricMode_CURRENT, managementapi.MetricMode_SUMMARY:
 		headers, rows, rightAligned := deploymentMetricsSnapshotRows(resp)
 		ctx.OutputTable(TableOutput{Headers: headers, Rows: rows, RightAlignedColumns: rightAligned})
 		return nil
@@ -151,7 +151,7 @@ func runMetricsCommand(ctx *CommandContext, flags *cmd.MetricsFlags, fetch metri
 // deploymentMetricsWindowLine summarizes the returned window for summary/series
 // modes: resolved start/end in local time plus duration, and the step interval
 // when the server reports one (SERIES only).
-func deploymentMetricsWindowLine(resp *managementapi.GetModelMetricsResponse) string {
+func deploymentMetricsWindowLine(resp *managementapi.GetMetricsResponse) string {
 	start := time.UnixMilli(int64(resp.StartEpochMillis)).Local()
 	end := time.UnixMilli(int64(resp.EndEpochMillis)).Local()
 	line := fmt.Sprintf("Window: %s – %s local (%s)",
@@ -193,7 +193,7 @@ func deploymentMetricsHumanizeDuration(d time.Duration) string {
 // (metric, label set), with a column per label key seen across descriptors and
 // a trailing VALUE column. In summary mode, COUNTER values render as
 // "total (rate/s)" where the rate is the window total divided by its duration.
-func deploymentMetricsSnapshotRows(resp *managementapi.GetModelMetricsResponse) (headers []string, rows [][]string, rightAligned []int) {
+func deploymentMetricsSnapshotRows(resp *managementapi.GetMetricsResponse) (headers []string, rows [][]string, rightAligned []int) {
 	labelKeys := deploymentMetricsLabelKeys(resp.MetricDescriptors)
 	headers = append(headers, "METRIC")
 	for _, k := range labelKeys {
@@ -204,7 +204,7 @@ func deploymentMetricsSnapshotRows(resp *managementapi.GetModelMetricsResponse) 
 	rightAligned = []int{valueCol}
 
 	windowSeconds := float64(resp.EndEpochMillis-resp.StartEpochMillis) / 1000
-	var values *managementapi.ModelMetricValueSet
+	var values *managementapi.MetricValueSet
 	if len(resp.MetricValues) > 0 {
 		values = &resp.MetricValues[0]
 	}
@@ -217,8 +217,8 @@ func deploymentMetricsSnapshotRows(resp *managementapi.GetModelMetricsResponse) 
 				row[1+ki] = labelSet[k]
 			}
 			v := deploymentMetricsValueAt(values, di, li)
-			if resp.Mode == managementapi.ModelMetricMode_SUMMARY &&
-				d.Kind == managementapi.ModelMetricKind_COUNTER {
+			if resp.Mode == managementapi.MetricMode_SUMMARY &&
+				d.Kind == managementapi.MetricKind_COUNTER {
 				row[valueCol] = deploymentMetricsFormatCounter(v, d.UnitHint, windowSeconds)
 			} else {
 				row[valueCol] = deploymentMetricsFormatValue(v, d.UnitHint)
@@ -233,7 +233,7 @@ func deploymentMetricsSnapshotRows(resp *managementapi.GetModelMetricsResponse) 
 // metric, then one sparkline per label set with its min-max range and the
 // trailing ("end") value. The window may be historical, so the last point is
 // labeled "end", not "now".
-func deploymentMetricsChartLines(resp *managementapi.GetModelMetricsResponse) []string {
+func deploymentMetricsChartLines(resp *managementapi.GetMetricsResponse) []string {
 	var lines []string
 	for di, d := range resp.MetricDescriptors {
 		lines = append(lines, fmt.Sprintf("%s  [%s · %s]", d.Name, d.Kind, strings.ToLower(string(d.UnitHint))))
@@ -277,7 +277,7 @@ func deploymentMetricsChartLines(resp *managementapi.GetModelMetricsResponse) []
 // deploymentMetricsSeriesTable is the --no-chart fallback for series mode: one
 // row per (metric, label set) with a value column per time step, headed by the
 // step's local start time.
-func deploymentMetricsSeriesTable(resp *managementapi.GetModelMetricsResponse) (headers []string, rows [][]string, rightAligned []int) {
+func deploymentMetricsSeriesTable(resp *managementapi.GetMetricsResponse) (headers []string, rows [][]string, rightAligned []int) {
 	labelKeys := deploymentMetricsLabelKeys(resp.MetricDescriptors)
 	headers = append(headers, "METRIC")
 	for _, k := range labelKeys {
@@ -310,7 +310,7 @@ func deploymentMetricsSeriesTable(resp *managementapi.GetModelMetricsResponse) (
 
 // deploymentMetricsLabelKeys returns the union of label keys across descriptors
 // in first-seen order, so the table has a stable column per label dimension.
-func deploymentMetricsLabelKeys(descriptors []managementapi.ModelMetricDescriptor) []string {
+func deploymentMetricsLabelKeys(descriptors []managementapi.MetricDescriptor) []string {
 	var keys []string
 	seen := map[string]bool{}
 	for _, d := range descriptors {
@@ -358,7 +358,7 @@ func deploymentMetricsLabelShort(labelSet map[string]string) string {
 
 // deploymentMetricsValueAt reads the value for descriptor di / label set li from
 // a single value set, guarding the index-mapped slices. nil means no data.
-func deploymentMetricsValueAt(values *managementapi.ModelMetricValueSet, di, li int) *float32 {
+func deploymentMetricsValueAt(values *managementapi.MetricValueSet, di, li int) *float32 {
 	if values == nil || di >= len(values.Values) || li >= len(values.Values[di]) {
 		return nil
 	}
@@ -367,7 +367,7 @@ func deploymentMetricsValueAt(values *managementapi.ModelMetricValueSet, di, li 
 
 // deploymentMetricsSeriesValues collects descriptor di / label set li across all
 // time steps, preserving nil gaps.
-func deploymentMetricsSeriesValues(steps []managementapi.ModelMetricValueSet, di, li int) []*float32 {
+func deploymentMetricsSeriesValues(steps []managementapi.MetricValueSet, di, li int) []*float32 {
 	series := make([]*float32, len(steps))
 	for si := range steps {
 		series[si] = deploymentMetricsValueAt(&steps[si], di, li)
@@ -475,7 +475,7 @@ func deploymentMetricsSparkline(series []*float32) string {
 
 // deploymentMetricsFormatValue formats a single value with its unit suffix; nil
 // renders as "-".
-func deploymentMetricsFormatValue(v *float32, unit managementapi.ModelMetricUnitHint) string {
+func deploymentMetricsFormatValue(v *float32, unit managementapi.MetricUnitHint) string {
 	if v == nil {
 		return "-"
 	}
@@ -484,7 +484,7 @@ func deploymentMetricsFormatValue(v *float32, unit managementapi.ModelMetricUnit
 
 // deploymentMetricsFormatCounter formats a COUNTER summary value as the window
 // total plus its per-second rate, e.g. "1.2k (340.5/s)".
-func deploymentMetricsFormatCounter(total *float32, unit managementapi.ModelMetricUnitHint, windowSeconds float64) string {
+func deploymentMetricsFormatCounter(total *float32, unit managementapi.MetricUnitHint, windowSeconds float64) string {
 	if total == nil {
 		return "-"
 	}
@@ -498,17 +498,17 @@ func deploymentMetricsFormatCounter(total *float32, unit managementapi.ModelMetr
 
 // deploymentMetricsUnitSuffix is the short value suffix for a unit hint. COUNT
 // and RATIO are dimensionless and carry no suffix; unknown hints are omitted.
-func deploymentMetricsUnitSuffix(unit managementapi.ModelMetricUnitHint) string {
+func deploymentMetricsUnitSuffix(unit managementapi.MetricUnitHint) string {
 	switch unit {
-	case managementapi.ModelMetricUnitHint_SECONDS:
+	case managementapi.MetricUnitHint_SECONDS:
 		return "s"
-	case managementapi.ModelMetricUnitHint_PER_SECOND:
+	case managementapi.MetricUnitHint_PER_SECOND:
 		return "/s"
-	case managementapi.ModelMetricUnitHint_BYTES:
+	case managementapi.MetricUnitHint_BYTES:
 		return "B"
-	case managementapi.ModelMetricUnitHint_MEBIBYTES:
+	case managementapi.MetricUnitHint_MEBIBYTES:
 		return "MiB"
-	case managementapi.ModelMetricUnitHint_COUNT, managementapi.ModelMetricUnitHint_RATIO:
+	case managementapi.MetricUnitHint_COUNT, managementapi.MetricUnitHint_RATIO:
 		return ""
 	default:
 		return ""
