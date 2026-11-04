@@ -98,6 +98,7 @@ func codexCommand(ctx context.Context, execer Execer, dir string, args ...string
 	command := exec.CommandContext(ctx, bin, args...)
 	command.Env = append(os.Environ(), "CODEX_HOME="+dir)
 	command.Stdout, command.Stderr = &out, &errOut
+	command.WaitDelay = 5 * time.Second
 	if err := execer.Exec(command); err != nil {
 		if ctx.Err() != nil {
 			err = fmt.Errorf("%w: %v", ctx.Err(), err)
