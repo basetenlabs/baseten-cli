@@ -107,6 +107,17 @@ func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
 	}
 }
 
+func TestHasOpenCode2(t *testing.T) {
+	for version, want := range map[string]bool{
+		"opencode v2.2.5": true, "2.0.27": true, "opencode 10.1.0": true,
+		"1.19.5": false, "opencode v1.18.34": false, "": false, "unknown": false,
+	} {
+		require.Equal(t, want, HasOpenCode2(Detection{Installs: []Install{{Version: version}}}), version)
+	}
+	require.True(t, HasOpenCode2(Detection{Installs: []Install{{Version: "1.19.5"}, {Version: "opencode v2.0.27"}}}))
+	require.False(t, HasOpenCode2(Detection{}))
+}
+
 func testRoutes() []Route {
 	return []Route{
 		testRoute("acme/primary", "Primary"),

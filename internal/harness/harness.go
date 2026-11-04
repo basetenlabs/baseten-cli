@@ -92,12 +92,13 @@ type Harness interface {
 }
 
 type PrepareOptions struct {
-	Selection           Selection
-	Endpoint            string
-	Helper              *Helper
-	CLI                 string
-	NoClaudeServedModel bool
-	NoPiServedModel     bool
+	Selection             Selection
+	Endpoint              string
+	Helper                *Helper
+	CLI                   string
+	NoClaudeServedModel   bool
+	NoPiServedModel       bool
+	NoOpenCodeServedModel bool
 }
 
 // Helper is the credential command a harness runs instead of storing a key:
@@ -505,6 +506,12 @@ type Plan struct {
 	bearerPath []string
 	teardown   bool
 	remove     bool
+	files      []ownedFile
+}
+
+type ownedFile struct {
+	name string
+	data []byte
 }
 
 // StageCredentials puts the proposed token into configuration files, to aid with diff detection.
@@ -687,6 +694,28 @@ func prepareRemoval(path string) (*Plan, error) {
 	return &Plan{Path: path, file: f, Managed: f.exists, Changed: f.exists, teardown: true, remove: true}, nil
 }
 
+func prepareFiles(dir string, files []ownedFile) *Plan {
+	p := &Plan{Path: dir, Managed: true, files: files}
+	for _, f := range files {
+		p.Keys = append(p.Keys, f.name)
+		current, err := os.ReadFile(filepath.Join(dir, f.name))
+		p.Changed = p.Changed || err != nil || !bytes.Equal(current, f.data)
+	}
+	return p
+}
+
+func prepareFilesRemoval(dir string, files []ownedFile) *Plan {
+	p := &Plan{Path: dir, teardown: true, remove: true}
+	for _, f := range files {
+		if _, err := os.Lstat(filepath.Join(dir, f.name)); err == nil {
+			p.Keys = append(p.Keys, f.name)
+			p.files = append(p.files, f)
+		}
+	}
+	p.Managed, p.Changed = len(p.files) > 0, len(p.files) > 0
+	return p
+}
+
 func (p *Plan) encode() error {
 	original, err := decodeConfig(p.Path, p.file.data)
 	if err != nil {
@@ -721,6 +750,10 @@ func (p *Plan) apply() error {
 	switch {
 	case !p.Changed:
 		return nil
+	case len(p.files) > 0 && p.remove:
+		return removeFiles(p.Path, p.files)
+	case len(p.files) > 0:
+		return writeFiles(p.Path, p.files)
 	case p.remove:
 		if err := os.Remove(p.Path); err != nil && !os.IsNotExist(err) {
 			return err
@@ -739,6 +772,30 @@ func (p *Plan) apply() error {
 		// Setup writes a credential, so the file is private.
 		return os.Chmod(p.Path, 0o600)
 	}
+}
+
+func writeFiles(dir string, files []ownedFile) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f.name), f.data, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeFiles(dir string, files []ownedFile) error {
+	for _, f := range slices.Backward(files) {
+		if err := os.Remove(filepath.Join(dir, f.name)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
+		return os.Remove(dir)
+	}
+	return nil
 }
 
 func decode(b []byte) (map[string]any, error) {

@@ -39,9 +39,10 @@ type Record struct {
 	// CodexRestartPending records that the codex app-server daemon still needs
 	// a restart, because the last one was declined or failed. Retried on the
 	// next sync.
-	CodexRestartPending bool `json:"codex_restart_pending,omitempty"`
-	NoClaudeServedModel bool `json:"no_claude_served_model,omitempty"`
-	NoPiServedModel     bool `json:"no_pi_served_model,omitempty"`
+	CodexRestartPending   bool `json:"codex_restart_pending,omitempty"`
+	NoClaudeServedModel   bool `json:"no_claude_served_model,omitempty"`
+	NoPiServedModel       bool `json:"no_pi_served_model,omitempty"`
+	NoOpenCodeServedModel bool `json:"no_opencode_served_model,omitempty"`
 }
 
 // RecordFile is the on-disk harness.json structure. Unrecognized keys are

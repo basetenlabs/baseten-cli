@@ -349,7 +349,8 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		if target.record.CredentialSource == harness.CredentialSourceHelper {
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
-		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel})
+		noOpenCodeServedModel := target.record.NoOpenCodeServedModel || !harness.HasOpenCode2(target.detection)
+		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -404,14 +405,23 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		}
 		noPiServedModel = !show
 	}
+	noOpenCodeServedModel := f.NoOpenCodeServedModel
+	if !noOpenCodeServedModel && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.OpenCode) {
+		show, err := gridAskServedModel(ctx, "OpenCode")
+		if err != nil {
+			return err
+		}
+		noOpenCodeServedModel = !show
+	}
 	targets := make([]gridHarnessTarget, len(selected))
 	for i := range selected {
 		record := harness.Record{
-			KeyName:             f.KeyName,
-			Profile:             session.ProfileName(),
-			CredentialSource:    credentialSource,
-			NoClaudeServedModel: noServedModel,
-			NoPiServedModel:     noPiServedModel,
+			KeyName:               f.KeyName,
+			Profile:               session.ProfileName(),
+			CredentialSource:      credentialSource,
+			NoClaudeServedModel:   noServedModel,
+			NoPiServedModel:       noPiServedModel,
+			NoOpenCodeServedModel: noOpenCodeServedModel,
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
 			// A harness that cannot run the helper keeps a key.
@@ -545,7 +555,9 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 }
 
 func gridOffersServedModel(selected []gridSelectedHarness, listed []managementapi.GridRoute, name string) bool {
-	i := slices.IndexFunc(selected, func(s gridSelectedHarness) bool { return s.Name() == name })
+	i := slices.IndexFunc(selected, func(s gridSelectedHarness) bool {
+		return s.Name() == name && (name != harness.OpenCode || harness.HasOpenCode2(s.detection))
+	})
 	if i < 0 {
 		return false
 	}
