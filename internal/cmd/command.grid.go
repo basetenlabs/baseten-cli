@@ -527,6 +527,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	}
 	if !ctx.JSON {
 		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
+		gridHarnessClaudeDesktopHint(ctx, targets)
 	}
 	for i := range targets {
 		t := &targets[i]
@@ -552,6 +553,14 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		ctx.Logf("Undo with: %s\n", gridFollowupCommand("teardown", targets[i].gridSelectedHarness, f.ConfigDir))
 	}
 	return nil
+}
+
+// gridHarnessClaudeDesktopHint says to relaunch Claude Desktop, which reads its
+// config only at launch.
+func gridHarnessClaudeDesktopHint(ctx *CommandContext, targets []gridHarnessTarget) {
+	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool { return t.Name() == harness.ClaudeDesktop }) {
+		ctx.LogLine("Quit and reopen Claude Desktop to load the changes.")
+	}
 }
 
 func gridOffersServedModel(selected []gridSelectedHarness, listed []managementapi.GridRoute, name string) bool {
@@ -732,6 +741,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 	}
 	if !ctx.JSON {
 		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
+		gridHarnessClaudeDesktopHint(ctx, targets)
 	}
 	for i := range targets {
 		name := targets[i].Name()
@@ -985,6 +995,9 @@ func gridHarnessDefaultModels(defaults *managementapi.GridHarnessDefaults, harne
 		return map[string]*managementapi.GridHarnessModel{gridHarnessRolePrimary: defaults.Codex.Primary}
 	case harness.Pi:
 		return map[string]*managementapi.GridHarnessModel{gridHarnessRolePrimary: defaults.Pi.Primary}
+	case harness.ClaudeDesktop:
+		// The team settings have no Claude Desktop defaults.
+		return nil
 	default:
 		panic(fmt.Sprintf("no harness defaults for harness %q", harnessName))
 	}
@@ -1625,6 +1638,9 @@ func outputGridTeamSettings(ctx *CommandContext, settings *managementapi.GridTea
 	var rows [][]string
 	for _, h := range harness.All() {
 		models := gridHarnessDefaultModels(&settings.HarnessDefaults, h.Name())
+		if models == nil {
+			continue
+		}
 		rows = append(rows, []string{
 			h.Name(),
 			gridTeamSettingsHarnessDefaultLabel(models[gridHarnessRolePrimary], true),

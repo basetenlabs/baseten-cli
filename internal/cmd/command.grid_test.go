@@ -106,6 +106,8 @@ func gridAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAP
 	// A profile session, so setup installs the token helper. Tests of an
 	// ephemeral session set BASETEN_API_KEY themselves.
 	t.Setenv("BASETEN_API_KEY", "")
+	// Claude Desktop's config has no environment override, so it follows HOME.
+	t.Setenv("HOME", t.TempDir())
 	h.Require.NoError(configDirStore(t).SetAPIKeyProfile(t.Context(), "alice", api.URL, "test-key", true, nil))
 	// The test binary is the baseten on PATH, so setup does not warn.
 	if exe, err := os.Executable(); err == nil {

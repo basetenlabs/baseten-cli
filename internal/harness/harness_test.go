@@ -23,7 +23,7 @@ const testEndpoint = "https://inference.example.com"
 
 func testRoute(name, displayName string) Route {
 	return Route{
-		Name: name, DisplayName: displayName,
+		ID: name, Name: name, DisplayName: displayName,
 		ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, Responses: true,
 	}
 }
@@ -367,7 +367,7 @@ func TestSetupRefreshAndTeardownKeepUnrelatedSettings(t *testing.T) {
 
 			teardown(t, h, path)
 			want := map[string]any{"theme": "light", "user-added": "keep"}
-			if h.Name() == Pi {
+			if h.Name() == Pi || h.Name() == ClaudeDesktop {
 				// Pi's default model is in settings.json, so setup leaves models.json's alone.
 				want["model"] = "original-model"
 			}
@@ -981,10 +981,11 @@ func TestPiIncomplete(t *testing.T) {
 
 func TestClientHeaderNamesHarness(t *testing.T) {
 	paths := map[string][]string{
-		ClaudeCode: {"env", "ANTHROPIC_CUSTOM_HEADERS"},
-		Codex:      {"model_providers", providerID, "http_headers", clientHeader},
-		OpenCode:   {"provider", providerID, "options", "headers", clientHeader},
-		Pi:         {"providers", providerID, "headers", clientHeader},
+		ClaudeCode:    {"env", "ANTHROPIC_CUSTOM_HEADERS"},
+		Codex:         {"model_providers", providerID, "http_headers", clientHeader},
+		OpenCode:      {"provider", providerID, "options", "headers", clientHeader},
+		Pi:            {"providers", providerID, "headers", clientHeader},
+		ClaudeDesktop: claudeDesktopMarkerPath,
 	}
 	for _, h := range All() {
 		t.Run(h.Name(), func(t *testing.T) {

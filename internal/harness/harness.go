@@ -1,5 +1,5 @@
 // Package harness configures coding harnesses (Claude Code, Codex, OpenCode,
-// and Pi) to use Baseten routes, and removes that configuration again.
+// Pi, and Claude Desktop) to use Baseten routes, and removes that configuration again.
 //
 // Setup overwrites a fixed set of integration settings in each harness's native
 // settings file. There are no backups: repeating setup refreshes the same
@@ -39,6 +39,8 @@ const (
 	Codex      = "codex"
 	OpenCode   = "opencode"
 	Pi         = "pi"
+	// ClaudeDesktop is Claude Desktop's third-party mode.
+	ClaudeDesktop = "claude-desktop"
 )
 
 // Integration states reported by [Harness.Inspect].
@@ -129,12 +131,14 @@ func Supported() bool {
 
 // All returns every supported harness.
 func All() []Harness {
-	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}, piHarness{}}
+	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}, piHarness{}, claudeDesktopHarness{}}
 }
 
 // Route is a Baseten route as shown in a harness's model picker, with the model
 // capabilities supplied by the route's own metadata.
 type Route struct {
+	// ID is the route's stable ID, which Claude Desktop's model IDs carry.
+	ID          string
 	Name        string
 	DisplayName string
 	// Provider is the route's upstream provider, such as ProviderAnthropic,
@@ -185,7 +189,7 @@ func NewProviders(connections []managementapi.GridConnection) Providers {
 // route that reaches one through a team connection. It fails if the route's
 // model metadata is missing or is not enough to configure a harness.
 func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
-	r := Route{Name: api.Name, DisplayName: api.DisplayName, Router: routeIsRouter(api)}
+	r := Route{ID: api.Id, Name: api.Name, DisplayName: api.DisplayName, Router: routeIsRouter(api)}
 	r.Provider, r.UpstreamModel = routeTarget(api, providers)
 	m := api.Metadata
 	if m == nil {

@@ -607,14 +607,14 @@ type GridStatusList struct {
 
 // GridHarnessFlags selects the harnesses a command applies to.
 type GridHarnessFlags struct {
-	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude-code,codex,opencode,pi"`
+	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude-code,codex,opencode,pi,claude-desktop"`
 	ConfigDir string   `flag:"config-dir" desc:"Harness configuration directory. Requires exactly one --harness. Defaults to the harness's own location."`
 }
 
 // GridTokenFlags are the flags for `baseten grid token`.
 type GridTokenFlags struct {
 	CommandFlags
-	Harness string `flag:"harness" desc:"Harness the token is for, as configured by 'grid setup'." enum:"claude-code,codex,opencode,pi" required:"true"`
+	Harness string `flag:"harness" desc:"Harness the token is for, as configured by 'grid setup'." enum:"claude-code,codex,opencode,pi,claude-desktop" required:"true"`
 	Team    string `flag:"team" desc:"Team name or ID the token is for. Defaults to the team the harness was set up with."`
 }
 
