@@ -458,6 +458,25 @@ func NewAuthStore(insecureStorage bool) (*auth.Store, error) {
 	}), nil
 }
 
+// selectExplicitProfile handles an [auth.ErrExplicitProfileRequired] by
+// prompting for a profile on a terminal. Other errors, and that error when not
+// on a terminal, are returned as is.
+func (c *CommandContext) selectExplicitProfile(err error) (string, error) {
+	var required *auth.ErrExplicitProfileRequired
+	if !errors.As(err, &required) || len(required.Profiles) == 0 || !c.IsInteractive() {
+		return "", err
+	}
+	var name string
+	if err := c.RunPrompt(huh.NewSelect[string]().
+		Title("Use which profile?").
+		Options(huh.NewOptions(required.Profiles...)...).
+		Filtering(true).
+		Value(&name)); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
 // SetDefaultProfile sets a fallback profile, used only when no profile is
 // selected via --profile, BASETEN_API_KEY, or BASETEN_PROFILE. It must be
 // called before anything that resolves auth (AuthTransport, NewManagementClient,
@@ -797,6 +816,10 @@ func (c *hostHeaderClient) Do(req *http.Request) (*http.Response, error) {
 type authInfo struct {
 	profileFlag    string
 	defaultProfile string
+	// selectProfile, when set, picks a profile when explicit profile selection
+	// is required and nothing selected one. See
+	// [CommandContext.selectExplicitProfile].
+	selectProfile func(error) (string, error)
 
 	once    sync.Once
 	err     error
@@ -806,7 +829,14 @@ type authInfo struct {
 
 func (a *authInfo) resolve() error {
 	a.once.Do(func() {
-		if a.session, a.err = auth.ResolveSession(a.profileFlag, a.defaultProfile); a.err != nil {
+		a.session, a.err = auth.ResolveSession(a.profileFlag, a.defaultProfile)
+		if a.err != nil && a.selectProfile != nil {
+			var name string
+			if name, a.err = a.selectProfile(a.err); a.err == nil {
+				a.session, a.err = auth.ResolveSession(name, "")
+			}
+		}
+		if a.err != nil {
 			return
 		}
 		a.remote, a.err = NewRemote(a.session.RemoteURL())
