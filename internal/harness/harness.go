@@ -97,6 +97,7 @@ type PrepareOptions struct {
 	Helper                *Helper
 	CLI                   string
 	NoClaudeServedModel   bool
+	NoPiServedModel       bool
 	NoOpenCodeServedModel bool
 }
 

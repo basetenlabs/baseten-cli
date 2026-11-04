@@ -32,6 +32,9 @@ var commandGrid = Command{
 				"Setup never changes a status line you configured; it adds a Stop hook that shows the serving model after each response instead. " +
 				"Interactive setup asks whether to show it, defaulting to yes; --no-claude-served-model leaves it out and removes it without asking, and --yes shows it unless that flag is set. " +
 				"To turn it off without rerunning setup, set BASETEN_CLAUDE_SERVED_MODEL=0 in Claude Code's settings env. " +
+				"For Pi, when the team has router routes, setup writes an extension, extensions/baseten-served-model.ts next to models.json, that shows in Pi's footer which model served the latest response of a router route. " +
+				"Setup never overwrites a file of yours at that path. Interactive setup asks whether to show it, defaulting to yes; --no-pi-served-model leaves it out and removes it without asking, and --yes shows it unless that flag is set. " +
+				"To turn it off without rerunning setup, start Pi with BASETEN_PI_SERVED_MODEL=0. " +
 				"For OpenCode 2, when the team has router routes, setup adds a plugin under OpenCode's plugins directory that shows which model served the latest response of a router route below the prompt. " +
 				"Setup never changes a plugin directory it did not write. " +
 				"Interactive setup asks whether to show it, defaulting to yes; --no-opencode-served-model leaves it out and removes it without asking, and --yes shows it unless that flag is set. " +
@@ -130,6 +133,7 @@ var commandGrid = Command{
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
 				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path. " +
 				"For Claude Code, teardown removes the served-model status line and Stop hook that setup added, and keeps your own status line and hooks. " +
+				"For Pi, it removes the served-model extension that setup wrote, and keeps a file of yours at that path. " +
 				"For OpenCode, it removes the served-model plugin that setup added, and keeps your own plugins.\n\n" +
 				"Teardown also deletes the Grid API key the removed harnesses use, once no other harness on this machine uses it, " +
 				"except a key installed with --use-session-credential, whose lifecycle this CLI does not own. " +
@@ -649,6 +653,7 @@ type GridSetupFlags struct {
 	SubagentRouteID       string `flag:"subagent-route-id" desc:"Route ID for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
 	FallbackRouteID       string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
 	NoClaudeServedModel   bool   `flag:"no-claude-served-model" desc:"For Claude Code, leave out the status line or Stop hook that shows which model served a router route's response, and remove it if setup added it before, without asking."`
+	NoPiServedModel       bool   `flag:"no-pi-served-model" desc:"For Pi, leave out the extension that shows which model served a router route's response, and remove it if setup added it before, without asking."`
 	NoOpenCodeServedModel bool   `flag:"no-opencode-served-model" desc:"For OpenCode 2, leave out the plugin that shows which model served a router route's response, and remove it if setup added it before, without asking."`
 	UseSessionCredential  bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun                bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`

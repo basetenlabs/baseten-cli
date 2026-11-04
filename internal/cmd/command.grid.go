@@ -350,7 +350,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
 		noOpenCodeServedModel := target.record.NoOpenCodeServedModel || !harness.HasOpenCode2(target.detection)
-		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, NoClaudeServedModel: target.record.NoClaudeServedModel, NoOpenCodeServedModel: noOpenCodeServedModel})
+		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -397,6 +397,14 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		}
 		noServedModel = !show
 	}
+	noPiServedModel := f.NoPiServedModel
+	if !noPiServedModel && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.Pi) {
+		show, err := gridAskServedModel(ctx, "Pi")
+		if err != nil {
+			return err
+		}
+		noPiServedModel = !show
+	}
 	noOpenCodeServedModel := f.NoOpenCodeServedModel
 	if !noOpenCodeServedModel && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.OpenCode) {
 		show, err := gridAskServedModel(ctx, "OpenCode")
@@ -412,6 +420,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 			Profile:               session.ProfileName(),
 			CredentialSource:      credentialSource,
 			NoClaudeServedModel:   noServedModel,
+			NoPiServedModel:       noPiServedModel,
 			NoOpenCodeServedModel: noOpenCodeServedModel,
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
@@ -561,10 +570,10 @@ func gridOffersServedModel(selected []gridSelectedHarness, listed []managementap
 	return slices.ContainsFunc(selected[i].Routes(routes), func(r harness.Route) bool { return r.Router })
 }
 
-func gridAskServedModel(ctx *CommandContext, harnessName string) (bool, error) {
+func gridAskServedModel(ctx *CommandContext, harnessLabel string) (bool, error) {
 	show := true
 	err := ctx.RunPrompt(huh.NewSelect[bool]().
-		Title("Show which model served each response on auto routes in "+harnessName+"?").
+		Title("Show which model served each response on auto routes in "+harnessLabel+"?").
 		Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
 		Value(&show))
 	return show, err
