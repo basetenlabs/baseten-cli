@@ -2040,25 +2040,38 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 		t.Skip("pi is not on PATH")
 	}
 	var mu sync.Mutex
-	var requested []string
+	var requested, bodies []string
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			http.NotFound(w, r)
 			return
 		}
 		var body struct {
-			Model string `json:"model"`
+			Model    string `json:"model"`
+			Messages []struct {
+				Role string `json:"role"`
+			} `json:"messages"`
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
 		mu.Lock()
 		requested = append(requested, body.Model)
+		bodies = append(bodies, string(raw))
 		mu.Unlock()
-		served := map[string]string{"acme/auto": "acme/served-x", "acme/primary": "acme/served-z"}[body.Model]
+		final := len(body.Messages) > 0 && body.Messages[len(body.Messages)-1].Role == "tool"
+		served := map[bool]map[string]string{
+			false: {"acme/auto": "acme/served-step", "acme/primary": "acme/served-z"},
+			true:  {"acme/auto": "acme/served-final", "acme/primary": "acme/served-z"},
+		}[final][body.Model]
+		delta, finish := map[string]any{"role": "assistant", "content": "Reading notes.", "tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
+			"function": map[string]any{"name": "read", "arguments": `{"path":"notes.txt"}`}}}}, "tool_calls"
+		if final {
+			delta, finish = map[string]any{"role": "assistant", "content": "Done reading."}, "stop"
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, chunk := range []map[string]any{
-			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": "OK"}, "finish_reason": nil}}},
-			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}},
+			{"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}},
+			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": finish}}},
 			{"choices": []any{}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}},
 		} {
 			chunk["id"], chunk["object"], chunk["created"], chunk["model"] = "chatcmpl-served", "chat.completion.chunk", 1, served
@@ -2090,6 +2103,14 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	work, tmp := t.TempDir(), t.TempDir()
+	h.Require.NoError(os.WriteFile(filepath.Join(work, "notes.txt"), []byte("hello\n"), 0o600))
+	environment := func(env []string) []string {
+		return append([]string{
+			"HOME=" + root, "PI_CODING_AGENT_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + tmp, "PI_OFFLINE=1", "PI_TELEMETRY=0",
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}, env...)
+	}
 	type command struct {
 		Type     string `json:"type"`
 		Message  string `json:"message,omitempty"`
@@ -2101,14 +2122,10 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	use := func(model string) command {
 		return command{Type: "set_model", Provider: "baseten-harness", ModelID: model}
 	}
-	session := func(env []string, args []string, commands ...command) []string {
+	session := func(env []string, args []string, commands ...command) {
 		run := exec.CommandContext(ctx, binary, append([]string{"--mode", "rpc"}, args...)...)
 		run.Dir = work
-		run.Env = append([]string{
-			"HOME=" + root, "PI_CODING_AGENT_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + tmp, "PI_OFFLINE=1", "PI_TELEMETRY=0",
-			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
-			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
-		}, env...)
+		run.Env = environment(env)
 		run.WaitDelay = 5 * time.Second
 		var stderr strings.Builder
 		run.Stderr = &stderr
@@ -2118,7 +2135,6 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 		h.Require.NoError(err)
 		h.Require.NoError(run.Start())
 		lines := bufio.NewReader(stdout)
-		var statuses []string
 		for _, c := range commands {
 			raw, err := json.Marshal(c)
 			h.Require.NoError(err)
@@ -2128,41 +2144,127 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 				line, err := lines.ReadBytes('\n')
 				h.Require.NoError(err, "pi stopped before finishing %s: %s", c.Type, stderr.String())
 				var event struct {
-					Type       string `json:"type"`
-					Command    string `json:"command"`
-					Success    bool   `json:"success"`
-					Error      string `json:"error"`
-					Method     string `json:"method"`
-					StatusKey  string `json:"statusKey"`
-					StatusText string `json:"statusText"`
+					Type    string `json:"type"`
+					Command string `json:"command"`
+					Success bool   `json:"success"`
+					Error   string `json:"error"`
 				}
 				if json.Unmarshal(line, &event) != nil {
 					continue
 				}
 				h.Require.NotEqual("extension_error", event.Type, string(line))
 				h.Require.False(event.Type == "response" && !event.Success, event.Error)
-				if event.Method == "setStatus" && event.StatusKey == "baseten-served-model" {
-					statuses = append(statuses, event.StatusText)
-				}
-				done = (c.Type == "prompt" && event.Type == "agent_end") || (c.Type != "prompt" && event.Type == "response" && event.Command == c.Type)
+				done = (c.Type == "prompt" && event.Type == "agent_settled") || (c.Type != "prompt" && event.Type == "response" && event.Command == c.Type)
 			}
 		}
 		h.Require.NoError(stdin.Close())
 		h.Require.NoError(run.Wait(), stderr.String())
-		return statuses
 	}
-	served := "Auto (Baseten Internal Dogfooding) → acme/served-x"
+	transcript := func() []string {
+		files, err := filepath.Glob(filepath.Join(configDir, "sessions", "*", "*.jsonl"))
+		h.Require.NoError(err)
+		h.Require.Len(files, 1)
+		raw, err := os.ReadFile(files[0])
+		h.Require.NoError(err)
+		var entries []string
+		for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+			var entry struct {
+				Type       string `json:"type"`
+				CustomType string `json:"customType"`
+				Data       struct {
+					Label string `json:"label"`
+				} `json:"data"`
+				Message struct {
+					Role          string `json:"role"`
+					ResponseModel string `json:"responseModel"`
+				} `json:"message"`
+			}
+			h.Require.NoError(json.Unmarshal([]byte(line), &entry))
+			switch {
+			case entry.Type == "custom":
+				entries = append(entries, entry.CustomType+": "+entry.Data.Label)
+			case entry.Type == "message" && entry.Message.Role != "system":
+				entries = append(entries, strings.TrimSpace(entry.Message.Role+" "+entry.Message.ResponseModel))
+			}
+		}
+		return entries
+	}
+	render := func(last string, env ...string) string {
+		t.Helper()
+		run := exec.CommandContext(ctx, binary, "--continue")
+		run.Dir = work
+		run.Env = environment(append([]string{"TERM=xterm-256color"}, env...))
+		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 60, Cols: 200})
+		h.Require.NoError(err)
+		var screenMu sync.Mutex
+		var screen strings.Builder
+		go func() {
+			buf := make([]byte, 32<<10)
+			for {
+				n, err := terminal.Read(buf)
+				screenMu.Lock()
+				screen.Write(buf[:n])
+				screenMu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}()
+		shown := func() string {
+			screenMu.Lock()
+			defer screenMu.Unlock()
+			return terminalEscape.ReplaceAllString(screen.String(), "")
+		}
+		for ctx.Err() == nil && !strings.Contains(shown(), last) {
+			time.Sleep(100 * time.Millisecond)
+		}
+		time.Sleep(time.Second)
+		_ = run.Process.Kill()
+		_ = run.Wait()
+		_ = terminal.Close()
+		h.Require.Contains(shown(), last, "pi rendered the resumed session")
+		return shown()
+	}
+	label := "Auto (Baseten Internal Dogfooding) → acme/served-final"
+	served := "baseten-served-model: " + label
+	routed := func(entries ...string) []string {
+		return append([]string{"user", "assistant acme/served-step", "toolResult", "assistant acme/served-final"}, entries...)
+	}
+	primary := []string{"user", "assistant acme/served-z", "toolResult", "assistant acme/served-z"}
 
-	h.Require.Equal([]string{"", served, "", served},
-		session(nil, nil, state, prompt("Reply with OK."), use("acme/primary"), prompt("Reply again."), use("acme/auto"), prompt("Reply once more.")))
-	h.Require.Equal([]string{served}, session(nil, []string{"--continue"}, state), "a resumed session shows its latest response")
+	session(nil, nil, state, prompt("Summarize notes.txt."), use("acme/primary"), prompt("Summarize notes.txt again."), use("acme/auto"), prompt("Summarize notes.txt once more."))
+	want := slices.Concat(routed(served), primary, routed(served))
+	h.Require.Equal(want, transcript(), "one entry per router prompt, after its final response, naming the model that served that response")
+	h.Require.Contains(render("Summarize notes.txt once more."), label, "a resumed session renders the entries")
+
 	for _, off := range []string{"0", "false"} {
-		h.Require.Empty(session([]string{"BASETEN_PI_SERVED_MODEL=" + off}, []string{"--continue"}, state, prompt("Reply with OK.")))
+		session([]string{"BASETEN_PI_SERVED_MODEL=" + off}, []string{"--continue"}, prompt("Summarize notes.txt with the display "+off+"."))
+		want = append(want, routed()...)
+		h.Require.Equal(want, transcript(), "BASETEN_PI_SERVED_MODEL=%s adds no entry", off)
+		h.Require.NotContains(render("Summarize notes.txt with the display "+off+".", "BASETEN_PI_SERVED_MODEL="+off), label, "BASETEN_PI_SERVED_MODEL=%s renders no entry", off)
 	}
-	h.Require.Equal([]string{served}, session([]string{"BASETEN_PI_SERVED_MODEL=1"}, []string{"--continue"}, state))
+	session([]string{"BASETEN_PI_SERVED_MODEL=1"}, []string{"--continue"}, prompt("Summarize notes.txt with the display on."))
+	want = append(want, routed(served)...)
+	h.Require.Equal(want, transcript())
+
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", configDir, "--primary-route-id", "route-auto", "--use-session-credential", "--yes", "--no-pi-served-model"))
+	h.Require.NoFileExists(piServedModelFile(configDir))
+	session(nil, []string{"--continue"}, prompt("Summarize notes.txt without the extension."))
+	want = append(want, routed()...)
+	h.Require.Equal(want, transcript())
+	orphaned := render("Summarize notes.txt without the extension.")
+	h.Require.NotContains(orphaned, label, "entries left by a removed extension are not shown")
+	h.Require.NotContains(orphaned, "baseten-served-model")
+
 	mu.Lock()
-	h.Require.Equal([]string{"acme/auto", "acme/primary", "acme/auto", "acme/auto", "acme/auto"}, requested)
-	mu.Unlock()
+	defer mu.Unlock()
+	h.Require.Equal(slices.Concat(slices.Repeat([]string{"acme/auto"}, 2), slices.Repeat([]string{"acme/primary"}, 2), slices.Repeat([]string{"acme/auto"}, 10)), requested)
+	h.Require.Contains(bodies[len(bodies)-1], "Done reading.", "later requests carry the earlier responses")
+	for _, body := range bodies {
+		for _, leak := range []string{"baseten-served-model", "Auto (Baseten Internal Dogfooding)", "→", `\u2192`, "acme/served"} {
+			h.Require.NotContains(body, leak, "entries never reach the model")
+		}
+	}
 }
 
 var openCode2Execer = versionedHarnessExecer{"claude": "2.1.272 (Claude Code)", "opencode": "opencode v2.2.5"}
@@ -2525,7 +2627,10 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	h.Require.NoError(err)
 	t.Cleanup(func() { _ = os.RemoveAll(work) })
 	tmp := t.TempDir()
-	label := "Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash"
+	toast := []string{"Served model", "Auto (Baseten Internal Dogfooding)", "→ zai-org/GLM-5.3-Flash"}
+	toasted := func(screen string) bool {
+		return !slices.ContainsFunc(toast, func(part string) bool { return !strings.Contains(screen, part) })
+	}
 	tui := func(env ...string) (string, []string) {
 		t.Helper()
 		started := time.Now()
@@ -2567,7 +2672,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			defer mu.Unlock()
 			return answered.After(started) && time.Since(answered) > 3*time.Second
 		}
-		for ctx.Err() == nil && !strings.Contains(shown(), label) && !settled() {
+		for ctx.Err() == nil && !toasted(shown()) && !settled() {
 			time.Sleep(100 * time.Millisecond)
 		}
 		_ = run.Process.Kill()
@@ -2581,15 +2686,19 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 
 	setup("route-auto")
 	screen, models := tui()
-	h.Require.Contains(screen, label, "the TUI shows the router route and the model that served it")
+	for _, part := range toast {
+		h.Require.Contains(screen, part, "the TUI toasts the router route and the model that served it")
+	}
 	h.Require.Contains(models, "acme/auto")
 
 	screen, models = tui("BASETEN_OPENCODE_SERVED_MODEL=0")
+	h.Require.NotContains(screen, "Served model", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.Contains(models, "acme/auto")
 
 	setup("route-primary")
 	screen, models = tui()
+	h.Require.NotContains(screen, "Served model", "a route that is not a router shows nothing")
 	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "a route that is not a router shows nothing")
 	h.Require.Contains(models, "acme/primary")
 }
