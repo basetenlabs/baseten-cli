@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2040,25 +2042,38 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 		t.Skip("pi is not on PATH")
 	}
 	var mu sync.Mutex
-	var requested []string
+	var requested, bodies []string
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			http.NotFound(w, r)
 			return
 		}
 		var body struct {
-			Model string `json:"model"`
+			Model    string `json:"model"`
+			Messages []struct {
+				Role string `json:"role"`
+			} `json:"messages"`
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
 		mu.Lock()
 		requested = append(requested, body.Model)
+		bodies = append(bodies, string(raw))
 		mu.Unlock()
-		served := map[string]string{"acme/auto": "acme/served-x", "acme/primary": "acme/served-z"}[body.Model]
+		final := len(body.Messages) > 0 && body.Messages[len(body.Messages)-1].Role == "tool"
+		served := map[bool]map[string]string{
+			false: {"acme/auto": "acme/served-step", "acme/primary": "acme/served-z"},
+			true:  {"acme/auto": "acme/served-final", "acme/primary": "acme/served-z"},
+		}[final][body.Model]
+		delta, finish := map[string]any{"role": "assistant", "content": "Reading notes.", "tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
+			"function": map[string]any{"name": "read", "arguments": `{"path":"notes.txt"}`}}}}, "tool_calls"
+		if final {
+			delta, finish = map[string]any{"role": "assistant", "content": "Done reading."}, "stop"
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, chunk := range []map[string]any{
-			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": "OK"}, "finish_reason": nil}}},
-			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}},
+			{"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}},
+			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": finish}}},
 			{"choices": []any{}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}},
 		} {
 			chunk["id"], chunk["object"], chunk["created"], chunk["model"] = "chatcmpl-served", "chat.completion.chunk", 1, served
@@ -2090,6 +2105,14 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	work, tmp := t.TempDir(), t.TempDir()
+	h.Require.NoError(os.WriteFile(filepath.Join(work, "notes.txt"), []byte("hello\n"), 0o600))
+	environment := func(env []string) []string {
+		return append([]string{
+			"HOME=" + root, "PI_CODING_AGENT_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + tmp, "PI_OFFLINE=1", "PI_TELEMETRY=0",
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}, env...)
+	}
 	type command struct {
 		Type     string `json:"type"`
 		Message  string `json:"message,omitempty"`
@@ -2101,14 +2124,10 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	use := func(model string) command {
 		return command{Type: "set_model", Provider: "baseten-harness", ModelID: model}
 	}
-	session := func(env []string, args []string, commands ...command) []string {
+	session := func(env []string, args []string, commands ...command) {
 		run := exec.CommandContext(ctx, binary, append([]string{"--mode", "rpc"}, args...)...)
 		run.Dir = work
-		run.Env = append([]string{
-			"HOME=" + root, "PI_CODING_AGENT_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + tmp, "PI_OFFLINE=1", "PI_TELEMETRY=0",
-			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
-			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
-		}, env...)
+		run.Env = environment(env)
 		run.WaitDelay = 5 * time.Second
 		var stderr strings.Builder
 		run.Stderr = &stderr
@@ -2118,7 +2137,6 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 		h.Require.NoError(err)
 		h.Require.NoError(run.Start())
 		lines := bufio.NewReader(stdout)
-		var statuses []string
 		for _, c := range commands {
 			raw, err := json.Marshal(c)
 			h.Require.NoError(err)
@@ -2128,41 +2146,127 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 				line, err := lines.ReadBytes('\n')
 				h.Require.NoError(err, "pi stopped before finishing %s: %s", c.Type, stderr.String())
 				var event struct {
-					Type       string `json:"type"`
-					Command    string `json:"command"`
-					Success    bool   `json:"success"`
-					Error      string `json:"error"`
-					Method     string `json:"method"`
-					StatusKey  string `json:"statusKey"`
-					StatusText string `json:"statusText"`
+					Type    string `json:"type"`
+					Command string `json:"command"`
+					Success bool   `json:"success"`
+					Error   string `json:"error"`
 				}
 				if json.Unmarshal(line, &event) != nil {
 					continue
 				}
 				h.Require.NotEqual("extension_error", event.Type, string(line))
 				h.Require.False(event.Type == "response" && !event.Success, event.Error)
-				if event.Method == "setStatus" && event.StatusKey == "baseten-served-model" {
-					statuses = append(statuses, event.StatusText)
-				}
-				done = (c.Type == "prompt" && event.Type == "agent_end") || (c.Type != "prompt" && event.Type == "response" && event.Command == c.Type)
+				done = (c.Type == "prompt" && event.Type == "agent_settled") || (c.Type != "prompt" && event.Type == "response" && event.Command == c.Type)
 			}
 		}
 		h.Require.NoError(stdin.Close())
 		h.Require.NoError(run.Wait(), stderr.String())
-		return statuses
 	}
-	served := "Auto (Baseten Internal Dogfooding) → acme/served-x"
+	transcript := func() []string {
+		files, err := filepath.Glob(filepath.Join(configDir, "sessions", "*", "*.jsonl"))
+		h.Require.NoError(err)
+		h.Require.Len(files, 1)
+		raw, err := os.ReadFile(files[0])
+		h.Require.NoError(err)
+		var entries []string
+		for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+			var entry struct {
+				Type       string `json:"type"`
+				CustomType string `json:"customType"`
+				Data       struct {
+					Label string `json:"label"`
+				} `json:"data"`
+				Message struct {
+					Role          string `json:"role"`
+					ResponseModel string `json:"responseModel"`
+				} `json:"message"`
+			}
+			h.Require.NoError(json.Unmarshal([]byte(line), &entry))
+			switch {
+			case entry.Type == "custom":
+				entries = append(entries, entry.CustomType+": "+entry.Data.Label)
+			case entry.Type == "message" && entry.Message.Role != "system":
+				entries = append(entries, strings.TrimSpace(entry.Message.Role+" "+entry.Message.ResponseModel))
+			}
+		}
+		return entries
+	}
+	render := func(last string, env ...string) string {
+		t.Helper()
+		run := exec.CommandContext(ctx, binary, "--continue")
+		run.Dir = work
+		run.Env = environment(append([]string{"TERM=xterm-256color"}, env...))
+		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 60, Cols: 200})
+		h.Require.NoError(err)
+		var screenMu sync.Mutex
+		var screen strings.Builder
+		go func() {
+			buf := make([]byte, 32<<10)
+			for {
+				n, err := terminal.Read(buf)
+				screenMu.Lock()
+				screen.Write(buf[:n])
+				screenMu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}()
+		shown := func() string {
+			screenMu.Lock()
+			defer screenMu.Unlock()
+			return terminalEscape.ReplaceAllString(screen.String(), "")
+		}
+		for ctx.Err() == nil && !strings.Contains(shown(), last) {
+			time.Sleep(100 * time.Millisecond)
+		}
+		time.Sleep(time.Second)
+		_ = run.Process.Kill()
+		_ = run.Wait()
+		_ = terminal.Close()
+		h.Require.Contains(shown(), last, "pi rendered the resumed session")
+		return shown()
+	}
+	label := "Auto (Baseten Internal Dogfooding) → acme/served-final"
+	served := "baseten-served-model: " + label
+	routed := func(entries ...string) []string {
+		return append([]string{"user", "assistant acme/served-step", "toolResult", "assistant acme/served-final"}, entries...)
+	}
+	primary := []string{"user", "assistant acme/served-z", "toolResult", "assistant acme/served-z"}
 
-	h.Require.Equal([]string{"", served, "", served},
-		session(nil, nil, state, prompt("Reply with OK."), use("acme/primary"), prompt("Reply again."), use("acme/auto"), prompt("Reply once more.")))
-	h.Require.Equal([]string{served}, session(nil, []string{"--continue"}, state), "a resumed session shows its latest response")
+	session(nil, nil, state, prompt("Summarize notes.txt."), use("acme/primary"), prompt("Summarize notes.txt again."), use("acme/auto"), prompt("Summarize notes.txt once more."))
+	want := slices.Concat(routed(served), primary, routed(served))
+	h.Require.Equal(want, transcript(), "one entry per router prompt, after its final response, naming the model that served that response")
+	h.Require.Contains(render("Summarize notes.txt once more."), label, "a resumed session renders the entries")
+
 	for _, off := range []string{"0", "false"} {
-		h.Require.Empty(session([]string{"BASETEN_PI_SERVED_MODEL=" + off}, []string{"--continue"}, state, prompt("Reply with OK.")))
+		session([]string{"BASETEN_PI_SERVED_MODEL=" + off}, []string{"--continue"}, prompt("Summarize notes.txt with the display "+off+"."))
+		want = append(want, routed()...)
+		h.Require.Equal(want, transcript(), "BASETEN_PI_SERVED_MODEL=%s adds no entry", off)
+		h.Require.NotContains(render("Summarize notes.txt with the display "+off+".", "BASETEN_PI_SERVED_MODEL="+off), label, "BASETEN_PI_SERVED_MODEL=%s renders no entry", off)
 	}
-	h.Require.Equal([]string{served}, session([]string{"BASETEN_PI_SERVED_MODEL=1"}, []string{"--continue"}, state))
+	session([]string{"BASETEN_PI_SERVED_MODEL=1"}, []string{"--continue"}, prompt("Summarize notes.txt with the display on."))
+	want = append(want, routed(served)...)
+	h.Require.Equal(want, transcript())
+
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", configDir, "--primary-route-id", "route-auto", "--use-session-credential", "--yes", "--no-pi-served-model"))
+	h.Require.NoFileExists(piServedModelFile(configDir))
+	session(nil, []string{"--continue"}, prompt("Summarize notes.txt without the extension."))
+	want = append(want, routed()...)
+	h.Require.Equal(want, transcript())
+	orphaned := render("Summarize notes.txt without the extension.")
+	h.Require.NotContains(orphaned, label, "entries left by a removed extension are not shown")
+	h.Require.NotContains(orphaned, "baseten-served-model")
+
 	mu.Lock()
-	h.Require.Equal([]string{"acme/auto", "acme/primary", "acme/auto", "acme/auto", "acme/auto"}, requested)
-	mu.Unlock()
+	defer mu.Unlock()
+	h.Require.Equal(slices.Concat(slices.Repeat([]string{"acme/auto"}, 2), slices.Repeat([]string{"acme/primary"}, 2), slices.Repeat([]string{"acme/auto"}, 10)), requested)
+	h.Require.Contains(bodies[len(bodies)-1], "Done reading.", "later requests carry the earlier responses")
+	for _, body := range bodies {
+		for _, leak := range []string{"baseten-served-model", "Auto (Baseten Internal Dogfooding)", "→", `\u2192`, "acme/served"} {
+			h.Require.NotContains(body, leak, "entries never reach the model")
+		}
+	}
 }
 
 var openCode2Execer = versionedHarnessExecer{"claude": "2.1.272 (Claude Code)", "opencode": "opencode v2.2.5"}
@@ -2475,8 +2579,12 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	var answered time.Time
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Model string `json:"model"`
-			Tools []any  `json:"tools"`
+			Model    string `json:"model"`
+			Tools    []any  `json:"tools"`
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
@@ -2484,13 +2592,31 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		last := body.Messages[len(body.Messages)-1]
+		step := len(body.Tools) > 0 && last.Role == "user" && bytes.Contains(last.Content, []byte("notes.txt"))
+		delta, finish := map[string]any{"content": "Served reply."}, "stop"
+		if step {
+			delta, finish = map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
+				"function": map[string]any{"name": "read", "arguments": `{"path":"notes.txt"}`}}}}, "tool_calls"
+		}
+		served := "qwen/Qwen3.6-Coder"
+		switch {
+		case step:
+			served = "zai-org/GLM-5.3-Flash"
+		case bytes.Contains(raw, []byte("this session again")):
+			served = "deepseek-ai/DeepSeek-V4.2"
+		case bytes.Contains(raw, []byte("another session")):
+			served = "moonshotai/Kimi-K2.6"
+		case bytes.Contains(raw, []byte("Start quietly")):
+			served = ""
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, choice := range []map[string]any{
 			{"index": 0, "delta": map[string]any{"role": "assistant", "content": ""}, "finish_reason": nil},
-			{"index": 0, "delta": map[string]any{"content": "Served reply."}, "finish_reason": nil},
-			{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"},
+			{"index": 0, "delta": delta, "finish_reason": nil},
+			{"index": 0, "delta": map[string]any{}, "finish_reason": finish},
 		} {
-			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": "zai-org/GLM-5.3-Flash",
+			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": served,
 				"choices": []any{choice}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
 		}
@@ -2524,23 +2650,26 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	work, err := os.MkdirTemp("/tmp", "oc")
 	h.Require.NoError(err)
 	t.Cleanup(func() { _ = os.RemoveAll(work) })
+	h.Require.NoError(os.WriteFile(filepath.Join(work, "notes.txt"), []byte("hello\n"), 0o600))
 	tmp := t.TempDir()
-	label := "Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash"
-	tui := func(env ...string) (string, []string) {
-		t.Helper()
-		started := time.Now()
-		mu.Lock()
-		before := len(requested)
-		mu.Unlock()
-		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-		defer cancel()
-		run := exec.CommandContext(ctx, binary, "--standalone", "--prompt", "Reply with OK.")
-		run.Dir = work
-		run.Env = append([]string{
+	toast := []string{"Served model", "Auto (Baseten Internal Dogfooding)", "→ qwen/Qwen3.6-Coder"}
+	toasted := func(screen string) bool {
+		return !slices.ContainsFunc(toast, func(part string) bool { return !strings.Contains(screen, part) })
+	}
+	environment := func(env ...string) []string {
+		return append([]string{
 			"HOME=" + root, "PATH=" + os.Getenv("PATH"), "TERM=xterm-256color", "TMPDIR=" + tmp,
 			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
 			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
 		}, env...)
+	}
+	launch := func(ctx context.Context, args []string, env ...string) (*os.File, func() string, func()) {
+		ctx, cancel := context.WithCancel(ctx)
+		run := exec.CommandContext(ctx, binary, args...)
+		run.Cancel = func() error { return run.Process.Signal(syscall.SIGTERM) }
+		run.WaitDelay = 10 * time.Second
+		run.Dir = work
+		run.Env = environment(env...)
 		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 50, Cols: 260})
 		h.Require.NoError(err)
 		var screenMu sync.Mutex
@@ -2562,17 +2691,30 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			defer screenMu.Unlock()
 			return terminalEscape.ReplaceAllString(screen.String(), "")
 		}
+		return terminal, shown, sync.OnceFunc(func() {
+			cancel()
+			_ = run.Wait()
+			_ = terminal.Close()
+		})
+	}
+	tui := func(env ...string) (string, []string) {
+		t.Helper()
+		started := time.Now()
+		mu.Lock()
+		before := len(requested)
+		mu.Unlock()
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		_, shown, stop := launch(ctx, []string{"--standalone", "--prompt", "Read notes.txt and reply."}, env...)
 		settled := func() bool {
 			mu.Lock()
 			defer mu.Unlock()
 			return answered.After(started) && time.Since(answered) > 3*time.Second
 		}
-		for ctx.Err() == nil && !strings.Contains(shown(), label) && !settled() {
+		for ctx.Err() == nil && !toasted(shown()) && !settled() {
 			time.Sleep(100 * time.Millisecond)
 		}
-		_ = run.Process.Kill()
-		_ = run.Wait()
-		_ = terminal.Close()
+		stop()
 		mu.Lock()
 		defer mu.Unlock()
 		h.Require.True(answered.After(started), "OpenCode answered the prompt; requested %v\n%s", requested, shown())
@@ -2581,16 +2723,60 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 
 	setup("route-auto")
 	screen, models := tui()
-	h.Require.Contains(screen, label, "the TUI shows the router route and the model that served it")
-	h.Require.Contains(models, "acme/auto")
+	h.Require.NotContains(screen, "zai-org/GLM-5.3-Flash", "the intermediate tool step does not toast")
+	for _, part := range toast {
+		h.Require.Contains(screen, part, "the TUI toasts the router route and the model that served the final response")
+	}
+	h.Require.Equal([]string{"acme/auto", "acme/auto"}, slices.DeleteFunc(models, func(model string) bool { return model != "acme/auto" }))
 
 	screen, models = tui("BASETEN_OPENCODE_SERVED_MODEL=0")
-	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
+	h.Require.NotContains(screen, "Served model", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
+	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.Contains(models, "acme/auto")
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	h.Require.NoError(err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	h.Require.NoError(listener.Close())
+	h.Require.NoError(os.WriteFile(filepath.Join(configDir, "service.json"), fmt.Appendf(nil, `{"port":%d}`, port), 0o600))
+	t.Cleanup(func() {
+		service := exec.Command(binary, "service", "stop")
+		service.Dir = work
+		service.Env = environment()
+		_ = service.Run()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	terminal, shown, stop := launch(ctx, []string{"--prompt", "Start quietly from notes.txt."})
+	defer stop()
+	await := func(text string) {
+		for ctx.Err() == nil && !strings.Contains(shown(), text) {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	await("Served reply.")
+	other := exec.CommandContext(ctx, binary, "run", "Reply in another session.")
+	other.Dir = work
+	other.Env = environment()
+	output, err := other.CombinedOutput()
+	h.Require.NoError(err, string(output))
+	h.Require.Contains(string(output), "Served reply.")
+	time.Sleep(3 * time.Second)
+	h.Require.NotContains(shown(), "zai-org/GLM-5.3-Flash", "a run whose final response names no served model does not toast an earlier step's")
+	h.Require.NotContains(shown(), "moonshotai/Kimi-K2.6", "a response in another session on the same background server does not toast")
+	_, err = terminal.WriteString("Reply in this session again.")
+	h.Require.NoError(err)
+	await("Reply in this session again.")
+	_, err = terminal.WriteString("\r")
+	h.Require.NoError(err)
+	await("→ deepseek-ai/DeepSeek-V4.2")
+	h.Require.Contains(shown(), "→ deepseek-ai/DeepSeek-V4.2", "a response in the session on screen toasts")
+	stop()
 
 	setup("route-primary")
 	screen, models = tui()
-	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "a route that is not a router shows nothing")
+	h.Require.NotContains(screen, "Served model", "a route that is not a router shows nothing")
+	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "a route that is not a router shows nothing")
 	h.Require.Contains(models, "acme/primary")
 }
 
