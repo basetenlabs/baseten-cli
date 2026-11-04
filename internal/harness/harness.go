@@ -97,6 +97,7 @@ type PrepareOptions struct {
 	Helper              *Helper
 	CLI                 string
 	NoClaudeServedModel bool
+	NoPiServedModel     bool
 }
 
 // Helper is the credential command a harness runs instead of storing a key:

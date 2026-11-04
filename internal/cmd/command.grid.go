@@ -349,7 +349,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		if target.record.CredentialSource == harness.CredentialSourceHelper {
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
-		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, NoClaudeServedModel: target.record.NoClaudeServedModel})
+		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -389,12 +389,20 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		credentialSource = harness.CredentialSourceSession
 	}
 	noServedModel := f.NoClaudeServedModel
-	if !noServedModel && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersClaudeServedModel(selected, listed) {
-		show, err := gridAskClaudeServedModel(ctx)
+	if !noServedModel && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.ClaudeCode) {
+		show, err := gridAskServedModel(ctx, "Claude Code")
 		if err != nil {
 			return err
 		}
 		noServedModel = !show
+	}
+	noPiServedModel := f.NoPiServedModel
+	if !noPiServedModel && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.Pi) {
+		show, err := gridAskServedModel(ctx, "Pi")
+		if err != nil {
+			return err
+		}
+		noPiServedModel = !show
 	}
 	targets := make([]gridHarnessTarget, len(selected))
 	for i := range selected {
@@ -403,6 +411,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 			Profile:             session.ProfileName(),
 			CredentialSource:    credentialSource,
 			NoClaudeServedModel: noServedModel,
+			NoPiServedModel:     noPiServedModel,
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
 			// A harness that cannot run the helper keeps a key.
@@ -535,8 +544,8 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	return nil
 }
 
-func gridOffersClaudeServedModel(selected []gridSelectedHarness, listed []managementapi.GridRoute) bool {
-	i := slices.IndexFunc(selected, func(s gridSelectedHarness) bool { return s.Name() == harness.ClaudeCode })
+func gridOffersServedModel(selected []gridSelectedHarness, listed []managementapi.GridRoute, name string) bool {
+	i := slices.IndexFunc(selected, func(s gridSelectedHarness) bool { return s.Name() == name })
 	if i < 0 {
 		return false
 	}
@@ -549,10 +558,10 @@ func gridOffersClaudeServedModel(selected []gridSelectedHarness, listed []manage
 	return slices.ContainsFunc(selected[i].Routes(routes), func(r harness.Route) bool { return r.Router })
 }
 
-func gridAskClaudeServedModel(ctx *CommandContext) (bool, error) {
+func gridAskServedModel(ctx *CommandContext, harnessLabel string) (bool, error) {
 	show := true
 	err := ctx.RunPrompt(huh.NewSelect[bool]().
-		Title("Show which model served each response on auto routes in Claude Code?").
+		Title("Show which model served each response on auto routes in "+harnessLabel+"?").
 		Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
 		Value(&show))
 	return show, err
