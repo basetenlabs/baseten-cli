@@ -2878,12 +2878,22 @@ func Test_Grid_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 
 func Test_Grid_Setup_GitContext(t *testing.T) {
 	skipUnlessSupported(t)
-	h, _ := fakeGridAPI(t)
+	h, api := fakeGridAPI(t)
 	root := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
 	setup := []string{"grid", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "pi", "--yes"}
+
+	h.Context = internalcmd.WithExecer(h.Context, versionedHarnessExecer{"claude": "2.1.0 (Claude Code)", "opencode": "1.2.3", "pi": "1.2.3"})
+	h.Require.ErrorContains(h.Execute(append(setup, "--git-context")...), "git not found on PATH, required by --git-context")
+	h.Require.Empty(api.Calls())
+	h.Require.NoFileExists(filepath.Join(recordDir(t), "harness.json"))
+	entries, err := os.ReadDir(root)
+	h.Require.NoError(err)
+	h.Require.Empty(entries)
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+
 	installed := func() []bool {
 		hooks, _ := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))["hooks"].(map[string]any)
 		_, claude := hooks["SessionStart"]

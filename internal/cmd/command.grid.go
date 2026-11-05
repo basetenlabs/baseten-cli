@@ -366,6 +366,11 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if f.UseSessionCredential && f.KeyName != "" {
 		return cmd.NewErrUsagef("--key-name is not used with --use-session-credential; the session's API key already exists")
 	}
+	if f.GitContext {
+		if _, err := ctx.Execer().LookPath("git"); err != nil {
+			return cmd.NewErrUsagef("git not found on PATH, required by --git-context")
+		}
+	}
 	selected, err := gridSelectHarnesses(ctx, f.GridHarnessFlags, true)
 	if err != nil {
 		return err
