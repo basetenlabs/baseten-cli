@@ -34,7 +34,7 @@ var claudeStopHooksPath = []string{"hooks", "Stop"}
 
 var claudeSessionStartHooksPath = []string{"hooks", "SessionStart"}
 
-const claudeSessionStartCommand = `if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf 'repo=%s branch=%s commit=%s\n' "$(git remote get-url origin 2>/dev/null | sed 's#//[^@/]*@#//#')" "$(git branch --show-current 2>/dev/null)" "$(git rev-parse --verify HEAD 2>/dev/null)"; fi`
+const claudeSessionStartCommand = `if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then printf 'repo=%s branch=%s commit=%s\n' "$(git remote get-url origin 2>/dev/null | sed 's#//[^@/]*@#//#')" "$(git branch --show-current 2>/dev/null)" "$(git rev-parse --verify HEAD 2>/dev/null)"; fi`
 
 const claudeServedModelCommand = " grid claude-served-model"
 
