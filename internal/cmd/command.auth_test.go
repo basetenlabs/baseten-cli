@@ -687,6 +687,16 @@ func Test_Auth_Logout_ExplicitProfilePrompts(t *testing.T) {
 	h.Require.Equal([]string{"alice"}, names)
 }
 
+func Test_Auth_Logout_ExplicitProfileFromEnv(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	t.Setenv("BASETEN_PROFILE", "bob")
+	h.Require.NoError(h.Execute("auth", "logout"))
+	h.Require.Equal("Logged out bob\n", h.Stdout.String())
+	names, err := configDirStore(t).ProfileNames()
+	h.Require.NoError(err)
+	h.Require.Equal([]string{"alice"}, names)
+}
+
 func Test_Auth_Switch_ExplicitProfileErrors(t *testing.T) {
 	h := newExplicitProfileHarness(t)
 	h.Require.ErrorContains(h.Execute("auth", "switch", "--profile", "bob"), "there is no current profile")

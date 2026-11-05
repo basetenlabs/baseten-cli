@@ -9,6 +9,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 
@@ -91,6 +92,9 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 	}
 
 	profileName := flags.Profile
+	if profileName == "" {
+		profileName = os.Getenv("BASETEN_PROFILE")
+	}
 	if profileName == "" {
 		current, _, ok, err := store.CurrentProfile()
 		if err != nil {
