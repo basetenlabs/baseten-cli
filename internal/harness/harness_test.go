@@ -791,7 +791,7 @@ func TestOpenCodeGitContextPluginKeepsUserFile(t *testing.T) {
 	require.Equal(t, "export default {}\n", string(written))
 }
 
-func TestOpenCodeGitContextPluginMatchesClaudeHook(t *testing.T) {
+func TestGitContextSanitizesOriginURL(t *testing.T) {
 	for _, tool := range []string{"sh", "git", "node"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skip(tool + " is not on PATH")
@@ -800,8 +800,11 @@ func TestOpenCodeGitContextPluginMatchesClaudeHook(t *testing.T) {
 	dir := t.TempDir()
 	plugin := filepath.Join(dir, "plugin.mjs")
 	require.NoError(t, os.WriteFile(plugin, openCodeGitContextSource, 0o600))
-	driver := `const { pathToFileURL } = await import("node:url"); const { default: plugin } = await import(pathToFileURL(process.argv[1]).href); const hooks = await plugin.server({ directory: process.cwd() }); const out = { system: [] }; await hooks["experimental.chat.system.transform"]({ sessionID: "s" }, out); process.stdout.write(out.system.map((line) => line + "\n").join(""))`
-	run := func(dir string, args ...string) string {
+	extension := filepath.Join(dir, "extension.mts")
+	require.NoError(t, os.WriteFile(extension, piGitContextSource, 0o600))
+	openCodeDriver := `const { pathToFileURL } = await import("node:url"); const { default: plugin } = await import(pathToFileURL(process.argv[1]).href); const hooks = await plugin.server({ directory: process.cwd() }); const out = { system: [] }; await hooks["experimental.chat.system.transform"]({ sessionID: "s" }, out); process.stdout.write(out.system.map((line) => line + "\n").join(""))`
+	piDriver := `const { pathToFileURL } = await import("node:url"); const { execFile } = await import("node:child_process"); const { default: extension } = await import(pathToFileURL(process.argv[1]).href); const handlers = {}; extension({ on: (event, fn) => { handlers[event] = fn }, exec: (cmd, args, opts) => new Promise((resolve) => execFile(cmd, args, opts, (error, stdout) => resolve({ code: error ? 1 : 0, stdout: String(stdout) }))) }); await handlers.session_start({}, { cwd: process.cwd() }); const event = { systemPromptOptions: { sections: {} } }; await handlers.before_agent_start(event); const line = event.systemPromptOptions.sections.baseten_git_context; if (line) process.stdout.write(line + "\n")`
+	run := func(t *testing.T, dir string, args ...string) string {
 		t.Helper()
 		command := exec.Command(args[0], args[1:]...)
 		command.Dir = dir
@@ -809,19 +812,64 @@ func TestOpenCodeGitContextPluginMatchesClaudeHook(t *testing.T) {
 		require.NoError(t, err)
 		return string(out)
 	}
-	same := func(dir string) string {
-		t.Helper()
-		want := run(dir, "sh", "-c", claudeSessionStartCommand)
-		require.Equal(t, want, run(dir, "node", "--input-type=module", "-e", driver, plugin))
-		return want
-	}
-	require.Empty(t, same(t.TempDir()))
 	repo := t.TempDir()
-	run(repo, "git", "init", "-q")
-	require.Contains(t, same(repo), " commit=\n")
-	run(repo, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
-	run(repo, "git", "remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
-	require.Contains(t, same(repo), "repo=https://example.com/org/repo.git branch=")
+	run(t, repo, "git", "init", "-q")
+	branch := strings.TrimSpace(run(t, repo, "git", "branch", "--show-current"))
+	stripTypes := exec.Command("node", "--experimental-strip-types", "-e", "").Run() == nil
+	vectors := [][2]string{
+		{"https://user:secret@example.com/org/repo.git", "https://example.com/org/repo.git"},
+		{"https://token@github.com/org/repo", "https://github.com/org/repo"},
+		{"https://git@github.com/org/repo.git", "https://github.com/org/repo.git"},
+		{"https://alice%40example.com:secret%3Atoken@github.com/org/repo.git", "https://github.com/org/repo.git"},
+		{"https://a@b@example.com/org/repo.git", "https://example.com/org/repo.git"},
+		{"ssh://git@github.com/org/repo.git", "ssh://git@github.com/org/repo.git"},
+		{"ssh://git:secret@github.com/org/repo.git", "ssh://git@github.com/org/repo.git"},
+		{"ssh://bob@host.example:2222/up.git", "ssh://host.example:2222/up.git"},
+		{"git+ssh://git@github.com/org/repo.git", "git+ssh://git@github.com/org/repo.git"},
+		{"ssh+git://git@github.com/org/repo.git", "ssh+git://git@github.com/org/repo.git"},
+		{"SSH://git@github.com/org/repo.git", "SSH://github.com/org/repo.git"},
+		{"ssh://GIT@github.com/org/repo.git", "ssh://github.com/org/repo.git"},
+		{"git@github.com:org/gh.git", "git@github.com:org/gh.git"},
+		{"alice@host.example:org/scp.git", "host.example:org/scp.git"},
+		{"GIT@github.com:org/repo.git", "github.com:org/repo.git"},
+		{"git:secret@github.com:org/repo.git", "git@github.com:org/repo.git"},
+		{"alice:pw@github.com:org/repo.git", "github.com:org/repo.git"},
+		{"@host:path", "host:path"},
+		{"alice@[2001:db8::1]:org/repo.git", "[2001:db8::1]:org/repo.git"},
+		{"git@[2001:db8::1]:org/repo.git", "git@[2001:db8::1]:org/repo.git"},
+		{"host.example:org/noUser.git", "host.example:org/noUser.git"},
+		{"/srv/git/repo.git", "/srv/git/repo.git"},
+		{"file:///srv/git/repo.git", "file:///srv/git/repo.git"},
+		{"file://alice:secret@localhost/repo.git", "file://localhost/repo.git"},
+		{"https://example.com/org/repo.git?token=abc#frag", "https://example.com/org/repo.git?token=abc#frag"},
+		{"https://alice:pw@example.com/org/repo.git?token=abc#frag", "https://example.com/org/repo.git?token=abc#frag"},
+		{"https://example.com?ref=a@b", "https://example.com?ref=a@b"},
+		{"http://[::1]:8080/org/repo.git", "http://[::1]:8080/org/repo.git"},
+		{"hg::https://alice:secret@example.invalid/org/repo.git", "hg::https://example.invalid/org/repo.git"},
+		{"remote-hg::git@github.com:org/repo.git", "remote-hg::git@github.com:org/repo.git"},
+		{"ext::ssh alice:secret-token@example.com git-upload-pack /repo", ""},
+		{"alice@host.example", "alice@host.example"},
+		{"C:\\srv\\repo.git", "C:\\srv\\repo.git"},
+	}
+	for _, column := range []struct {
+		name    string
+		command []string
+	}{
+		{"claude-code", []string{"sh", "-c", claudeSessionStartCommand}},
+		{"opencode", []string{"node", "--input-type=module", "-e", openCodeDriver, plugin}},
+		{"pi", []string{"node", "--experimental-strip-types", "--input-type=module", "-e", piDriver, extension}},
+	} {
+		t.Run(column.name, func(t *testing.T) {
+			if column.name == "pi" && !stripTypes {
+				t.Skip("node cannot strip TypeScript types")
+			}
+			require.Empty(t, run(t, t.TempDir(), column.command...))
+			for _, v := range vectors {
+				run(t, repo, "git", "config", "remote.origin.url", v[0])
+				require.Equal(t, "repo="+v[1]+" branch="+branch+" commit=\n", run(t, repo, column.command...), v[0])
+			}
+		})
+	}
 }
 
 func TestUnsupportedSelectionsAreRejected(t *testing.T) {

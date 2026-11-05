@@ -34,7 +34,52 @@ var claudeStopHooksPath = []string{"hooks", "Stop"}
 
 var claudeSessionStartHooksPath = []string{"hooks", "SessionStart"}
 
-const claudeSessionStartCommand = `if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then printf 'repo=%s branch=%s commit=%s\n' "$(git remote get-url origin 2>/dev/null | sed 's#//[^@/]*@#//#')" "$(git branch --show-current 2>/dev/null)" "$(git rev-parse --verify HEAD 2>/dev/null)"; fi`
+const claudeSessionStartCommand = `if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then
+	url=$(git remote get-url origin 2>/dev/null)
+	prefix=
+	while :; do
+		case $url in
+		[A-Za-z0-9+.-]*::*) transport=${url%%::*} ;;
+		*) break ;;
+		esac
+		case $transport in
+		*[!A-Za-z0-9+.-]*) break ;;
+		esac
+		prefix=$prefix$transport::
+		url=${url#*::}
+	done
+	if [ -n "$prefix" ]; then
+		case $url in
+		*[[:space:]]*) prefix= url= ;;
+		esac
+	fi
+	case $url in
+	*://*)
+		scheme=${url%%://*}
+		rest=${url#*://}
+		authority=${rest%%[/?#]*}
+		rest=${rest#"$authority"}
+		case $authority in
+		*@*)
+			userinfo=${authority%@*}
+			host=${authority##*@}
+			case $scheme:${userinfo%%:*} in
+			ssh:git | git+ssh:git | ssh+git:git) host=git@$host ;;
+			esac
+			url=$scheme://$host$rest
+			;;
+		esac
+		;;
+	*)
+		userinfo=$(printf '%s\n' "$url" | sed -nE 's#^([^/]*@)(\[[^]@]*]|[^/:@]*):.*#\1#p')
+		url=${url#"$userinfo"}
+		case $userinfo in
+		git@ | git:*) url=git@$url ;;
+		esac
+		;;
+	esac
+	printf 'repo=%s branch=%s commit=%s\n' "$prefix$url" "$(git branch --show-current 2>/dev/null)" "$(git rev-parse --verify HEAD 2>/dev/null)"
+fi`
 
 const claudeServedModelCommand = " grid claude-served-model"
 

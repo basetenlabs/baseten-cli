@@ -15,7 +15,31 @@ async function gitContext(cwd) {
     git(cwd, ["branch", "--show-current"]),
     git(cwd, ["rev-parse", "--verify", "HEAD"]),
   ])
-  return `repo=${origin.replace(/\/\/[^@/]*@/, "//")} branch=${branch} commit=${commit}`
+  return `repo=${sanitize(origin)} branch=${branch} commit=${commit}`
+}
+
+function sanitize(url) {
+  let prefix = ""
+  let m
+  while ((m = /^[A-Za-z0-9+.-]+::/.exec(url))) {
+    prefix += m[0]
+    url = url.slice(m[0].length)
+  }
+  if (prefix && /\s/.test(url)) return ""
+  const sep = url.indexOf("://")
+  if (sep >= 0) {
+    const rest = url.slice(sep + 3)
+    const end = rest.search(/[/?#]|$/)
+    const authority = rest.slice(0, end)
+    const at = authority.lastIndexOf("@")
+    if (at < 0) return prefix + url
+    const scheme = url.slice(0, sep)
+    const exempt = ["ssh", "git+ssh", "ssh+git"].includes(scheme) && authority.slice(0, at).split(":")[0] === "git"
+    return prefix + scheme + "://" + (exempt ? "git@" : "") + rest.slice(at + 1)
+  }
+  const scp = /^([^/]*)@(\[[^\]@]*\]|[^/:@]*):/.exec(url)
+  if (!scp) return prefix + url
+  return prefix + (scp[1].split(":")[0] === "git" ? "git@" : "") + url.slice(scp[1].length + 1)
 }
 
 function sessionContext(sessionID, cwd) {
