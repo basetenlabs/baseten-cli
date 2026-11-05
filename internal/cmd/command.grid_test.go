@@ -960,6 +960,17 @@ func (g *harnessGateway) requested() []string {
 
 func (g *harnessGateway) saw(model string) bool { return slices.Contains(g.requested(), model) }
 
+func (g *harnessGateway) sawWith(model, text string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for i, requested := range g.models {
+		if requested == model && strings.Contains(g.bodies[i], text) {
+			return true
+		}
+	}
+	return false
+}
+
 func (g *harnessGateway) sentClients() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -998,7 +1009,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 	cases := []harnessCase{
 		{label: "claude-code", name: "claude-code", binary: "claude", args: []string{"-p", "Reply with OK."}},
 		{label: "codex", name: "codex", binary: "codex", args: []string{"exec", "--skip-git-repo-check", "Reply with OK."}},
-		{label: "opencode/v1", name: "opencode", binary: "opencode", args: []string{"run", "Reply with OK."}},
+		{label: "opencode/v1", name: "opencode", binary: "opencode", args: []string{"run", "Reply with OK."}, seed: `{"snapshot": false}`},
 		{label: "pi", name: "pi", binary: "pi", args: []string{"--print", "Reply with OK."}},
 	}
 	if opencode2 := os.Getenv("BASETEN_TEST_OPENCODE2"); opencode2 != "" {
@@ -1006,8 +1017,8 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 		// private one keeps the test off the developer's.
 		args := []string{"run", "--standalone", "Reply with OK."}
 		cases = append(cases,
-			harnessCase{label: "opencode2/v1", name: "opencode", binary: opencode2, args: args},
-			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}}`},
+			harnessCase{label: "opencode2/v1", name: "opencode", binary: opencode2, args: args, seed: `{"snapshot": false}`},
+			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}, "snapshot": false}`},
 		)
 	}
 	for _, tc := range cases {
@@ -1071,7 +1082,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			// The gateway refuses every request, so stop the harness once it asks
 			// for the route rather than waiting out its retries.
 			exited := false
-			for !gateway.saw("acme/primary") && !exited && ctx.Err() == nil {
+			for !gateway.sawWith("acme/primary", gitContext) && !exited && ctx.Err() == nil {
 				select {
 				case <-done:
 					exited = true
