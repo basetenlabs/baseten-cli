@@ -924,18 +924,24 @@ func Test_Grid_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), `"state": "configured"`)
 }
 
-// harnessGateway records the model and client each inference request names and
-// refuses it.
+// harnessGateway records the model, client, and declared tools of each
+// inference request and refuses it.
 type harnessGateway struct {
 	mu             sync.Mutex
 	models         []string
 	clients        []string
 	requestClasses []string
+	tools          []string
 }
 
 func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Model string `json:"model"`
+		Tools []struct {
+			Function struct {
+				Name string `json:"name"`
+			} `json:"function"`
+		} `json:"tools"`
 	}
 	raw, _ := io.ReadAll(r.Body)
 	if json.Unmarshal(raw, &body) == nil && body.Model != "" {
@@ -943,6 +949,9 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.models = append(g.models, body.Model)
 		g.clients = append(g.clients, r.Header.Get("X-Baseten-Grid-Client"))
 		g.requestClasses = append(g.requestClasses, r.Header.Get("x-claude-code-request-class"))
+		for _, tool := range body.Tools {
+			g.tools = append(g.tools, tool.Function.Name)
+		}
 		g.mu.Unlock()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -968,6 +977,12 @@ func (g *harnessGateway) sentRequestClasses() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return slices.Clone(g.requestClasses)
+}
+
+func (g *harnessGateway) sentTools() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.tools)
 }
 
 // Test_Grid_Setup_RealHarness configures each installed harness in an
@@ -1077,6 +1092,9 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Grid-Client")
 			if tc.name == "claude-code" {
 				h.Require.True(slices.ContainsFunc(gateway.sentRequestClasses(), func(v string) bool { return v != "" }), "x-claude-code-request-class")
+			}
+			if tc.name == "pi" {
+				h.Require.Contains(gateway.sentTools(), "baseten_web_search", "baseten_web_search")
 			}
 		})
 	}
@@ -1823,7 +1841,7 @@ func Test_Grid_Setup_PiServedModel(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	var plans public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &plans))
-	h.Require.Len(plans.Items, 3)
+	h.Require.Len(plans.Items, 4)
 	h.Require.Equal(extension, plans.Items[2].Config)
 	h.Require.True(plans.Items[2].Changed)
 	h.Require.Empty(plans.Items[2].ReplacedSettings)
@@ -1913,8 +1931,8 @@ func Test_Grid_Setup_PiServedModelZeroRouters(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	var plans public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &plans))
-	h.Require.Len(plans.Items, 2)
-	h.Require.NoDirExists(filepath.Dir(extension))
+	h.Require.Len(plans.Items, 3)
+	h.Require.NoFileExists(extension)
 
 	serveServedModelRoutes(api, "auto")
 	h.Require.NoError(h.Execute(setup...))
