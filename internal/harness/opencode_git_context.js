@@ -31,11 +31,12 @@ function sanitize(url) {
     const rest = url.slice(sep + 3)
     const end = rest.search(/[/?#]|$/)
     const authority = rest.slice(0, end)
+    const path = rest.slice(end).split(/[?#]/)[0]
     const at = authority.lastIndexOf("@")
-    if (at < 0) return prefix + url
+    if (at < 0) return prefix + url.slice(0, sep + 3) + authority + path
     const scheme = url.slice(0, sep)
     const exempt = ["ssh", "git+ssh", "ssh+git"].includes(scheme) && authority.slice(0, at).split(":")[0] === "git"
-    return prefix + scheme + "://" + (exempt ? "git@" : "") + rest.slice(at + 1)
+    return prefix + scheme + "://" + (exempt ? "git@" : "") + authority.slice(at + 1) + path
   }
   const scp = /^([^/]*)@(\[[^\]@]*\]|[^/:@]*):/.exec(url)
   if (!scp) return prefix + url

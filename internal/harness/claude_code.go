@@ -66,9 +66,10 @@ const claudeSessionStartCommand = `if [ "$(git rev-parse --is-inside-work-tree 2
 			case $scheme:${userinfo%%:*} in
 			ssh:git | git+ssh:git | ssh+git:git) host=git@$host ;;
 			esac
-			url=$scheme://$host$rest
+			authority=$host
 			;;
 		esac
+		url=$scheme://$authority${rest%%[?#]*}
 		;;
 	*)
 		userinfo=$(printf '%s\n' "$url" | sed -nE 's#^([^/]*@)(\[[^]@]*]|[^/:@]*):.*#\1#p')
