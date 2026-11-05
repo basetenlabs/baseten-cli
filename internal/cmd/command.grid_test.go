@@ -941,7 +941,7 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal(raw, &body) == nil && body.Model != "" {
 		g.mu.Lock()
 		g.models = append(g.models, body.Model)
-		g.clients = append(g.clients, r.Header.Get("X-Baseten-Client"))
+		g.clients = append(g.clients, r.Header.Get("X-Baseten-Grid-Client"))
 		g.requestClasses = append(g.requestClasses, r.Header.Get("x-claude-code-request-class"))
 		g.mu.Unlock()
 	}
@@ -1074,7 +1074,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			if !gateway.saw("acme/primary") {
 				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.requested(), output.String())
 			}
-			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Client")
+			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Grid-Client")
 			if tc.name == "claude-code" {
 				h.Require.True(slices.ContainsFunc(gateway.sentRequestClasses(), func(v string) bool { return v != "" }), "x-claude-code-request-class")
 			}
