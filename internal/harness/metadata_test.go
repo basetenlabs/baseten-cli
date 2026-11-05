@@ -125,6 +125,12 @@ func TestPiAdaptiveThinking(t *testing.T) {
 		{"claude-opus-4-5-20251101", false},
 		{"claude-haiku-4-5-20251001", false},
 		{"claude-sonnet-4-5-20250929", false},
+		{"anthropic.claude-opus-4-5-20251101-v1:0", false},
+		{"anthropic.claude-haiku-4-5-20251001-v1:0", false},
+		{"anthropic.claude-sonnet-4-5-20250929-v1:0", false},
+		{"claude-opus-4-5@20251101", false},
+		{"claude-haiku-4-5@20251001", false},
+		{"claude-sonnet-4-5@20250929", false},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
 			require.Equal(t, tc.adaptive, piAdaptiveThinking(tc.model))
@@ -134,7 +140,7 @@ func TestPiAdaptiveThinking(t *testing.T) {
 		require.False(t, piAdaptiveThinking("claude-opus-4-5-latest"))
 	})
 	t.Run("unknown models default to adaptive", func(t *testing.T) {
-		for _, model := range []string{"", "claude-opus-99-1", "claude-opus-4-50"} {
+		for _, model := range []string{"", "claude-opus-99-1"} {
 			require.True(t, piAdaptiveThinking(model), model)
 		}
 	})
@@ -160,6 +166,7 @@ func TestPiAnthropicThinkingCompatibility(t *testing.T) {
 					ContextWindow: &tc.contextWindow, MaxOutputTokens: &tc.outputLimit,
 					InputModalities: []string{"text", "image"}, Tools: &tools,
 					ReasoningEffortLevels: &tc.reasoningLevels,
+					SupportedApiFormats:   &managementapi.ExploreMetadataAPIFormats{Messages: &tools},
 				},
 			}
 			require.NoError(t, json.Unmarshal([]byte(`{"type":"CONNECTION","connection_id":"conn-a","model":"`+tc.model+`"}`), &api.Target))

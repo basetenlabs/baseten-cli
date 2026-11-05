@@ -3,15 +3,36 @@ package harness
 import (
 	"cmp"
 	"context"
+	"embed"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 )
 
 type openCodeHarness struct{}
+
+//go:embed opencode-served-model
+var openCodeServedModelSource embed.FS
+
+const (
+	openCodeServedModelSourceDir = "opencode-served-model"
+	openCodeServedModelRoutes    = "routes.json"
+	openCodeServedModelOwner     = "baseten grid setup"
+)
+
+type openCodeServedModelConfig struct {
+	ManagedBy string            `json:"managedBy"`
+	Provider  string            `json:"provider"`
+	Routers   map[string]string `json:"routers"`
+}
+
+var openCodeVersionPattern = regexp.MustCompile(`(\d+)\.\d+`)
 
 // OpenCode reads two settings formats from the same file. V1 is the original
 // format; OpenCode 2 adds a native format and keeps reading V1. Setup writes
@@ -52,11 +73,11 @@ var (
 	openCodeV2BackgroundPath = []string{"agents", "title", "model"}
 )
 
-// openCodeProviderPackages maps route providers to the AI SDK package for
-// their native API. Other providers use the Chat Completions package.
-var openCodeProviderPackages = map[string]string{
-	ProviderAnthropic: "@ai-sdk/anthropic",
-	ProviderOpenAI:    "@ai-sdk/openai",
+// openCodeModelPackages maps the API a route serves to the AI SDK package
+// that speaks it. Routes called with Chat Completions use the provider's.
+var openCodeModelPackages = map[TargetAPI]string{
+	TargetAPIMessages:  "@ai-sdk/anthropic",
+	TargetAPIResponses: "@ai-sdk/openai",
 }
 
 // openCodeV2Packages maps the AI SDK packages V1 names to OpenCode 2's
@@ -235,7 +256,83 @@ func (openCodeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 		return nil, err
 	}
 	p.bearerPath = bearerPath
+	return withOpenCodeServedModel(p, routes, opts.NoOpenCodeServedModel)
+}
+
+func HasOpenCode2(d Detection) bool {
+	return slices.ContainsFunc(d.Installs, func(i Install) bool { return openCodeMajorVersion(i.Version) >= 2 })
+}
+
+func openCodeMajorVersion(version string) int {
+	match := openCodeVersionPattern.FindStringSubmatch(version)
+	if match == nil {
+		return 0
+	}
+	major, _ := strconv.Atoi(match[1])
+	return major
+}
+
+func openCodeServedModelDir(path string) string {
+	return filepath.Join(filepath.Dir(path), "plugins", "baseten-served-model")
+}
+
+func withOpenCodeServedModel(p *Plan, routes []Route, off bool) ([]*Plan, error) {
+	dir := openCodeServedModelDir(p.Path)
+	routers := openCodeRouterLabels(routes)
+	files, err := openCodeServedModelFiles(routers)
+	if err != nil {
+		return nil, err
+	}
+	free, owned := openCodeServedModelOwnership(dir)
+	switch show := !off && len(routers) > 0; {
+	case show && (free || owned):
+		return []*Plan{p, prepareFiles(dir, files)}, nil
+	case show:
+		p.Notes = append(p.Notes, "warning: "+dir+" already exists and was not written by baseten grid setup; leaving it unchanged, so OpenCode will not show which model served each response on auto routes.")
+	case owned:
+		return []*Plan{p, prepareFilesRemoval(dir, files)}, nil
+	}
 	return []*Plan{p}, nil
+}
+
+func openCodeServedModelOwnership(dir string) (free, owned bool) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) || (err == nil && len(entries) == 0) {
+		return true, false
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, openCodeServedModelRoutes))
+	var config openCodeServedModelConfig
+	return false, err == nil && json.Unmarshal(raw, &config) == nil && config.ManagedBy == openCodeServedModelOwner
+}
+
+func openCodeRouterLabels(routes []Route) map[string]string {
+	labels := map[string]string{}
+	for _, r := range routes {
+		if r.Router {
+			labels[r.Name] = cmp.Or(r.DisplayName, r.Name)
+		}
+	}
+	return labels
+}
+
+func openCodeServedModelFiles(routers map[string]string) ([]ownedFile, error) {
+	config, err := encode(openCodeServedModelConfig{ManagedBy: openCodeServedModelOwner, Provider: providerID, Routers: routers})
+	if err != nil {
+		return nil, err
+	}
+	files := []ownedFile{{openCodeServedModelRoutes, config}}
+	entries, err := openCodeServedModelSource.ReadDir(openCodeServedModelSourceDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		data, err := openCodeServedModelSource.ReadFile(openCodeServedModelSourceDir + "/" + entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, ownedFile{entry.Name(), data})
+	}
+	return files, nil
 }
 
 // openCodeV1Settings builds the original settings format.
@@ -261,9 +358,9 @@ func openCodeV1Settings(routes []Route, s Selection, endpoint, bearer string) []
 		if r.Cost != nil {
 			model["cost"] = openCodeV1Cost(*r.Cost)
 		}
-		// A model's npm overrides the provider's, so first-party routes use their
-		// native API at the same base URL: Messages for Anthropic, Responses for OpenAI.
-		if npm, ok := openCodeProviderPackages[r.Provider]; ok {
+		// A model's npm overrides the provider's, so a route is called with the
+		// API its supported formats advertise, at the same base URL.
+		if npm, ok := openCodeModelPackages[r.TargetAPI]; ok {
 			model["provider"] = map[string]any{"npm": npm}
 		}
 		models[r.Name] = model
@@ -305,7 +402,7 @@ func openCodeV2Settings(routes []Route, s Selection, endpoint, bearer string) []
 		if r.Cost != nil {
 			model["cost"] = openCodeV2Cost(*r.Cost)
 		}
-		if npm, ok := openCodeProviderPackages[r.Provider]; ok {
+		if npm, ok := openCodeModelPackages[r.TargetAPI]; ok {
 			model["package"] = openCodeV2Packages[npm]
 		}
 		models[r.Name] = model
@@ -406,7 +503,7 @@ func (openCodeHarness) Teardown(path string) ([]*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []*Plan{p}, nil
+	return withOpenCodeServedModel(p, nil, true)
 }
 
 func (openCodeHarness) Inspect(d Detection) (Status, error) {

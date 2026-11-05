@@ -55,7 +55,7 @@ const providerID = "baseten-harness"
 
 // clientHeader names the harness on each request. Baseten's /v1/models answers
 // with a harness-specific catalog for claude-code and codex.
-const clientHeader = "X-Baseten-Client"
+const clientHeader = "X-Baseten-Grid-Client"
 
 // TODO: Make the default background route server-driven.
 const defaultBackgroundRoute = "deepseek-ai/DeepSeek-V4.1-Flash"
@@ -92,11 +92,13 @@ type Harness interface {
 }
 
 type PrepareOptions struct {
-	Selection           Selection
-	Endpoint            string
-	Helper              *Helper
-	CLI                 string
-	NoClaudeServedModel bool
+	Selection             Selection
+	Endpoint              string
+	Helper                *Helper
+	CLI                   string
+	NoClaudeServedModel   bool
+	NoPiServedModel       bool
+	NoOpenCodeServedModel bool
 }
 
 // Helper is the credential command a harness runs instead of storing a key:
@@ -130,15 +132,22 @@ func All() []Harness {
 	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}, piHarness{}}
 }
 
+// TargetAPI is the wire protocol a harness calls a route with.
+type TargetAPI string
+
+const (
+	TargetAPIMessages        TargetAPI = "messages"
+	TargetAPIResponses       TargetAPI = "responses"
+	TargetAPIChatCompletions TargetAPI = "chat-completions"
+)
+
 // Route is a Baseten route as shown in a harness's model picker, with the model
 // capabilities supplied by the route's own metadata.
 type Route struct {
 	Name        string
 	DisplayName string
-	// Provider is the route's upstream provider, such as ProviderAnthropic,
-	// which decides the API a harness calls the route with. It is "" when
-	// unknown, as for a router that picks a route per request, and such a
-	// route is called with the Chat Completions API.
+	// Provider is the route's upstream provider, such as ProviderAnthropic.
+	// It is "" when unknown, as for a router that picks a route per request.
 	Provider        string
 	UpstreamModel   string
 	Router          bool
@@ -152,6 +161,7 @@ type Route struct {
 	// Messages API and the OpenAI Responses API.
 	Messages  bool
 	Responses bool
+	TargetAPI TargetAPI
 	// Cost is the provider's list price, or nil if unknown.
 	Cost *Cost
 }
@@ -190,12 +200,17 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 		return r, fmt.Errorf("route %q has no model metadata", r.Name)
 	}
 	r.ContextWindow, r.OutputLimit = deref(m.ContextWindow), deref(m.MaxOutputTokens)
-	r.InputModalities, r.Tools = m.InputModalities, deref(m.Tools)
+	r.InputModalities = slices.DeleteFunc(slices.Clone(m.InputModalities), func(modality string) bool {
+		return modality != "text" && modality != "image"
+	})
+	r.Tools = deref(m.Tools)
 	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
 	// Without formats the route's APIs are unknown, so every harness lists it.
 	r.Messages, r.Responses = true, true
+	r.TargetAPI = TargetAPIChatCompletions
 	if f := m.SupportedApiFormats; f != nil {
 		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
+		r.TargetAPI = preferredTargetAPI(f, r.Provider)
 	}
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
@@ -204,6 +219,20 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 		}
 	}
 	return r, validateRoute(r)
+}
+
+func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats, provider string) TargetAPI {
+	switch {
+	case deref(f.ChatCompletions) && (provider == ProviderBaseten || provider == ""):
+		// NB(nikhil): MAPIs specifically advertise all compatibility, but prefer chat completions.
+		return TargetAPIChatCompletions
+	case deref(f.Messages):
+		return TargetAPIMessages
+	case deref(f.Responses):
+		return TargetAPIResponses
+	default:
+		return TargetAPIChatCompletions
+	}
 }
 
 // newCost returns nil unless both input and output prices are known.
@@ -241,11 +270,6 @@ func validateRoute(r Route) error {
 		return fmt.Errorf("route %q has no usable context and output limits", r.Name)
 	case len(r.InputModalities) == 0:
 		return fmt.Errorf("route %q has no input modalities", r.Name)
-	}
-	for _, modality := range r.InputModalities {
-		if modality != "text" && modality != "image" {
-			return fmt.Errorf("route %q has an unsupported input modality", r.Name)
-		}
 	}
 	for _, level := range r.ReasoningLevels {
 		if level != "none" && reasoningRank(level) < 0 {
@@ -299,6 +323,8 @@ const (
 	ProviderAnthropic = "ANTHROPIC"
 	ProviderOpenAI    = "OPENAI"
 	ProviderBaseten   = "BASETEN_MODEL_API"
+	ProviderBedrock   = "BEDROCK"
+	ProviderVertex    = "VERTEX"
 )
 
 // routeTarget resolves the upstream provider and, for connections, the model ID.
@@ -504,6 +530,12 @@ type Plan struct {
 	bearerPath []string
 	teardown   bool
 	remove     bool
+	files      []ownedFile
+}
+
+type ownedFile struct {
+	name string
+	data []byte
 }
 
 // StageCredentials puts the proposed token into configuration files, to aid with diff detection.
@@ -686,6 +718,28 @@ func prepareRemoval(path string) (*Plan, error) {
 	return &Plan{Path: path, file: f, Managed: f.exists, Changed: f.exists, teardown: true, remove: true}, nil
 }
 
+func prepareFiles(dir string, files []ownedFile) *Plan {
+	p := &Plan{Path: dir, Managed: true, files: files}
+	for _, f := range files {
+		p.Keys = append(p.Keys, f.name)
+		current, err := os.ReadFile(filepath.Join(dir, f.name))
+		p.Changed = p.Changed || err != nil || !bytes.Equal(current, f.data)
+	}
+	return p
+}
+
+func prepareFilesRemoval(dir string, files []ownedFile) *Plan {
+	p := &Plan{Path: dir, teardown: true, remove: true}
+	for _, f := range files {
+		if _, err := os.Lstat(filepath.Join(dir, f.name)); err == nil {
+			p.Keys = append(p.Keys, f.name)
+			p.files = append(p.files, f)
+		}
+	}
+	p.Managed, p.Changed = len(p.files) > 0, len(p.files) > 0
+	return p
+}
+
 func (p *Plan) encode() error {
 	original, err := decodeConfig(p.Path, p.file.data)
 	if err != nil {
@@ -720,6 +774,10 @@ func (p *Plan) apply() error {
 	switch {
 	case !p.Changed:
 		return nil
+	case len(p.files) > 0 && p.remove:
+		return removeFiles(p.Path, p.files)
+	case len(p.files) > 0:
+		return writeFiles(p.Path, p.files)
 	case p.remove:
 		if err := os.Remove(p.Path); err != nil && !os.IsNotExist(err) {
 			return err
@@ -738,6 +796,30 @@ func (p *Plan) apply() error {
 		// Setup writes a credential, so the file is private.
 		return os.Chmod(p.Path, 0o600)
 	}
+}
+
+func writeFiles(dir string, files []ownedFile) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f.name), f.data, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeFiles(dir string, files []ownedFile) error {
+	for _, f := range slices.Backward(files) {
+		if err := os.Remove(filepath.Join(dir, f.name)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
+		return os.Remove(dir)
+	}
+	return nil
 }
 
 func decode(b []byte) (map[string]any, error) {

@@ -75,15 +75,15 @@ var commandTrainPush = Command{
 		Examples: []CommandExample{
 			{
 				Description: "Run a training job from a config file.",
-				Command:     "baseten train push --config ./train.py",
+				Command:     "baseten train push --config config.py",
 			},
 			{
 				Description: "Run a named job on eight H200s over spot capacity.",
-				Command:     "baseten train push --config ./train.py --job-name sweep-3 --accelerator H200:8 --spot",
+				Command:     "baseten train push --config config.py --job-name sweep-3 --accelerator H200:8 --spot",
 			},
 			{
 				Description: "Run a job that opens an interactive session if it fails.",
-				Command:     "baseten train push --config ./train.py --interactive on-failure --interactive-timeout 2h",
+				Command:     "baseten train push --config config.py --interactive on-failure --interactive-timeout 2h",
 			},
 		},
 	},

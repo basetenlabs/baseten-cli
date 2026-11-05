@@ -1,23 +1,28 @@
 package cmd_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -26,6 +31,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/harness"
+	"github.com/creack/pty"
 	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 )
@@ -935,7 +941,7 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal(raw, &body) == nil && body.Model != "" {
 		g.mu.Lock()
 		g.models = append(g.models, body.Model)
-		g.clients = append(g.clients, r.Header.Get("X-Baseten-Client"))
+		g.clients = append(g.clients, r.Header.Get("X-Baseten-Grid-Client"))
 		g.requestClasses = append(g.requestClasses, r.Header.Get("x-claude-code-request-class"))
 		g.mu.Unlock()
 	}
@@ -1068,7 +1074,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			if !gateway.saw("acme/primary") {
 				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.requested(), output.String())
 			}
-			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Client")
+			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Grid-Client")
 			if tc.name == "claude-code" {
 				h.Require.True(slices.ContainsFunc(gateway.sentRequestClasses(), func(v string) bool { return v != "" }), "x-claude-code-request-class")
 			}
@@ -1775,15 +1781,1018 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 	h.Require.Equal("Auto → acme/served-y\n", h.Stdout.String())
 }
 
+func piServedModelFile(dir string) string {
+	return filepath.Join(dir, "extensions", "baseten-served-model.ts")
+}
+
+func piServedModelRouters(t *testing.T, path string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	body := raw[:bytes.LastIndexByte(bytes.TrimSuffix(raw, []byte("\n")), '\n')+1]
+	require.Equal(t, fmt.Sprintf("export const basetenGridSetupSha256 = \"%x\";\n", sha256.Sum256(body)), string(raw[len(body):]))
+	_, rest, ok := strings.Cut(string(body), "new Map<string, string>(Object.entries(")
+	require.True(t, ok)
+	encoded, _, ok := strings.Cut(rest, "));\n")
+	require.True(t, ok)
+	var routers map[string]string
+	require.NoError(t, json.Unmarshal([]byte(encoded), &routers))
+	return routers
+}
+
+func Test_Grid_Setup_PiServedModel(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto=Auto (Baseten Internal Dogfooding)")
+	dir := t.TempDir()
+	path := harnessSettingsFile("pi", dir)
+	settingsPath := filepath.Join(dir, "settings.json")
+	extension := piServedModelFile(dir)
+	mine := filepath.Join(dir, "extensions", "mine.ts")
+	h.Require.NoError(os.MkdirAll(filepath.Dir(extension), 0o700))
+	h.Require.NoError(os.WriteFile(mine, []byte("export default function () {}\n"), 0o600))
+	userModels := map[string]any{"providers": map[string]any{"local": map[string]any{"api": "openai-completions", "models": []any{map[string]any{"id": "llama"}}}}}
+	userSettings := map[string]any{"theme": "dark", "extensions": []any{"~/my-extension.ts"}}
+	for file, data := range map[string]map[string]any{path: userModels, settingsPath: userSettings} {
+		raw, err := json.Marshal(data)
+		h.Require.NoError(err)
+		h.Require.NoError(os.WriteFile(file, raw, 0o600))
+	}
+	setup := []string{"grid", "setup", "--harness", "pi", "--config-dir", dir, "--yes", "--output", "json"}
+
+	h.Require.NoError(h.Execute(setup...))
+	var plans public.GridPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &plans))
+	h.Require.Len(plans.Items, 3)
+	h.Require.Equal(extension, plans.Items[2].Config)
+	h.Require.True(plans.Items[2].Changed)
+	h.Require.Empty(plans.Items[2].ReplacedSettings)
+	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)"}, piServedModelRouters(t, extension))
+	h.Require.NotContains(h.Stderr.String(), "left unchanged")
+	settings := readHarnessSettings(t, "pi", settingsPath)
+	h.Require.Equal("dark", settings["theme"])
+	h.Require.Equal(userSettings["extensions"], settings["extensions"], "setup needs no extensions setting and leaves the user's alone")
+	h.Require.Equal(userModels["providers"].(map[string]any)["local"], readHarnessSettings(t, "pi", path)["providers"].(map[string]any)["local"])
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &plans))
+	for _, item := range plans.Items {
+		h.Require.False(item.Changed, "rerunning setup changes nothing")
+	}
+
+	serveServedModelRoutes(api, "auto=Auto (Baseten Internal Dogfooding)", "eq=x=\"y's\" \\ </script>", "bare=")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &plans))
+	h.Require.Equal(extension, plans.Items[2].Config)
+	h.Require.True(plans.Items[2].Changed)
+	h.Require.Empty(plans.Items[2].ReplacedSettings, "setup refreshes its own extension without reporting a replacement")
+	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/eq": `x="y's" \ </script>`, "acme/bare": "acme/bare"}, piServedModelRouters(t, extension))
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "pi", "--config-dir", dir, "--yes"))
+	h.Require.NoFileExists(extension)
+	h.Require.FileExists(mine)
+	h.Require.Equal(userSettings, readHarnessSettings(t, "pi", settingsPath))
+	h.Require.Equal(userModels, readHarnessSettings(t, "pi", path))
+}
+
+func Test_Grid_Setup_PiServedModelUserFile(t *testing.T) {
+	skipUnlessSupported(t)
+	for name, edit := range map[string]func(generated []byte) []byte{
+		"own": func([]byte) []byte { return []byte("export default function () {}\n") },
+		"edited": func(generated []byte) []byte {
+			return bytes.Replace(generated, []byte(`{"acme/auto":"auto"}`), []byte(`{"acme/auto":"Mine"}`), 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			serveServedModelRoutes(api, "auto")
+			dir := t.TempDir()
+			extension := piServedModelFile(dir)
+			setup := []string{"grid", "setup", "--harness", "pi", "--config-dir", dir, "--yes"}
+			h.Require.NoError(h.Execute(setup...))
+			generated, err := os.ReadFile(extension)
+			h.Require.NoError(err)
+			user := edit(generated)
+			h.Require.NotEqual(generated, user)
+			h.Require.NoError(os.WriteFile(extension, user, 0o644))
+			h.Require.NoError(os.Chmod(extension, 0o644))
+			untouched := func(msgAndArgs ...any) {
+				raw, err := os.ReadFile(extension)
+				h.Require.NoError(err)
+				h.Require.Equal(string(user), string(raw), msgAndArgs...)
+				info, err := os.Stat(extension)
+				h.Require.NoError(err)
+				h.Require.Equal(os.FileMode(0o644), info.Mode().Perm(), msgAndArgs...)
+			}
+
+			serveServedModelRoutes(api, "auto", "code")
+			h.Require.NoError(h.Execute(setup...))
+			h.Require.Contains(h.Stderr.String(), "warning: existing "+extension+" left unchanged; Pi will not show which model served auto-route responses")
+			untouched("setup")
+			h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+			untouched("sync")
+			h.Require.NoError(h.Execute(append(setup, "--no-pi-served-model")...))
+			untouched("opt-out")
+			serveServedModelRoutes(api)
+			h.Require.NoError(h.Execute(setup...))
+			untouched("zero routers")
+			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "pi", "--config-dir", dir, "--yes"))
+			untouched("teardown")
+		})
+	}
+}
+
+func Test_Grid_Setup_PiServedModelZeroRouters(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	dir := t.TempDir()
+	extension := piServedModelFile(dir)
+	setup := []string{"grid", "setup", "--harness", "pi", "--config-dir", dir, "--yes", "--output", "json"}
+
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	var plans public.GridPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &plans))
+	h.Require.Len(plans.Items, 2)
+	h.Require.NoDirExists(filepath.Dir(extension))
+
+	serveServedModelRoutes(api, "auto")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.FileExists(extension)
+	mine := filepath.Join(dir, "extensions", "mine.ts")
+	h.Require.NoError(os.WriteFile(mine, []byte("export default function () {}\n"), 0o600))
+
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NoFileExists(extension)
+	h.Require.FileExists(mine)
+	h.Require.Equal("acme/primary", readHarnessSettings(t, "pi", filepath.Join(dir, "settings.json"))["defaultModel"])
+}
+
+func Test_Grid_Setup_PiServedModelOptOut(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	extension := piServedModelFile(dir)
+	setup := []string{"grid", "setup", "--harness", "pi", "--config-dir", dir, "--yes"}
+	record := func() string {
+		raw, err := os.ReadFile(filepath.Join(recordDir(t), "harness.json"))
+		h.Require.NoError(err)
+		return string(raw)
+	}
+
+	h.Require.NoError(h.Execute(setup...))
+	generated, err := os.ReadFile(extension)
+	h.Require.NoError(err)
+	h.Require.NoError(h.Execute(append(setup, "--no-pi-served-model")...))
+	h.Require.NoFileExists(extension)
+	h.Require.Equal("baseten-harness", readHarnessSettings(t, "pi", filepath.Join(dir, "settings.json"))["defaultProvider"])
+	h.Require.True(harnessRecordFile(t).Harnesses["pi"].NoPiServedModel)
+	h.Require.Contains(record(), `"no_pi_served_model": true`)
+
+	h.Require.NoError(os.WriteFile(extension, generated, 0o600))
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NoFileExists(extension, "sync replays the recorded opt-out")
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.FileExists(extension, "setup without the flag turns it back on")
+	h.Require.False(harnessRecordFile(t).Harnesses["pi"].NoPiServedModel)
+	h.Require.NotContains(record(), "no_pi_served_model")
+}
+
+func Test_Grid_Setup_PiServedModelPrompt(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	base := h.Context
+	answer := func(answers ...string) { h.Context = internalcmd.WithPromptAnswers(base, answers...) }
+	dir := t.TempDir()
+	setup := []string{"grid", "setup", "--harness", "pi", "--config-dir", dir}
+	question := "Show which model served each response on auto routes in Pi?"
+	shown := func() bool { return fileExists(piServedModelFile(dir)) }
+	recorded := func() bool { return harnessRecordFile(t).Harnesses["pi"].NoPiServedModel }
+
+	answer("1", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), question)
+	h.Require.True(shown())
+
+	answer("2", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), question)
+	h.Require.False(shown(), "answering no removes the extension")
+	h.Require.True(recorded())
+	h.Context = base
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.False(shown(), "sync replays the answer without asking")
+
+	answer("", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.True(shown(), "the default answer is yes")
+	h.Require.False(recorded())
+
+	answer("2")
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--no-pi-served-model")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.False(shown())
+	h.Require.True(recorded())
+	h.Require.NoError(h.Execute(append(setup, "--yes")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.True(shown(), "--yes shows it without asking")
+	h.Require.False(recorded())
+	h.Context = base
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--no-pi-served-model")...))
+	h.Require.False(shown(), "without a terminal the flag decides")
+	h.Require.NoError(h.Execute(append(setup, "--yes")...))
+	h.Require.True(shown())
+
+	answer()
+	h.Require.NoError(h.Execute(append(setup, "--dry-run")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+
+	serveServedModelRoutes(api)
+	answer("1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NotContains(h.Stderr.String(), question, "no router routes, no question")
+	serveServedModelRoutes(api, "auto")
+	answer("1")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", t.TempDir()))
+	h.Require.NotContains(h.Stderr.String(), question, "Pi is not a target")
+
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
+	answer("2", "1", "1")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--harness", "pi"))
+	claudeQuestion := strings.Index(h.Stderr.String(), "Show which model served each response on auto routes in Claude Code?")
+	h.Require.GreaterOrEqual(claudeQuestion, 0)
+	h.Require.Greater(strings.Index(h.Stderr.String(), question), claudeQuestion, "Claude Code is asked first, then Pi")
+	h.Require.NotContains(readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json")), "statusLine")
+	h.Require.FileExists(piServedModelFile(filepath.Join(root, "pi")))
+	h.Require.True(harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel)
+	h.Require.False(harnessRecordFile(t).Harnesses["pi"].NoPiServedModel)
+}
+
+func Test_Grid_PiServedModel_RealPi(t *testing.T) {
+	skipUnlessSupported(t)
+	binary, err := exec.LookPath("pi")
+	if err != nil {
+		t.Skip("pi is not on PATH")
+	}
+	var mu sync.Mutex
+	var requested, bodies []string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		var body struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role string `json:"role"`
+			} `json:"messages"`
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		requested = append(requested, body.Model)
+		bodies = append(bodies, string(raw))
+		mu.Unlock()
+		final := len(body.Messages) > 0 && body.Messages[len(body.Messages)-1].Role == "tool"
+		served := map[bool]map[string]string{
+			false: {"acme/auto": "acme/served-step", "acme/primary": "acme/served-z"},
+			true:  {"acme/auto": "acme/served-final", "acme/primary": "acme/served-z"},
+		}[final][body.Model]
+		delta, finish := map[string]any{"role": "assistant", "content": "Reading notes.", "tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
+			"function": map[string]any{"name": "read", "arguments": `{"path":"notes.txt"}`}}}}, "tool_calls"
+		if final {
+			delta, finish = map[string]any{"role": "assistant", "content": "Done reading."}, "stop"
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, chunk := range []map[string]any{
+			{"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}},
+			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": finish}}},
+			{"choices": []any{}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}},
+		} {
+			chunk["id"], chunk["object"], chunk["created"], chunk["model"] = "chatcmpl-served", "chat.completion.chunk", 1, served
+			raw, _ := json.Marshal(chunk)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(gateway.Close)
+	h, api := gridAPI(t, gateway.URL)
+	route := func(id, name, display string, target map[string]any) map[string]any {
+		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": target}
+	}
+	router := map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
+		"items": []any{
+			route("route-primary", "acme/primary", "Primary", map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
+			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", router),
+			route("route-code", "acme/code", `Code "beta" \ 'x' </script>`, router),
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	configDir := filepath.Join(root, ".pi", "agent")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", configDir, "--primary-route-id", "route-auto", "--use-session-credential", "--yes"))
+	h.Require.Equal(map[string]any{"defaultProvider": "baseten-harness", "defaultModel": "acme/auto"}, readHarnessSettings(t, "pi", filepath.Join(configDir, "settings.json")))
+	h.Require.FileExists(piServedModelFile(configDir))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	work, tmp := t.TempDir(), t.TempDir()
+	h.Require.NoError(os.WriteFile(filepath.Join(work, "notes.txt"), []byte("hello\n"), 0o600))
+	environment := func(env []string) []string {
+		return append([]string{
+			"HOME=" + root, "PI_CODING_AGENT_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + tmp, "PI_OFFLINE=1", "PI_TELEMETRY=0",
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}, env...)
+	}
+	type command struct {
+		Type     string `json:"type"`
+		Message  string `json:"message,omitempty"`
+		Provider string `json:"provider,omitempty"`
+		ModelID  string `json:"modelId,omitempty"`
+	}
+	state := command{Type: "get_state"}
+	prompt := func(message string) command { return command{Type: "prompt", Message: message} }
+	use := func(model string) command {
+		return command{Type: "set_model", Provider: "baseten-harness", ModelID: model}
+	}
+	session := func(env []string, args []string, commands ...command) {
+		run := exec.CommandContext(ctx, binary, append([]string{"--mode", "rpc"}, args...)...)
+		run.Dir = work
+		run.Env = environment(env)
+		run.WaitDelay = 5 * time.Second
+		var stderr strings.Builder
+		run.Stderr = &stderr
+		stdin, err := run.StdinPipe()
+		h.Require.NoError(err)
+		stdout, err := run.StdoutPipe()
+		h.Require.NoError(err)
+		h.Require.NoError(run.Start())
+		lines := bufio.NewReader(stdout)
+		for _, c := range commands {
+			raw, err := json.Marshal(c)
+			h.Require.NoError(err)
+			_, err = stdin.Write(append(raw, '\n'))
+			h.Require.NoError(err)
+			for done := false; !done; {
+				line, err := lines.ReadBytes('\n')
+				h.Require.NoError(err, "pi stopped before finishing %s: %s", c.Type, stderr.String())
+				var event struct {
+					Type    string `json:"type"`
+					Command string `json:"command"`
+					Success bool   `json:"success"`
+					Error   string `json:"error"`
+				}
+				if json.Unmarshal(line, &event) != nil {
+					continue
+				}
+				h.Require.NotEqual("extension_error", event.Type, string(line))
+				h.Require.False(event.Type == "response" && !event.Success, event.Error)
+				done = (c.Type == "prompt" && event.Type == "agent_settled") || (c.Type != "prompt" && event.Type == "response" && event.Command == c.Type)
+			}
+		}
+		h.Require.NoError(stdin.Close())
+		h.Require.NoError(run.Wait(), stderr.String())
+	}
+	transcript := func() []string {
+		files, err := filepath.Glob(filepath.Join(configDir, "sessions", "*", "*.jsonl"))
+		h.Require.NoError(err)
+		h.Require.Len(files, 1)
+		raw, err := os.ReadFile(files[0])
+		h.Require.NoError(err)
+		var entries []string
+		for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+			var entry struct {
+				Type       string `json:"type"`
+				CustomType string `json:"customType"`
+				Data       struct {
+					Label string `json:"label"`
+				} `json:"data"`
+				Message struct {
+					Role          string `json:"role"`
+					ResponseModel string `json:"responseModel"`
+				} `json:"message"`
+			}
+			h.Require.NoError(json.Unmarshal([]byte(line), &entry))
+			switch {
+			case entry.Type == "custom":
+				entries = append(entries, entry.CustomType+": "+entry.Data.Label)
+			case entry.Type == "message" && entry.Message.Role != "system":
+				entries = append(entries, strings.TrimSpace(entry.Message.Role+" "+entry.Message.ResponseModel))
+			}
+		}
+		return entries
+	}
+	render := func(last string, env ...string) string {
+		t.Helper()
+		run := exec.CommandContext(ctx, binary, "--continue")
+		run.Dir = work
+		run.Env = environment(append([]string{"TERM=xterm-256color"}, env...))
+		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 60, Cols: 200})
+		h.Require.NoError(err)
+		var screenMu sync.Mutex
+		var screen strings.Builder
+		go func() {
+			buf := make([]byte, 32<<10)
+			for {
+				n, err := terminal.Read(buf)
+				screenMu.Lock()
+				screen.Write(buf[:n])
+				screenMu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}()
+		shown := func() string {
+			screenMu.Lock()
+			defer screenMu.Unlock()
+			return terminalEscape.ReplaceAllString(screen.String(), "")
+		}
+		for ctx.Err() == nil && !strings.Contains(shown(), last) {
+			time.Sleep(100 * time.Millisecond)
+		}
+		time.Sleep(time.Second)
+		_ = run.Process.Kill()
+		_ = run.Wait()
+		_ = terminal.Close()
+		h.Require.Contains(shown(), last, "pi rendered the resumed session")
+		return shown()
+	}
+	label := "Auto (Baseten Internal Dogfooding) → acme/served-final"
+	served := "baseten-served-model: " + label
+	routed := func(entries ...string) []string {
+		return append([]string{"user", "assistant acme/served-step", "toolResult", "assistant acme/served-final"}, entries...)
+	}
+	primary := []string{"user", "assistant acme/served-z", "toolResult", "assistant acme/served-z"}
+
+	session(nil, nil, state, prompt("Summarize notes.txt."), use("acme/primary"), prompt("Summarize notes.txt again."), use("acme/auto"), prompt("Summarize notes.txt once more."))
+	want := slices.Concat(routed(served), primary, routed(served))
+	h.Require.Equal(want, transcript(), "one entry per router prompt, after its final response, naming the model that served that response")
+	h.Require.Contains(render("Summarize notes.txt once more."), label, "a resumed session renders the entries")
+
+	for _, off := range []string{"0", "false"} {
+		session([]string{"BASETEN_PI_SERVED_MODEL=" + off}, []string{"--continue"}, prompt("Summarize notes.txt with the display "+off+"."))
+		want = append(want, routed()...)
+		h.Require.Equal(want, transcript(), "BASETEN_PI_SERVED_MODEL=%s adds no entry", off)
+		h.Require.NotContains(render("Summarize notes.txt with the display "+off+".", "BASETEN_PI_SERVED_MODEL="+off), label, "BASETEN_PI_SERVED_MODEL=%s renders no entry", off)
+	}
+	session([]string{"BASETEN_PI_SERVED_MODEL=1"}, []string{"--continue"}, prompt("Summarize notes.txt with the display on."))
+	want = append(want, routed(served)...)
+	h.Require.Equal(want, transcript())
+
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", configDir, "--primary-route-id", "route-auto", "--use-session-credential", "--yes", "--no-pi-served-model"))
+	h.Require.NoFileExists(piServedModelFile(configDir))
+	session(nil, []string{"--continue"}, prompt("Summarize notes.txt without the extension."))
+	want = append(want, routed()...)
+	h.Require.Equal(want, transcript())
+	orphaned := render("Summarize notes.txt without the extension.")
+	h.Require.NotContains(orphaned, label, "entries left by a removed extension are not shown")
+	h.Require.NotContains(orphaned, "baseten-served-model")
+
+	mu.Lock()
+	defer mu.Unlock()
+	h.Require.Equal(slices.Concat(slices.Repeat([]string{"acme/auto"}, 2), slices.Repeat([]string{"acme/primary"}, 2), slices.Repeat([]string{"acme/auto"}, 10)), requested)
+	h.Require.Contains(bodies[len(bodies)-1], "Done reading.", "later requests carry the earlier responses")
+	for _, body := range bodies {
+		for _, leak := range []string{"baseten-served-model", "Auto (Baseten Internal Dogfooding)", "→", `\u2192`, "acme/served"} {
+			h.Require.NotContains(body, leak, "entries never reach the model")
+		}
+	}
+}
+
+var openCode2Execer = versionedHarnessExecer{"claude": "2.1.272 (Claude Code)", "opencode": "opencode v2.2.5"}
+
+func openCodePluginDir(dir string) string {
+	return filepath.Join(dir, "plugins", "baseten-served-model")
+}
+
+func openCodePluginFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(openCodePluginDir(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	require.NoError(t, err)
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+func openCodePluginRoutes(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(openCodePluginDir(dir), "routes.json"))
+	require.NoError(t, err)
+	var routes map[string]any
+	require.NoError(t, json.Unmarshal(raw, &routes))
+	return routes
+}
+
+func openCodePluginRouters(routers map[string]any) map[string]any {
+	return map[string]any{"managedBy": "baseten grid setup", "provider": "baseten-harness", "routers": routers}
+}
+
+var openCodePluginSources = []string{"routes.json", "server.js", "shared.js", "tui.tsx"}
+
+func Test_Grid_Setup_OpenCodeServedModel(t *testing.T) {
+	skipUnlessSupported(t)
+	for name, seed := range map[string]string{"original": `{"theme":"dark"}`, "native": `{"providers":{"other":{"name":"Other"}},"theme":"dark"}`} {
+		t.Run(name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+			serveServedModelRoutes(api, "auto=Auto (Baseten Internal Dogfooding)")
+			dir := t.TempDir()
+			path := harnessSettingsFile("opencode", dir)
+			h.Require.NoError(os.WriteFile(path, []byte(seed), 0o600))
+			mine := filepath.Join(dir, "plugins", "mine", "server.js")
+			h.Require.NoError(os.MkdirAll(filepath.Dir(mine), 0o700))
+			h.Require.NoError(os.WriteFile(mine, []byte("export default {}\n"), 0o600))
+			setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes", "--output", "json"}
+
+			h.Require.NoError(h.Execute(setup...))
+			h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir))
+			h.Require.Equal(openCodePluginRouters(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)"}), openCodePluginRoutes(t, dir))
+			settings := readHarnessSettings(t, "opencode", path)
+			h.Require.NotContains(settings, "plugins")
+			h.Require.NotContains(settings, "plugin")
+			h.Require.Equal("dark", settings["theme"])
+			_, native := settings["providers"]
+			h.Require.Equal(name == "native", native)
+			h.Require.NotContains(h.Stderr.String(), "already exists")
+
+			h.Require.NoError(h.Execute(setup...))
+			var rerun public.GridPlanList
+			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
+			h.Require.Len(rerun.Items, 2)
+			h.Require.Equal(openCodePluginDir(dir), rerun.Items[1].Config)
+			h.Require.Equal(openCodePluginSources, rerun.Items[1].Settings)
+			for _, item := range rerun.Items {
+				h.Require.False(item.Changed, "rerunning setup changes nothing")
+			}
+
+			server := filepath.Join(openCodePluginDir(dir), "server.js")
+			written, err := os.ReadFile(server)
+			h.Require.NoError(err)
+			h.Require.NoError(os.WriteFile(server, []byte("stale"), 0o600))
+			serveServedModelRoutes(api, "auto=Auto (Baseten Internal Dogfooding)", "code")
+			h.Require.NoError(h.Execute(setup...))
+			h.Require.Equal(openCodePluginRouters(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/code": "code"}), openCodePluginRoutes(t, dir))
+			refreshed, err := os.ReadFile(server)
+			h.Require.NoError(err)
+			h.Require.Equal(written, refreshed, "setup refreshes the plugin source")
+			h.Require.NotContains(readHarnessSettings(t, "opencode", path), "plugins")
+
+			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "opencode", "--config-dir", dir, "--yes"))
+			h.Require.NoDirExists(openCodePluginDir(dir))
+			h.Require.FileExists(mine)
+			var original map[string]any
+			h.Require.NoError(json.Unmarshal([]byte(seed), &original))
+			h.Require.Equal(original, readHarnessSettings(t, "opencode", path))
+		})
+	}
+}
+
+func Test_Grid_Setup_OpenCodeServedModelForeignPlugin(t *testing.T) {
+	skipUnlessSupported(t)
+	for name, files := range map[string]map[string]string{
+		"unmarked":    {"server.js": "export default {}\n"},
+		"other owner": {"routes.json": `{"managedBy":"someone else","routers":{}}`, "server.js": "export default {}\n"},
+		"file":        {"": "not a directory\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+			serveServedModelRoutes(api, "auto")
+			dir := t.TempDir()
+			h.Require.NoError(os.MkdirAll(filepath.Join(dir, "plugins"), 0o700))
+			if _, ok := files[""]; !ok {
+				h.Require.NoError(os.Mkdir(openCodePluginDir(dir), 0o700))
+			}
+			for file, content := range files {
+				h.Require.NoError(os.WriteFile(filepath.Join(openCodePluginDir(dir), file), []byte(content), 0o600))
+			}
+			unchanged := func() {
+				t.Helper()
+				for file, content := range files {
+					raw, err := os.ReadFile(filepath.Join(openCodePluginDir(dir), file))
+					h.Require.NoError(err)
+					h.Require.Equal(content, string(raw))
+				}
+				if _, ok := files[""]; !ok {
+					h.Require.Len(openCodePluginFiles(t, dir), len(files))
+				}
+			}
+			setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"}
+
+			h.Require.NoError(h.Execute(setup...))
+			h.Require.Contains(h.Stderr.String(), "warning: "+openCodePluginDir(dir)+" already exists and was not written by baseten grid setup; leaving it unchanged")
+			h.Require.Equal("baseten-harness/acme/primary", readHarnessSettings(t, "opencode", harnessSettingsFile("opencode", dir))["model"])
+			unchanged()
+			h.Require.NoError(h.Execute(append(setup, "--no-opencode-served-model")...))
+			h.Require.NotContains(h.Stderr.String(), "already exists")
+			unchanged()
+			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "opencode", "--config-dir", dir, "--yes"))
+			unchanged()
+		})
+	}
+}
+
+func Test_Grid_Setup_OpenCodeServedModelZeroRoutersAndOpenCode1(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	base := h.Context
+	h.Context = internalcmd.WithExecer(base, openCode2Execer)
+	dir := t.TempDir()
+	setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"}
+
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Empty(openCodePluginFiles(t, dir))
+	serveServedModelRoutes(api, "auto")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir))
+	serveServedModelRoutes(api)
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NoDirExists(openCodePluginDir(dir), "no router routes removes the plugin")
+
+	serveServedModelRoutes(api, "auto")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir))
+	h.Context = internalcmd.WithExecer(base, versionedHarnessExecer{"opencode": "1.19.5"})
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NoDirExists(openCodePluginDir(dir), "OpenCode 1 removes the plugin")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NoDirExists(openCodePluginDir(dir), "OpenCode 1 never writes the plugin")
+
+	desktop := "/Applications/OpenCode.app/Contents/Resources/opencode-cli"
+	if runtime.GOOS == "linux" {
+		desktop = "/opt/OpenCode/resources/opencode-cli"
+	}
+	h.Context = internalcmd.WithExecer(base, versionedHarnessExecer{"opencode": "1.19.5", desktop: "opencode v2.0.27"})
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir), "an OpenCode 2 install sharing the settings gets the plugin")
+}
+
+func Test_Grid_Setup_OpenCodeServedModelOptOut(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+	serveServedModelRoutes(api, "auto")
+	dir := t.TempDir()
+	path := harnessSettingsFile("opencode", dir)
+	h.Require.NoError(os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o600))
+	setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"}
+	record := func() string {
+		raw, err := os.ReadFile(filepath.Join(recordDir(t), "harness.json"))
+		h.Require.NoError(err)
+		return string(raw)
+	}
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir))
+	plugin := map[string][]byte{}
+	for _, file := range openCodePluginSources {
+		raw, err := os.ReadFile(filepath.Join(openCodePluginDir(dir), file))
+		h.Require.NoError(err)
+		plugin[file] = raw
+	}
+	h.Require.NoError(h.Execute(append(setup, "--no-opencode-served-model")...))
+	h.Require.NoDirExists(openCodePluginDir(dir))
+	h.Require.Equal("dark", readHarnessSettings(t, "opencode", path)["theme"])
+	h.Require.True(harnessRecordFile(t).Harnesses["opencode"].NoOpenCodeServedModel)
+	h.Require.Contains(record(), `"no_opencode_served_model": true`)
+
+	h.Require.NoError(os.MkdirAll(openCodePluginDir(dir), 0o700))
+	for file, raw := range plugin {
+		h.Require.NoError(os.WriteFile(filepath.Join(openCodePluginDir(dir), file), raw, 0o600))
+	}
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NoDirExists(openCodePluginDir(dir), "sync replays the recorded opt-out")
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir), "setup without the flag turns it back on")
+	h.Require.False(harnessRecordFile(t).Harnesses["opencode"].NoOpenCodeServedModel)
+	h.Require.NotContains(record(), "no_opencode_served_model")
+	h.Require.NoError(os.RemoveAll(openCodePluginDir(dir)))
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir), "sync restores the plugin")
+}
+
+func Test_Grid_Setup_OpenCodeServedModelPrompt(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+	serveServedModelRoutes(api, "auto")
+	base := h.Context
+	answer := func(answers ...string) { h.Context = internalcmd.WithPromptAnswers(base, answers...) }
+	dir := t.TempDir()
+	setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir}
+	question := "Show which model served each response on auto routes in OpenCode?"
+	shown := func() bool { return fileExists(filepath.Join(openCodePluginDir(dir), "routes.json")) }
+	recorded := func() bool { return harnessRecordFile(t).Harnesses["opencode"].NoOpenCodeServedModel }
+
+	answer("1", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), question)
+	h.Require.True(shown())
+
+	answer("2", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), question)
+	h.Require.False(shown(), "answering no removes the plugin")
+	h.Require.True(recorded())
+	h.Context = base
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.False(shown(), "sync replays the answer without asking")
+
+	answer("", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.True(shown(), "the default answer is yes")
+	h.Require.False(recorded())
+
+	answer("2")
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--no-opencode-served-model")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.False(shown())
+	h.Require.True(recorded())
+	h.Require.NoError(h.Execute(append(setup, "--yes")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+	h.Require.True(shown(), "--yes shows it without asking")
+	h.Require.False(recorded())
+	h.Context = base
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--no-opencode-served-model")...))
+	h.Require.False(shown(), "without a terminal the flag decides")
+	h.Require.NoError(h.Execute(append(setup, "--yes")...))
+	h.Require.True(shown())
+
+	answer()
+	h.Require.NoError(h.Execute(append(setup, "--dry-run")...))
+	h.Require.NotContains(h.Stderr.String(), question)
+
+	serveServedModelRoutes(api)
+	answer("1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NotContains(h.Stderr.String(), question, "no router routes, no question")
+	serveServedModelRoutes(api, "auto")
+	h.Context = internalcmd.WithPromptAnswers(internalcmd.WithExecer(base, versionedHarnessExecer{"opencode": "1.19.5"}), "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.NotContains(h.Stderr.String(), question, "OpenCode 1 is not asked")
+
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("XDG_CONFIG_HOME", root)
+	answer("1", "2", "1")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--harness", "opencode"))
+	claudeQuestion := strings.Index(h.Stderr.String(), "Show which model served each response on auto routes in Claude Code?")
+	h.Require.GreaterOrEqual(claudeQuestion, 0)
+	h.Require.Greater(strings.Index(h.Stderr.String(), question), claudeQuestion, "Claude Code is asked first")
+	h.Require.Contains(readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json")), "statusLine")
+	h.Require.NoDirExists(openCodePluginDir(filepath.Join(root, "opencode")))
+	h.Require.False(harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel)
+	h.Require.True(harnessRecordFile(t).Harnesses["opencode"].NoOpenCodeServedModel)
+}
+
+var terminalEscape = regexp.MustCompile(`\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]`)
+
+func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
+	skipUnlessSupported(t)
+	binary := os.Getenv("BASETEN_TEST_OPENCODE2")
+	if binary == "" {
+		t.Skip("BASETEN_TEST_OPENCODE2 does not name an OpenCode 2 binary")
+	}
+	if _, err := exec.LookPath(binary); err != nil {
+		t.Skipf("%s is not installed", binary)
+	}
+	var mu sync.Mutex
+	var requested []string
+	var answered time.Time
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model    string `json:"model"`
+			Tools    []any  `json:"tools"`
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		last := body.Messages[len(body.Messages)-1]
+		step := len(body.Tools) > 0 && last.Role == "user" && bytes.Contains(last.Content, []byte("notes.txt"))
+		delta, finish := map[string]any{"content": "Served reply."}, "stop"
+		if step {
+			delta, finish = map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
+				"function": map[string]any{"name": "read", "arguments": `{"path":"notes.txt"}`}}}}, "tool_calls"
+		}
+		served := "qwen/Qwen3.6-Coder"
+		switch {
+		case step:
+			served = "zai-org/GLM-5.3-Flash"
+		case bytes.Contains(raw, []byte("this session again")):
+			served = "deepseek-ai/DeepSeek-V4.2"
+		case bytes.Contains(raw, []byte("another session")):
+			served = "moonshotai/Kimi-K2.6"
+		case bytes.Contains(raw, []byte("Start quietly")):
+			served = ""
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, choice := range []map[string]any{
+			{"index": 0, "delta": map[string]any{"role": "assistant", "content": ""}, "finish_reason": nil},
+			{"index": 0, "delta": delta, "finish_reason": nil},
+			{"index": 0, "delta": map[string]any{}, "finish_reason": finish},
+		} {
+			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": served,
+				"choices": []any{choice}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		mu.Lock()
+		defer mu.Unlock()
+		requested = append(requested, body.Model)
+		if len(body.Tools) > 0 {
+			answered = time.Now()
+		}
+	}))
+	t.Cleanup(gateway.Close)
+	h, api := gridAPI(t, gateway.URL)
+	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	route := func(id, name, display string, target map[string]any) map[string]any {
+		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": target}
+	}
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
+		"items": []any{
+			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}),
+			route("route-primary", "acme/primary", "Primary", map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	configDir := filepath.Join(root, ".config", "opencode")
+	setup := func(primary string) {
+		h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", configDir, "--use-session-credential", "--primary-route-id", primary, "--yes"))
+		h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, configDir), "setup detects OpenCode 2 and writes the plugin")
+	}
+	work, err := os.MkdirTemp("/tmp", "oc")
+	h.Require.NoError(err)
+	t.Cleanup(func() { _ = os.RemoveAll(work) })
+	h.Require.NoError(os.WriteFile(filepath.Join(work, "notes.txt"), []byte("hello\n"), 0o600))
+	tmp := t.TempDir()
+	toast := []string{"Served model", "Auto (Baseten Internal Dogfooding)", "→ qwen/Qwen3.6-Coder"}
+	toasted := func(screen string) bool {
+		return !slices.ContainsFunc(toast, func(part string) bool { return !strings.Contains(screen, part) })
+	}
+	environment := func(env ...string) []string {
+		return append([]string{
+			"HOME=" + root, "PATH=" + os.Getenv("PATH"), "TERM=xterm-256color", "TMPDIR=" + tmp,
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}, env...)
+	}
+	launch := func(ctx context.Context, args []string, env ...string) (*os.File, func() string, func()) {
+		ctx, cancel := context.WithCancel(ctx)
+		run := exec.CommandContext(ctx, binary, args...)
+		run.Cancel = func() error { return run.Process.Signal(syscall.SIGTERM) }
+		run.WaitDelay = 10 * time.Second
+		run.Dir = work
+		run.Env = environment(env...)
+		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 50, Cols: 260})
+		h.Require.NoError(err)
+		var screenMu sync.Mutex
+		var screen strings.Builder
+		go func() {
+			buf := make([]byte, 32<<10)
+			for {
+				n, err := terminal.Read(buf)
+				screenMu.Lock()
+				screen.Write(buf[:n])
+				screenMu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}()
+		shown := func() string {
+			screenMu.Lock()
+			defer screenMu.Unlock()
+			return terminalEscape.ReplaceAllString(screen.String(), "")
+		}
+		return terminal, shown, sync.OnceFunc(func() {
+			cancel()
+			_ = run.Wait()
+			_ = terminal.Close()
+		})
+	}
+	tui := func(env ...string) (string, []string) {
+		t.Helper()
+		started := time.Now()
+		mu.Lock()
+		before := len(requested)
+		mu.Unlock()
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		_, shown, stop := launch(ctx, []string{"--standalone", "--prompt", "Read notes.txt and reply."}, env...)
+		settled := func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return answered.After(started) && time.Since(answered) > 3*time.Second
+		}
+		for ctx.Err() == nil && !toasted(shown()) && !settled() {
+			time.Sleep(100 * time.Millisecond)
+		}
+		stop()
+		mu.Lock()
+		defer mu.Unlock()
+		h.Require.True(answered.After(started), "OpenCode answered the prompt; requested %v\n%s", requested, shown())
+		return shown(), slices.Clone(requested[before:])
+	}
+
+	setup("route-auto")
+	screen, models := tui()
+	h.Require.NotContains(screen, "zai-org/GLM-5.3-Flash", "the intermediate tool step does not toast")
+	for _, part := range toast {
+		h.Require.Contains(screen, part, "the TUI toasts the router route and the model that served the final response")
+	}
+	h.Require.Equal([]string{"acme/auto", "acme/auto"}, slices.DeleteFunc(models, func(model string) bool { return model != "acme/auto" }))
+
+	screen, models = tui("BASETEN_OPENCODE_SERVED_MODEL=0")
+	h.Require.NotContains(screen, "Served model", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
+	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
+	h.Require.Contains(models, "acme/auto")
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	h.Require.NoError(err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	h.Require.NoError(listener.Close())
+	h.Require.NoError(os.WriteFile(filepath.Join(configDir, "service.json"), fmt.Appendf(nil, `{"port":%d}`, port), 0o600))
+	t.Cleanup(func() {
+		service := exec.Command(binary, "service", "stop")
+		service.Dir = work
+		service.Env = environment()
+		_ = service.Run()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	terminal, shown, stop := launch(ctx, []string{"--prompt", "Start quietly from notes.txt."})
+	defer stop()
+	await := func(text string) {
+		for ctx.Err() == nil && !strings.Contains(shown(), text) {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	await("Served reply.")
+	other := exec.CommandContext(ctx, binary, "run", "Reply in another session.")
+	other.Dir = work
+	other.Env = environment()
+	output, err := other.CombinedOutput()
+	h.Require.NoError(err, string(output))
+	h.Require.Contains(string(output), "Served reply.")
+	time.Sleep(3 * time.Second)
+	h.Require.NotContains(shown(), "zai-org/GLM-5.3-Flash", "a run whose final response names no served model does not toast an earlier step's")
+	h.Require.NotContains(shown(), "moonshotai/Kimi-K2.6", "a response in another session on the same background server does not toast")
+	_, err = terminal.WriteString("Reply in this session again.")
+	h.Require.NoError(err)
+	await("Reply in this session again.")
+	_, err = terminal.WriteString("\r")
+	h.Require.NoError(err)
+	await("→ deepseek-ai/DeepSeek-V4.2")
+	h.Require.Contains(shown(), "→ deepseek-ai/DeepSeek-V4.2", "a response in the session on screen toasts")
+	stop()
+
+	setup("route-primary")
+	screen, models = tui()
+	h.Require.NotContains(screen, "Served model", "a route that is not a router shows nothing")
+	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "a route that is not a router shows nothing")
+	h.Require.Contains(models, "acme/primary")
+}
+
 // serveFirstPartyRoutes serves an Anthropic route and an OpenAI route, each
 // through a team connection, a Baseten-hosted route, and a route whose
 // connection no longer exists.
 func serveFirstPartyRoutes(api *MockManagementAPI) {
+	messages := maps.Clone(harnessRouteMetadata)
+	messages["supported_api_formats"] = map[string]any{"messages": true}
+	responses := maps.Clone(harnessRouteMetadata)
+	responses["supported_api_formats"] = map[string]any{"responses": true}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": messages,
 				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}},
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": responses,
 				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-openai"}},
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
