@@ -721,9 +721,10 @@ func TestClaudeSessionStartHookPrintsGitContext(t *testing.T) {
 	require.Empty(t, run(t.TempDir(), "sh", "-c", claudeSessionStartCommand))
 	repo := t.TempDir()
 	run(repo, "git", "init")
-	run(repo, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-m", "init")
-	run(repo, "git", "remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
 	branch := strings.TrimSpace(run(repo, "git", "branch", "--show-current"))
+	require.Equal(t, "repo= branch="+branch+" commit=\n", run(repo, "sh", "-c", claudeSessionStartCommand))
+	run(repo, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	run(repo, "git", "remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
 	commit := strings.TrimSpace(run(repo, "git", "rev-parse", "HEAD"))
 	require.Equal(t, "repo=https://example.com/org/repo.git branch="+branch+" commit="+commit+"\n", run(repo, "sh", "-c", claudeSessionStartCommand))
 }
