@@ -112,6 +112,19 @@ func TestNewRoutePicksTargetAPIFromFormats(t *testing.T) {
 	}
 }
 
+func TestNewRouteAcceptsAudioVideoInputModalities(t *testing.T) {
+	tools, ctx, out := true, 128000, 4096
+	r, err := NewRoute(managementapi.GridRoute{
+		Name: "acme/av", DisplayName: "AV",
+		Metadata: &managementapi.ExploreMetadata{
+			ContextWindow: &ctx, MaxOutputTokens: &out,
+			InputModalities: []string{"text", "audio", "video"}, Tools: &tools,
+		},
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"text", "audio", "video"}, r.InputModalities)
+}
+
 func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
 	routes := []Route{
 		{Name: "acme/o'brien", Router: true}, {Name: "acme/plain", DisplayName: "Plain"},

@@ -269,11 +269,6 @@ func validateRoute(r Route) error {
 	case len(r.InputModalities) == 0:
 		return fmt.Errorf("route %q has no input modalities", r.Name)
 	}
-	for _, modality := range r.InputModalities {
-		if modality != "text" && modality != "image" {
-			return fmt.Errorf("route %q has an unsupported input modality", r.Name)
-		}
-	}
 	for _, level := range r.ReasoningLevels {
 		if level != "none" && reasoningRank(level) < 0 {
 			return fmt.Errorf("route %q has an unsupported reasoning level", r.Name)
