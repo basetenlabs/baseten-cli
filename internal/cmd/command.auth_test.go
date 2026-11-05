@@ -626,7 +626,7 @@ func Test_Auth_Config_Update_RequireExplicitProfile(t *testing.T) {
 	h.Require.ErrorAs(err, &required)
 
 	h.Require.NoError(h.Execute("auth", "config", "update", "--require-explicit-profile=false"))
-	h.Require.Contains(h.Stderr.String(), "select one with `baseten auth switch <profile>`")
+	h.Require.Contains(h.Stderr.String(), "select one with `baseten auth switch --profile <profile>`")
 	h.Require.NoError(h.Execute("auth", "config", "describe"))
 	h.Require.Equal("Require explicit profile: false\n", h.Stdout.String())
 }

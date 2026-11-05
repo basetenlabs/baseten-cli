@@ -576,7 +576,7 @@ func commandAuthConfigUpdate(ctx *CommandContext, flags *cmd.AuthConfigUpdateFla
 		if _, _, ok, err := store.CurrentProfile(); err != nil {
 			return err
 		} else if !ok {
-			ctx.LogLine("No current profile; select one with `baseten auth switch <profile>`")
+			ctx.LogLine("No current profile; select one with `baseten auth switch --profile <profile>`")
 		}
 	}
 	return nil
