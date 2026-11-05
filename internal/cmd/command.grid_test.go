@@ -3982,7 +3982,8 @@ func gridSettingsFixture() map[string]any {
 		"harness_defaults": map[string]any{
 			"claude_code": map[string]any{"primary": nil, "background": nil},
 			"opencode":    map[string]any{"primary": nil, "background": nil},
-			"codex":       map[string]any{"primary": nil}, "pi": map[string]any{"primary": nil},
+			"codex":       map[string]any{"primary": nil, "background": nil},
+			"pi":          map[string]any{"primary": nil, "background": nil},
 		},
 		"spend_limit": map[string]any{"per_member_monthly_limit_usd": "100", "team_wide_monthly_limit_usd": nil},
 	}
