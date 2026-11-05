@@ -1786,6 +1786,10 @@ func piServedModelFile(dir string) string {
 	return filepath.Join(dir, "extensions", "baseten-served-model.ts")
 }
 
+func piGitContextFile(dir string) string {
+	return filepath.Join(dir, "extensions", "baseten-git-context.ts")
+}
+
 func piServedModelRouters(t *testing.T, path string) map[string]string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -1824,10 +1828,11 @@ func Test_Grid_Setup_PiServedModel(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	var plans public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &plans))
-	h.Require.Len(plans.Items, 3)
+	h.Require.Len(plans.Items, 4)
 	h.Require.Equal(extension, plans.Items[2].Config)
 	h.Require.True(plans.Items[2].Changed)
 	h.Require.Empty(plans.Items[2].ReplacedSettings)
+	h.Require.Equal(piGitContextFile(dir), plans.Items[3].Config)
 	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)"}, piServedModelRouters(t, extension))
 	h.Require.NotContains(h.Stderr.String(), "left unchanged")
 	settings := readHarnessSettings(t, "pi", settingsPath)
@@ -1851,6 +1856,7 @@ func Test_Grid_Setup_PiServedModel(t *testing.T) {
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "pi", "--config-dir", dir, "--yes"))
 	h.Require.NoFileExists(extension)
+	h.Require.NoFileExists(piGitContextFile(dir))
 	h.Require.FileExists(mine)
 	h.Require.Equal(userSettings, readHarnessSettings(t, "pi", settingsPath))
 	h.Require.Equal(userModels, readHarnessSettings(t, "pi", path))
@@ -1914,8 +1920,9 @@ func Test_Grid_Setup_PiServedModelZeroRouters(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	var plans public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &plans))
-	h.Require.Len(plans.Items, 2)
-	h.Require.NoDirExists(filepath.Dir(extension))
+	h.Require.Len(plans.Items, 3)
+	h.Require.NoFileExists(extension)
+	h.Require.FileExists(piGitContextFile(dir))
 
 	serveServedModelRoutes(api, "auto")
 	h.Require.NoError(h.Execute(setup...))
@@ -1948,6 +1955,7 @@ func Test_Grid_Setup_PiServedModelOptOut(t *testing.T) {
 	h.Require.NoError(err)
 	h.Require.NoError(h.Execute(append(setup, "--no-pi-served-model")...))
 	h.Require.NoFileExists(extension)
+	h.Require.FileExists(piGitContextFile(dir), "the git context extension does not depend on the served-model opt-out")
 	h.Require.Equal("baseten-harness", readHarnessSettings(t, "pi", filepath.Join(dir, "settings.json"))["defaultProvider"])
 	h.Require.True(harnessRecordFile(t).Harnesses["pi"].NoPiServedModel)
 	h.Require.Contains(record(), `"no_pi_served_model": true`)
@@ -2838,6 +2846,94 @@ func Test_Grid_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	connections := api.FindCall("GET", "/v1/grid/connections")
 	h.Require.NotNil(connections)
 	h.Require.Contains(connections.RawQuery, "team_id=team-a")
+}
+
+func Test_Grid_PiGitContext_RealPi(t *testing.T) {
+	skipUnlessSupported(t)
+	binary, err := exec.LookPath("pi")
+	if err != nil {
+		t.Skip("pi is not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	var mu sync.Mutex
+	var systems []string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		if len(body.Messages) > 0 && body.Messages[0].Role == "system" {
+			systems = append(systems, body.Messages[0].Content)
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, chunk := range []map[string]any{
+			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": "OK."}, "finish_reason": nil}}},
+			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}},
+		} {
+			chunk["id"], chunk["object"], chunk["created"], chunk["model"] = "chatcmpl-git", "chat.completion.chunk", 1, "acme/primary"
+			raw, _ := json.Marshal(chunk)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(gateway.Close)
+	h, api := gridAPI(t, gateway.URL)
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
+		"items":      []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}}},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	configDir := filepath.Join(root, ".pi", "agent")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", configDir, "--use-session-credential", "--yes", "--no-pi-served-model"))
+	h.Require.FileExists(piGitContextFile(configDir))
+	h.Require.NoFileExists(piServedModelFile(configDir))
+
+	run := func(dir string, args ...string) string {
+		command := exec.Command(args[0], args[1:]...)
+		command.Dir = dir
+		out, err := command.CombinedOutput()
+		h.Require.NoError(err, string(out))
+		return strings.TrimSpace(string(out))
+	}
+	prompt := func(dir string) string {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		command := exec.CommandContext(ctx, binary, "--print", "--no-session", "Reply with OK.")
+		command.Dir = dir
+		command.Env = []string{
+			"HOME=" + root, "PI_CODING_AGENT_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + t.TempDir(), "PI_OFFLINE=1", "PI_TELEMETRY=0",
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}
+		command.WaitDelay = 5 * time.Second
+		out, err := command.CombinedOutput()
+		h.Require.NoError(err, string(out))
+		h.Require.Equal("OK.", strings.TrimSpace(string(out)))
+		mu.Lock()
+		defer mu.Unlock()
+		h.Require.NotEmpty(systems)
+		return systems[len(systems)-1]
+	}
+
+	h.Require.NotContains(prompt(t.TempDir()), "repo=")
+	repo := t.TempDir()
+	run(repo, "git", "init", "-b", "main")
+	h.Require.Contains(prompt(repo), "<baseten_git_context>\nrepo= branch=main commit=\n</baseten_git_context>")
+	run(repo, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	run(repo, "git", "remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
+	commit := run(repo, "git", "rev-parse", "HEAD")
+	h.Require.Contains(prompt(repo), "<baseten_git_context>\nrepo=https://example.com/org/repo.git branch=main commit="+commit+"\n</baseten_git_context>")
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "pi", "--config-dir", configDir, "--yes"))
+	h.Require.NoFileExists(piGitContextFile(configDir))
 }
 
 func Test_Grid_Setup_PiFirstPartyRoutes(t *testing.T) {

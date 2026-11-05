@@ -1115,6 +1115,40 @@ func TestPiTeardownPreservesAnotherProviderSelection(t *testing.T) {
 	require.Equal(t, settings, load(t, piSettingsPath(path)))
 }
 
+func TestPiGitContextExtensionIsAlwaysInstalled(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	target := piGitContextPath(path)
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, NoPiServedModel: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	raw, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, string(piGitContextSource)+gridSetupSeal(piGitContextSource), string(raw))
+	require.True(t, gridSetupSealed(raw))
+	require.NoFileExists(t, piServedModelPath(path))
+	for _, p := range setup(t, h, path, testRoutes(), Selection{}) {
+		require.False(t, p.Changed && p.Path == target, "repeating setup leaves the extension alone")
+	}
+	teardown(t, h, path)
+	require.NoFileExists(t, target)
+}
+
+func TestPiGitContextExtensionKeepsUserFile(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	target := piGitContextPath(path)
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
+	user := "export default function () {}\n"
+	require.NoError(t, os.WriteFile(target, []byte(user), 0o600))
+	plans := setup(t, h, path, testRoutes(), Selection{})
+	require.Contains(t, plans[len(plans)-1].Notes, "warning: existing "+target+" left unchanged; Pi sessions will not include the git repository, branch, and commit")
+	teardown(t, h, path)
+	raw, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, user, string(raw))
+}
+
 func TestPiIncomplete(t *testing.T) {
 	h := piHarness{}
 	path := settingsPath(t, h)
