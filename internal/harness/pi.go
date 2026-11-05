@@ -120,7 +120,12 @@ func (piHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([]*P
 	if err != nil {
 		return nil, err
 	}
-	gitContext, err := prepareSealedFile(piGitContextPath(path), piGitContextSource, "Pi sessions will not include the git repository, branch, and commit")
+	var gitContext []*Plan
+	if opts.GitContext {
+		gitContext, err = prepareSealedFile(piGitContextPath(path), piGitContextSource, "Pi sessions will not include the git repository, branch, and commit")
+	} else {
+		gitContext, err = prepareSealedFileRemoval(piGitContextPath(path))
+	}
 	if err != nil {
 		return nil, err
 	}

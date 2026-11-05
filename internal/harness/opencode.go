@@ -263,7 +263,12 @@ func (openCodeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 	if err != nil {
 		return nil, err
 	}
-	gitContext, err := prepareSealedFile(openCodeGitContextPath(path), openCodeGitContextSource, "OpenCode sessions will not include the git repository, branch, and commit")
+	var gitContext []*Plan
+	if opts.GitContext {
+		gitContext, err = prepareSealedFile(openCodeGitContextPath(path), openCodeGitContextSource, "OpenCode sessions will not include the git repository, branch, and commit")
+	} else {
+		gitContext, err = prepareSealedFileRemoval(openCodeGitContextPath(path))
+	}
 	if err != nil {
 		return nil, err
 	}

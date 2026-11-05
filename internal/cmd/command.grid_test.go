@@ -858,7 +858,7 @@ func Test_Grid_Setup_Status_Teardown_DefaultDiscovery(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--harness", "codex", "--yes", "--output", "json"))
 	var setup public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &setup))
-	h.Require.Len(setup.Items, 4)
+	h.Require.Len(setup.Items, 3) // Two settings files and the Codex model catalog.
 	// A malformed file warns instead of hiding the other harnesses.
 	pi := filepath.Join(root, "pi", "models.json")
 	h.Require.NoError(os.MkdirAll(filepath.Dir(pi), 0o700))
@@ -1032,7 +1032,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 				h.Require.NoError(os.WriteFile(harnessSettingsFile(tc.name, configDir), []byte(tc.seed), 0o600))
 			}
 			// The token helper would run this test binary, so the session's key is installed instead.
-			h.Require.NoError(h.Execute("grid", "setup", "--harness", tc.name, "--config-dir", configDir, "--use-session-credential", "--yes"))
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", tc.name, "--config-dir", configDir, "--use-session-credential", "--yes", "--git-context"))
 
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			defer cancel()
@@ -1192,7 +1192,7 @@ func Test_Grid_Setup_ServedModelStatusLine(t *testing.T) {
 	h.Require.Equal(map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --router 'acme/auto=auto'"}, settings["statusLine"])
 	h.Require.Contains(settings["availableModels"], "acme/auto[1m]")
 	h.Require.Equal("dark", settings["theme"])
-	h.Require.NotContains(settings["hooks"], "Stop")
+	h.Require.NotContains(settings, "hooks")
 	h.Require.NotContains(h.Stderr.String(), "Existing statusLine")
 
 	h.Require.NoError(h.Execute(setup...))
@@ -1341,7 +1341,7 @@ func Test_Grid_Setup_ServedModelZeroRouters(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	settings := readHarnessSettings(t, "claude-code", path)
 	h.Require.NotContains(settings, "statusLine")
-	h.Require.NotContains(settings["hooks"], "Stop")
+	h.Require.NotContains(settings, "hooks")
 
 	serveServedModelRoutes(api, "auto")
 	h.Require.NoError(h.Execute(setup...))
@@ -1352,7 +1352,7 @@ func Test_Grid_Setup_ServedModelZeroRouters(t *testing.T) {
 
 	settings = readHarnessSettings(t, "claude-code", path)
 	settings["statusLine"] = map[string]any{"type": "command", "command": "my-status"}
-	settings["hooks"].(map[string]any)["Stop"] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "say done"}}}}
+	settings["hooks"] = map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "say done"}}}}}
 	raw, err := json.Marshal(settings)
 	h.Require.NoError(err)
 	h.Require.NoError(os.WriteFile(path, raw, 0o600))
@@ -1406,8 +1406,7 @@ func Test_Grid_Setup_ServedModelOptOut(t *testing.T) {
 	h.Require.NoError(h.Execute(append(setup, "--no-claude-served-model")...))
 	settings := readHarnessSettings(t, "claude-code", path)
 	h.Require.NotContains(settings, "statusLine")
-	h.Require.Equal(guard["PreToolUse"], settings["hooks"].(map[string]any)["PreToolUse"])
-	h.Require.NotContains(settings["hooks"], "Stop")
+	h.Require.Equal(guard, settings["hooks"])
 	h.Require.Equal("dark", settings["theme"])
 	h.Require.True(harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel)
 	h.Require.Contains(record(), `"no_claude_served_model": true`)
@@ -1434,7 +1433,7 @@ func Test_Grid_Setup_ServedModelOptOut(t *testing.T) {
 	h.Require.NoError(h.Execute(append(setup, "--no-claude-served-model")...))
 	settings = readHarnessSettings(t, "claude-code", path)
 	h.Require.Equal(userStatusLine, settings["statusLine"])
-	h.Require.Equal([]any{userStop}, settings["hooks"].(map[string]any)["Stop"])
+	h.Require.Equal(map[string]any{"Stop": []any{userStop}}, settings["hooks"])
 }
 
 func Test_Grid_Setup_ServedModelPrompt(t *testing.T) {
@@ -1861,11 +1860,10 @@ func Test_Grid_Setup_PiServedModel(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	var plans public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &plans))
-	h.Require.Len(plans.Items, 4)
+	h.Require.Len(plans.Items, 3)
 	h.Require.Equal(extension, plans.Items[2].Config)
 	h.Require.True(plans.Items[2].Changed)
 	h.Require.Empty(plans.Items[2].ReplacedSettings)
-	h.Require.Equal(piGitContextFile(dir), plans.Items[3].Config)
 	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)"}, piServedModelRouters(t, extension))
 	h.Require.NotContains(h.Stderr.String(), "left unchanged")
 	settings := readHarnessSettings(t, "pi", settingsPath)
@@ -1889,7 +1887,6 @@ func Test_Grid_Setup_PiServedModel(t *testing.T) {
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "pi", "--config-dir", dir, "--yes"))
 	h.Require.NoFileExists(extension)
-	h.Require.NoFileExists(piGitContextFile(dir))
 	h.Require.FileExists(mine)
 	h.Require.Equal(userSettings, readHarnessSettings(t, "pi", settingsPath))
 	h.Require.Equal(userModels, readHarnessSettings(t, "pi", path))
@@ -1953,9 +1950,8 @@ func Test_Grid_Setup_PiServedModelZeroRouters(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	var plans public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &plans))
-	h.Require.Len(plans.Items, 3)
-	h.Require.NoFileExists(extension)
-	h.Require.FileExists(piGitContextFile(dir))
+	h.Require.Len(plans.Items, 2)
+	h.Require.NoDirExists(filepath.Dir(extension))
 
 	serveServedModelRoutes(api, "auto")
 	h.Require.NoError(h.Execute(setup...))
@@ -1988,7 +1984,6 @@ func Test_Grid_Setup_PiServedModelOptOut(t *testing.T) {
 	h.Require.NoError(err)
 	h.Require.NoError(h.Execute(append(setup, "--no-pi-served-model")...))
 	h.Require.NoFileExists(extension)
-	h.Require.FileExists(piGitContextFile(dir), "the git context extension does not depend on the served-model opt-out")
 	h.Require.Equal("baseten-harness", readHarnessSettings(t, "pi", filepath.Join(dir, "settings.json"))["defaultProvider"])
 	h.Require.True(harnessRecordFile(t).Harnesses["pi"].NoPiServedModel)
 	h.Require.Contains(record(), `"no_pi_served_model": true`)
@@ -2375,7 +2370,7 @@ func Test_Grid_Setup_OpenCodeServedModel(t *testing.T) {
 			h.Require.NoError(h.Execute(setup...))
 			var rerun public.GridPlanList
 			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
-			h.Require.Len(rerun.Items, 3)
+			h.Require.Len(rerun.Items, 2)
 			h.Require.Equal(openCodePluginDir(dir), rerun.Items[1].Config)
 			h.Require.Equal(openCodePluginSources, rerun.Items[1].Settings)
 			for _, item := range rerun.Items {
@@ -2881,6 +2876,42 @@ func Test_Grid_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	h.Require.Contains(connections.RawQuery, "team_id=team-a")
 }
 
+func Test_Grid_Setup_GitContext(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := fakeGridAPI(t)
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "pi", "--yes"}
+	installed := func() []bool {
+		hooks, _ := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))["hooks"].(map[string]any)
+		_, claude := hooks["SessionStart"]
+		return []bool{claude, fileExists(filepath.Join(root, "opencode", "plugins", "baseten-git-context.js")), fileExists(piGitContextFile(filepath.Join(root, "pi")))}
+	}
+	record := func() string {
+		raw, err := os.ReadFile(filepath.Join(recordDir(t), "harness.json"))
+		h.Require.NoError(err)
+		return string(raw)
+	}
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]bool{false, false, false}, installed())
+	h.Require.NotContains(record(), "git_context")
+
+	h.Require.NoError(h.Execute(append(setup, "--git-context")...))
+	h.Require.Equal([]bool{true, true, true}, installed())
+	h.Require.Equal(3, strings.Count(record(), `"git_context": true`))
+	h.Require.True(harnessRecordFile(t).Harnesses["pi"].GitContext)
+
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Equal([]bool{true, true, true}, installed(), "sync replays the recorded opt-in")
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]bool{false, false, false}, installed(), "setup without the flag removes them")
+	h.Require.NotContains(record(), "git_context")
+}
+
 func Test_Grid_PiGitContext_RealPi(t *testing.T) {
 	skipUnlessSupported(t)
 	binary, err := exec.LookPath("pi")
@@ -2925,7 +2956,7 @@ func Test_Grid_PiGitContext_RealPi(t *testing.T) {
 	})
 	root := t.TempDir()
 	configDir := filepath.Join(root, ".pi", "agent")
-	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", configDir, "--use-session-credential", "--yes", "--no-pi-served-model"))
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", configDir, "--use-session-credential", "--yes", "--no-pi-served-model", "--git-context"))
 	h.Require.FileExists(piGitContextFile(configDir))
 	h.Require.NoFileExists(piServedModelFile(configDir))
 

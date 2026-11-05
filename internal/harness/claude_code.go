@@ -87,7 +87,7 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, opts PrepareOpti
 		credentialPath = nil
 	}
 	p, err := prepareSettings(path, credentialPath, func(data map[string]any) ([]setting, error) {
-		return claudeSettings(routes, s, endpoint, data, helper, cli, opts.NoClaudeServedModel)
+		return claudeSettings(routes, s, endpoint, data, helper, cli, opts.NoClaudeServedModel, opts.GitContext)
 	})
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, opts PrepareOpti
 	return []*Plan{p}, nil
 }
 
-func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string, noServedModel bool) ([]setting, error) {
+func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string, noServedModel, gitContext bool) ([]setting, error) {
 	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
@@ -180,7 +180,11 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 			values = append(values, setting{Path: claudeSubagentPath})
 		}
 	}
-	if start, ok := claudeHooksSetting(claudeSessionStartHooksPath, claudeSessionStartOwned, current, claudeCommandEntry(claudeSessionStartCommand)); ok {
+	var own map[string]any
+	if gitContext {
+		own = claudeCommandEntry(claudeSessionStartCommand)
+	}
+	if start, ok := claudeHooksSetting(claudeSessionStartHooksPath, claudeSessionStartOwned, current, own); ok {
 		values = append(values, start)
 	}
 	served := routes

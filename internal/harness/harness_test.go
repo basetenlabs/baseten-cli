@@ -404,6 +404,14 @@ func setup(t *testing.T, h Harness, path string, routes []Route, s Selection) []
 	return plans
 }
 
+func setupGitContext(t *testing.T, h Harness, path string) []*Plan {
+	t.Helper()
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, GitContext: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	return plans
+}
+
 func teardown(t *testing.T, h Harness, path string) []*Plan {
 	t.Helper()
 	plans, err := h.Teardown(path)
@@ -669,10 +677,12 @@ func TestClaudeSessionStartHookIsInstalledOnce(t *testing.T) {
 	save(t, path, map[string]any{"theme": "dark"})
 	ours := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeSessionStartCommand}}}
 	setup(t, h, path, testRoutes(), Selection{})
+	require.NotContains(t, load(t, path), "hooks")
+	setupGitContext(t, h, path)
 	require.Equal(t, []any{ours}, get(load(t, path), claudeSessionStartHooksPath).Data)
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)
-	for _, p := range setup(t, h, path, testRoutes(), Selection{}) {
+	for _, p := range setupGitContext(t, h, path) {
 		require.False(t, p.Changed, "repeating setup changes nothing")
 	}
 	after, err := os.ReadFile(path)
@@ -681,6 +691,9 @@ func TestClaudeSessionStartHookIsInstalledOnce(t *testing.T) {
 	status, err := h.Inspect(Detection{Name: ClaudeCode, Path: path})
 	require.NoError(t, err)
 	require.Contains(t, status.Managed, pathKey(claudeSessionStartHooksPath))
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NotContains(t, load(t, path), "hooks")
+	setupGitContext(t, h, path)
 	teardown(t, h, path)
 	require.Equal(t, map[string]any{"theme": "dark"}, load(t, path))
 }
@@ -695,10 +708,12 @@ func TestClaudeSessionStartHookKeepsUserHooks(t *testing.T) {
 	save(t, path, map[string]any{"hooks": map[string]any{"SessionStart": user}})
 	ours := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeSessionStartCommand}}}
 	for range 2 {
-		plans := setup(t, h, path, testRoutes(), Selection{})
+		plans := setupGitContext(t, h, path)
 		require.Empty(t, plans[0].Replaced)
 		require.Equal(t, append(slices.Clone(user), ours), get(load(t, path), claudeSessionStartHooksPath).Data)
 	}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.Equal(t, user, get(load(t, path), claudeSessionStartHooksPath).Data)
 	teardown(t, h, path)
 	require.Equal(t, map[string]any{"hooks": map[string]any{"SessionStart": user}}, load(t, path))
 }
@@ -730,7 +745,7 @@ func TestClaudeSessionStartHookPrintsGitContext(t *testing.T) {
 	require.Equal(t, "repo=https://example.com/org/repo.git branch="+branch+" commit="+commit+"\n", run(repo, "sh", "-c", claudeSessionStartCommand))
 }
 
-func TestOpenCodeGitContextPluginIsAlwaysInstalled(t *testing.T) {
+func TestOpenCodeGitContextPluginIsOptIn(t *testing.T) {
 	h := openCodeHarness{}
 	path := settingsPath(t, h)
 	save(t, path, map[string]any{"theme": "dark"})
@@ -738,16 +753,22 @@ func TestOpenCodeGitContextPluginIsAlwaysInstalled(t *testing.T) {
 	mine := filepath.Join(filepath.Dir(plugin), "mine.js")
 	require.NoError(t, os.MkdirAll(filepath.Dir(mine), 0o700))
 	require.NoError(t, os.WriteFile(mine, []byte("export default {}\n"), 0o600))
-	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, NoOpenCodeServedModel: true})
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, plugin)
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, NoOpenCodeServedModel: true, GitContext: true})
 	require.NoError(t, err)
 	require.NoError(t, ApplyPlans(plans, testToken))
 	written, err := os.ReadFile(plugin)
 	require.NoError(t, err)
 	require.True(t, gridSetupSealed(written))
 	require.True(t, strings.HasPrefix(string(written), string(openCodeGitContextSource)))
-	for _, p := range setup(t, h, path, testRoutes(), Selection{}) {
+	for _, p := range setupGitContext(t, h, path) {
 		require.False(t, p.Changed, "repeating setup changes nothing")
 	}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, plugin)
+	require.FileExists(t, mine)
+	setupGitContext(t, h, path)
 	teardown(t, h, path)
 	require.NoFileExists(t, plugin)
 	require.FileExists(t, mine)
@@ -760,7 +781,7 @@ func TestOpenCodeGitContextPluginKeepsUserFile(t *testing.T) {
 	plugin := openCodeGitContextPath(path)
 	require.NoError(t, os.MkdirAll(filepath.Dir(plugin), 0o700))
 	require.NoError(t, os.WriteFile(plugin, []byte("export default {}\n"), 0o600))
-	plans := setup(t, h, path, testRoutes(), Selection{})
+	plans := setupGitContext(t, h, path)
 	require.True(t, slices.ContainsFunc(plans, func(p *Plan) bool {
 		return slices.ContainsFunc(p.Notes, func(note string) bool { return strings.Contains(note, plugin+" left unchanged") })
 	}))
@@ -1188,11 +1209,13 @@ func TestPiTeardownPreservesAnotherProviderSelection(t *testing.T) {
 	require.Equal(t, settings, load(t, piSettingsPath(path)))
 }
 
-func TestPiGitContextExtensionIsAlwaysInstalled(t *testing.T) {
+func TestPiGitContextExtensionIsOptIn(t *testing.T) {
 	h := piHarness{}
 	path := settingsPath(t, h)
 	target := piGitContextPath(path)
-	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, NoPiServedModel: true})
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, target)
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, NoPiServedModel: true, GitContext: true})
 	require.NoError(t, err)
 	require.NoError(t, ApplyPlans(plans, testToken))
 	raw, err := os.ReadFile(target)
@@ -1200,9 +1223,12 @@ func TestPiGitContextExtensionIsAlwaysInstalled(t *testing.T) {
 	require.Equal(t, string(piGitContextSource)+gridSetupSeal(piGitContextSource), string(raw))
 	require.True(t, gridSetupSealed(raw))
 	require.NoFileExists(t, piServedModelPath(path))
-	for _, p := range setup(t, h, path, testRoutes(), Selection{}) {
+	for _, p := range setupGitContext(t, h, path) {
 		require.False(t, p.Changed && p.Path == target, "repeating setup leaves the extension alone")
 	}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, target)
+	setupGitContext(t, h, path)
 	teardown(t, h, path)
 	require.NoFileExists(t, target)
 }
@@ -1214,7 +1240,7 @@ func TestPiGitContextExtensionKeepsUserFile(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
 	user := "export default function () {}\n"
 	require.NoError(t, os.WriteFile(target, []byte(user), 0o600))
-	plans := setup(t, h, path, testRoutes(), Selection{})
+	plans := setupGitContext(t, h, path)
 	require.Contains(t, plans[len(plans)-1].Notes, "warning: existing "+target+" left unchanged; Pi sessions will not include the git repository, branch, and commit")
 	teardown(t, h, path)
 	raw, err := os.ReadFile(target)

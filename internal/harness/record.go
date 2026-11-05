@@ -43,6 +43,7 @@ type Record struct {
 	NoClaudeServedModel   bool `json:"no_claude_served_model,omitempty"`
 	NoPiServedModel       bool `json:"no_pi_served_model,omitempty"`
 	NoOpenCodeServedModel bool `json:"no_opencode_served_model,omitempty"`
+	GitContext            bool `json:"git_context,omitempty"`
 }
 
 // RecordFile is the on-disk harness.json structure. Unrecognized keys are

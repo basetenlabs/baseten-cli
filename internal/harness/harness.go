@@ -100,6 +100,7 @@ type PrepareOptions struct {
 	NoClaudeServedModel   bool
 	NoPiServedModel       bool
 	NoOpenCodeServedModel bool
+	GitContext            bool
 }
 
 // Helper is the credential command a harness runs instead of storing a key:

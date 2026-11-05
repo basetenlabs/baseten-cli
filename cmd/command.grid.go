@@ -30,7 +30,7 @@ var commandGrid = Command{
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.\n\n" +
 				"Setup also adds a served-model indicator for intelligent routes in Claude Code, Pi, and OpenCode 2. " +
 				"To turn it off, set BASETEN_CLAUDE_SERVED_MODEL, BASETEN_PI_SERVED_MODEL, or BASETEN_OPENCODE_SERVED_MODEL to 0.\n\n" +
-				"Setup also adds a Claude Code SessionStart hook, an OpenCode plugin, and a Pi extension that add the git origin URL, branch, and commit to the session context when a session starts inside a git repository.",
+				"With --git-context, setup also adds a Claude Code SessionStart hook, an OpenCode plugin, and a Pi extension that add the git origin URL, branch, and commit to the session context when a session starts inside a git repository.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
@@ -645,6 +645,7 @@ type GridSetupFlags struct {
 	NoClaudeServedModel   bool   `flag:"no-claude-served-model" desc:"For Claude Code, leave out the status line or Stop hook that shows which model served a router route's response, and remove it if setup added it before, without asking."`
 	NoPiServedModel       bool   `flag:"no-pi-served-model" desc:"For Pi, leave out the extension that shows which model served a router route's response, and remove it if setup added it before, without asking."`
 	NoOpenCodeServedModel bool   `flag:"no-opencode-served-model" desc:"For OpenCode 2, leave out the plugin that shows which model served a router route's response, and remove it if setup added it before, without asking."`
+	GitContext            bool   `flag:"git-context" desc:"Add the git origin URL, branch, and commit to each Claude Code, OpenCode, and Pi session's context, through a SessionStart hook, plugin, or extension. Without it, setup removes them if it added them before."`
 	UseSessionCredential  bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun                bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
 	Yes                   bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
