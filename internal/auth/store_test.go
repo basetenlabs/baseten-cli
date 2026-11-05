@@ -341,7 +341,8 @@ func TestErrExplicitProfileRequired_Error(t *testing.T) {
 		"    --profile d\n"+
 		"    --profile e\n"+
 		"    ...and 2 more (see `baseten auth list`)\n"+
-		"  Or set BASETEN_PROFILE, or disable with `baseten auth config update --require-explicit-profile=false`",
+		"  Or set BASETEN_PROFILE, or disable with `baseten auth config update --require-explicit-profile=false` "+
+		"and then select a current profile with `baseten auth switch <profile>`",
 		err.Error())
 
 	err = &auth.ErrExplicitProfileRequired{Profiles: []string{"bob's"}}

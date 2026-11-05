@@ -12,6 +12,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
+	"github.com/creack/pty"
 )
 
 // newAuthHarness returns a CommandHarness with the env credential vars cleared
@@ -625,8 +626,18 @@ func Test_Auth_Config_Update_RequireExplicitProfile(t *testing.T) {
 	h.Require.ErrorAs(err, &required)
 
 	h.Require.NoError(h.Execute("auth", "config", "update", "--require-explicit-profile=false"))
+	h.Require.Contains(h.Stderr.String(), "select one with `baseten auth switch <profile>`")
 	h.Require.NoError(h.Execute("auth", "config", "describe"))
 	h.Require.Equal("Require explicit profile: false\n", h.Stdout.String())
+}
+
+func Test_Auth_Config_Update_DisableWithCurrentProfileNoHint(t *testing.T) {
+	h := newAuthHarness(t)
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-a", true, nil))
+
+	h.Require.NoError(h.Execute("auth", "config", "update", "--require-explicit-profile=false"))
+	h.Require.NotContains(h.Stderr.String(), "auth switch")
 }
 
 func Test_Auth_Config_Update_RequiresSetting(t *testing.T) {
@@ -649,6 +660,26 @@ func Test_Auth_Status_ExplicitProfilePrompts(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Use which profile?")
 	h.Require.Contains(h.Stdout.String(), "bob\n")
 	h.Require.Contains(h.Stdout.String(), "Explicit profile selection: required")
+}
+
+func Test_Auth_Status_ExplicitProfileAccessiblePromptKeepsJSONClean(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	// TERM=dumb puts huh in accessible mode, whose output defaults to stdout.
+	t.Setenv("TERM", "dumb")
+	control, terminal, err := pty.Open()
+	h.Require.NoError(err)
+	t.Cleanup(func() {
+		_ = control.Close()
+		_ = terminal.Close()
+	})
+	_, err = control.WriteString("2\n")
+	h.Require.NoError(err)
+	h.StdinReader = terminal
+	h.Require.NoError(h.Execute("auth", "status", "--output", "json"))
+	h.Require.Contains(h.Stderr.String(), "Use which profile?")
+	var got cmd.AuthStatusResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal("bob", got.Profile)
 }
 
 func Test_Auth_Status_ExplicitProfileFromEnv(t *testing.T) {
@@ -699,7 +730,9 @@ func Test_Auth_Logout_ExplicitProfileFromEnv(t *testing.T) {
 
 func Test_Auth_Switch_ExplicitProfileErrors(t *testing.T) {
 	h := newExplicitProfileHarness(t)
-	h.Require.ErrorContains(h.Execute("auth", "switch", "--profile", "bob"), "there is no current profile")
+	err := h.Execute("auth", "switch", "--profile", "bob")
+	h.Require.ErrorContains(err, "there is no current profile")
+	h.Require.ErrorContains(err, "and then rerun this command")
 }
 
 func Test_Auth_Login_ExplicitProfileNeverSwitches(t *testing.T) {

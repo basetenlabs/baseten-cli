@@ -423,7 +423,8 @@ func (e *ErrExplicitProfileRequired) Error() string {
 	if len(e.Profiles) > maxListedProfiles {
 		fmt.Fprintf(&b, "    ...and %d more (see `baseten auth list`)\n", len(e.Profiles)-maxListedProfiles)
 	}
-	b.WriteString("  Or set BASETEN_PROFILE, or disable with `baseten auth config update --require-explicit-profile=false`")
+	b.WriteString("  Or set BASETEN_PROFILE, or disable with `baseten auth config update --require-explicit-profile=false` " +
+		"and then select a current profile with `baseten auth switch <profile>`")
 	return b.String()
 }
 

@@ -420,19 +420,22 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 // RunPrompt runs a single interactive prompt field, aborting it when the
 // command context is cancelled.
 func (c *CommandContext) RunPrompt(field huh.Field) error {
+	// Equivalent to the field's own Run, which ignores the context and so
+	// leaves the prompt running when the command is cancelled by a SIGTERM or
+	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
+	// signal, which huh handles itself by returning huh.ErrUserAborted. I/O is
+	// set explicitly because huh's accessible mode (e.g. TERM=dumb) defaults
+	// output to stdout, which would corrupt command output.
+	form := huh.NewForm(huh.NewGroup(field)).WithShowHelp(false).WithInput(c.Stdin).WithOutput(c.Stderr)
 	if answers, ok := c.promptAnswers(); ok {
 		if len(*answers) == 0 {
 			return errors.New("no answer for the prompt")
 		}
 		answer := (*answers)[0]
 		*answers = (*answers)[1:]
-		return huh.NewForm(huh.NewGroup(field)).WithAccessible(true).WithInput(strings.NewReader(answer + "\n")).WithOutput(c.Stderr).RunWithContext(c)
+		form = form.WithAccessible(true).WithInput(strings.NewReader(answer + "\n"))
 	}
-	// Equivalent to the field's own Run, which ignores the context and so
-	// leaves the prompt running when the command is cancelled by a SIGTERM or
-	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
-	// signal, which huh handles itself by returning huh.ErrUserAborted.
-	return huh.NewForm(huh.NewGroup(field)).WithShowHelp(false).RunWithContext(c)
+	return form.RunWithContext(c)
 }
 
 // OAuthConfig returns the OAuth2 configuration for the given host.

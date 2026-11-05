@@ -193,7 +193,7 @@ func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
 	} else if af.RequireExplicitProfile {
 		return fmt.Errorf("there is no current profile when explicit profile selection is required; " +
 			"pass --profile or set BASETEN_PROFILE per command, or disable with " +
-			"`baseten auth config update --require-explicit-profile=false`")
+			"`baseten auth config update --require-explicit-profile=false` and then rerun this command")
 	}
 
 	profileName := flags.Profile
@@ -572,6 +572,13 @@ func commandAuthConfigUpdate(ctx *CommandContext, flags *cmd.AuthConfigUpdateFla
 		return err
 	}
 	outputAuthConfig(ctx, cmd.AuthConfigResult{RequireExplicitProfile: flags.RequireExplicitProfile})
+	if !flags.RequireExplicitProfile {
+		if _, _, ok, err := store.CurrentProfile(); err != nil {
+			return err
+		} else if !ok {
+			ctx.LogLine("No current profile; select one with `baseten auth switch <profile>`")
+		}
+	}
 	return nil
 }
 
