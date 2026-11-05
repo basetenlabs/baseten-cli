@@ -200,14 +200,17 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 		return r, fmt.Errorf("route %q has no model metadata", r.Name)
 	}
 	r.ContextWindow, r.OutputLimit = deref(m.ContextWindow), deref(m.MaxOutputTokens)
-	r.InputModalities, r.Tools = m.InputModalities, deref(m.Tools)
+	r.InputModalities = slices.DeleteFunc(slices.Clone(m.InputModalities), func(modality string) bool {
+		return modality != "text" && modality != "image"
+	})
+	r.Tools = deref(m.Tools)
 	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
 	// Without formats the route's APIs are unknown, so every harness lists it.
 	r.Messages, r.Responses = true, true
 	r.TargetAPI = TargetAPIChatCompletions
 	if f := m.SupportedApiFormats; f != nil {
 		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
-		r.TargetAPI = preferredTargetAPI(f)
+		r.TargetAPI = preferredTargetAPI(f, r.Provider)
 	}
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
@@ -218,11 +221,10 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	return r, validateRoute(r)
 }
 
-// NB(nikhil): Prefer chat completions (for best Baseten MAPIs experience), and then decide based
-// on what is advertised.
-func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats) TargetAPI {
+func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats, provider string) TargetAPI {
 	switch {
-	case deref(f.ChatCompletions):
+	case deref(f.ChatCompletions) && (provider == ProviderBaseten || provider == ""):
+		// NB(nikhil): MAPIs specifically advertise all compatibility, but prefer chat completions.
 		return TargetAPIChatCompletions
 	case deref(f.Messages):
 		return TargetAPIMessages
@@ -321,6 +323,8 @@ const (
 	ProviderAnthropic = "ANTHROPIC"
 	ProviderOpenAI    = "OPENAI"
 	ProviderBaseten   = "BASETEN_MODEL_API"
+	ProviderBedrock   = "BEDROCK"
+	ProviderVertex    = "VERTEX"
 )
 
 // routeTarget resolves the upstream provider and, for connections, the model ID.
