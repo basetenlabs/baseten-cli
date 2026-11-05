@@ -236,8 +236,8 @@ func gridHelperPath() (helper, warning string, err error) {
 //  1. If in `setup`, we emit a validation error.
 //  2. If in `sync`, we emit a warning, and clobber with the new server default.
 func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, listed []managementapi.GridRoute, targets []gridHarnessTarget, forSync bool) ([]*harness.Plan, error) {
-	// Routes reach external providers through team connections, and the
-	// provider decides which API a harness calls the route with.
+	// Routes reach external providers through team connections, which resolve
+	// each connection route's upstream provider and model.
 	connections, err := listGridConnections(ctx, api, managementapi.GetV1GridConnectionsParams{TeamId: &team.Id})
 	if err != nil {
 		return nil, err

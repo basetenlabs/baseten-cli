@@ -25,6 +25,7 @@ func testRoute(name, displayName string) Route {
 	return Route{
 		Name: name, DisplayName: displayName,
 		ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, Responses: true,
+		TargetAPI: TargetAPIChatCompletions,
 	}
 }
 
@@ -78,6 +79,93 @@ func TestNewRouteMarksRouters(t *testing.T) {
 	r, err := NewRoute(managementapi.GridRoute{Name: "acme/untyped", Metadata: metadata}, nil)
 	require.NoError(t, err)
 	require.False(t, r.Router, "a route without a target type is not a router")
+}
+
+func TestNewRoutePicksTargetAPIFromFormats(t *testing.T) {
+	yes, no, tools, ctx, out := true, false, true, 128000, 4096
+	for _, tc := range []struct {
+		name    string
+		formats *managementapi.ExploreMetadataAPIFormats
+		want    TargetAPI
+	}{
+		{"no formats", nil, TargetAPIChatCompletions},
+		{"chat completions", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}, TargetAPIChatCompletions},
+		{"messages", &managementapi.ExploreMetadataAPIFormats{Messages: &yes}, TargetAPIMessages},
+		{"responses", &managementapi.ExploreMetadataAPIFormats{Responses: &yes}, TargetAPIResponses},
+		{"chat completions before messages", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes}, TargetAPIChatCompletions},
+		{"chat completions before responses", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}, TargetAPIChatCompletions},
+		{"messages before responses", &managementapi.ExploreMetadataAPIFormats{Messages: &yes, Responses: &yes}, TargetAPIMessages},
+		{"none advertised", &managementapi.ExploreMetadataAPIFormats{Messages: &no, Responses: &no, ChatCompletions: &no}, TargetAPIChatCompletions},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := NewRoute(managementapi.GridRoute{
+				Name: "acme/route", DisplayName: "Route",
+				Metadata: &managementapi.ExploreMetadata{
+					ContextWindow: &ctx, MaxOutputTokens: &out,
+					InputModalities: []string{"text"}, Tools: &tools,
+					SupportedApiFormats: tc.formats,
+				},
+			}, nil)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, r.TargetAPI)
+		})
+	}
+}
+
+func TestNewRoutePrefersNativeTargetAPIForExternalProviders(t *testing.T) {
+	yes, tools, ctx, out := true, true, 128000, 4096
+	all := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes, Responses: &yes}
+	completionsAndResponses := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}
+	completions := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}
+	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI, "conn-bedrock": ProviderBedrock, "conn-vertex": ProviderVertex}
+	for _, tc := range []struct {
+		name    string
+		target  string
+		formats *managementapi.ExploreMetadataAPIFormats
+		want    TargetAPI
+	}{
+		{"baseten prefers chat completions", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, all, TargetAPIChatCompletions},
+		{"router prefers chat completions", `{"type": "INTELLIGENT"}`, all, TargetAPIChatCompletions},
+		{"unknown connection prefers chat completions", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, all, TargetAPIChatCompletions},
+		{"anthropic prefers messages", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, all, TargetAPIMessages},
+		{"openai prefers responses", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, completionsAndResponses, TargetAPIResponses},
+		{"bedrock prefers responses", `{"type": "CONNECTION", "connection_id": "conn-bedrock", "model": "openai.gpt"}`, completionsAndResponses, TargetAPIResponses},
+		{"vertex prefers messages", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "claude"}`, all, TargetAPIMessages},
+		{"external falls back to chat completions", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "gemini"}`, completions, TargetAPIChatCompletions},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := managementapi.GridRoute{
+				Name: "acme/route", DisplayName: "Route",
+				Metadata: &managementapi.ExploreMetadata{
+					ContextWindow: &ctx, MaxOutputTokens: &out,
+					InputModalities: []string{"text"}, Tools: &tools,
+					SupportedApiFormats: tc.formats,
+				},
+			}
+			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
+			r, err := NewRoute(api, providers)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, r.TargetAPI)
+		})
+	}
+}
+
+func TestNewRouteKeepsOnlyTextAndImageInputModalities(t *testing.T) {
+	tools, ctx, out := true, 128000, 4096
+	route := func(modalities ...string) (Route, error) {
+		return NewRoute(managementapi.GridRoute{
+			Name: "acme/av", DisplayName: "AV",
+			Metadata: &managementapi.ExploreMetadata{
+				ContextWindow: &ctx, MaxOutputTokens: &out,
+				InputModalities: modalities, Tools: &tools,
+			},
+		}, nil)
+	}
+	r, err := route("text", "image", "video", "audio")
+	require.NoError(t, err)
+	require.Equal(t, []string{"text", "image"}, r.InputModalities)
+	_, err = route("audio", "video")
+	require.ErrorContains(t, err, "has no input modalities")
 }
 
 func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
@@ -648,9 +736,9 @@ func TestOpenCodeJSONC(t *testing.T) {
 func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, openCodeHarness{})
 	routes := testRoutes()
-	routes[0].Provider = ProviderAnthropic
-	routes[1].Provider = ProviderOpenAI
-	routes[2].Provider = "XAI"
+	routes[0].TargetAPI = TargetAPIMessages
+	routes[1].TargetAPI = TargetAPIResponses
+	routes[2].TargetAPI = TargetAPIChatCompletions
 	setup(t, openCodeHarness{}, path, routes, Selection{})
 	data := load(t, path)
 	require.Equal(t, "@ai-sdk/openai-compatible", get(data, []string{"provider", providerID, "npm"}).Data)
@@ -711,10 +799,10 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	save(t, path, openCodeV2File())
 	cacheRead := 0.3
 	routes := testRoutes()
-	routes[0].Provider = ProviderAnthropic
+	routes[0].TargetAPI = TargetAPIMessages
 	routes[0].ReasoningLevels = []string{"low", "max"}
 	routes[0].Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, LongContext: &Cost{Input: 6, Output: 22.5}}
-	routes[1].Provider = ProviderOpenAI
+	routes[1].TargetAPI = TargetAPIResponses
 	plans := setup(t, openCodeHarness{}, path, routes, Selection{Subagent: "acme/subagent"})
 	require.Equal(t, []string{"model"}, plans[0].Replaced)
 	d := load(t, path)
@@ -906,9 +994,9 @@ func TestOpenCodeDesktopDetection(t *testing.T) {
 func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, piHarness{})
 	routes := testRoutes()
-	routes[0].Provider = ProviderAnthropic
-	routes[1].Provider = ProviderOpenAI
-	routes[2].Provider = "XAI"
+	routes[0].TargetAPI = TargetAPIMessages
+	routes[1].TargetAPI = TargetAPIResponses
+	routes[2].TargetAPI = TargetAPIChatCompletions
 	setup(t, piHarness{}, path, routes, Selection{})
 	provider := get(load(t, path), piProviderPath).Data.(map[string]any)
 	require.Equal(t, "openai-completions", provider["api"])
