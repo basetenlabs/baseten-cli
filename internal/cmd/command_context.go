@@ -420,26 +420,24 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 // RunPrompt runs a single interactive prompt field, aborting it when the
 // command context is cancelled.
 func (c *CommandContext) RunPrompt(field huh.Field) error {
+	// huh's base theme leaves titles and options in the terminal's default
+	// foreground. Its default Charm theme colors them for one background,
+	// drawing options near-white on a light terminal.
+	form := huh.NewForm(huh.NewGroup(field)).WithTheme(huh.ThemeFunc(huh.ThemeBase))
 	if answers, ok := c.promptAnswers(); ok {
 		if len(*answers) == 0 {
 			return errors.New("no answer for the prompt")
 		}
 		answer := (*answers)[0]
 		*answers = (*answers)[1:]
-		return huh.NewForm(huh.NewGroup(field)).WithAccessible(true).WithInput(strings.NewReader(answer + "\n")).WithOutput(c.Stderr).RunWithContext(c)
+		return form.WithAccessible(true).WithInput(strings.NewReader(answer + "\n")).WithOutput(c.Stderr).RunWithContext(c)
 	}
 	// Equivalent to the field's own Run, which ignores the context and so
 	// leaves the prompt running when the command is cancelled by a SIGTERM or
 	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
 	// signal, which huh handles itself by returning huh.ErrUserAborted.
-	return huh.NewForm(huh.NewGroup(field)).WithShowHelp(false).WithTheme(promptTheme).RunWithContext(c)
+	return form.WithShowHelp(false).RunWithContext(c)
 }
-
-// promptTheme is huh's base theme: titles and options keep the terminal's
-// default foreground and the rest is plain ANSI, so prompts follow the user's
-// terminal palette. huh's default Charm theme draws options in ANSI-256 color
-// 252 on light backgrounds, which is near-white on white.
-var promptTheme = huh.ThemeFunc(huh.ThemeBase)
 
 // OAuthConfig returns the OAuth2 configuration for the given host.
 func OAuthConfig(host string) *oauth2.Config {
