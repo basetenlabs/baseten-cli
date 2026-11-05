@@ -858,7 +858,7 @@ func Test_Grid_Setup_Status_Teardown_DefaultDiscovery(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--harness", "codex", "--yes", "--output", "json"))
 	var setup public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &setup))
-	h.Require.Len(setup.Items, 3) // Two settings files and the Codex model catalog.
+	h.Require.Len(setup.Items, 4)
 	// A malformed file warns instead of hiding the other harnesses.
 	pi := filepath.Join(root, "pi", "models.json")
 	h.Require.NoError(os.MkdirAll(filepath.Dir(pi), 0o700))
@@ -931,6 +931,7 @@ type harnessGateway struct {
 	models         []string
 	clients        []string
 	requestClasses []string
+	bodies         []string
 }
 
 func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -943,6 +944,7 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.models = append(g.models, body.Model)
 		g.clients = append(g.clients, r.Header.Get("X-Baseten-Grid-Client"))
 		g.requestClasses = append(g.requestClasses, r.Header.Get("x-claude-code-request-class"))
+		g.bodies = append(g.bodies, string(raw))
 		g.mu.Unlock()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -962,6 +964,12 @@ func (g *harnessGateway) sentClients() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return slices.Clone(g.clients)
+}
+
+func (g *harnessGateway) sentBodies() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.bodies)
 }
 
 func (g *harnessGateway) sentRequestClasses() []string {
@@ -1030,6 +1038,10 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			defer cancel()
 			run := exec.CommandContext(ctx, binary, tc.args...)
 			run.Dir = t.TempDir()
+			var gitContext string
+			if tc.name == "opencode" {
+				gitContext = initHarnessGitRepo(t, run.Dir)
+			}
 			// A minimal environment: anything inherited could point the harness at
 			// a real provider and make the test pass for the wrong reason.
 			run.Env = []string{
@@ -1075,11 +1087,32 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.requested(), output.String())
 			}
 			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Grid-Client")
+			if gitContext != "" {
+				h.Require.True(slices.ContainsFunc(gateway.sentBodies(), func(body string) bool { return strings.Contains(body, gitContext) }), "git context %q", gitContext)
+			}
 			if tc.name == "claude-code" {
 				h.Require.True(slices.ContainsFunc(gateway.sentRequestClasses(), func(v string) bool { return v != "" }), "x-claude-code-request-class")
 			}
 		})
 	}
+}
+
+func initHarnessGitRepo(t *testing.T, dir string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	run := func(args ...string) string {
+		command := exec.Command("git", args...)
+		command.Dir = dir
+		out, err := command.Output()
+		require.NoError(t, err)
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-q")
+	run("-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
+	run("remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
+	return "repo=https://example.com/org/repo.git branch=" + run("branch", "--show-current") + " commit=" + run("rev-parse", "HEAD")
 }
 
 func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
@@ -2342,7 +2375,7 @@ func Test_Grid_Setup_OpenCodeServedModel(t *testing.T) {
 			h.Require.NoError(h.Execute(setup...))
 			var rerun public.GridPlanList
 			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
-			h.Require.Len(rerun.Items, 2)
+			h.Require.Len(rerun.Items, 3)
 			h.Require.Equal(openCodePluginDir(dir), rerun.Items[1].Config)
 			h.Require.Equal(openCodePluginSources, rerun.Items[1].Settings)
 			for _, item := range rerun.Items {

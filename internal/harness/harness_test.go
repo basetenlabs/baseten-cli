@@ -730,6 +730,79 @@ func TestClaudeSessionStartHookPrintsGitContext(t *testing.T) {
 	require.Equal(t, "repo=https://example.com/org/repo.git branch="+branch+" commit="+commit+"\n", run(repo, "sh", "-c", claudeSessionStartCommand))
 }
 
+func TestOpenCodeGitContextPluginIsAlwaysInstalled(t *testing.T) {
+	h := openCodeHarness{}
+	path := settingsPath(t, h)
+	save(t, path, map[string]any{"theme": "dark"})
+	plugin := openCodeGitContextPath(path)
+	mine := filepath.Join(filepath.Dir(plugin), "mine.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(mine), 0o700))
+	require.NoError(t, os.WriteFile(mine, []byte("export default {}\n"), 0o600))
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, NoOpenCodeServedModel: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	written, err := os.ReadFile(plugin)
+	require.NoError(t, err)
+	require.True(t, gridSetupSealed(written))
+	require.True(t, strings.HasPrefix(string(written), string(openCodeGitContextSource)))
+	for _, p := range setup(t, h, path, testRoutes(), Selection{}) {
+		require.False(t, p.Changed, "repeating setup changes nothing")
+	}
+	teardown(t, h, path)
+	require.NoFileExists(t, plugin)
+	require.FileExists(t, mine)
+	require.Equal(t, map[string]any{"theme": "dark"}, load(t, path))
+}
+
+func TestOpenCodeGitContextPluginKeepsUserFile(t *testing.T) {
+	h := openCodeHarness{}
+	path := settingsPath(t, h)
+	plugin := openCodeGitContextPath(path)
+	require.NoError(t, os.MkdirAll(filepath.Dir(plugin), 0o700))
+	require.NoError(t, os.WriteFile(plugin, []byte("export default {}\n"), 0o600))
+	plans := setup(t, h, path, testRoutes(), Selection{})
+	require.True(t, slices.ContainsFunc(plans, func(p *Plan) bool {
+		return slices.ContainsFunc(p.Notes, func(note string) bool { return strings.Contains(note, plugin+" left unchanged") })
+	}))
+	teardown(t, h, path)
+	written, err := os.ReadFile(plugin)
+	require.NoError(t, err)
+	require.Equal(t, "export default {}\n", string(written))
+}
+
+func TestOpenCodeGitContextPluginMatchesClaudeHook(t *testing.T) {
+	for _, tool := range []string{"sh", "git", "node"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " is not on PATH")
+		}
+	}
+	dir := t.TempDir()
+	plugin := filepath.Join(dir, "plugin.mjs")
+	require.NoError(t, os.WriteFile(plugin, openCodeGitContextSource, 0o600))
+	driver := `const { pathToFileURL } = await import("node:url"); const { default: plugin } = await import(pathToFileURL(process.argv[1]).href); const hooks = await plugin.server({ directory: process.cwd() }); const out = { system: [] }; await hooks["experimental.chat.system.transform"]({ sessionID: "s" }, out); process.stdout.write(out.system.map((line) => line + "\n").join(""))`
+	run := func(dir string, args ...string) string {
+		t.Helper()
+		command := exec.Command(args[0], args[1:]...)
+		command.Dir = dir
+		out, err := command.Output()
+		require.NoError(t, err)
+		return string(out)
+	}
+	same := func(dir string) string {
+		t.Helper()
+		want := run(dir, "sh", "-c", claudeSessionStartCommand)
+		require.Equal(t, want, run(dir, "node", "--input-type=module", "-e", driver, plugin))
+		return want
+	}
+	require.Empty(t, same(t.TempDir()))
+	repo := t.TempDir()
+	run(repo, "git", "init", "-q")
+	require.Contains(t, same(repo), " commit=\n")
+	run(repo, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
+	run(repo, "git", "remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
+	require.Contains(t, same(repo), "repo=https://example.com/org/repo.git branch=")
+}
+
 func TestUnsupportedSelectionsAreRejected(t *testing.T) {
 	for _, tc := range []struct {
 		h Harness

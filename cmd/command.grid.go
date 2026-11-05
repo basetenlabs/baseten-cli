@@ -30,7 +30,7 @@ var commandGrid = Command{
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those.\n\n" +
 				"Setup also adds a served-model indicator for intelligent routes in Claude Code, Pi, and OpenCode 2. " +
 				"To turn it off, set BASETEN_CLAUDE_SERVED_MODEL, BASETEN_PI_SERVED_MODEL, or BASETEN_OPENCODE_SERVED_MODEL to 0.\n\n" +
-				"Setup also adds a Claude Code SessionStart hook and a Pi extension that add the git origin URL, branch, and commit to the session context when a session starts inside a git repository.",
+				"Setup also adds a Claude Code SessionStart hook, an OpenCode plugin, and a Pi extension that add the git origin URL, branch, and commit to the session context when a session starts inside a git repository.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
@@ -124,7 +124,7 @@ var commandGrid = Command{
 			Description: gridPrereleaseNotice +
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
 				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path. " +
-				"It also removes the served-model status line, Stop hook, extension, or plugin and the git context hook or extension that setup added, and keeps your own.\n\n" +
+				"It also removes the served-model status line, Stop hook, extension, or plugin and the git context hook, plugin, or extension that setup added, and keeps your own.\n\n" +
 				"Teardown also deletes the Grid API key the removed harnesses use, once no other harness on this machine uses it, " +
 				"except a key installed with --use-session-credential, whose lifecycle this CLI does not own. " +
 				"It forgets the recorded setup so 'grid sync' no longer refreshes the removed harnesses. " +
