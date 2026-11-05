@@ -993,8 +993,11 @@ func TestClientHeaderNamesHarness(t *testing.T) {
 			path := settingsPath(t, h)
 			setup(t, h, path, testRoutes(), Selection{})
 			want := h.Name()
-			if h.Name() == ClaudeCode {
+			switch h.Name() {
+			case ClaudeCode:
 				want = clientHeader + ": " + ClaudeCode
+			case ClaudeDesktop:
+				want = ClaudeCode
 			}
 			require.Equal(t, want, get(load(t, path), paths[h.Name()]).Data)
 			if h.Name() == ClaudeCode {

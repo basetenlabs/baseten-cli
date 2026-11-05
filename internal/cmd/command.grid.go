@@ -996,8 +996,8 @@ func gridHarnessDefaultModels(defaults *managementapi.GridHarnessDefaults, harne
 	case harness.Pi:
 		return map[string]*managementapi.GridHarnessModel{gridHarnessRolePrimary: defaults.Pi.Primary}
 	case harness.ClaudeDesktop:
-		// The team settings have no Claude Desktop defaults.
-		return nil
+		// Claude Desktop shares Claude Code's defaults; it has no background slot.
+		return map[string]*managementapi.GridHarnessModel{gridHarnessRolePrimary: defaults.ClaudeCode.Primary}
 	default:
 		panic(fmt.Sprintf("no harness defaults for harness %q", harnessName))
 	}

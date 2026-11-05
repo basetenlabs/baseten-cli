@@ -28,7 +28,9 @@ const claudeDesktopModelPrefix = "claude-desktop-"
 // matches never reaches the picker.
 var claudeDesktopDenied = regexp.MustCompile(`ark-code|astron|command-r|deepseek|doubao|gemini|gemma|glm|gpt|grok|hermes|hy3|kimi|lfm|\bling\b|llama|longcat|mimo|minimax|mistral|mixtral|moonshot|nemotron|openai|phi-|qianfan|qwen|tc-code|\bunic\b|yi-|stepfun|step-3|seed-|bytedance|hunyuan|granite|amazon\.nova|nova-|devstral|ministral|ernie|codex|arcee|trinity|abab|phi\d|\bk2\.|\bm2\.|jamba|arctic|solar|mercury|zamba|kat-coder|\bds-|dpsk`)
 
-// claudeDesktopMarkerPath identifies Baseten's config in the library.
+// claudeDesktopMarkerPath identifies Baseten's config in the library. The app
+// identifies as claude-code on the wire, so it shares that harness's team
+// defaults and attribution on Baseten's side.
 var claudeDesktopMarkerPath = []string{"inferenceCustomHeaders", clientHeader}
 
 var claudeDesktopCredentialPath = []string{"inferenceGatewayApiKey"}
@@ -113,7 +115,7 @@ func claudeDesktopConfigPath(library string) string {
 }
 
 func claudeDesktopOwned(data map[string]any) bool {
-	return get(data, claudeDesktopMarkerPath).Data == ClaudeDesktop
+	return get(data, claudeDesktopMarkerPath).Data == ClaudeCode
 }
 
 func claudeDesktopID(path string) string { return strings.TrimSuffix(filepath.Base(path), ".json") }
@@ -175,7 +177,7 @@ func (claudeDesktopHarness) Prepare(path string, routes []Route, opts PrepareOpt
 		desired([]string{"inferenceProvider"}, "gateway"),
 		desired([]string{"inferenceGatewayBaseUrl"}, opts.Endpoint),
 		desired([]string{"inferenceGatewayAuthScheme"}, "bearer"),
-		desired([]string{"inferenceCustomHeaders"}, map[string]any{clientHeader: ClaudeDesktop}),
+		desired([]string{"inferenceCustomHeaders"}, map[string]any{clientHeader: ClaudeCode}),
 		desired([]string{"modelDiscoveryEnabled"}, false),
 		desired([]string{"autoModeEnabled"}, false),
 		desired([]string{"inferenceModels"}, models),
