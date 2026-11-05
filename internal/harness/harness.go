@@ -132,15 +132,22 @@ func All() []Harness {
 	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}, piHarness{}}
 }
 
+// TargetAPI is the wire protocol a harness calls a route with.
+type TargetAPI string
+
+const (
+	TargetAPIMessages        TargetAPI = "messages"
+	TargetAPIResponses       TargetAPI = "responses"
+	TargetAPIChatCompletions TargetAPI = "chat-completions"
+)
+
 // Route is a Baseten route as shown in a harness's model picker, with the model
 // capabilities supplied by the route's own metadata.
 type Route struct {
 	Name        string
 	DisplayName string
-	// Provider is the route's upstream provider, such as ProviderAnthropic,
-	// which decides the API a harness calls the route with. It is "" when
-	// unknown, as for a router that picks a route per request, and such a
-	// route is called with the Chat Completions API.
+	// Provider is the route's upstream provider, such as ProviderAnthropic.
+	// It is "" when unknown, as for a router that picks a route per request.
 	Provider        string
 	UpstreamModel   string
 	Router          bool
@@ -154,6 +161,7 @@ type Route struct {
 	// Messages API and the OpenAI Responses API.
 	Messages  bool
 	Responses bool
+	TargetAPI TargetAPI
 	// Cost is the provider's list price, or nil if unknown.
 	Cost *Cost
 }
@@ -196,8 +204,10 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
 	// Without formats the route's APIs are unknown, so every harness lists it.
 	r.Messages, r.Responses = true, true
+	r.TargetAPI = TargetAPIChatCompletions
 	if f := m.SupportedApiFormats; f != nil {
 		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
+		r.TargetAPI = preferredTargetAPI(f)
 	}
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
@@ -206,6 +216,21 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 		}
 	}
 	return r, validateRoute(r)
+}
+
+// NB(nikhil): Prefer chat completions (for best Baseten MAPIs experience), and then decide based
+// on what is advertised.
+func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats) TargetAPI {
+	switch {
+	case deref(f.ChatCompletions):
+		return TargetAPIChatCompletions
+	case deref(f.Messages):
+		return TargetAPIMessages
+	case deref(f.Responses):
+		return TargetAPIResponses
+	default:
+		return TargetAPIChatCompletions
+	}
 }
 
 // newCost returns nil unless both input and output prices are known.

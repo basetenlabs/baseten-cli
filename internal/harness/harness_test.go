@@ -25,6 +25,7 @@ func testRoute(name, displayName string) Route {
 	return Route{
 		Name: name, DisplayName: displayName,
 		ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, Responses: true,
+		TargetAPI: TargetAPIChatCompletions,
 	}
 }
 
@@ -78,6 +79,37 @@ func TestNewRouteMarksRouters(t *testing.T) {
 	r, err := NewRoute(managementapi.GridRoute{Name: "acme/untyped", Metadata: metadata}, nil)
 	require.NoError(t, err)
 	require.False(t, r.Router, "a route without a target type is not a router")
+}
+
+func TestNewRoutePicksTargetAPIFromFormats(t *testing.T) {
+	yes, no, tools, ctx, out := true, false, true, 128000, 4096
+	for _, tc := range []struct {
+		name    string
+		formats *managementapi.ExploreMetadataAPIFormats
+		want    TargetAPI
+	}{
+		{"no formats", nil, TargetAPIChatCompletions},
+		{"chat completions", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}, TargetAPIChatCompletions},
+		{"messages", &managementapi.ExploreMetadataAPIFormats{Messages: &yes}, TargetAPIMessages},
+		{"responses", &managementapi.ExploreMetadataAPIFormats{Responses: &yes}, TargetAPIResponses},
+		{"chat completions before messages", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes}, TargetAPIChatCompletions},
+		{"chat completions before responses", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}, TargetAPIChatCompletions},
+		{"messages before responses", &managementapi.ExploreMetadataAPIFormats{Messages: &yes, Responses: &yes}, TargetAPIMessages},
+		{"none advertised", &managementapi.ExploreMetadataAPIFormats{Messages: &no, Responses: &no, ChatCompletions: &no}, TargetAPIChatCompletions},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := NewRoute(managementapi.GridRoute{
+				Name: "acme/route", DisplayName: "Route",
+				Metadata: &managementapi.ExploreMetadata{
+					ContextWindow: &ctx, MaxOutputTokens: &out,
+					InputModalities: []string{"text"}, Tools: &tools,
+					SupportedApiFormats: tc.formats,
+				},
+			}, nil)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, r.TargetAPI)
+		})
+	}
 }
 
 func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
@@ -648,9 +680,9 @@ func TestOpenCodeJSONC(t *testing.T) {
 func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, openCodeHarness{})
 	routes := testRoutes()
-	routes[0].Provider = ProviderAnthropic
-	routes[1].Provider = ProviderOpenAI
-	routes[2].Provider = "XAI"
+	routes[0].TargetAPI = TargetAPIMessages
+	routes[1].TargetAPI = TargetAPIResponses
+	routes[2].TargetAPI = TargetAPIChatCompletions
 	setup(t, openCodeHarness{}, path, routes, Selection{})
 	data := load(t, path)
 	require.Equal(t, "@ai-sdk/openai-compatible", get(data, []string{"provider", providerID, "npm"}).Data)
@@ -711,10 +743,10 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	save(t, path, openCodeV2File())
 	cacheRead := 0.3
 	routes := testRoutes()
-	routes[0].Provider = ProviderAnthropic
+	routes[0].TargetAPI = TargetAPIMessages
 	routes[0].ReasoningLevels = []string{"low", "max"}
 	routes[0].Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, LongContext: &Cost{Input: 6, Output: 22.5}}
-	routes[1].Provider = ProviderOpenAI
+	routes[1].TargetAPI = TargetAPIResponses
 	plans := setup(t, openCodeHarness{}, path, routes, Selection{Subagent: "acme/subagent"})
 	require.Equal(t, []string{"model"}, plans[0].Replaced)
 	d := load(t, path)
@@ -906,9 +938,9 @@ func TestOpenCodeDesktopDetection(t *testing.T) {
 func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, piHarness{})
 	routes := testRoutes()
-	routes[0].Provider = ProviderAnthropic
-	routes[1].Provider = ProviderOpenAI
-	routes[2].Provider = "XAI"
+	routes[0].TargetAPI = TargetAPIMessages
+	routes[1].TargetAPI = TargetAPIResponses
+	routes[2].TargetAPI = TargetAPIChatCompletions
 	setup(t, piHarness{}, path, routes, Selection{})
 	provider := get(load(t, path), piProviderPath).Data.(map[string]any)
 	require.Equal(t, "openai-completions", provider["api"])

@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 )
@@ -57,7 +56,7 @@ func (h piHarness) Detect(ctx context.Context, execer Execer, dir string) (Detec
 
 func (piHarness) BackgroundRoute(Selection) string { return "" }
 
-// Routes returns every route, since Pi picks each route's API by its target.
+// Routes returns every route, since Pi picks each route's API per model.
 func (piHarness) Routes(routes []Route) []Route { return routes }
 
 func (piHarness) SupportsSubagent() bool { return false }
@@ -181,8 +180,7 @@ func piServedModelOwned(data []byte) bool {
 }
 
 // piModel describes a route to Pi. A model's api overrides the provider's, so
-// first-party routes use their native API: Messages for Anthropic, Responses
-// for OpenAI.
+// a route is called with the API its supported formats advertise.
 func piModel(r Route, baseURL string) map[string]any {
 	levels := piThinkingLevels(r.ReasoningLevels)
 	model := map[string]any{
@@ -199,14 +197,14 @@ func piModel(r Route, baseURL string) map[string]any {
 	if cost := piCost(r.Cost); cost != nil {
 		model["cost"] = cost
 	}
-	switch r.Provider {
-	case ProviderAnthropic:
+	switch r.TargetAPI {
+	case TargetAPIMessages:
 		// Pi's Anthropic client appends /v1/messages itself.
 		model["api"], model["baseUrl"] = "anthropic-messages", baseURL
 		if piAdaptiveThinking(r.UpstreamModel) {
 			model["compat"] = map[string]any{"forceAdaptiveThinking": true}
 		}
-	case ProviderOpenAI:
+	case TargetAPIResponses:
 		model["api"] = "openai-responses"
 	default:
 		// The provider's compat would apply to every API, so only Chat
@@ -225,15 +223,16 @@ func piModel(r Route, baseURL string) map[string]any {
 	return model
 }
 
-var piModelSnapshotSuffix = regexp.MustCompile(`-(?:[0-9]{8}|latest)$`)
-
 func piAdaptiveThinking(upstreamModel string) bool {
-	switch piModelSnapshotSuffix.ReplaceAllString(upstreamModel, "") {
-	case "claude-opus-4-5", "claude-haiku-4-5", "claude-sonnet-4-5":
-		return false
-	default:
-		return true
+	// NB(nikhil): We simplify with substring check for now, given fully correct coverage today, and
+	// seemingly low risk of a new model ID with these identifiers that supports extended thinking.
+	for _, legacy := range []string{"claude-opus-4-5", "claude-haiku-4-5", "claude-sonnet-4-5"} {
+		if strings.Contains(upstreamModel, legacy) {
+			return false
+		}
 	}
+
+	return true
 }
 
 // piThinkingLevels maps each of Pi's thinking levels to the route's effort

@@ -73,11 +73,11 @@ var (
 	openCodeV2BackgroundPath = []string{"agents", "title", "model"}
 )
 
-// openCodeProviderPackages maps route providers to the AI SDK package for
-// their native API. Other providers use the Chat Completions package.
-var openCodeProviderPackages = map[string]string{
-	ProviderAnthropic: "@ai-sdk/anthropic",
-	ProviderOpenAI:    "@ai-sdk/openai",
+// openCodeModelPackages maps the API a route serves to the AI SDK package
+// that speaks it. Routes called with Chat Completions use the provider's.
+var openCodeModelPackages = map[TargetAPI]string{
+	TargetAPIMessages:  "@ai-sdk/anthropic",
+	TargetAPIResponses: "@ai-sdk/openai",
 }
 
 // openCodeV2Packages maps the AI SDK packages V1 names to OpenCode 2's
@@ -358,9 +358,9 @@ func openCodeV1Settings(routes []Route, s Selection, endpoint, bearer string) []
 		if r.Cost != nil {
 			model["cost"] = openCodeV1Cost(*r.Cost)
 		}
-		// A model's npm overrides the provider's, so first-party routes use their
-		// native API at the same base URL: Messages for Anthropic, Responses for OpenAI.
-		if npm, ok := openCodeProviderPackages[r.Provider]; ok {
+		// A model's npm overrides the provider's, so a route is called with the
+		// API its supported formats advertise, at the same base URL.
+		if npm, ok := openCodeModelPackages[r.TargetAPI]; ok {
 			model["provider"] = map[string]any{"npm": npm}
 		}
 		models[r.Name] = model
@@ -402,7 +402,7 @@ func openCodeV2Settings(routes []Route, s Selection, endpoint, bearer string) []
 		if r.Cost != nil {
 			model["cost"] = openCodeV2Cost(*r.Cost)
 		}
-		if npm, ok := openCodeProviderPackages[r.Provider]; ok {
+		if npm, ok := openCodeModelPackages[r.TargetAPI]; ok {
 			model["package"] = openCodeV2Packages[npm]
 		}
 		models[r.Name] = model

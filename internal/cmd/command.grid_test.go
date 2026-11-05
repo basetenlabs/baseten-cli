@@ -2784,11 +2784,15 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 // through a team connection, a Baseten-hosted route, and a route whose
 // connection no longer exists.
 func serveFirstPartyRoutes(api *MockManagementAPI) {
+	messages := maps.Clone(harnessRouteMetadata)
+	messages["supported_api_formats"] = map[string]any{"messages": true}
+	responses := maps.Clone(harnessRouteMetadata)
+	responses["supported_api_formats"] = map[string]any{"responses": true}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": messages,
 				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}},
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": responses,
 				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-openai"}},
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
