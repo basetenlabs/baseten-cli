@@ -17,19 +17,25 @@ import (
 
 type openCodeHarness struct{}
 
-//go:embed opencode-served-model
-var openCodeServedModelSource embed.FS
+//go:embed opencode-served-model opencode-web-search
+var openCodePluginSource embed.FS
 
 const (
 	openCodeServedModelSourceDir = "opencode-served-model"
 	openCodeServedModelRoutes    = "routes.json"
-	openCodeServedModelOwner     = "baseten grid setup"
+	openCodeWebSearchSourceDir   = "opencode-web-search"
+	openCodeWebSearchMarker      = "managed.json"
+	openCodePluginOwner          = "baseten grid setup"
 )
 
 type openCodeServedModelConfig struct {
 	ManagedBy string            `json:"managedBy"`
 	Provider  string            `json:"provider"`
 	Routers   map[string]string `json:"routers"`
+}
+
+type openCodePluginMarker struct {
+	ManagedBy string `json:"managedBy"`
 }
 
 var openCodeVersionPattern = regexp.MustCompile(`(\d+)\.\d+`)
@@ -256,7 +262,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 		return nil, err
 	}
 	p.bearerPath = bearerPath
-	return withOpenCodeServedModel(p, routes, opts.NoOpenCodeServedModel)
+	return withOpenCodePlugins(p, routes, !opts.NoOpenCodeServedModel, opts.OpenCodeWebSearch)
 }
 
 func HasOpenCode2(d Detection) bool {
@@ -276,33 +282,54 @@ func openCodeServedModelDir(path string) string {
 	return filepath.Join(filepath.Dir(path), "plugins", "baseten-served-model")
 }
 
-func withOpenCodeServedModel(p *Plan, routes []Route, off bool) ([]*Plan, error) {
-	dir := openCodeServedModelDir(p.Path)
+func openCodeWebSearchDir(path string) string {
+	return filepath.Join(filepath.Dir(path), "plugins", "baseten-web-search")
+}
+
+func withOpenCodePlugins(p *Plan, routes []Route, servedModel, webSearch bool) ([]*Plan, error) {
 	routers := openCodeRouterLabels(routes)
-	files, err := openCodeServedModelFiles(routers)
+	served, err := openCodePluginFiles(openCodeServedModelSourceDir, openCodeServedModelRoutes, openCodeServedModelConfig{ManagedBy: openCodePluginOwner, Provider: providerID, Routers: routers})
 	if err != nil {
 		return nil, err
 	}
-	free, owned := openCodeServedModelOwnership(dir)
-	switch show := !off && len(routers) > 0; {
-	case show && (free || owned):
-		return []*Plan{p, prepareFiles(dir, files)}, nil
-	case show:
-		p.Notes = append(p.Notes, "warning: "+dir+" already exists and was not written by baseten grid setup; leaving it unchanged, so OpenCode will not show which model served each response on auto routes.")
-	case owned:
-		return []*Plan{p, prepareFilesRemoval(dir, files)}, nil
+	search, err := openCodePluginFiles(openCodeWebSearchSourceDir, openCodeWebSearchMarker, openCodePluginMarker{ManagedBy: openCodePluginOwner})
+	if err != nil {
+		return nil, err
 	}
-	return []*Plan{p}, nil
+	plans := []*Plan{p}
+	if plugin := openCodePluginPlan(p, openCodeServedModelDir(p.Path), served, servedModel && len(routers) > 0, "OpenCode will not show which model served each response on auto routes."); plugin != nil {
+		plans = append(plans, plugin)
+	}
+	if plugin := openCodePluginPlan(p, openCodeWebSearchDir(p.Path), search, webSearch, "OpenCode will not declare the baseten_web_search tool."); plugin != nil {
+		if webSearch {
+			plugin.Notes = append(plugin.Notes, "Baseten-managed web search, baseten_web_search, replaces OpenCode's built-in websearch tool.")
+		}
+		plans = append(plans, plugin)
+	}
+	return plans, nil
 }
 
-func openCodeServedModelOwnership(dir string) (free, owned bool) {
+func openCodePluginPlan(p *Plan, dir string, files []ownedFile, want bool, consequence string) *Plan {
+	free, owned := openCodePluginOwnership(dir, files[0].name)
+	switch {
+	case want && (free || owned):
+		return prepareFiles(dir, files)
+	case want:
+		p.Notes = append(p.Notes, "warning: "+dir+" already exists and was not written by baseten grid setup; leaving it unchanged, so "+consequence)
+	case owned:
+		return prepareFilesRemoval(dir, files)
+	}
+	return nil
+}
+
+func openCodePluginOwnership(dir, marker string) (free, owned bool) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) || (err == nil && len(entries) == 0) {
 		return true, false
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, openCodeServedModelRoutes))
-	var config openCodeServedModelConfig
-	return false, err == nil && json.Unmarshal(raw, &config) == nil && config.ManagedBy == openCodeServedModelOwner
+	raw, err := os.ReadFile(filepath.Join(dir, marker))
+	var config openCodePluginMarker
+	return false, err == nil && json.Unmarshal(raw, &config) == nil && config.ManagedBy == openCodePluginOwner
 }
 
 func openCodeRouterLabels(routes []Route) map[string]string {
@@ -315,18 +342,18 @@ func openCodeRouterLabels(routes []Route) map[string]string {
 	return labels
 }
 
-func openCodeServedModelFiles(routers map[string]string) ([]ownedFile, error) {
-	config, err := encode(openCodeServedModelConfig{ManagedBy: openCodeServedModelOwner, Provider: providerID, Routers: routers})
+func openCodePluginFiles(source, marker string, config any) ([]ownedFile, error) {
+	encoded, err := encode(config)
 	if err != nil {
 		return nil, err
 	}
-	files := []ownedFile{{openCodeServedModelRoutes, config}}
-	entries, err := openCodeServedModelSource.ReadDir(openCodeServedModelSourceDir)
+	files := []ownedFile{{marker, encoded}}
+	entries, err := openCodePluginSource.ReadDir(source)
 	if err != nil {
 		return nil, err
 	}
 	for _, entry := range entries {
-		data, err := openCodeServedModelSource.ReadFile(openCodeServedModelSourceDir + "/" + entry.Name())
+		data, err := openCodePluginSource.ReadFile(source + "/" + entry.Name())
 		if err != nil {
 			return nil, err
 		}
@@ -503,7 +530,7 @@ func (openCodeHarness) Teardown(path string) ([]*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	return withOpenCodeServedModel(p, nil, true)
+	return withOpenCodePlugins(p, nil, false, false)
 }
 
 func (openCodeHarness) Inspect(d Detection) (Status, error) {
@@ -512,7 +539,15 @@ func (openCodeHarness) Inspect(d Detection) (Status, error) {
 		return r, err
 	}
 	r.managed(data, openCodeTeardownPaths(data))
+	for _, plugin := range []struct{ dir, marker string }{{openCodeServedModelDir(d.Path), openCodeServedModelRoutes}, {openCodeWebSearchDir(d.Path), openCodeWebSearchMarker}} {
+		if _, owned := openCodePluginOwnership(plugin.dir, plugin.marker); owned {
+			r.Managed = append(r.Managed, "plugins/"+filepath.Base(plugin.dir))
+		}
+	}
 	if r.State == StateNotConfigured {
+		if len(r.Managed) > 0 {
+			r.State = StateIncomplete
+		}
 		return r, nil
 	}
 	// Prefer the native format: OpenCode 2 does, when a file has both.

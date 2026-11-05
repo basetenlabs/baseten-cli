@@ -996,6 +996,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 	type harnessCase struct {
 		label, name, binary string
 		args                []string
+		webSearch           bool
 		// seed is a settings file in place before setup, which decides the
 		// OpenCode settings format.
 		seed string
@@ -1012,7 +1013,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 		args := []string{"run", "--standalone", "Reply with OK."}
 		cases = append(cases,
 			harnessCase{label: "opencode2/v1", name: "opencode", binary: opencode2, args: args},
-			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}}`},
+			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}}`, webSearch: true},
 		)
 	}
 	for _, tc := range cases {
@@ -1037,7 +1038,12 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 				h.Require.NoError(os.WriteFile(harnessSettingsFile(tc.name, configDir), []byte(tc.seed), 0o600))
 			}
 			// The token helper would run this test binary, so the session's key is installed instead.
-			h.Require.NoError(h.Execute("grid", "setup", "--harness", tc.name, "--config-dir", configDir, "--use-session-credential", "--yes"))
+			setup := []string{"grid", "setup", "--harness", tc.name, "--config-dir", configDir, "--use-session-credential", "--yes"}
+			if tc.webSearch {
+				t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
+				setup = append(setup, "--opencode-web-search")
+			}
+			h.Require.NoError(h.Execute(setup...))
 
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			defer cancel()
@@ -1093,6 +1099,12 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			}
 			if tc.name == "pi" {
 				h.Require.Contains(gateway.sentTools(), "baseten_web_search", "baseten_web_search")
+			}
+			if tc.name == "opencode" {
+				h.Require.Equal(tc.webSearch, slices.Contains(gateway.sentTools(), "baseten_web_search"), "baseten_web_search")
+				if tc.webSearch {
+					h.Require.NotContains(gateway.sentTools(), "websearch", "the built-in websearch is replaced")
+				}
 			}
 		})
 	}
@@ -2475,6 +2487,82 @@ func Test_Grid_Setup_OpenCodeServedModelPrompt(t *testing.T) {
 	h.Require.NoDirExists(openCodePluginDir(filepath.Join(root, "opencode")))
 	h.Require.False(harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel)
 	h.Require.True(harnessRecordFile(t).Harnesses["opencode"].NoOpenCodeServedModel)
+}
+
+func Test_Grid_Setup_OpenCodeWebSearch(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := fakeGridAPI(t)
+	base := internalcmd.WithExecer(h.Context, openCode2Execer)
+	h.Context = base
+	dir := t.TempDir()
+	plugin := filepath.Join(dir, "plugins", "baseten-web-search", "server.js")
+	setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"}
+	recorded := func() bool { return harnessRecordFile(t).Harnesses["opencode"].OpenCodeWebSearch }
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.False(fileExists(plugin), "web search is opt-in")
+	h.Require.False(recorded())
+
+	h.Require.NoError(h.Execute(append(setup, "--opencode-web-search")...))
+	h.Require.True(fileExists(plugin))
+	h.Require.Contains(h.Stderr.String(), "Baseten-managed web search, baseten_web_search, replaces OpenCode's built-in websearch tool.")
+	h.Require.True(recorded())
+	h.Require.NoError(os.Remove(plugin))
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.True(fileExists(plugin), "sync replays the recorded opt-in")
+
+	h.Context = internalcmd.WithExecer(base, versionedHarnessExecer{"opencode": "1.19.5"})
+	h.Require.NoError(h.Execute(append(setup, "--opencode-web-search")...))
+	h.Require.False(fileExists(plugin), "OpenCode 1 gets no plugin")
+	h.Context = base
+
+	h.Require.NoError(h.Execute(append(setup, "--opencode-web-search")...))
+	h.Require.True(fileExists(plugin))
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.False(fileExists(plugin), "setup without the flag removes the plugin")
+	h.Require.False(recorded())
+
+	h.Require.NoError(h.Execute(append(setup, "--opencode-web-search")...))
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "opencode", "--config-dir", dir, "--yes"))
+	h.Require.NoDirExists(filepath.Dir(plugin))
+}
+
+func Test_Grid_Teardown_OrphanedOpenCodePlugins(t *testing.T) {
+	skipUnlessSupported(t)
+	for name, reset := range map[string]func(path string) error{
+		"deleted": os.Remove,
+		"reset":   func(path string) error { return os.WriteFile(path, []byte("{}"), 0o600) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+			serveServedModelRoutes(api, "auto")
+			root := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+			t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+			t.Setenv("XDG_CONFIG_HOME", root)
+			t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
+			dir := filepath.Join(root, "opencode")
+			search := filepath.Join(dir, "plugins", "baseten-web-search")
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--opencode-web-search", "--yes"))
+			h.Require.DirExists(search)
+			h.Require.DirExists(openCodePluginDir(dir))
+			h.Require.NoError(reset(harnessSettingsFile("opencode", dir)))
+
+			h.Require.NoError(h.Execute("grid", "status", "--output", "json"))
+			var statuses public.GridStatusList
+			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
+			h.Require.Len(statuses.Items, 1, "status lists the orphaned plugins")
+			h.Require.Equal("incomplete", statuses.Items[0].State)
+			h.Require.Equal([]string{"plugins/baseten-served-model", "plugins/baseten-web-search"}, statuses.Items[0].ManagedSettings)
+
+			h.Require.NoError(h.Execute("grid", "teardown", "--yes"))
+			h.Require.NoDirExists(search)
+			h.Require.NoDirExists(openCodePluginDir(dir))
+			h.Require.NoError(h.Execute("grid", "status"))
+			h.Require.Contains(h.Stderr.String(), "No configured Baseten harnesses found.")
+		})
+	}
 }
 
 var terminalEscape = regexp.MustCompile(`\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]`)

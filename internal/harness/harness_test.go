@@ -873,6 +873,92 @@ func TestOpenCodeV2OptionalSubagentCleanup(t *testing.T) {
 	require.False(t, get(load(t, path), openCodeV2SubagentPaths[0]).Exists, "a retired subagent route is cleared on refresh")
 }
 
+func TestOpenCodeWebSearchPlugin(t *testing.T) {
+	h := openCodeHarness{}
+	path := settingsPath(t, h)
+	dir := openCodeWebSearchDir(path)
+	plans := setup(t, h, path, testRoutes(), Selection{})
+	require.Len(t, plans, 1, "without the opt-in, setup writes no plugin")
+	require.NoDirExists(t, dir)
+
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, OpenCodeWebSearch: true})
+	require.NoError(t, err)
+	require.Len(t, plans, 2)
+	plan := plans[1]
+	require.Equal(t, dir, plan.Path)
+	require.True(t, plan.Managed)
+	require.True(t, plan.Changed)
+	require.Equal(t, []string{openCodeWebSearchMarker, "server.js"}, plan.Keys)
+	require.Equal(t, []string{"Baseten-managed web search, baseten_web_search, replaces OpenCode's built-in websearch tool."}, plan.Notes)
+	require.Contains(t, string(plan.files[1].data), "baseten_web_search")
+	require.NoError(t, ApplyPlans(plans, testToken))
+	require.FileExists(t, filepath.Join(dir, "server.js"))
+	require.NotContains(t, load(t, path), "tools", "setup leaves OpenCode's own websearch setting alone")
+	status, err := h.Inspect(Detection{Name: OpenCode, Path: path})
+	require.NoError(t, err)
+	require.Contains(t, status.Managed, "plugins/baseten-web-search")
+
+	plans = setup(t, h, path, testRoutes(), Selection{})
+	require.Len(t, plans, 2)
+	require.NoDirExists(t, dir, "setup without the opt-in removes the plugin")
+
+	setup(t, h, path, testRoutes(), Selection{})
+	plans, err = h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, OpenCodeWebSearch: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	teardown(t, h, path)
+	require.NoDirExists(t, dir)
+}
+
+func TestOpenCodeWebSearchPluginUserDir(t *testing.T) {
+	h := openCodeHarness{}
+	path := settingsPath(t, h)
+	dir := openCodeWebSearchDir(path)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	mine := filepath.Join(dir, "server.js")
+	require.NoError(t, os.WriteFile(mine, []byte("export default {}\n"), 0o600))
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, OpenCodeWebSearch: true})
+	require.NoError(t, err)
+	require.Len(t, plans, 1)
+	require.Equal(t, []string{"warning: " + dir + " already exists and was not written by baseten grid setup; leaving it unchanged, so OpenCode will not declare the baseten_web_search tool."}, plans[0].Notes)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	status, err := h.Inspect(Detection{Name: OpenCode, Path: path})
+	require.NoError(t, err)
+	require.NotContains(t, status.Managed, "plugins/baseten-web-search")
+	teardown(t, h, path)
+	raw, err := os.ReadFile(mine)
+	require.NoError(t, err)
+	require.Equal(t, "export default {}\n", string(raw), "the user's plugin survives setup and teardown")
+}
+
+func TestOpenCodeOrphanedPlugins(t *testing.T) {
+	h := openCodeHarness{}
+	for name, reset := range map[string]func(path string) error{
+		"deleted": os.Remove,
+		"reset":   func(path string) error { return os.WriteFile(path, []byte("{}"), 0o600) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := settingsPath(t, h)
+			routes := append(testRoutes(), Route{Name: "acme/auto", Router: true})
+			plans, err := h.Prepare(path, routes, PrepareOptions{Endpoint: testEndpoint, OpenCodeWebSearch: true})
+			require.NoError(t, err)
+			require.NoError(t, ApplyPlans(plans, testToken))
+			require.NoError(t, reset(path))
+			status, err := h.Inspect(Detection{Name: OpenCode, Path: path})
+			require.NoError(t, err)
+			require.Equal(t, StateIncomplete, status.State, "a setup-owned plugin outlives the settings")
+			require.Equal(t, []string{"plugins/baseten-served-model", "plugins/baseten-web-search"}, status.Managed)
+			plans = teardown(t, h, path)
+			require.True(t, slices.ContainsFunc(plans, func(p *Plan) bool { return p.Managed }))
+			require.NoDirExists(t, openCodeServedModelDir(path))
+			require.NoDirExists(t, openCodeWebSearchDir(path))
+			status, err = h.Inspect(Detection{Name: OpenCode, Path: path})
+			require.NoError(t, err)
+			require.Equal(t, StateNotConfigured, status.State)
+		})
+	}
+}
+
 func TestOpenCodeDesktopDetection(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

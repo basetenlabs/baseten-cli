@@ -644,6 +644,7 @@ type GridSetupFlags struct {
 	NoClaudeServedModel   bool   `flag:"no-claude-served-model" desc:"For Claude Code, leave out the status line or Stop hook that shows which model served a router route's response, and remove it if setup added it before, without asking."`
 	NoPiServedModel       bool   `flag:"no-pi-served-model" desc:"For Pi, leave out the extension that shows which model served a router route's response, and remove it if setup added it before, without asking."`
 	NoOpenCodeServedModel bool   `flag:"no-opencode-served-model" desc:"For OpenCode 2, leave out the plugin that shows which model served a router route's response, and remove it if setup added it before, without asking."`
+	OpenCodeWebSearch     bool   `flag:"opencode-web-search" desc:"For OpenCode 2, add a plugin that declares Baseten's hosted web search as the baseten_web_search tool in place of OpenCode's built-in websearch tool. Setup without the flag removes the plugin if setup added it before."`
 	UseSessionCredential  bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun                bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
 	Yes                   bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
