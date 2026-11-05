@@ -663,6 +663,71 @@ func TestClaudeAnthropicModelEnvIsManaged(t *testing.T) {
 	require.False(t, get(load(t, path), []string{"env", "ANTHROPIC_MODEL"}).Exists)
 }
 
+func TestClaudeSessionStartHookIsInstalledOnce(t *testing.T) {
+	h := claudeCodeHarness{}
+	path := settingsPath(t, h)
+	save(t, path, map[string]any{"theme": "dark"})
+	ours := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeSessionStartCommand}}}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.Equal(t, []any{ours}, get(load(t, path), claudeSessionStartHooksPath).Data)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	for _, p := range setup(t, h, path, testRoutes(), Selection{}) {
+		require.False(t, p.Changed, "repeating setup changes nothing")
+	}
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, string(before), string(after))
+	status, err := h.Inspect(Detection{Name: ClaudeCode, Path: path})
+	require.NoError(t, err)
+	require.Contains(t, status.Managed, pathKey(claudeSessionStartHooksPath))
+	teardown(t, h, path)
+	require.Equal(t, map[string]any{"theme": "dark"}, load(t, path))
+}
+
+func TestClaudeSessionStartHookKeepsUserHooks(t *testing.T) {
+	h := claudeCodeHarness{}
+	path := settingsPath(t, h)
+	user := []any{
+		map[string]any{"matcher": "startup", "hooks": []any{map[string]any{"type": "command", "command": "echo hi"}}},
+		map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "date"}}},
+	}
+	save(t, path, map[string]any{"hooks": map[string]any{"SessionStart": user}})
+	ours := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeSessionStartCommand}}}
+	for range 2 {
+		plans := setup(t, h, path, testRoutes(), Selection{})
+		require.Empty(t, plans[0].Replaced)
+		require.Equal(t, append(slices.Clone(user), ours), get(load(t, path), claudeSessionStartHooksPath).Data)
+	}
+	teardown(t, h, path)
+	require.Equal(t, map[string]any{"hooks": map[string]any{"SessionStart": user}}, load(t, path))
+}
+
+func TestClaudeSessionStartHookPrintsGitContext(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh is not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	run := func(dir string, args ...string) string {
+		t.Helper()
+		command := exec.Command(args[0], args[1:]...)
+		command.Dir = dir
+		out, err := command.Output()
+		require.NoError(t, err)
+		return string(out)
+	}
+	require.Empty(t, run(t.TempDir(), "sh", "-c", claudeSessionStartCommand))
+	repo := t.TempDir()
+	run(repo, "git", "init")
+	run(repo, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-m", "init")
+	run(repo, "git", "remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
+	branch := strings.TrimSpace(run(repo, "git", "branch", "--show-current"))
+	commit := strings.TrimSpace(run(repo, "git", "rev-parse", "HEAD"))
+	require.Equal(t, "repo=https://example.com/org/repo.git branch="+branch+" commit="+commit+"\n", run(repo, "sh", "-c", claudeSessionStartCommand))
+}
+
 func TestUnsupportedSelectionsAreRejected(t *testing.T) {
 	for _, tc := range []struct {
 		h Harness

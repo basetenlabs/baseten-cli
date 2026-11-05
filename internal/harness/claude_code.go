@@ -32,6 +32,10 @@ var claudeStatusLinePath = []string{"statusLine"}
 
 var claudeStopHooksPath = []string{"hooks", "Stop"}
 
+var claudeSessionStartHooksPath = []string{"hooks", "SessionStart"}
+
+const claudeSessionStartCommand = `if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf 'repo=%s branch=%s commit=%s\n' "$(git remote get-url origin 2>/dev/null | sed 's#//[^@/]*@#//#')" "$(git branch --show-current 2>/dev/null)" "$(git rev-parse HEAD 2>/dev/null)"; fi`
+
 const claudeServedModelCommand = " grid claude-served-model"
 
 var claudeServedModelPattern = regexp.MustCompile(`^'(?:[^']|'\\'')*'` + claudeServedModelCommand + `(?: --router '(?:[^']|'\\'')*')+(?: --hook)?$`)
@@ -88,7 +92,9 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, opts PrepareOpti
 	if err != nil {
 		return nil, err
 	}
-	p.Replaced = slices.DeleteFunc(p.Replaced, func(key string) bool { return key == pathKey(claudeStopHooksPath) })
+	p.Replaced = slices.DeleteFunc(p.Replaced, func(key string) bool {
+		return key == pathKey(claudeStopHooksPath) || key == pathKey(claudeSessionStartHooksPath)
+	})
 	if claudeHasServedModelHook(p.config) {
 		p.Notes = append(p.Notes, "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
 	}
@@ -174,6 +180,9 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 			values = append(values, setting{Path: claudeSubagentPath})
 		}
 	}
+	if start, ok := claudeHooksSetting(claudeSessionStartHooksPath, claudeSessionStartOwned, current, claudeCommandEntry(claudeSessionStartCommand)); ok {
+		values = append(values, start)
+	}
 	served := routes
 	if noServedModel {
 		served = nil
@@ -238,32 +247,32 @@ func claudeServedModelRemoval(current map[string]any) []setting {
 }
 
 func claudeStopHookInstall(current map[string]any, command string) []setting {
-	if stop, ok := claudeStopHooksSetting(current, claudeCommandEntry(command)); ok {
+	if stop, ok := claudeHooksSetting(claudeStopHooksPath, claudeServedModelOwned, current, claudeCommandEntry(command)); ok {
 		return []setting{stop}
 	}
 	return nil
 }
 
 func claudeStopHookRemoval(current map[string]any) []setting {
-	if stop, ok := claudeStopHooksSetting(current, nil); ok {
+	if stop, ok := claudeHooksSetting(claudeStopHooksPath, claudeServedModelOwned, current, nil); ok {
 		return []setting{stop}
 	}
 	return nil
 }
 
-func claudeStopHooksSetting(current, own map[string]any) (setting, bool) {
-	stop := get(current, claudeStopHooksPath)
-	existing, ok := stop.Data.([]any)
-	if (stop.Exists && !ok) || (own == nil && !slices.ContainsFunc(existing, claudeServedModelHook)) {
+func claudeHooksSetting(path []string, owned func(any) bool, current, own map[string]any) (setting, bool) {
+	hooks := get(current, path)
+	existing, ok := hooks.Data.([]any)
+	if (hooks.Exists && !ok) || (own == nil && !slices.ContainsFunc(existing, claudeOwnedHookGroup(owned))) {
 		return setting{}, false
 	}
 	var entries []any
 	for _, entry := range existing {
-		if !claudeServedModelHook(entry) {
+		if !claudeOwnedHookGroup(owned)(entry) {
 			entries = append(entries, entry)
 			continue
 		}
-		group, placed := claudeRewrittenStopGroup(entry, own)
+		group, placed := claudeRewrittenHookGroup(owned, entry, own)
 		if placed {
 			own = nil
 		}
@@ -275,19 +284,19 @@ func claudeStopHooksSetting(current, own map[string]any) (setting, bool) {
 		entries = append(entries, map[string]any{"hooks": []any{own}})
 	}
 	if len(entries) == 0 {
-		return setting{Path: claudeStopHooksPath}, true
+		return setting{Path: path}, true
 	}
-	return desired(claudeStopHooksPath, entries), true
+	return desired(path, entries), true
 }
 
-func claudeRewrittenStopGroup(entry any, own map[string]any) (map[string]any, bool) {
+func claudeRewrittenHookGroup(owned func(any) bool, entry any, own map[string]any) (map[string]any, bool) {
 	group, _ := entry.(map[string]any)
 	hooks, _ := group["hooks"].([]any)
 	var kept []any
 	placed := false
 	for _, hook := range hooks {
 		switch {
-		case !claudeServedModelOwned(hook):
+		case !owned(hook):
 			kept = append(kept, hook)
 		case own != nil && !placed:
 			kept, placed = append(kept, own), true
@@ -307,15 +316,23 @@ func claudeServedModelOwned(v any) bool {
 	return claudeServedModelPattern.MatchString(command)
 }
 
-func claudeServedModelHook(entry any) bool {
-	group, _ := entry.(map[string]any)
-	hooks, _ := group["hooks"].([]any)
-	return slices.ContainsFunc(hooks, claudeServedModelOwned)
+func claudeSessionStartOwned(v any) bool {
+	entry, _ := v.(map[string]any)
+	command, _ := entry["command"].(string)
+	return command == claudeSessionStartCommand
+}
+
+func claudeOwnedHookGroup(owned func(any) bool) func(any) bool {
+	return func(entry any) bool {
+		group, _ := entry.(map[string]any)
+		hooks, _ := group["hooks"].([]any)
+		return slices.ContainsFunc(hooks, owned)
+	}
 }
 
 func claudeHasServedModelHook(data map[string]any) bool {
 	stop, _ := get(data, claudeStopHooksPath).Data.([]any)
-	return slices.ContainsFunc(stop, claudeServedModelHook)
+	return slices.ContainsFunc(stop, claudeOwnedHookGroup(claudeServedModelOwned))
 }
 
 func ClaudeServedModel(transcript, message, prompt string) (requested, served string) {
@@ -446,11 +463,18 @@ func (claudeCodeHarness) Teardown(path string) ([]*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	if stop, ok := claudeStopHooksSetting(p.config, nil); ok && p.Managed {
-		if err := put(p.config, stop.Path, stop.Installed); err != nil {
+	if !p.Managed {
+		return []*Plan{p}, nil
+	}
+	removals := claudeStopHookRemoval(p.config)
+	if start, ok := claudeHooksSetting(claudeSessionStartHooksPath, claudeSessionStartOwned, p.config, nil); ok {
+		removals = append(removals, start)
+	}
+	for _, hooks := range removals {
+		if err := put(p.config, hooks.Path, hooks.Installed); err != nil {
 			return nil, err
 		}
-		p.Keys = append(p.Keys, pathKey(stop.Path))
+		p.Keys = append(p.Keys, pathKey(hooks.Path))
 		if err := p.encode(); err != nil {
 			return nil, err
 		}
@@ -469,6 +493,9 @@ func (claudeCodeHarness) Inspect(d Detection) (Status, error) {
 	}
 	if claudeHasServedModelHook(data) {
 		r.Managed = append(r.Managed, pathKey(claudeStopHooksPath))
+	}
+	if _, ok := claudeHooksSetting(claudeSessionStartHooksPath, claudeSessionStartOwned, data, nil); ok {
+		r.Managed = append(r.Managed, pathKey(claudeSessionStartHooksPath))
 	}
 	r.BackgroundRoute, _ = get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string)
 	r.addRoutes(claudeRoutes(data))

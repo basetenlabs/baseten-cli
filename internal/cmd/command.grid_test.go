@@ -1159,7 +1159,7 @@ func Test_Grid_Setup_ServedModelStatusLine(t *testing.T) {
 	h.Require.Equal(map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --router 'acme/auto=auto'"}, settings["statusLine"])
 	h.Require.Contains(settings["availableModels"], "acme/auto[1m]")
 	h.Require.Equal("dark", settings["theme"])
-	h.Require.NotContains(settings, "hooks")
+	h.Require.NotContains(settings["hooks"], "Stop")
 	h.Require.NotContains(h.Stderr.String(), "Existing statusLine")
 
 	h.Require.NoError(h.Execute(setup...))
@@ -1308,7 +1308,7 @@ func Test_Grid_Setup_ServedModelZeroRouters(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	settings := readHarnessSettings(t, "claude-code", path)
 	h.Require.NotContains(settings, "statusLine")
-	h.Require.NotContains(settings, "hooks")
+	h.Require.NotContains(settings["hooks"], "Stop")
 
 	serveServedModelRoutes(api, "auto")
 	h.Require.NoError(h.Execute(setup...))
@@ -1319,7 +1319,7 @@ func Test_Grid_Setup_ServedModelZeroRouters(t *testing.T) {
 
 	settings = readHarnessSettings(t, "claude-code", path)
 	settings["statusLine"] = map[string]any{"type": "command", "command": "my-status"}
-	settings["hooks"] = map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "say done"}}}}}
+	settings["hooks"].(map[string]any)["Stop"] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "say done"}}}}
 	raw, err := json.Marshal(settings)
 	h.Require.NoError(err)
 	h.Require.NoError(os.WriteFile(path, raw, 0o600))
@@ -1373,7 +1373,8 @@ func Test_Grid_Setup_ServedModelOptOut(t *testing.T) {
 	h.Require.NoError(h.Execute(append(setup, "--no-claude-served-model")...))
 	settings := readHarnessSettings(t, "claude-code", path)
 	h.Require.NotContains(settings, "statusLine")
-	h.Require.Equal(guard, settings["hooks"])
+	h.Require.Equal(guard["PreToolUse"], settings["hooks"].(map[string]any)["PreToolUse"])
+	h.Require.NotContains(settings["hooks"], "Stop")
 	h.Require.Equal("dark", settings["theme"])
 	h.Require.True(harnessRecordFile(t).Harnesses["claude-code"].NoClaudeServedModel)
 	h.Require.Contains(record(), `"no_claude_served_model": true`)
@@ -1400,7 +1401,7 @@ func Test_Grid_Setup_ServedModelOptOut(t *testing.T) {
 	h.Require.NoError(h.Execute(append(setup, "--no-claude-served-model")...))
 	settings = readHarnessSettings(t, "claude-code", path)
 	h.Require.Equal(userStatusLine, settings["statusLine"])
-	h.Require.Equal(map[string]any{"Stop": []any{userStop}}, settings["hooks"])
+	h.Require.Equal([]any{userStop}, settings["hooks"].(map[string]any)["Stop"])
 }
 
 func Test_Grid_Setup_ServedModelPrompt(t *testing.T) {
