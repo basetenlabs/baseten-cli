@@ -585,3 +585,19 @@ func Test_Auth_Login_Web_ProfileFlagOverridesName(t *testing.T) {
 	h.Require.True(ok)
 	h.Require.Equal("work", name)
 }
+
+func Test_Auth_Token_APIKeyProfile(t *testing.T) {
+	h := newAuthHarness(t)
+
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-xyz", true, nil))
+
+	h.Require.NoError(h.Execute("auth", "token"))
+	h.Require.Equal("key-xyz\n", h.Stdout.String())
+}
+
+func Test_Auth_Token_NotLoggedIn(t *testing.T) {
+	h := newAuthHarness(t)
+	h.Require.Error(h.Execute("auth", "token"))
+	h.Require.Contains(h.Stderr.String(), "not logged in")
+}

@@ -23,6 +23,7 @@ func init() {
 	Register("auth logout", commandAuthLogout)
 	Register("auth switch", commandAuthSwitch)
 	Register("auth status", commandAuthStatus)
+	Register("auth token", commandAuthToken)
 	Register("auth list", commandAuthList)
 }
 
@@ -253,6 +254,28 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 		})
 	} else {
 		ctx.Outputf("%s\n  Remote: %s\n  Auth type: %s\n", profileName, hyperlink(ctx.Stdout, profile.RemoteURL), profile.AuthType)
+	}
+	return nil
+}
+
+func commandAuthToken(ctx *CommandContext, flags *cmd.AuthTokenFlags) error {
+	transport, _, err := ctx.AuthTransport()
+	if err != nil {
+		return err
+	}
+	token, err := transport.Credential(ctx)
+	if err != nil {
+		return err
+	}
+
+	authType := auth.AuthTypeOAuth
+	if transport.Session.UsesAPIKey() {
+		authType = auth.AuthTypeAPIKey
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(cmd.AuthTokenResult{Token: token, AuthType: string(authType)})
+	} else {
+		ctx.Outputf("%s\n", token)
 	}
 	return nil
 }

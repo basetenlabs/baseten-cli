@@ -98,6 +98,32 @@ var commandAuth = Command{
 			},
 		},
 		{
+			Name:    "token",
+			Summary: "Print the current credential",
+			Description: "Print the credential the resolved profile authenticates with, for tools and SDKs " +
+				"that read BASETEN_API_KEY. Prints the stored API key for API key profiles, or an " +
+				"access token for browser logins, refreshed first if it has expired. An access " +
+				"token expires, so run this again rather than storing its output.",
+			Flags: AuthTokenFlags{},
+			Output: &CommandOutput[AuthTokenResult]{
+				TextDescription: "Prints the credential alone on one line to stdout.",
+				Examples: []CommandExample{
+					{
+						Description: "Hand the current credential to a Baseten SDK.",
+						Command:     "export BASETEN_API_KEY=$(baseten auth token)",
+					},
+					{
+						Description: "Print the credential for a specific profile.",
+						Command:     "baseten auth token --profile <profile>",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print just the auth type.",
+					Command:     "baseten auth token --jq '.auth_type'",
+				},
+			},
+		},
+		{
 			Name:        "list",
 			Summary:     "List stored profiles",
 			Description: "List stored profiles, marking the one currently in use.",
@@ -147,6 +173,12 @@ type AuthStatusResult struct {
 	AuthType  string `json:"auth_type"`
 }
 
+// AuthTokenResult is the JSON output of `baseten auth token`.
+type AuthTokenResult struct {
+	Token    string `json:"token"`
+	AuthType string `json:"auth_type"`
+}
+
 // AuthListResult is the JSON output of `baseten auth list`.
 type AuthListResult struct {
 	Profiles []AuthListProfile `json:"profiles"`
@@ -182,6 +214,11 @@ type AuthSwitchFlags struct {
 
 // AuthStatusFlags are the flags for baseten auth status.
 type AuthStatusFlags struct {
+	CommandFlags
+}
+
+// AuthTokenFlags are the flags for baseten auth token.
+type AuthTokenFlags struct {
 	CommandFlags
 }
 
