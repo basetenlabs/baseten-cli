@@ -1039,7 +1039,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			run := exec.CommandContext(ctx, binary, tc.args...)
 			run.Dir = t.TempDir()
 			var gitContext string
-			if tc.name == "opencode" {
+			if tc.name != "codex" {
 				gitContext = initHarnessGitRepo(t, run.Dir)
 			}
 			// A minimal environment: anything inherited could point the harness at
