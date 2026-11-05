@@ -539,9 +539,9 @@ func (openCodeHarness) Inspect(d Detection) (Status, error) {
 		return r, err
 	}
 	r.managed(data, openCodeTeardownPaths(data))
-	for _, plugin := range [][2]string{{openCodeServedModelDir(d.Path), openCodeServedModelRoutes}, {openCodeWebSearchDir(d.Path), openCodeWebSearchMarker}} {
-		if _, owned := openCodePluginOwnership(plugin[0], plugin[1]); owned {
-			r.Managed = append(r.Managed, "plugins/"+filepath.Base(plugin[0]))
+	for _, plugin := range []struct{ dir, marker string }{{openCodeServedModelDir(d.Path), openCodeServedModelRoutes}, {openCodeWebSearchDir(d.Path), openCodeWebSearchMarker}} {
+		if _, owned := openCodePluginOwnership(plugin.dir, plugin.marker); owned {
+			r.Managed = append(r.Managed, "plugins/"+filepath.Base(plugin.dir))
 		}
 	}
 	if r.State == StateNotConfigured {
