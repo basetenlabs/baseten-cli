@@ -2527,6 +2527,44 @@ func Test_Grid_Setup_OpenCodeWebSearch(t *testing.T) {
 	h.Require.NoDirExists(filepath.Dir(plugin))
 }
 
+func Test_Grid_Teardown_OrphanedOpenCodePlugins(t *testing.T) {
+	skipUnlessSupported(t)
+	for name, reset := range map[string]func(path string) error{
+		"deleted": os.Remove,
+		"reset":   func(path string) error { return os.WriteFile(path, []byte("{}"), 0o600) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+			serveServedModelRoutes(api, "auto")
+			root := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+			t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+			t.Setenv("XDG_CONFIG_HOME", root)
+			t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
+			dir := filepath.Join(root, "opencode")
+			search := filepath.Join(dir, "plugins", "baseten-web-search")
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--opencode-web-search", "--yes"))
+			h.Require.DirExists(search)
+			h.Require.DirExists(openCodePluginDir(dir))
+			h.Require.NoError(reset(harnessSettingsFile("opencode", dir)))
+
+			h.Require.NoError(h.Execute("grid", "status", "--output", "json"))
+			var statuses public.GridStatusList
+			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
+			h.Require.Len(statuses.Items, 1, "status lists the orphaned plugins")
+			h.Require.Equal("incomplete", statuses.Items[0].State)
+			h.Require.Equal([]string{"plugins/baseten-served-model", "plugins/baseten-web-search"}, statuses.Items[0].ManagedSettings)
+
+			h.Require.NoError(h.Execute("grid", "teardown", "--yes"))
+			h.Require.NoDirExists(search)
+			h.Require.NoDirExists(openCodePluginDir(dir))
+			h.Require.NoError(h.Execute("grid", "status"))
+			h.Require.Contains(h.Stderr.String(), "No configured Baseten harnesses found.")
+		})
+	}
+}
+
 var terminalEscape = regexp.MustCompile(`\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]`)
 
 func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {

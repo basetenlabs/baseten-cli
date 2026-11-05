@@ -539,11 +539,16 @@ func (openCodeHarness) Inspect(d Detection) (Status, error) {
 		return r, err
 	}
 	r.managed(data, openCodeTeardownPaths(data))
-	if r.State == StateNotConfigured {
-		return r, nil
+	for _, plugin := range [][2]string{{openCodeServedModelDir(d.Path), openCodeServedModelRoutes}, {openCodeWebSearchDir(d.Path), openCodeWebSearchMarker}} {
+		if _, owned := openCodePluginOwnership(plugin[0], plugin[1]); owned {
+			r.Managed = append(r.Managed, "plugins/"+filepath.Base(plugin[0]))
+		}
 	}
-	if _, owned := openCodePluginOwnership(openCodeWebSearchDir(d.Path), openCodeWebSearchMarker); owned {
-		r.Managed = append(r.Managed, "plugins/baseten-web-search")
+	if r.State == StateNotConfigured {
+		if len(r.Managed) > 0 {
+			r.State = StateIncomplete
+		}
+		return r, nil
 	}
 	// Prefer the native format: OpenCode 2 does, when a file has both.
 	providerPath, backgroundPath := openCodeV2ProviderPath, openCodeV2BackgroundPath
