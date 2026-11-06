@@ -20,6 +20,9 @@ type openCodeHarness struct{}
 //go:embed opencode-served-model
 var openCodeServedModelSource embed.FS
 
+//go:embed opencode_git_context.js
+var openCodeGitContextSource []byte
+
 const (
 	openCodeServedModelSourceDir = "opencode-served-model"
 	openCodeServedModelRoutes    = "routes.json"
@@ -73,11 +76,11 @@ var (
 	openCodeV2BackgroundPath = []string{"agents", "title", "model"}
 )
 
-// openCodeProviderPackages maps route providers to the AI SDK package for
-// their native API. Other providers use the Chat Completions package.
-var openCodeProviderPackages = map[string]string{
-	ProviderAnthropic: "@ai-sdk/anthropic",
-	ProviderOpenAI:    "@ai-sdk/openai",
+// openCodeModelPackages maps the API a route serves to the AI SDK package
+// that speaks it. Routes called with Chat Completions use the provider's.
+var openCodeModelPackages = map[TargetAPI]string{
+	TargetAPIMessages:  "@ai-sdk/anthropic",
+	TargetAPIResponses: "@ai-sdk/openai",
 }
 
 // openCodeV2Packages maps the AI SDK packages V1 names to OpenCode 2's
@@ -256,7 +259,20 @@ func (openCodeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 		return nil, err
 	}
 	p.bearerPath = bearerPath
-	return withOpenCodeServedModel(p, routes, opts.NoOpenCodeServedModel)
+	plans, err := withOpenCodeServedModel(p, routes, opts.NoOpenCodeServedModel)
+	if err != nil {
+		return nil, err
+	}
+	var gitContext []*Plan
+	if opts.GitContext {
+		gitContext, err = prepareSealedFile(openCodeGitContextPath(path), openCodeGitContextSource, "OpenCode sessions will not include the git repository, branch, and commit")
+	} else {
+		gitContext, err = prepareSealedFileRemoval(openCodeGitContextPath(path))
+	}
+	if err != nil {
+		return nil, err
+	}
+	return append(plans, gitContext...), nil
 }
 
 func HasOpenCode2(d Detection) bool {
@@ -274,6 +290,10 @@ func openCodeMajorVersion(version string) int {
 
 func openCodeServedModelDir(path string) string {
 	return filepath.Join(filepath.Dir(path), "plugins", "baseten-served-model")
+}
+
+func openCodeGitContextPath(path string) string {
+	return filepath.Join(filepath.Dir(path), "plugins", "baseten-git-context.js")
 }
 
 func withOpenCodeServedModel(p *Plan, routes []Route, off bool) ([]*Plan, error) {
@@ -358,9 +378,9 @@ func openCodeV1Settings(routes []Route, s Selection, endpoint, bearer string) []
 		if r.Cost != nil {
 			model["cost"] = openCodeV1Cost(*r.Cost)
 		}
-		// A model's npm overrides the provider's, so first-party routes use their
-		// native API at the same base URL: Messages for Anthropic, Responses for OpenAI.
-		if npm, ok := openCodeProviderPackages[r.Provider]; ok {
+		// A model's npm overrides the provider's, so a route is called with the
+		// API its supported formats advertise, at the same base URL.
+		if npm, ok := openCodeModelPackages[r.TargetAPI]; ok {
 			model["provider"] = map[string]any{"npm": npm}
 		}
 		models[r.Name] = model
@@ -402,7 +422,7 @@ func openCodeV2Settings(routes []Route, s Selection, endpoint, bearer string) []
 		if r.Cost != nil {
 			model["cost"] = openCodeV2Cost(*r.Cost)
 		}
-		if npm, ok := openCodeProviderPackages[r.Provider]; ok {
+		if npm, ok := openCodeModelPackages[r.TargetAPI]; ok {
 			model["package"] = openCodeV2Packages[npm]
 		}
 		models[r.Name] = model
@@ -503,7 +523,15 @@ func (openCodeHarness) Teardown(path string) ([]*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	return withOpenCodeServedModel(p, nil, true)
+	plans, err := withOpenCodeServedModel(p, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	gitContext, err := prepareSealedFileRemoval(openCodeGitContextPath(path))
+	if err != nil {
+		return nil, err
+	}
+	return append(plans, gitContext...), nil
 }
 
 func (openCodeHarness) Inspect(d Detection) (Status, error) {

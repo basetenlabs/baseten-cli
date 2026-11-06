@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -929,6 +931,7 @@ type harnessGateway struct {
 	models         []string
 	clients        []string
 	requestClasses []string
+	bodies         []string
 }
 
 func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -939,8 +942,9 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal(raw, &body) == nil && body.Model != "" {
 		g.mu.Lock()
 		g.models = append(g.models, body.Model)
-		g.clients = append(g.clients, r.Header.Get("X-Baseten-Client"))
+		g.clients = append(g.clients, r.Header.Get("X-Baseten-Grid-Client"))
 		g.requestClasses = append(g.requestClasses, r.Header.Get("x-claude-code-request-class"))
+		g.bodies = append(g.bodies, string(raw))
 		g.mu.Unlock()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -956,10 +960,27 @@ func (g *harnessGateway) requested() []string {
 
 func (g *harnessGateway) saw(model string) bool { return slices.Contains(g.requested(), model) }
 
+func (g *harnessGateway) sawWith(model, text string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for i, requested := range g.models {
+		if requested == model && strings.Contains(g.bodies[i], text) {
+			return true
+		}
+	}
+	return false
+}
+
 func (g *harnessGateway) sentClients() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return slices.Clone(g.clients)
+}
+
+func (g *harnessGateway) sentBodies() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.bodies)
 }
 
 func (g *harnessGateway) sentRequestClasses() []string {
@@ -988,7 +1009,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 	cases := []harnessCase{
 		{label: "claude-code", name: "claude-code", binary: "claude", args: []string{"-p", "Reply with OK."}},
 		{label: "codex", name: "codex", binary: "codex", args: []string{"exec", "--skip-git-repo-check", "Reply with OK."}},
-		{label: "opencode/v1", name: "opencode", binary: "opencode", args: []string{"run", "Reply with OK."}},
+		{label: "opencode/v1", name: "opencode", binary: "opencode", args: []string{"run", "Reply with OK."}, seed: `{"snapshot": false}`},
 		{label: "pi", name: "pi", binary: "pi", args: []string{"--print", "Reply with OK."}},
 	}
 	if opencode2 := os.Getenv("BASETEN_TEST_OPENCODE2"); opencode2 != "" {
@@ -996,8 +1017,8 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 		// private one keeps the test off the developer's.
 		args := []string{"run", "--standalone", "Reply with OK."}
 		cases = append(cases,
-			harnessCase{label: "opencode2/v1", name: "opencode", binary: opencode2, args: args},
-			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}}`},
+			harnessCase{label: "opencode2/v1", name: "opencode", binary: opencode2, args: args, seed: `{"snapshot": false}`},
+			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}, "snapshot": false}`},
 		)
 	}
 	for _, tc := range cases {
@@ -1022,12 +1043,16 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 				h.Require.NoError(os.WriteFile(harnessSettingsFile(tc.name, configDir), []byte(tc.seed), 0o600))
 			}
 			// The token helper would run this test binary, so the session's key is installed instead.
-			h.Require.NoError(h.Execute("grid", "setup", "--harness", tc.name, "--config-dir", configDir, "--use-session-credential", "--yes"))
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", tc.name, "--config-dir", configDir, "--use-session-credential", "--yes", "--git-context"))
 
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			defer cancel()
 			run := exec.CommandContext(ctx, binary, tc.args...)
 			run.Dir = t.TempDir()
+			var gitContext string
+			if tc.name != "codex" {
+				gitContext = initHarnessGitRepo(t, run.Dir)
+			}
 			// A minimal environment: anything inherited could point the harness at
 			// a real provider and make the test pass for the wrong reason.
 			run.Env = []string{
@@ -1057,7 +1082,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			// The gateway refuses every request, so stop the harness once it asks
 			// for the route rather than waiting out its retries.
 			exited := false
-			for !gateway.saw("acme/primary") && !exited && ctx.Err() == nil {
+			for !gateway.sawWith("acme/primary", gitContext) && !exited && ctx.Err() == nil {
 				select {
 				case <-done:
 					exited = true
@@ -1072,12 +1097,33 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			if !gateway.saw("acme/primary") {
 				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.requested(), output.String())
 			}
-			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Client")
+			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Grid-Client")
+			if gitContext != "" {
+				h.Require.True(slices.ContainsFunc(gateway.sentBodies(), func(body string) bool { return strings.Contains(body, gitContext) }), "git context %q", gitContext)
+			}
 			if tc.name == "claude-code" {
 				h.Require.True(slices.ContainsFunc(gateway.sentRequestClasses(), func(v string) bool { return v != "" }), "x-claude-code-request-class")
 			}
 		})
 	}
+}
+
+func initHarnessGitRepo(t *testing.T, dir string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	run := func(args ...string) string {
+		command := exec.Command("git", args...)
+		command.Dir = dir
+		out, err := command.Output()
+		require.NoError(t, err)
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-q")
+	run("-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
+	run("remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
+	return "repo=https://example.com/org/repo.git branch=" + run("branch", "--show-current") + " commit=" + run("rev-parse", "HEAD")
 }
 
 func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
@@ -1783,6 +1829,10 @@ func piServedModelFile(dir string) string {
 	return filepath.Join(dir, "extensions", "baseten-served-model.ts")
 }
 
+func piGitContextFile(dir string) string {
+	return filepath.Join(dir, "extensions", "baseten-git-context.ts")
+}
+
 func piServedModelRouters(t *testing.T, path string) map[string]string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -2040,25 +2090,38 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 		t.Skip("pi is not on PATH")
 	}
 	var mu sync.Mutex
-	var requested []string
+	var requested, bodies []string
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			http.NotFound(w, r)
 			return
 		}
 		var body struct {
-			Model string `json:"model"`
+			Model    string `json:"model"`
+			Messages []struct {
+				Role string `json:"role"`
+			} `json:"messages"`
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
 		mu.Lock()
 		requested = append(requested, body.Model)
+		bodies = append(bodies, string(raw))
 		mu.Unlock()
-		served := map[string]string{"acme/auto": "acme/served-x", "acme/primary": "acme/served-z"}[body.Model]
+		final := len(body.Messages) > 0 && body.Messages[len(body.Messages)-1].Role == "tool"
+		served := map[bool]map[string]string{
+			false: {"acme/auto": "acme/served-step", "acme/primary": "acme/served-z"},
+			true:  {"acme/auto": "acme/served-final", "acme/primary": "acme/served-z"},
+		}[final][body.Model]
+		delta, finish := map[string]any{"role": "assistant", "content": "Reading notes.", "tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
+			"function": map[string]any{"name": "read", "arguments": `{"path":"notes.txt"}`}}}}, "tool_calls"
+		if final {
+			delta, finish = map[string]any{"role": "assistant", "content": "Done reading."}, "stop"
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, chunk := range []map[string]any{
-			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": "OK"}, "finish_reason": nil}}},
-			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}},
+			{"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}},
+			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": finish}}},
 			{"choices": []any{}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}},
 		} {
 			chunk["id"], chunk["object"], chunk["created"], chunk["model"] = "chatcmpl-served", "chat.completion.chunk", 1, served
@@ -2090,6 +2153,14 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	work, tmp := t.TempDir(), t.TempDir()
+	h.Require.NoError(os.WriteFile(filepath.Join(work, "notes.txt"), []byte("hello\n"), 0o600))
+	environment := func(env []string) []string {
+		return append([]string{
+			"HOME=" + root, "PI_CODING_AGENT_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + tmp, "PI_OFFLINE=1", "PI_TELEMETRY=0",
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}, env...)
+	}
 	type command struct {
 		Type     string `json:"type"`
 		Message  string `json:"message,omitempty"`
@@ -2101,14 +2172,10 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	use := func(model string) command {
 		return command{Type: "set_model", Provider: "baseten-harness", ModelID: model}
 	}
-	session := func(env []string, args []string, commands ...command) []string {
+	session := func(env []string, args []string, commands ...command) {
 		run := exec.CommandContext(ctx, binary, append([]string{"--mode", "rpc"}, args...)...)
 		run.Dir = work
-		run.Env = append([]string{
-			"HOME=" + root, "PI_CODING_AGENT_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + tmp, "PI_OFFLINE=1", "PI_TELEMETRY=0",
-			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
-			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
-		}, env...)
+		run.Env = environment(env)
 		run.WaitDelay = 5 * time.Second
 		var stderr strings.Builder
 		run.Stderr = &stderr
@@ -2118,7 +2185,6 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 		h.Require.NoError(err)
 		h.Require.NoError(run.Start())
 		lines := bufio.NewReader(stdout)
-		var statuses []string
 		for _, c := range commands {
 			raw, err := json.Marshal(c)
 			h.Require.NoError(err)
@@ -2128,41 +2194,127 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 				line, err := lines.ReadBytes('\n')
 				h.Require.NoError(err, "pi stopped before finishing %s: %s", c.Type, stderr.String())
 				var event struct {
-					Type       string `json:"type"`
-					Command    string `json:"command"`
-					Success    bool   `json:"success"`
-					Error      string `json:"error"`
-					Method     string `json:"method"`
-					StatusKey  string `json:"statusKey"`
-					StatusText string `json:"statusText"`
+					Type    string `json:"type"`
+					Command string `json:"command"`
+					Success bool   `json:"success"`
+					Error   string `json:"error"`
 				}
 				if json.Unmarshal(line, &event) != nil {
 					continue
 				}
 				h.Require.NotEqual("extension_error", event.Type, string(line))
 				h.Require.False(event.Type == "response" && !event.Success, event.Error)
-				if event.Method == "setStatus" && event.StatusKey == "baseten-served-model" {
-					statuses = append(statuses, event.StatusText)
-				}
-				done = (c.Type == "prompt" && event.Type == "agent_end") || (c.Type != "prompt" && event.Type == "response" && event.Command == c.Type)
+				done = (c.Type == "prompt" && event.Type == "agent_settled") || (c.Type != "prompt" && event.Type == "response" && event.Command == c.Type)
 			}
 		}
 		h.Require.NoError(stdin.Close())
 		h.Require.NoError(run.Wait(), stderr.String())
-		return statuses
 	}
-	served := "Auto (Baseten Internal Dogfooding) → acme/served-x"
+	transcript := func() []string {
+		files, err := filepath.Glob(filepath.Join(configDir, "sessions", "*", "*.jsonl"))
+		h.Require.NoError(err)
+		h.Require.Len(files, 1)
+		raw, err := os.ReadFile(files[0])
+		h.Require.NoError(err)
+		var entries []string
+		for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+			var entry struct {
+				Type       string `json:"type"`
+				CustomType string `json:"customType"`
+				Data       struct {
+					Label string `json:"label"`
+				} `json:"data"`
+				Message struct {
+					Role          string `json:"role"`
+					ResponseModel string `json:"responseModel"`
+				} `json:"message"`
+			}
+			h.Require.NoError(json.Unmarshal([]byte(line), &entry))
+			switch {
+			case entry.Type == "custom":
+				entries = append(entries, entry.CustomType+": "+entry.Data.Label)
+			case entry.Type == "message" && entry.Message.Role != "system":
+				entries = append(entries, strings.TrimSpace(entry.Message.Role+" "+entry.Message.ResponseModel))
+			}
+		}
+		return entries
+	}
+	render := func(last string, env ...string) string {
+		t.Helper()
+		run := exec.CommandContext(ctx, binary, "--continue")
+		run.Dir = work
+		run.Env = environment(append([]string{"TERM=xterm-256color"}, env...))
+		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 60, Cols: 200})
+		h.Require.NoError(err)
+		var screenMu sync.Mutex
+		var screen strings.Builder
+		go func() {
+			buf := make([]byte, 32<<10)
+			for {
+				n, err := terminal.Read(buf)
+				screenMu.Lock()
+				screen.Write(buf[:n])
+				screenMu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}()
+		shown := func() string {
+			screenMu.Lock()
+			defer screenMu.Unlock()
+			return terminalEscape.ReplaceAllString(screen.String(), "")
+		}
+		for ctx.Err() == nil && !strings.Contains(shown(), last) {
+			time.Sleep(100 * time.Millisecond)
+		}
+		time.Sleep(time.Second)
+		_ = run.Process.Kill()
+		_ = run.Wait()
+		_ = terminal.Close()
+		h.Require.Contains(shown(), last, "pi rendered the resumed session")
+		return shown()
+	}
+	label := "Auto (Baseten Internal Dogfooding) → acme/served-final"
+	served := "baseten-served-model: " + label
+	routed := func(entries ...string) []string {
+		return append([]string{"user", "assistant acme/served-step", "toolResult", "assistant acme/served-final"}, entries...)
+	}
+	primary := []string{"user", "assistant acme/served-z", "toolResult", "assistant acme/served-z"}
 
-	h.Require.Equal([]string{"", served, "", served},
-		session(nil, nil, state, prompt("Reply with OK."), use("acme/primary"), prompt("Reply again."), use("acme/auto"), prompt("Reply once more.")))
-	h.Require.Equal([]string{served}, session(nil, []string{"--continue"}, state), "a resumed session shows its latest response")
+	session(nil, nil, state, prompt("Summarize notes.txt."), use("acme/primary"), prompt("Summarize notes.txt again."), use("acme/auto"), prompt("Summarize notes.txt once more."))
+	want := slices.Concat(routed(served), primary, routed(served))
+	h.Require.Equal(want, transcript(), "one entry per router prompt, after its final response, naming the model that served that response")
+	h.Require.Contains(render("Summarize notes.txt once more."), label, "a resumed session renders the entries")
+
 	for _, off := range []string{"0", "false"} {
-		h.Require.Empty(session([]string{"BASETEN_PI_SERVED_MODEL=" + off}, []string{"--continue"}, state, prompt("Reply with OK.")))
+		session([]string{"BASETEN_PI_SERVED_MODEL=" + off}, []string{"--continue"}, prompt("Summarize notes.txt with the display "+off+"."))
+		want = append(want, routed()...)
+		h.Require.Equal(want, transcript(), "BASETEN_PI_SERVED_MODEL=%s adds no entry", off)
+		h.Require.NotContains(render("Summarize notes.txt with the display "+off+".", "BASETEN_PI_SERVED_MODEL="+off), label, "BASETEN_PI_SERVED_MODEL=%s renders no entry", off)
 	}
-	h.Require.Equal([]string{served}, session([]string{"BASETEN_PI_SERVED_MODEL=1"}, []string{"--continue"}, state))
+	session([]string{"BASETEN_PI_SERVED_MODEL=1"}, []string{"--continue"}, prompt("Summarize notes.txt with the display on."))
+	want = append(want, routed(served)...)
+	h.Require.Equal(want, transcript())
+
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", configDir, "--primary-route-id", "route-auto", "--use-session-credential", "--yes", "--no-pi-served-model"))
+	h.Require.NoFileExists(piServedModelFile(configDir))
+	session(nil, []string{"--continue"}, prompt("Summarize notes.txt without the extension."))
+	want = append(want, routed()...)
+	h.Require.Equal(want, transcript())
+	orphaned := render("Summarize notes.txt without the extension.")
+	h.Require.NotContains(orphaned, label, "entries left by a removed extension are not shown")
+	h.Require.NotContains(orphaned, "baseten-served-model")
+
 	mu.Lock()
-	h.Require.Equal([]string{"acme/auto", "acme/primary", "acme/auto", "acme/auto", "acme/auto"}, requested)
-	mu.Unlock()
+	defer mu.Unlock()
+	h.Require.Equal(slices.Concat(slices.Repeat([]string{"acme/auto"}, 2), slices.Repeat([]string{"acme/primary"}, 2), slices.Repeat([]string{"acme/auto"}, 10)), requested)
+	h.Require.Contains(bodies[len(bodies)-1], "Done reading.", "later requests carry the earlier responses")
+	for _, body := range bodies {
+		for _, leak := range []string{"baseten-served-model", "Auto (Baseten Internal Dogfooding)", "→", `\u2192`, "acme/served"} {
+			h.Require.NotContains(body, leak, "entries never reach the model")
+		}
+	}
 }
 
 var openCode2Execer = versionedHarnessExecer{"claude": "2.1.272 (Claude Code)", "opencode": "opencode v2.2.5"}
@@ -2475,8 +2627,12 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	var answered time.Time
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Model string `json:"model"`
-			Tools []any  `json:"tools"`
+			Model    string `json:"model"`
+			Tools    []any  `json:"tools"`
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
@@ -2484,13 +2640,31 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		last := body.Messages[len(body.Messages)-1]
+		step := len(body.Tools) > 0 && last.Role == "user" && bytes.Contains(last.Content, []byte("notes.txt"))
+		delta, finish := map[string]any{"content": "Served reply."}, "stop"
+		if step {
+			delta, finish = map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
+				"function": map[string]any{"name": "read", "arguments": `{"path":"notes.txt"}`}}}}, "tool_calls"
+		}
+		served := "qwen/Qwen3.6-Coder"
+		switch {
+		case step:
+			served = "zai-org/GLM-5.3-Flash"
+		case bytes.Contains(raw, []byte("this session again")):
+			served = "deepseek-ai/DeepSeek-V4.2"
+		case bytes.Contains(raw, []byte("another session")):
+			served = "moonshotai/Kimi-K2.6"
+		case bytes.Contains(raw, []byte("Start quietly")):
+			served = ""
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, choice := range []map[string]any{
 			{"index": 0, "delta": map[string]any{"role": "assistant", "content": ""}, "finish_reason": nil},
-			{"index": 0, "delta": map[string]any{"content": "Served reply."}, "finish_reason": nil},
-			{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"},
+			{"index": 0, "delta": delta, "finish_reason": nil},
+			{"index": 0, "delta": map[string]any{}, "finish_reason": finish},
 		} {
-			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": "zai-org/GLM-5.3-Flash",
+			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": served,
 				"choices": []any{choice}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
 		}
@@ -2524,23 +2698,26 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	work, err := os.MkdirTemp("/tmp", "oc")
 	h.Require.NoError(err)
 	t.Cleanup(func() { _ = os.RemoveAll(work) })
+	h.Require.NoError(os.WriteFile(filepath.Join(work, "notes.txt"), []byte("hello\n"), 0o600))
 	tmp := t.TempDir()
-	label := "Auto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash"
-	tui := func(env ...string) (string, []string) {
-		t.Helper()
-		started := time.Now()
-		mu.Lock()
-		before := len(requested)
-		mu.Unlock()
-		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-		defer cancel()
-		run := exec.CommandContext(ctx, binary, "--standalone", "--prompt", "Reply with OK.")
-		run.Dir = work
-		run.Env = append([]string{
+	toast := []string{"Served model", "Auto (Baseten Internal Dogfooding)", "→ qwen/Qwen3.6-Coder"}
+	toasted := func(screen string) bool {
+		return !slices.ContainsFunc(toast, func(part string) bool { return !strings.Contains(screen, part) })
+	}
+	environment := func(env ...string) []string {
+		return append([]string{
 			"HOME=" + root, "PATH=" + os.Getenv("PATH"), "TERM=xterm-256color", "TMPDIR=" + tmp,
 			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
 			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
 		}, env...)
+	}
+	launch := func(ctx context.Context, args []string, env ...string) (*os.File, func() string, func()) {
+		ctx, cancel := context.WithCancel(ctx)
+		run := exec.CommandContext(ctx, binary, args...)
+		run.Cancel = func() error { return run.Process.Signal(syscall.SIGTERM) }
+		run.WaitDelay = 10 * time.Second
+		run.Dir = work
+		run.Env = environment(env...)
 		terminal, err := pty.StartWithSize(run, &pty.Winsize{Rows: 50, Cols: 260})
 		h.Require.NoError(err)
 		var screenMu sync.Mutex
@@ -2562,17 +2739,30 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			defer screenMu.Unlock()
 			return terminalEscape.ReplaceAllString(screen.String(), "")
 		}
+		return terminal, shown, sync.OnceFunc(func() {
+			cancel()
+			_ = run.Wait()
+			_ = terminal.Close()
+		})
+	}
+	tui := func(env ...string) (string, []string) {
+		t.Helper()
+		started := time.Now()
+		mu.Lock()
+		before := len(requested)
+		mu.Unlock()
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		_, shown, stop := launch(ctx, []string{"--standalone", "--prompt", "Read notes.txt and reply."}, env...)
 		settled := func() bool {
 			mu.Lock()
 			defer mu.Unlock()
 			return answered.After(started) && time.Since(answered) > 3*time.Second
 		}
-		for ctx.Err() == nil && !strings.Contains(shown(), label) && !settled() {
+		for ctx.Err() == nil && !toasted(shown()) && !settled() {
 			time.Sleep(100 * time.Millisecond)
 		}
-		_ = run.Process.Kill()
-		_ = run.Wait()
-		_ = terminal.Close()
+		stop()
 		mu.Lock()
 		defer mu.Unlock()
 		h.Require.True(answered.After(started), "OpenCode answered the prompt; requested %v\n%s", requested, shown())
@@ -2581,16 +2771,60 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 
 	setup("route-auto")
 	screen, models := tui()
-	h.Require.Contains(screen, label, "the TUI shows the router route and the model that served it")
-	h.Require.Contains(models, "acme/auto")
+	h.Require.NotContains(screen, "zai-org/GLM-5.3-Flash", "the intermediate tool step does not toast")
+	for _, part := range toast {
+		h.Require.Contains(screen, part, "the TUI toasts the router route and the model that served the final response")
+	}
+	h.Require.Equal([]string{"acme/auto", "acme/auto"}, slices.DeleteFunc(models, func(model string) bool { return model != "acme/auto" }))
 
 	screen, models = tui("BASETEN_OPENCODE_SERVED_MODEL=0")
-	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
+	h.Require.NotContains(screen, "Served model", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
+	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.Contains(models, "acme/auto")
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	h.Require.NoError(err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	h.Require.NoError(listener.Close())
+	h.Require.NoError(os.WriteFile(filepath.Join(configDir, "service.json"), fmt.Appendf(nil, `{"port":%d}`, port), 0o600))
+	t.Cleanup(func() {
+		service := exec.Command(binary, "service", "stop")
+		service.Dir = work
+		service.Env = environment()
+		_ = service.Run()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	terminal, shown, stop := launch(ctx, []string{"--prompt", "Start quietly from notes.txt."})
+	defer stop()
+	await := func(text string) {
+		for ctx.Err() == nil && !strings.Contains(shown(), text) {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	await("Served reply.")
+	other := exec.CommandContext(ctx, binary, "run", "Reply in another session.")
+	other.Dir = work
+	other.Env = environment()
+	output, err := other.CombinedOutput()
+	h.Require.NoError(err, string(output))
+	h.Require.Contains(string(output), "Served reply.")
+	time.Sleep(3 * time.Second)
+	h.Require.NotContains(shown(), "zai-org/GLM-5.3-Flash", "a run whose final response names no served model does not toast an earlier step's")
+	h.Require.NotContains(shown(), "moonshotai/Kimi-K2.6", "a response in another session on the same background server does not toast")
+	_, err = terminal.WriteString("Reply in this session again.")
+	h.Require.NoError(err)
+	await("Reply in this session again.")
+	_, err = terminal.WriteString("\r")
+	h.Require.NoError(err)
+	await("→ deepseek-ai/DeepSeek-V4.2")
+	h.Require.Contains(shown(), "→ deepseek-ai/DeepSeek-V4.2", "a response in the session on screen toasts")
+	stop()
 
 	setup("route-primary")
 	screen, models = tui()
-	h.Require.NotContains(screen, "→ zai-org/GLM-5.3-Flash", "a route that is not a router shows nothing")
+	h.Require.NotContains(screen, "Served model", "a route that is not a router shows nothing")
+	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "a route that is not a router shows nothing")
 	h.Require.Contains(models, "acme/primary")
 }
 
@@ -2598,11 +2832,15 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 // through a team connection, a Baseten-hosted route, and a route whose
 // connection no longer exists.
 func serveFirstPartyRoutes(api *MockManagementAPI) {
+	messages := maps.Clone(harnessRouteMetadata)
+	messages["supported_api_formats"] = map[string]any{"messages": true}
+	responses := maps.Clone(harnessRouteMetadata)
+	responses["supported_api_formats"] = map[string]any{"responses": true}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": messages,
 				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}},
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": responses,
 				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-openai"}},
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
@@ -2647,6 +2885,140 @@ func Test_Grid_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	connections := api.FindCall("GET", "/v1/grid/connections")
 	h.Require.NotNil(connections)
 	h.Require.Contains(connections.RawQuery, "team_id=team-a")
+}
+
+func Test_Grid_Setup_GitContext(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "pi", "--yes"}
+
+	h.Context = internalcmd.WithExecer(h.Context, versionedHarnessExecer{"claude": "2.1.0 (Claude Code)", "opencode": "1.2.3", "pi": "1.2.3"})
+	h.Require.ErrorContains(h.Execute(append(setup, "--git-context")...), "git not found on PATH, required by --git-context")
+	h.Require.Empty(api.Calls())
+	h.Require.NoFileExists(filepath.Join(recordDir(t), "harness.json"))
+	entries, err := os.ReadDir(root)
+	h.Require.NoError(err)
+	h.Require.Empty(entries)
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+
+	installed := func() []bool {
+		hooks, _ := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))["hooks"].(map[string]any)
+		_, claude := hooks["SessionStart"]
+		return []bool{claude, fileExists(filepath.Join(root, "opencode", "plugins", "baseten-git-context.js")), fileExists(piGitContextFile(filepath.Join(root, "pi")))}
+	}
+	record := func() string {
+		raw, err := os.ReadFile(filepath.Join(recordDir(t), "harness.json"))
+		h.Require.NoError(err)
+		return string(raw)
+	}
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]bool{false, false, false}, installed())
+	h.Require.NotContains(record(), "git_context")
+
+	h.Require.NoError(h.Execute(append(setup, "--git-context")...))
+	h.Require.Equal([]bool{true, true, true}, installed())
+	h.Require.Equal(3, strings.Count(record(), `"git_context": true`))
+	h.Require.True(harnessRecordFile(t).Harnesses["pi"].GitContext)
+
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Equal([]bool{true, true, true}, installed(), "sync replays the recorded opt-in")
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]bool{false, false, false}, installed(), "setup without the flag removes them")
+	h.Require.NotContains(record(), "git_context")
+}
+
+func Test_Grid_PiGitContext_RealPi(t *testing.T) {
+	skipUnlessSupported(t)
+	binary, err := exec.LookPath("pi")
+	if err != nil {
+		t.Skip("pi is not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	var mu sync.Mutex
+	var systems []string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		if len(body.Messages) > 0 && body.Messages[0].Role == "system" {
+			systems = append(systems, body.Messages[0].Content)
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, chunk := range []map[string]any{
+			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": "OK."}, "finish_reason": nil}}},
+			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}},
+		} {
+			chunk["id"], chunk["object"], chunk["created"], chunk["model"] = "chatcmpl-git", "chat.completion.chunk", 1, "acme/primary"
+			raw, _ := json.Marshal(chunk)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(gateway.Close)
+	h, api := gridAPI(t, gateway.URL)
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
+		"items":      []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}}},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	configDir := filepath.Join(root, ".pi", "agent")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", configDir, "--use-session-credential", "--yes", "--no-pi-served-model", "--git-context"))
+	h.Require.FileExists(piGitContextFile(configDir))
+	h.Require.NoFileExists(piServedModelFile(configDir))
+
+	run := func(dir string, args ...string) string {
+		command := exec.Command(args[0], args[1:]...)
+		command.Dir = dir
+		out, err := command.CombinedOutput()
+		h.Require.NoError(err, string(out))
+		return strings.TrimSpace(string(out))
+	}
+	prompt := func(dir string) string {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		command := exec.CommandContext(ctx, binary, "--print", "--no-session", "Reply with OK.")
+		command.Dir = dir
+		command.Env = []string{
+			"HOME=" + root, "PI_CODING_AGENT_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + t.TempDir(), "PI_OFFLINE=1", "PI_TELEMETRY=0",
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}
+		command.WaitDelay = 5 * time.Second
+		out, err := command.CombinedOutput()
+		h.Require.NoError(err, string(out))
+		h.Require.Equal("OK.", strings.TrimSpace(string(out)))
+		mu.Lock()
+		defer mu.Unlock()
+		h.Require.NotEmpty(systems)
+		return systems[len(systems)-1]
+	}
+
+	h.Require.NotContains(prompt(t.TempDir()), "repo=")
+	repo := t.TempDir()
+	run(repo, "git", "init", "-b", "main")
+	h.Require.Contains(prompt(repo), "<baseten_git_context>\nrepo= branch=main commit=\n</baseten_git_context>")
+	run(repo, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	run(repo, "git", "remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
+	commit := run(repo, "git", "rev-parse", "HEAD")
+	h.Require.Contains(prompt(repo), "<baseten_git_context>\nrepo=https://example.com/org/repo.git branch=main commit="+commit+"\n</baseten_git_context>")
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "pi", "--config-dir", configDir, "--yes"))
+	h.Require.NoFileExists(piGitContextFile(configDir))
 }
 
 func Test_Grid_Setup_PiFirstPartyRoutes(t *testing.T) {

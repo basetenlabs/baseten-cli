@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,7 +56,7 @@ const providerID = "baseten-harness"
 
 // clientHeader names the harness on each request. Baseten's /v1/models answers
 // with a harness-specific catalog for claude-code and codex.
-const clientHeader = "X-Baseten-Client"
+const clientHeader = "X-Baseten-Grid-Client"
 
 // TODO: Make the default background route server-driven.
 const defaultBackgroundRoute = "deepseek-ai/DeepSeek-V4.1-Flash"
@@ -99,6 +100,7 @@ type PrepareOptions struct {
 	NoClaudeServedModel   bool
 	NoPiServedModel       bool
 	NoOpenCodeServedModel bool
+	GitContext            bool
 }
 
 // Helper is the credential command a harness runs instead of storing a key:
@@ -132,15 +134,22 @@ func All() []Harness {
 	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}, piHarness{}}
 }
 
+// TargetAPI is the wire protocol a harness calls a route with.
+type TargetAPI string
+
+const (
+	TargetAPIMessages        TargetAPI = "messages"
+	TargetAPIResponses       TargetAPI = "responses"
+	TargetAPIChatCompletions TargetAPI = "chat-completions"
+)
+
 // Route is a Baseten route as shown in a harness's model picker, with the model
 // capabilities supplied by the route's own metadata.
 type Route struct {
 	Name        string
 	DisplayName string
-	// Provider is the route's upstream provider, such as ProviderAnthropic,
-	// which decides the API a harness calls the route with. It is "" when
-	// unknown, as for a router that picks a route per request, and such a
-	// route is called with the Chat Completions API.
+	// Provider is the route's upstream provider, such as ProviderAnthropic.
+	// It is "" when unknown, as for a router that picks a route per request.
 	Provider        string
 	UpstreamModel   string
 	Router          bool
@@ -154,6 +163,7 @@ type Route struct {
 	// Messages API and the OpenAI Responses API.
 	Messages  bool
 	Responses bool
+	TargetAPI TargetAPI
 	// Cost is the provider's list price, or nil if unknown.
 	Cost *Cost
 }
@@ -192,12 +202,17 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 		return r, fmt.Errorf("route %q has no model metadata", r.Name)
 	}
 	r.ContextWindow, r.OutputLimit = deref(m.ContextWindow), deref(m.MaxOutputTokens)
-	r.InputModalities, r.Tools = m.InputModalities, deref(m.Tools)
+	r.InputModalities = slices.DeleteFunc(slices.Clone(m.InputModalities), func(modality string) bool {
+		return modality != "text" && modality != "image"
+	})
+	r.Tools = deref(m.Tools)
 	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
 	// Without formats the route's APIs are unknown, so every harness lists it.
 	r.Messages, r.Responses = true, true
+	r.TargetAPI = TargetAPIChatCompletions
 	if f := m.SupportedApiFormats; f != nil {
 		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
+		r.TargetAPI = preferredTargetAPI(f, r.Provider)
 	}
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
@@ -206,6 +221,20 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 		}
 	}
 	return r, validateRoute(r)
+}
+
+func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats, provider string) TargetAPI {
+	switch {
+	case deref(f.ChatCompletions) && (provider == ProviderBaseten || provider == ""):
+		// NB(nikhil): MAPIs specifically advertise all compatibility, but prefer chat completions.
+		return TargetAPIChatCompletions
+	case deref(f.Messages):
+		return TargetAPIMessages
+	case deref(f.Responses):
+		return TargetAPIResponses
+	default:
+		return TargetAPIChatCompletions
+	}
 }
 
 // newCost returns nil unless both input and output prices are known.
@@ -243,11 +272,6 @@ func validateRoute(r Route) error {
 		return fmt.Errorf("route %q has no usable context and output limits", r.Name)
 	case len(r.InputModalities) == 0:
 		return fmt.Errorf("route %q has no input modalities", r.Name)
-	}
-	for _, modality := range r.InputModalities {
-		if modality != "text" && modality != "image" {
-			return fmt.Errorf("route %q has an unsupported input modality", r.Name)
-		}
 	}
 	for _, level := range r.ReasoningLevels {
 		if level != "none" && reasoningRank(level) < 0 {
@@ -301,6 +325,8 @@ const (
 	ProviderAnthropic = "ANTHROPIC"
 	ProviderOpenAI    = "OPENAI"
 	ProviderBaseten   = "BASETEN_MODEL_API"
+	ProviderBedrock   = "BEDROCK"
+	ProviderVertex    = "VERTEX"
 )
 
 // routeTarget resolves the upstream provider and, for connections, the model ID.
@@ -714,6 +740,35 @@ func prepareFilesRemoval(dir string, files []ownedFile) *Plan {
 	}
 	p.Managed, p.Changed = len(p.files) > 0, len(p.files) > 0
 	return p
+}
+
+func prepareSealedFile(path string, body []byte, missing string) ([]*Plan, error) {
+	f, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if f.exists && !gridSetupSealed(f.data) {
+		return []*Plan{{Path: path, Notes: []string{"warning: existing " + path + " left unchanged; " + missing}, file: f, data: f.data}}, nil
+	}
+	data := append(slices.Clone(body), gridSetupSeal(body)...)
+	return []*Plan{{Path: path, Managed: true, Changed: !bytes.Equal(data, f.data), file: f, data: data}}, nil
+}
+
+func prepareSealedFileRemoval(path string) ([]*Plan, error) {
+	f, err := readFile(path)
+	if err != nil || !f.exists || !gridSetupSealed(f.data) {
+		return nil, err
+	}
+	return []*Plan{{Path: path, Managed: true, Changed: true, file: f, teardown: true, remove: true}}, nil
+}
+
+func gridSetupSeal(body []byte) string {
+	return fmt.Sprintf("export const basetenGridSetupSha256 = \"%x\";\n", sha256.Sum256(body))
+}
+
+func gridSetupSealed(data []byte) bool {
+	i := bytes.LastIndexByte(bytes.TrimSuffix(data, []byte("\n")), '\n')
+	return string(data[i+1:]) == gridSetupSeal(data[:i+1])
 }
 
 func (p *Plan) encode() error {
