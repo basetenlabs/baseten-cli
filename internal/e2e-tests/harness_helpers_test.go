@@ -71,6 +71,7 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 	}
 	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
 	require.NotEmpty(t, remoteURL, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
+	team := os.Getenv("BASETEN_E2E_TEST_TEAM")
 	t.Setenv("BASETEN_API_KEY", apiKey)
 	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
 	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
@@ -103,8 +104,11 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 	default:
 		t.Fatalf("unsupported harness %q", name)
 	}
-	teamArgs := harnessTeamArgs(t, name)
-	out, errOut, err := cli(t, append([]string{"grid", "setup", "--harness", name, "--config-dir", h.configDir, "--use-session-credential", "--yes"}, teamArgs...)...)
+	args := []string{"grid", "setup", "--harness", name, "--config-dir", h.configDir, "--use-session-credential", "--yes"}
+	if team != "" {
+		args = append(args, "--team", team)
+	}
+	out, errOut, err := cli(t, args...)
 	if err != nil {
 		msg := strings.TrimSpace(errOut + out)
 		switch {
@@ -134,61 +138,6 @@ func harnessEnvironmentalSetupError(msg string) bool {
 		}
 	}
 	return false
-}
-
-type harnessTeamProbeFailure struct {
-	team   string
-	err    error
-	out    string
-	errOut string
-}
-
-func harnessTeamArgs(t *testing.T, name string) []string {
-	t.Helper()
-	probeDir := t.TempDir()
-	_, _, probeErr := cli(t, "grid", "setup", "--harness", name, "--config-dir", probeDir,
-		"--use-session-credential", "--yes", "--dry-run")
-	if probeErr == nil {
-		return nil
-	}
-	out, errOut, err := cli(t, "org", "team", "list", "--output", "json")
-	if err != nil {
-		t.Skipf("org team list failed; cannot discover teams on this remote: %v\nstderr: %s", err, errOut)
-	}
-	var listed struct {
-		Teams []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"teams"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(out), &listed))
-	if len(listed.Teams) == 0 {
-		t.Skipf("the e2e org has no teams; %s needs a team with routes", name)
-	}
-	if len(listed.Teams) == 1 {
-		return nil
-	}
-	lastErr := probeErr
-	var failures []harnessTeamProbeFailure
-	for _, team := range listed.Teams {
-		if team.Name == "" {
-			continue
-		}
-		out, errOut, err := cli(t, "grid", "setup", "--harness", name, "--config-dir", probeDir,
-			"--team", team.Name, "--use-session-credential", "--yes", "--dry-run")
-		if err == nil {
-			return []string{"--team", team.Name}
-		}
-		lastErr = err
-		failures = append(failures, harnessTeamProbeFailure{team: team.Name, err: err, out: out, errOut: errOut})
-	}
-	for _, failure := range failures {
-		if !harnessEnvironmentalSetupError(failure.errOut + failure.out) {
-			t.Fatalf("team %s probe failed with an unrecognized error: %v\nstdout:\n%s\nstderr:\n%s", failure.team, failure.err, failure.out, failure.errOut)
-		}
-	}
-	t.Skipf("none of the org's %d teams have routes %s can call; last probe error: %v", len(listed.Teams), name, lastErr)
-	return nil
 }
 
 func (h *harnessTest) loadConfig(t *testing.T) {
