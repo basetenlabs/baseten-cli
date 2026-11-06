@@ -72,6 +72,7 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
 	require.NotEmpty(t, remoteURL, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
 	team := os.Getenv("BASETEN_E2E_TEST_TEAM")
+	require.NotEmpty(t, team, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_TEAM is missing")
 	t.Setenv("BASETEN_API_KEY", apiKey)
 	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
 	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
@@ -104,11 +105,7 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 	default:
 		t.Fatalf("unsupported harness %q", name)
 	}
-	args := []string{"grid", "setup", "--harness", name, "--config-dir", h.configDir, "--use-session-credential", "--yes"}
-	if team != "" {
-		args = append(args, "--team", team)
-	}
-	out, errOut, err := cli(t, args...)
+	out, errOut, err := cli(t, "grid", "setup", "--harness", name, "--config-dir", h.configDir, "--use-session-credential", "--yes", "--team", team)
 	if err != nil {
 		msg := strings.TrimSpace(errOut + out)
 		switch {

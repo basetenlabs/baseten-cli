@@ -34,6 +34,7 @@ E2e tests live in `internal/e2e-tests/` behind the `e2e` build tag and run again
 ```bash
 BASETEN_E2E_TEST_API_KEY=... \
 BASETEN_E2E_TEST_REMOTE_URL=... \
+BASETEN_E2E_TEST_TEAM=... \
     go test -v -tags=e2e ./internal/e2e-tests/...
 ```
 
