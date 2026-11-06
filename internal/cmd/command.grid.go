@@ -598,19 +598,13 @@ func gridAskServedModel(ctx *CommandContext, harnessLabel string) (bool, error) 
 func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 	updates := []struct {
 		flag    string
-		on, off bool
 		harness string
-		set     func(*harness.Record, bool)
+		set     func(*harness.Record)
 	}{
-		{"claude-served-model", f.ClaudeServedModel, f.NoClaudeServedModel, harness.ClaudeCode, func(r *harness.Record, on bool) { r.NoClaudeServedModel = !on }},
-		{"pi-served-model", f.PiServedModel, f.NoPiServedModel, harness.Pi, func(r *harness.Record, on bool) { r.NoPiServedModel = !on }},
-		{"opencode-served-model", f.OpenCodeServedModel, f.NoOpenCodeServedModel, harness.OpenCode, func(r *harness.Record, on bool) { r.NoOpenCodeServedModel = !on }},
-		{"git-context", f.GitContext, f.NoGitContext, "", func(r *harness.Record, on bool) { r.GitContext = on }},
-	}
-	for _, u := range updates {
-		if u.on && u.off {
-			return cmd.NewErrUsagef("--%s and --no-%s are mutually exclusive", u.flag, u.flag)
-		}
+		{"no-claude-served-model", harness.ClaudeCode, func(r *harness.Record) { r.NoClaudeServedModel = f.NoClaudeServedModel }},
+		{"no-pi-served-model", harness.Pi, func(r *harness.Record) { r.NoPiServedModel = f.NoPiServedModel }},
+		{"no-opencode-served-model", harness.OpenCode, func(r *harness.Record) { r.NoOpenCodeServedModel = f.NoOpenCodeServedModel }},
+		{"git-context", "", func(r *harness.Record) { r.GitContext = f.GitContext }},
 	}
 	if err := gridRequireGit(ctx, f.GitContext); err != nil {
 		return err
@@ -660,8 +654,8 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 			continue
 		}
 		for _, u := range updates {
-			if (u.on || u.off) && (u.harness == "" || u.harness == h.Name()) {
-				u.set(&record, u.on)
+			if ctx.Command.Flags().Changed(u.flag) && (u.harness == "" || u.harness == h.Name()) {
+				u.set(&record)
 			}
 		}
 		targets = append(targets, gridHarnessTarget{gridSelectedHarness: gridSelectedHarness{Harness: h, detection: d}, record: record})

@@ -3918,7 +3918,7 @@ func Test_Grid_Sync_GitContext(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "sync", "--git-context", "--yes"))
 	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.", "a flag matching the record changes nothing")
 
-	h.Require.NoError(h.Execute("grid", "sync", "--no-git-context", "--yes"))
+	h.Require.NoError(h.Execute("grid", "sync", "--git-context=false", "--yes"))
 	h.Require.Equal([]bool{false, false, false}, installed())
 	h.Require.NotContains(harnessRecordJSON(t), "git_context")
 
@@ -3953,22 +3953,49 @@ func Test_Grid_Sync_ServedModel(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
 	h.Require.Equal([]bool{false, true, true}, shown(), "sync replays the recorded opt-out")
 
-	h.Require.NoError(h.Execute("grid", "sync", "--claude-served-model", "--yes"))
+	h.Require.NoError(h.Execute("grid", "sync", "--no-claude-served-model=false", "--yes"))
 	h.Require.Equal([]bool{true, true, true}, shown())
 	h.Require.NotContains(harnessRecordJSON(t), "no_claude_served_model")
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal([]bool{true, true, true}, shown())
 
 	h.Require.NoError(h.Execute("grid", "sync", "--no-pi-served-model", "--no-opencode-served-model", "--yes"))
 	h.Require.Equal([]bool{true, false, false}, shown())
 	h.Require.Equal([]bool{false, true, true}, recorded())
 	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"no_pi_served_model": true`))
 	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"no_opencode_served_model": true`))
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal([]bool{true, false, false}, shown())
 
-	h.Require.NoError(h.Execute("grid", "sync", "--pi-served-model", "--opencode-served-model", "--yes"))
+	h.Require.NoError(h.Execute("grid", "sync", "--no-pi-served-model=false", "--no-opencode-served-model=false", "--yes"))
 	h.Require.Equal([]bool{true, true, true}, shown())
 	h.Require.Equal([]bool{false, false, false}, recorded())
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal([]bool{true, true, true}, shown())
 }
 
-func Test_Grid_Sync_OptInUsageErrors(t *testing.T) {
+func Test_Grid_Sync_OmittedFlagsKeepRecord(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	h.Context = internalcmd.WithExecer(h.Context, versionedHarnessExecer{"claude": "2.1.272 (Claude Code)", "opencode": "opencode v2.2.5", "pi": "1.2.3", "git": "git version 2.47.0"})
+	serveServedModelRoutes(api, "auto")
+	gridSyncHarnessRoot(t)
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "pi",
+		"--git-context", "--no-claude-served-model", "--no-pi-served-model", "--no-opencode-served-model", "--yes"))
+	recorded := harnessRecordJSON(t)
+	h.Require.Equal(3, strings.Count(recorded, `"git_context": true`))
+
+	for _, flags := range [][]string{nil, {"--git-context"}, {"--no-claude-served-model"}, {"--no-pi-served-model", "--no-opencode-served-model"}} {
+		h.Require.NoError(h.Execute(append([]string{"grid", "sync", "--yes"}, flags...)...))
+		h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.", flags)
+		h.Require.Equal(recorded, harnessRecordJSON(t), flags)
+	}
+}
+
+func Test_Grid_Sync_GitContextRequiresGit(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	root := gridSyncHarnessRoot(t)
@@ -3988,20 +4015,16 @@ func Test_Grid_Sync_OptInUsageErrors(t *testing.T) {
 		return contents
 	}
 	before, calls := files(), len(api.Calls())
-	usageError := func(message string, args ...string) {
-		t.Helper()
-		h.Require.Error(h.Execute(append([]string{"grid", "sync", "--yes"}, args...)...))
-		h.Require.Equal(int(public.ExitUsage), h.ExitCode)
-		h.Require.Contains(h.Stderr.String(), message)
-		h.Require.Len(api.Calls(), calls, "no API calls")
-		h.Require.Equal(before, files(), "no files changed")
-	}
-
-	for _, flag := range []string{"git-context", "claude-served-model", "pi-served-model", "opencode-served-model"} {
-		usageError("--"+flag+" and --no-"+flag+" are mutually exclusive", "--"+flag, "--no-"+flag)
-	}
 	h.Context = internalcmd.WithExecer(h.Context, versionedHarnessExecer{"claude": "1.2.3", "opencode": "1.2.3", "pi": "1.2.3"})
-	usageError("git not found on PATH, required by --git-context", "--git-context")
+
+	h.Require.Error(h.Execute("grid", "sync", "--git-context", "--yes"))
+	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Contains(h.Stderr.String(), "git not found on PATH, required by --git-context")
+	h.Require.Len(api.Calls(), calls, "no API calls")
+	h.Require.Equal(before, files(), "no files changed")
+
+	h.Require.NoError(h.Execute("grid", "sync", "--git-context=false", "--yes"))
+	h.Require.NotContains(harnessRecordJSON(t), "git_context")
 }
 
 func Test_Grid_Setup_UseSessionCredential(t *testing.T) {
