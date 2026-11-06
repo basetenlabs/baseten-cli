@@ -9,15 +9,15 @@ import (
 const gridRoutePrereleaseNotice = "PRE-RELEASE: grid route commands are not GA yet. " +
 	"Their arguments, flags, and output may change.\n\n"
 
-const gridRouteTargetJSONDescription = "target.type is BASETEN_MODEL_API, CONNECTION, or CLASSIFIER. " +
-	"Model targets include model; CONNECTION targets also include connection_id. CLASSIFIER targets include classifier, allowed_routes, and default_route."
+const gridRouteTargetJSONDescription = "target.type is BASETEN_MODEL_API, CONNECTION, or INTELLIGENT. " +
+	"Model targets include model; CONNECTION targets also include connection_id. INTELLIGENT targets include route_classifier and tradeoff."
 
 var commandGridRoute = Command{
 	Name:    "route",
 	Summary: "Manage routes (PRE-RELEASE)",
 	Description: gridRoutePrereleaseNotice +
 		"Manage routes. Baseten derives each route's name from its target. " +
-		"A route's name, team, and target type cannot be changed after creation. Classifier configurations can be updated.",
+		"A route's name, team, and target cannot be changed after creation.",
 	Children: []Command{
 		{
 			Name:    "list",
@@ -54,7 +54,7 @@ var commandGridRoute = Command{
 			Output: &CommandOutput[managementapi.GridRoute]{
 				JSONDescription: gridRouteTargetJSONDescription,
 				TextDescription: "Field-per-line summary of the route, including its target, invoke URL, and team name. " +
-					"Classifier and referenced route names include IDs in parentheses. " +
+					"Route classifier names include IDs in parentheses. " +
 					"Unrecognized target types are shown as <unrecognized type>.",
 				Examples: []CommandExample{
 					{
@@ -73,7 +73,7 @@ var commandGridRoute = Command{
 			Summary: "Create a route (PRE-RELEASE)",
 			Flags:   GridRouteCreateFlags{},
 			Description: gridRoutePrereleaseNotice +
-				"Create a model route with --target-type and --target-model, or a classifier route with --target-type classifier, --classifier-id, repeated --allowed-route-id, and --default-route-id. Baseten derives the route's name " +
+				"Create a model route with --target-type and --target-model. Baseten derives the route's name " +
 				"from its target. Find Model API names with 'baseten model-api list'.\n\n" +
 				"Omit --team to use your only team; specify it when you belong to several. External providers are reached through " +
 				"a connection owned by the route's team, which holds the provider's API key; pass its ID with " +
@@ -98,14 +98,6 @@ var commandGridRoute = Command{
 							"--target-connection-id <connection-id>",
 						},
 					},
-					{
-						Description: "Create a classifier-backed route.",
-						CommandLines: []string{
-							"baseten grid route create --target-type classifier",
-							"--classifier-id <id> --allowed-route-id <route-id>",
-							"--default-route-id <route-id>",
-						},
-					},
 				},
 				JQExample: CommandExample{
 					Description: "Print the created route ID.",
@@ -122,8 +114,8 @@ var commandGridRoute = Command{
 			Flags:   GridRouteUpdateFlags{},
 			Description: gridRoutePrereleaseNotice +
 				"Update a route by ID or exact name. Pass exactly one of --id or --name.\n\n" +
-				"Pass --display-name or --description; omitted fields are unchanged. To replace a classifier configuration, supply --classifier-id, --allowed-route-id, and --default-route-id together. " +
-				"Pass --description '' to clear the description. Name, team, target type, and non-classifier targets cannot be changed.",
+				"Pass --display-name or --description; omitted fields are unchanged. " +
+				"Pass --description '' to clear the description. Name, team, and target cannot be changed.",
 			Output: &CommandOutput[managementapi.GridRoute]{
 				JSONDescription: gridRouteTargetJSONDescription,
 				TextDescription: "On success, prints \"Updated route <name> (<id>)\" to stderr; no stdout output.",
@@ -230,16 +222,9 @@ type GridRouteRefFlags struct {
 	Name string `flag:"name" desc:"Exact route name, including its organization-owned prefix." oneof:"route-ref"`
 }
 
-type GridRouteClassifierFlags struct {
-	ClassifierID    string   `flag:"classifier-id" desc:"Classifier ID from grid classifier list. Requires allowed and default route IDs."`
-	AllowedRouteIDs []string `flag:"allowed-route-id" desc:"ID of a route the classifier may select. Repeat for each allowed route."`
-	DefaultRouteID  string   `flag:"default-route-id" desc:"ID of the allowed route used when the classifier picks none."`
-}
-
 type GridRouteTargetFlags struct {
-	GridRouteClassifierFlags
-	TargetType       string `flag:"target-type" desc:"Target type." enum:"baseten-model-api,connection,classifier" required:"true"`
-	TargetModel      string `flag:"target-model" desc:"Model API name or external provider model name. Required for non-classifier targets."`
+	TargetType       string `flag:"target-type" desc:"Target type." enum:"baseten-model-api,connection" required:"true"`
+	TargetModel      string `flag:"target-model" desc:"Model API name or external provider model name." required:"true"`
 	TargetConnection string `flag:"target-connection-id" desc:"ID of a connection in the route's team, whose provider serves the route. Required with --target-type connection."`
 }
 
@@ -268,7 +253,6 @@ type GridRouteCreateFlags struct {
 
 type GridRouteUpdateFlags struct {
 	CommandFlags
-	GridRouteClassifierFlags
 	GridRouteRefFlags
 	DisplayName OptionalFlag[string] `flag:"display-name" desc:"New display name (1 to 255 characters). Omit to keep it unchanged."`
 	Description OptionalFlag[string] `flag:"description" desc:"New description (up to 1000 characters). Pass an empty string to clear it."`

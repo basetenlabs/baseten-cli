@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -116,12 +115,9 @@ func commandGridRouteDescribe(ctx *CommandContext, flags *cmd.GridRouteDescribeF
 		if t.connection != "" {
 			ctx.Outputf("Target Connection: %s\n", t.connection)
 		}
-		if t.classifier != "" {
-			ctx.Outputf("Classifier:       %s\n", t.classifier)
-		}
-		if t.defaultRoute != "" {
-			ctx.Outputf("Default Route:    %s\n", t.defaultRoute)
-			ctx.Outputf("Allowed Routes:   %s\n", strings.Join(t.allowedRoutes, ", "))
+		if t.routeClassifier != "" {
+			ctx.Outputf("Route Classifier: %s\n", t.routeClassifier)
+			ctx.Outputf("Tradeoff:         %s\n", t.tradeoff)
 		}
 	}
 	ctx.Outputf("Invoke URL:       %s\n", hyperlink(ctx.Stdout, route.InvokeUrl))
@@ -130,24 +126,11 @@ func commandGridRouteDescribe(ctx *CommandContext, flags *cmd.GridRouteDescribeF
 }
 
 func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateGridRouteRequest_Target, error) {
-	if flags.TargetType == "" || (flags.TargetType != "classifier" && flags.TargetModel == "") {
+	if flags.TargetType == "" || flags.TargetModel == "" {
 		return nil, cmd.NewErrUsagef("--target-type and --target-model are required")
 	}
 	target := &managementapi.CreateGridRouteRequest_Target{}
-	if flags.TargetType != "classifier" && hasGridRouteClassifier(flags.GridRouteClassifierFlags) {
-		return nil, cmd.NewErrUsagef("classifier flags require --target-type classifier")
-	}
 	switch flags.TargetType {
-	case "classifier":
-		if flags.TargetModel != "" || flags.TargetConnection != "" {
-			return nil, cmd.NewErrUsagef("classifier targets do not accept --target-model or --target-connection-id")
-		}
-		classifier, err := gridRouteClassifierTarget(flags.GridRouteClassifierFlags)
-		if err != nil {
-			return nil, err
-		}
-		err = target.FromUpsertGridRouteTargetClassifier(classifier)
-		return target, err
 	case "baseten-model-api":
 		if flags.TargetConnection != "" {
 			return nil, cmd.NewErrUsagef("--target-connection-id is not valid with --target-type baseten-model-api")
@@ -170,22 +153,6 @@ func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateGridR
 	default:
 		return nil, cmd.NewErrUsagef("unsupported target type %q", flags.TargetType)
 	}
-}
-
-func hasGridRouteClassifier(f cmd.GridRouteClassifierFlags) bool {
-	return f.ClassifierID != "" || len(f.AllowedRouteIDs) > 0 || f.DefaultRouteID != ""
-}
-
-func gridRouteClassifierTarget(f cmd.GridRouteClassifierFlags) (managementapi.UpsertGridRouteTargetClassifier, error) {
-	if f.ClassifierID == "" || len(f.AllowedRouteIDs) == 0 || f.DefaultRouteID == "" {
-		return managementapi.UpsertGridRouteTargetClassifier{}, cmd.NewErrUsagef("pass --classifier-id, --allowed-route-id, and --default-route-id together")
-	}
-	for _, id := range f.AllowedRouteIDs {
-		if id == "" {
-			return managementapi.UpsertGridRouteTargetClassifier{}, cmd.NewErrUsagef("--allowed-route-id must not be empty")
-		}
-	}
-	return managementapi.UpsertGridRouteTargetClassifier{Type: "CLASSIFIER", ClassifierId: f.ClassifierID, AllowedRouteIds: f.AllowedRouteIDs, DefaultRouteId: f.DefaultRouteID}, nil
 }
 
 func commandGridRouteCreate(ctx *CommandContext, flags *cmd.GridRouteCreateFlags) error {
@@ -222,22 +189,10 @@ func commandGridRouteCreate(ctx *CommandContext, flags *cmd.GridRouteCreateFlags
 }
 
 func commandGridRouteUpdate(ctx *CommandContext, flags *cmd.GridRouteUpdateFlags) error {
-	hasClassifier := hasGridRouteClassifier(flags.GridRouteClassifierFlags)
-	if !flags.DisplayName.IsSet() && !flags.Description.IsSet() && !hasClassifier {
-		return cmd.NewErrUsagef("pass --display-name, --description, or a complete classifier configuration")
+	if !flags.DisplayName.IsSet() && !flags.Description.IsSet() {
+		return cmd.NewErrUsagef("pass --display-name or --description")
 	}
 	body := managementapi.UpdateGridRouteRequest{DisplayName: flags.DisplayName.Pointer(), Description: flags.Description.Pointer()}
-	if hasClassifier {
-		classifier, err := gridRouteClassifierTarget(flags.GridRouteClassifierFlags)
-		if err != nil {
-			return err
-		}
-		target := managementapi.UpdateGridRouteRequest_Target{}
-		if err := target.FromUpsertGridRouteTargetClassifier(classifier); err != nil {
-			return err
-		}
-		body.Target = managementapi.NewOptional(&target)
-	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -286,10 +241,8 @@ func commandGridRouteDelete(ctx *CommandContext, flags *cmd.GridRouteDeleteFlags
 
 // gridRouteTargetInfo is the displayable shape of any route target variant.
 type gridRouteTargetInfo struct {
-	kind, model, connection string
-	// Classifier routes pick one of their allowed routes per request.
-	classifier, defaultRoute string
-	allowedRoutes            []string
+	kind, model, connection   string
+	routeClassifier, tradeoff string
 }
 
 // gridRouteTargetFields extracts the shared fields from generated target variants,
@@ -300,19 +253,12 @@ func gridRouteTargetFields(value any) (gridRouteTargetInfo, error) {
 		return gridRouteTargetInfo{kind: t.Type, model: t.Model}, nil
 	case managementapi.GridRouteTargetConnection:
 		return gridRouteTargetInfo{kind: t.Type, model: t.Model, connection: t.ConnectionId}, nil
-	case managementapi.GridRouteTargetClassifier:
-		info := gridRouteTargetInfo{
-			kind:         t.Type,
-			defaultRoute: fmt.Sprintf("%s (%s)", t.DefaultRoute.Slug, t.DefaultRoute.Id),
-		}
-		// Null for routers created before classifiers could be selected.
-		if t.Classifier != nil {
-			info.classifier = fmt.Sprintf("%s (%s)", t.Classifier.Name, t.Classifier.Id)
-		}
-		for _, r := range t.AllowedRoutes {
-			info.allowedRoutes = append(info.allowedRoutes, fmt.Sprintf("%s (%s)", r.Slug, r.Id))
-		}
-		return info, nil
+	case managementapi.GridRouteTargetIntelligent:
+		return gridRouteTargetInfo{
+			kind:            t.Type,
+			routeClassifier: fmt.Sprintf("%s (%s)", t.RouteClassifier.Name, t.RouteClassifier.Id),
+			tradeoff:        string(t.Tradeoff),
+		}, nil
 	default:
 		return gridRouteTargetInfo{}, fmt.Errorf("unsupported route target %T", value)
 	}
