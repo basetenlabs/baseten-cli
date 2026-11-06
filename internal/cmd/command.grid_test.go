@@ -2611,6 +2611,24 @@ func Test_Grid_Setup_OpenCodeServedModelPrompt(t *testing.T) {
 	h.Require.True(harnessRecordFile(t).Harnesses["opencode"].NoOpenCodeServedModel)
 }
 
+func Test_Grid_Setup_PromptUsesTerminalForeground(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	h.Context = internalcmd.WithPromptAnswers(h.Context, "1", "1")
+	question := "Show which model served each response on auto routes in Claude Code?"
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--config-dir", t.TempDir()))
+	// huh's default theme colors prompt text for a dark background, leaving
+	// it near-white on a light one; prompts keep the terminal's foreground.
+	for line := range strings.Lines(h.Stderr.String()) {
+		if strings.Contains(line, question) {
+			h.Require.NotRegexp(terminalEscape, line)
+			return
+		}
+	}
+	h.Require.Fail("prompt not shown", h.Stderr.String())
+}
+
 var terminalEscape = regexp.MustCompile(`\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]`)
 
 func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
