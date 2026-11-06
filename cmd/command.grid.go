@@ -69,7 +69,9 @@ var commandGrid = Command{
 			Summary: "Refresh configured harnesses with their recorded setup (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
 				"Reapply the setup of every harness configured on this machine, using the team, location, and options recorded by its last 'grid setup'. " +
-				"Sync takes no harness selection: to change what is configured, run 'grid setup' or 'grid teardown'. " +
+				"The --git-context, --claude-served-model, --pi-served-model, and --opencode-served-model flags, and their --no- forms, change those recorded options " +
+				"on the synced harnesses they apply to before syncing, so an option can be flipped without rerunning setup. " +
+				"Sync takes no harness selection: to change which harnesses are configured or their other options, run 'grid setup' or 'grid teardown'. " +
 				"Stored routes the team has removed fall back to their defaults with a warning. Only harnesses whose record matches the current profile are synced, " +
 				"and a machine with no record needs 'grid setup' first. Harnesses set up with --use-session-credential re-resolve the session's API key; " +
 				"when it is unavailable, sync errors instead of creating a replacement.\n\n" +
@@ -654,8 +656,16 @@ type GridSetupFlags struct {
 // GridSyncFlags are the flags for `baseten grid sync`.
 type GridSyncFlags struct {
 	CommandFlags
-	DryRun bool `flag:"dry-run" desc:"Preview the refresh without changing files or creating an API key."`
-	Yes    bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+	ClaudeServedModel     bool `flag:"claude-served-model" desc:"For Claude Code, add the status line or Stop hook that shows which model served a router route's response, and record the choice."`
+	NoClaudeServedModel   bool `flag:"no-claude-served-model" desc:"For Claude Code, remove the status line or Stop hook that shows which model served a router route's response, and record the choice."`
+	PiServedModel         bool `flag:"pi-served-model" desc:"For Pi, add the extension that shows which model served a router route's response, and record the choice."`
+	NoPiServedModel       bool `flag:"no-pi-served-model" desc:"For Pi, remove the extension that shows which model served a router route's response, and record the choice."`
+	OpenCodeServedModel   bool `flag:"opencode-served-model" desc:"For OpenCode 2, add the plugin that shows which model served a router route's response, and record the choice."`
+	NoOpenCodeServedModel bool `flag:"no-opencode-served-model" desc:"For OpenCode 2, remove the plugin that shows which model served a router route's response, and record the choice."`
+	GitContext            bool `flag:"git-context" desc:"Add the git origin URL, branch, and commit to each Claude Code, OpenCode, and Pi session's context, as setup's --git-context does, and record the choice."`
+	NoGitContext          bool `flag:"no-git-context" desc:"Remove the git context hook, plugin, or extension that setup's --git-context added, and record the choice."`
+	DryRun                bool `flag:"dry-run" desc:"Preview the refresh without changing files or creating an API key."`
+	Yes                   bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
 // GridTeardownFlags are the flags for `baseten grid teardown`.

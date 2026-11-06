@@ -366,10 +366,8 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if f.UseSessionCredential && f.KeyName != "" {
 		return cmd.NewErrUsagef("--key-name is not used with --use-session-credential; the session's API key already exists")
 	}
-	if f.GitContext {
-		if _, err := ctx.Execer().LookPath("git"); err != nil {
-			return cmd.NewErrUsagef("git not found on PATH, required by --git-context")
-		}
+	if err := gridRequireGit(ctx, f.GitContext); err != nil {
+		return err
 	}
 	selected, err := gridSelectHarnesses(ctx, f.GridHarnessFlags, true)
 	if err != nil {
@@ -560,6 +558,16 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	return nil
 }
 
+func gridRequireGit(ctx *CommandContext, gitContext bool) error {
+	if !gitContext {
+		return nil
+	}
+	if _, err := ctx.Execer().LookPath("git"); err != nil {
+		return cmd.NewErrUsagef("git not found on PATH, required by --git-context")
+	}
+	return nil
+}
+
 func gridOffersServedModel(selected []gridSelectedHarness, listed []managementapi.GridRoute, name string) bool {
 	i := slices.IndexFunc(selected, func(s gridSelectedHarness) bool {
 		return s.Name() == name && (name != harness.OpenCode || harness.HasOpenCode2(s.detection))
@@ -588,6 +596,25 @@ func gridAskServedModel(ctx *CommandContext, harnessLabel string) (bool, error) 
 // commandGridSync refreshes the harnesses configured on this machine with
 // the team and options recorded by their last setup.
 func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
+	updates := []struct {
+		flag    string
+		on, off bool
+		harness string
+		set     func(*harness.Record, bool)
+	}{
+		{"claude-served-model", f.ClaudeServedModel, f.NoClaudeServedModel, harness.ClaudeCode, func(r *harness.Record, on bool) { r.NoClaudeServedModel = !on }},
+		{"pi-served-model", f.PiServedModel, f.NoPiServedModel, harness.Pi, func(r *harness.Record, on bool) { r.NoPiServedModel = !on }},
+		{"opencode-served-model", f.OpenCodeServedModel, f.NoOpenCodeServedModel, harness.OpenCode, func(r *harness.Record, on bool) { r.NoOpenCodeServedModel = !on }},
+		{"git-context", f.GitContext, f.NoGitContext, "", func(r *harness.Record, on bool) { r.GitContext = on }},
+	}
+	for _, u := range updates {
+		if u.on && u.off {
+			return cmd.NewErrUsagef("--%s and --no-%s are mutually exclusive", u.flag, u.flag)
+		}
+	}
+	if err := gridRequireGit(ctx, f.GitContext); err != nil {
+		return err
+	}
 	if !harness.Supported() {
 		return errors.New("Grid harness integrations support only macOS and Linux for now")
 	}
@@ -631,6 +658,11 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		}
 		if status.State == harness.StateNotConfigured {
 			continue
+		}
+		for _, u := range updates {
+			if (u.on || u.off) && (u.harness == "" || u.harness == h.Name()) {
+				u.set(&record, u.on)
+			}
 		}
 		targets = append(targets, gridHarnessTarget{gridSelectedHarness: gridSelectedHarness{Harness: h, detection: d}, record: record})
 	}

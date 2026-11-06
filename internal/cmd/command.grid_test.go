@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net"
 	"net/http"
@@ -3870,6 +3871,137 @@ func Test_Grid_Sync_RestartsCodexDaemon(t *testing.T) {
 	// An unchanged sync without a pending restart leaves the daemon alone.
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 	h.Require.Equal(1, busy.restarts)
+}
+
+func gridSyncHarnessRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
+	return root
+}
+
+func harnessRecordJSON(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(recordDir(t), "harness.json"))
+	require.NoError(t, err)
+	return string(raw)
+}
+
+func Test_Grid_Sync_GitContext(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := fakeGridAPI(t)
+	root := gridSyncHarnessRoot(t)
+	installed := func() []bool {
+		hooks, _ := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))["hooks"].(map[string]any)
+		_, claude := hooks["SessionStart"]
+		return []bool{claude, fileExists(filepath.Join(root, "opencode", "plugins", "baseten-git-context.js")), fileExists(piGitContextFile(filepath.Join(root, "pi")))}
+	}
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "pi", "--yes"))
+	h.Require.Equal([]bool{false, false, false}, installed())
+
+	h.Require.NoError(h.Execute("grid", "sync", "--git-context", "--dry-run", "--output", "json"))
+	var preview public.GridPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &preview))
+	h.Require.True(slices.ContainsFunc(preview.Items, func(p public.GridPlan) bool { return p.Changed }), "the preview applies the flag")
+	h.Require.Equal([]bool{false, false, false}, installed(), "a dry run changes no files")
+	h.Require.NotContains(harnessRecordJSON(t), "git_context", "a dry run changes no records")
+
+	h.Require.NoError(h.Execute("grid", "sync", "--git-context", "--yes"))
+	h.Require.Equal([]bool{true, true, true}, installed())
+	h.Require.Equal(3, strings.Count(harnessRecordJSON(t), `"git_context": true`))
+
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal([]bool{true, true, true}, installed(), "sync replays the recorded opt-in")
+	h.Require.NoError(h.Execute("grid", "sync", "--git-context", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.", "a flag matching the record changes nothing")
+
+	h.Require.NoError(h.Execute("grid", "sync", "--no-git-context", "--yes"))
+	h.Require.Equal([]bool{false, false, false}, installed())
+	h.Require.NotContains(harnessRecordJSON(t), "git_context")
+
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal([]bool{false, false, false}, installed(), "sync replays the recorded opt-out")
+}
+
+func Test_Grid_Sync_ServedModel(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	h.Context = internalcmd.WithExecer(h.Context, versionedHarnessExecer{"claude": "2.1.272 (Claude Code)", "opencode": "opencode v2.2.5", "pi": "1.2.3"})
+	serveServedModelRoutes(api, "auto")
+	root := gridSyncHarnessRoot(t)
+	shown := func() []bool {
+		_, claude := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))["statusLine"]
+		return []bool{claude, fileExists(piServedModelFile(filepath.Join(root, "pi"))), fileExists(openCodePluginDir(filepath.Join(root, "opencode")))}
+	}
+	recorded := func() []bool {
+		records := harnessRecordFile(t).Harnesses
+		return []bool{records["claude-code"].NoClaudeServedModel, records["pi"].NoPiServedModel, records["opencode"].NoOpenCodeServedModel}
+	}
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "pi", "--yes"))
+	h.Require.Equal([]bool{true, true, true}, shown())
+
+	h.Require.NoError(h.Execute("grid", "sync", "--no-claude-served-model", "--yes"))
+	h.Require.Equal([]bool{false, true, true}, shown())
+	h.Require.Equal([]bool{true, false, false}, recorded())
+	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"no_claude_served_model": true`), "only the Claude Code record changes")
+
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal([]bool{false, true, true}, shown(), "sync replays the recorded opt-out")
+
+	h.Require.NoError(h.Execute("grid", "sync", "--claude-served-model", "--yes"))
+	h.Require.Equal([]bool{true, true, true}, shown())
+	h.Require.NotContains(harnessRecordJSON(t), "no_claude_served_model")
+
+	h.Require.NoError(h.Execute("grid", "sync", "--no-pi-served-model", "--no-opencode-served-model", "--yes"))
+	h.Require.Equal([]bool{true, false, false}, shown())
+	h.Require.Equal([]bool{false, true, true}, recorded())
+	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"no_pi_served_model": true`))
+	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"no_opencode_served_model": true`))
+
+	h.Require.NoError(h.Execute("grid", "sync", "--pi-served-model", "--opencode-served-model", "--yes"))
+	h.Require.Equal([]bool{true, true, true}, shown())
+	h.Require.Equal([]bool{false, false, false}, recorded())
+}
+
+func Test_Grid_Sync_OptInUsageErrors(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	root := gridSyncHarnessRoot(t)
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "pi", "--yes"))
+	files := func() map[string]string {
+		contents := map[string]string{}
+		for _, dir := range []string{root, recordDir(t)} {
+			h.Require.NoError(filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return err
+				}
+				raw, err := os.ReadFile(path)
+				contents[path] = string(raw)
+				return err
+			}))
+		}
+		return contents
+	}
+	before, calls := files(), len(api.Calls())
+	usageError := func(message string, args ...string) {
+		t.Helper()
+		h.Require.Error(h.Execute(append([]string{"grid", "sync", "--yes"}, args...)...))
+		h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+		h.Require.Contains(h.Stderr.String(), message)
+		h.Require.Len(api.Calls(), calls, "no API calls")
+		h.Require.Equal(before, files(), "no files changed")
+	}
+
+	for _, flag := range []string{"git-context", "claude-served-model", "pi-served-model", "opencode-served-model"} {
+		usageError("--"+flag+" and --no-"+flag+" are mutually exclusive", "--"+flag, "--no-"+flag)
+	}
+	h.Context = internalcmd.WithExecer(h.Context, versionedHarnessExecer{"claude": "1.2.3", "opencode": "1.2.3", "pi": "1.2.3"})
+	usageError("git not found on PATH, required by --git-context", "--git-context")
 }
 
 func Test_Grid_Setup_UseSessionCredential(t *testing.T) {
