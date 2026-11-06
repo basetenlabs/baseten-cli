@@ -1,8 +1,9 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 
 const routers = new Map<string, string>(Object.entries({}));
-const statusKey = "baseten-served-model";
+const entryType = "baseten-served-model";
 const offValues = ["0", "f", "F", "false", "FALSE", "False"];
 
 function servedModelStatus(message: AssistantMessage | undefined): string | undefined {
@@ -19,19 +20,15 @@ function latestAssistantMessage(ctx: ExtensionContext): AssistantMessage | undef
 	return undefined;
 }
 
-function showServedModel(ctx: ExtensionContext, message: AssistantMessage | undefined) {
-	ctx.ui.setStatus(statusKey, servedModelStatus(message));
-}
-
 export default function (pi: ExtensionAPI) {
 	if (offValues.includes(process.env.BASETEN_PI_SERVED_MODEL ?? "")) {
 		return;
 	}
-	pi.on("message_end", (event, ctx) => {
-		if (event.message.role === "assistant") {
-			showServedModel(ctx, event.message);
-		}
+	pi.registerEntryRenderer<{ label?: string }>(entryType, (entry, _options, theme) =>
+		entry.data?.label ? new Text(theme.fg("dim", entry.data.label), 1, 0) : undefined,
+	);
+	pi.on("agent_before_settle", (event, ctx) => {
+		const label = servedModelStatus(latestAssistantMessage(ctx));
+		return label ? { entries: [...event.entries, { type: "custom", customType: entryType, data: { label } }] } : undefined;
 	});
-	pi.on("session_start", (_event, ctx) => showServedModel(ctx, latestAssistantMessage(ctx)));
-	pi.on("session_tree", (_event, ctx) => showServedModel(ctx, latestAssistantMessage(ctx)));
 }

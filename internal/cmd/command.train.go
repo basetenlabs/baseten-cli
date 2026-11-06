@@ -771,7 +771,7 @@ func commandTrainJobUpdate(ctx *CommandContext, flags *cmd.TrainJobUpdateFlags) 
 		changed = append(changed, fmt.Sprintf("priority to %d", flags.Priority))
 	}
 	if setAvailability {
-		model := managementapi.V1AvailabilityModel(flags.AvailabilityModel)
+		model := managementapi.AvailabilityModel(flags.AvailabilityModel)
 		req.AvailabilityModel = &model
 		changed = append(changed, fmt.Sprintf("availability model to %s", flags.AvailabilityModel))
 	}

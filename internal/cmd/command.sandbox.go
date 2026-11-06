@@ -177,6 +177,9 @@ func commandSandboxCreate(ctx *CommandContext, flags *cmd.SandboxCreateFlags) er
 	if ctx.Command.Flags().Changed("memory") {
 		request.Memory = &flags.Memory
 	}
+	if ctx.Command.Flags().Changed("cpu") {
+		request.Cpu = &flags.CPU
+	}
 	if ctx.Command.Flags().Changed("filesystem-max-memory-usage") {
 		// The API takes a number of Mi or a percentage/size string, so a bare
 		// integer is sent as the number and anything else as the string.
@@ -587,6 +590,9 @@ func sandboxOutputRecord(ctx *CommandContext, record *managementapi.Sandbox) {
 	sandboxOutputField(ctx, "Image:        ", deref(record.Image))
 	if record.Memory != nil {
 		ctx.Outputf("Memory:       %d MB\n", *record.Memory)
+	}
+	if record.Cpu != nil {
+		ctx.Outputf("CPU:          %d vCPU\n", *record.Cpu)
 	}
 	if record.Filesystem != nil && record.Filesystem.MaxMemoryUsage != nil {
 		if usage, err := record.Filesystem.MaxMemoryUsage.AsSandboxFilesystemMaxMemoryUsage0(); err == nil {
