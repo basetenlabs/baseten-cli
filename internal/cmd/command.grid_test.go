@@ -2430,6 +2430,21 @@ func Test_Grid_Setup_OpenCodeServedModel(t *testing.T) {
 			h.Require.Equal(name == "native", native)
 			h.Require.NotContains(h.Stderr.String(), "already exists")
 
+			t.Run("served model", func(t *testing.T) {
+				if _, err := exec.LookPath("node"); err != nil {
+					t.Skip("node is not on PATH")
+				}
+				driver := `const { pathToFileURL } = await import("node:url"); const { default: plugin } = await import(pathToFileURL(process.argv[1]).href); const hooks = {}; const served = []; await plugin.setup({ rpc: { register: async () => ({ events: { emit: async (_, event) => { served.push(event.label) } } }) }, session: { hook: async (name, fn) => { hooks[name] = fn } } }); for (const stream of process.argv.slice(2)) { const event = { kind: "primary", sessionID: "s", model: { id: "acme/auto" }, response: new Response(stream) }; hooks["http.response"](event); await event.response.text(); hooks["experimental.idle"]({ sessionID: "s" }) } process.stdout.write(served.map((label) => label + "\n").join(""))`
+				out, err := exec.Command("node", "--input-type=module", "-e", driver, filepath.Join(openCodePluginDir(dir), "server.js"),
+					"data: "+`{"object":"chat.completion.chunk","model":"qwen/Qwen3.6-Coder","choices":[]}`+"\n\ndata: [DONE]\n\n",
+					"event: message_start\ndata: "+`{"type":"message_start","message":{"type":"message","role":"assistant","content":[],"model":"zai-org/GLM-5.3-Flash"}}`+"\n\nevent: message_stop\ndata: "+`{"type":"message_stop"}`+"\n\n",
+					"event: response.created\ndata: "+`{"type":"response.created","response":{"object":"response","status":"in_progress","model":"deepseek-ai/DeepSeek-V4.2"}}`+"\n\n",
+				).Output()
+				require.NoError(t, err)
+				require.Equal(t, "Auto (Baseten Internal Dogfooding) → qwen/Qwen3.6-Coder\nAuto (Baseten Internal Dogfooding) → zai-org/GLM-5.3-Flash\nAuto (Baseten Internal Dogfooding) → deepseek-ai/DeepSeek-V4.2\n", string(out),
+					"chat completions, Messages, and Responses streams each name the served model")
+			})
+
 			h.Require.NoError(h.Execute(setup...))
 			var rerun public.GridPlanList
 			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &rerun))
@@ -2675,25 +2690,28 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 		t.Skipf("%s is not installed", binary)
 	}
 	var mu sync.Mutex
-	var requested []string
+	var requested, paths []string
 	var answered time.Time
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		type turn struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
 		var body struct {
 			Model    string `json:"model"`
 			Tools    []any  `json:"tools"`
-			Messages []struct {
-				Role    string          `json:"role"`
-				Content json.RawMessage `json:"content"`
-			} `json:"messages"`
+			Messages []turn `json:"messages"`
+			Input    []turn `json:"input"`
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
-		if r.URL.Path != "/v1/chat/completions" {
+		if !slices.Contains([]string{"/v1/chat/completions", "/v1/messages", "/v1/responses"}, r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}
-		last := body.Messages[len(body.Messages)-1]
-		step := len(body.Tools) > 0 && last.Role == "user" && bytes.Contains(last.Content, []byte("notes.txt"))
+		turns := append(body.Messages, body.Input...)
+		last := turns[len(turns)-1]
+		step := len(body.Tools) > 0 && last.Role == "user" && bytes.Contains(last.Content, []byte("notes.txt")) && !bytes.Contains(last.Content, []byte("tool_result"))
 		delta, finish := map[string]any{"content": "Served reply."}, "stop"
 		if step {
 			delta, finish = map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
@@ -2711,19 +2729,57 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			served = ""
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		for _, choice := range []map[string]any{
-			{"index": 0, "delta": map[string]any{"role": "assistant", "content": ""}, "finish_reason": nil},
-			{"index": 0, "delta": delta, "finish_reason": nil},
-			{"index": 0, "delta": map[string]any{}, "finish_reason": finish},
-		} {
-			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": served,
-				"choices": []any{choice}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+		events := func(events ...map[string]any) {
+			for _, event := range events {
+				data, _ := json.Marshal(event)
+				_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event["type"], data)
+			}
 		}
-		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		switch r.URL.Path {
+		case "/v1/messages":
+			block, content, stop := map[string]any{"type": "text", "text": ""}, map[string]any{"type": "text_delta", "text": "Served reply."}, "end_turn"
+			if step {
+				block, content, stop = map[string]any{"type": "tool_use", "id": "call_read", "name": "read", "input": map[string]any{}}, map[string]any{"type": "input_json_delta", "partial_json": `{"path":"notes.txt"}`}, "tool_use"
+			}
+			events(
+				map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_served", "type": "message", "role": "assistant", "content": []any{}, "model": served, "usage": map[string]any{"input_tokens": 5, "output_tokens": 1}}},
+				map[string]any{"type": "content_block_start", "index": 0, "content_block": block},
+				map[string]any{"type": "content_block_delta", "index": 0, "delta": content},
+				map[string]any{"type": "content_block_stop", "index": 0},
+				map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop}, "usage": map[string]any{"output_tokens": 2}},
+				map[string]any{"type": "message_stop"},
+			)
+		case "/v1/responses":
+			item := map[string]any{"type": "message", "id": "msg_served", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": "Served reply.", "annotations": []any{}}}}
+			content := map[string]any{"type": "response.output_text.delta", "item_id": "msg_served", "output_index": 0, "content_index": 0, "delta": "Served reply."}
+			if step {
+				item = map[string]any{"type": "function_call", "id": "fc_read", "call_id": "call_read", "name": "read", "arguments": `{"path":"notes.txt"}`, "status": "completed"}
+				content = map[string]any{"type": "response.function_call_arguments.delta", "item_id": "fc_read", "output_index": 0, "delta": `{"path":"notes.txt"}`}
+			}
+			events(
+				map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_served", "object": "response", "created_at": 1, "status": "in_progress", "model": served, "output": []any{}}},
+				map[string]any{"type": "response.output_item.added", "output_index": 0, "item": item},
+				content,
+				map[string]any{"type": "response.output_item.done", "output_index": 0, "item": item},
+				map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_served", "object": "response", "created_at": 1, "status": "completed", "model": served, "output": []any{item},
+					"usage": map[string]any{"input_tokens": 5, "output_tokens": 2, "total_tokens": 7}}},
+			)
+		default:
+			for _, choice := range []map[string]any{
+				{"index": 0, "delta": map[string]any{"role": "assistant", "content": ""}, "finish_reason": nil},
+				{"index": 0, "delta": delta, "finish_reason": nil},
+				{"index": 0, "delta": map[string]any{}, "finish_reason": finish},
+			} {
+				chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": served,
+					"choices": []any{choice}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+			}
+			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		requested = append(requested, body.Model)
+		paths = append(paths, r.URL.Path)
 		if len(body.Tools) > 0 {
 			answered = time.Now()
 		}
@@ -2731,16 +2787,19 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	t.Cleanup(gateway.Close)
 	h, api := gridAPI(t, gateway.URL)
 	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	route := func(id, name, display string, target map[string]any) map[string]any {
-		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": target}
+	route := func(id, name, display string, metadata, target map[string]any) map[string]any {
+		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": metadata, "target": target}
 	}
-	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
-		"items": []any{
-			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}),
-			route("route-primary", "acme/primary", "Primary", map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
-		},
-		"pagination": map[string]any{"has_more": false},
-	})
+	serveRoutes := func(auto map[string]any) {
+		api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
+			"items": []any{
+				route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", auto, map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}),
+				route("route-primary", "acme/primary", "Primary", harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
+			},
+			"pagination": map[string]any{"has_more": false},
+		})
+	}
+	serveRoutes(harnessRouteMetadata)
 	root := t.TempDir()
 	configDir := filepath.Join(root, ".config", "opencode")
 	setup := func(primary string) {
@@ -2878,6 +2937,22 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	h.Require.NotContains(screen, "Served model", "a route that is not a router shows nothing")
 	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "a route that is not a router shows nothing")
 	h.Require.Contains(models, "acme/primary")
+
+	for _, format := range []string{"messages", "responses"} {
+		auto := maps.Clone(harnessRouteMetadata)
+		auto["supported_api_formats"] = map[string]any{format: true}
+		serveRoutes(auto)
+		setup("route-auto")
+		screen, _ = tui()
+		h.Require.NotContains(screen, "zai-org/GLM-5.3-Flash", "the intermediate %s tool step does not toast", format)
+		for _, part := range toast {
+			h.Require.Contains(screen, part, "a router called with %s toasts the model that served the final response", format)
+		}
+		mu.Lock()
+		called := slices.Clone(paths)
+		mu.Unlock()
+		h.Require.Contains(called, "/v1/"+format, "OpenCode calls the router with %s", format)
+	}
 }
 
 // serveFirstPartyRoutes serves an Anthropic route and an OpenAI route, each
