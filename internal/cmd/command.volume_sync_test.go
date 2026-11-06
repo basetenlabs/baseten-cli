@@ -94,6 +94,22 @@ func Test_Volume_Sync_Start_BuildsOIDCAuthentication(t *testing.T) {
 		wantType  string
 	}{
 		{
+			name:      "Hugging Face account OIDC",
+			sourceURI: "hf://org/model",
+			args:      []string{"--auth-hf-oidc-resource", " hf-user "},
+			authField: "hf_oidc",
+			wantAuth:  map[string]any{"resource": "hf-user"},
+			wantType:  "HUGGING_FACE",
+		},
+		{
+			name:      "Hugging Face repository OIDC",
+			sourceURI: "hf://org/model",
+			args:      []string{"--auth-hf-oidc-resource", "org/model"},
+			authField: "hf_oidc",
+			wantAuth:  map[string]any{"resource": "org/model"},
+			wantType:  "HUGGING_FACE",
+		},
+		{
 			name:      "AWS OIDC",
 			sourceURI: "s3://bucket/models",
 			args: []string{
@@ -148,6 +164,38 @@ func Test_Volume_Sync_Start_ValidatesAuthenticationGroups(t *testing.T) {
 		args []string
 		want string
 	}{
+		{
+			name: "Hugging Face OIDC with secret",
+			args: []string{"--auth-hf-oidc-resource", "hf-user", "--auth-secret-name", "hf-token"},
+			want: "mutually exclusive",
+		},
+		{
+			name: "Hugging Face OIDC with AWS AssumeRole",
+			args: []string{
+				"--auth-hf-oidc-resource", "hf-user",
+				"--auth-aws-assume-role-arn", "arn:aws:iam::123:role/sync",
+				"--auth-aws-assume-role-region", "us-west-2",
+			},
+			want: "mutually exclusive",
+		},
+		{
+			name: "Hugging Face OIDC with AWS OIDC",
+			args: []string{
+				"--auth-hf-oidc-resource", "hf-user",
+				"--auth-aws-oidc-role-arn", "arn:aws:iam::123:role/sync",
+				"--auth-aws-oidc-region", "us-west-2",
+			},
+			want: "mutually exclusive",
+		},
+		{
+			name: "Hugging Face OIDC with GCP OIDC",
+			args: []string{
+				"--auth-hf-oidc-resource", "hf-user",
+				"--auth-gcp-oidc-service-account", "sync@project.iam.gserviceaccount.com",
+				"--auth-gcp-oidc-workload-identity-provider", "projects/123/locations/global/workloadIdentityPools/pool/providers/baseten",
+			},
+			want: "mutually exclusive",
+		},
 		{
 			name: "incomplete assume role",
 			args: []string{"--auth-aws-assume-role-arn", "arn:aws:iam::123:role/sync"},
@@ -217,6 +265,33 @@ func Test_Volume_Sync_Start_ValidatesAuthenticationGroups(t *testing.T) {
 			h.Require.ErrorContains(err, tc.want)
 		})
 	}
+}
+
+func Test_Volume_Sync_Start_RejectsHFOIDCForOtherSources(t *testing.T) {
+	for _, sourceURI := range []string{
+		"s3://bucket/models", "gs://bucket/models", "azure://container/models",
+		"r2://bucket/models", "cw://bucket/models", "bt://training/artifact",
+	} {
+		t.Run(sourceURI, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			err := h.Execute("volume", "sync", "start", "--source", sourceURI,
+				"--dest", "bdn:weights/model", "--auth-hf-oidc-resource", "hf-user")
+			h.Require.ErrorContains(err, "only for an hf:// source")
+			h.Require.Nil(m.FindCall("POST", "/v1/volumes/syncs"))
+		})
+	}
+}
+
+func Test_Volume_Sync_Start_OmitsHFOIDCForPublicSource(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/volumes/syncs", http.StatusOK, volumeSyncPayload("vsync-public", "PENDING"))
+	h.Require.NoError(h.Execute("volume", "sync", "start", "--source", "hf://org/model",
+		"--dest", "bdn:weights/model"))
+	source := m.FindCall("POST", "/v1/volumes/syncs").BodyJSON(t)["source"].(map[string]any)
+	h.Require.NotContains(source, "hf_oidc")
+	h.Require.NotContains(source, "auth_secret_name")
 }
 
 func Test_Volume_Sync_Start_WaitPollsToReady(t *testing.T) {

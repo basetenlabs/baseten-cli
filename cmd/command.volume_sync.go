@@ -15,7 +15,7 @@ var commandVolumeSync = Command{
 				"scheme selects the provider: hf://, s3://, gs://, azure://, r2://, cw://, or bt://. " +
 				"Repeat --include and --exclude to filter source-relative paths.\n\n" +
 				"Remote credentials must already be stored as a Baseten secret or made available through " +
-				"AWS AssumeRole, AWS OIDC, or GCP OIDC. The CLI infers the authentication method from the --auth-* flags and never " +
+				"AWS AssumeRole, AWS OIDC, GCP OIDC, or Hugging Face OIDC. The CLI infers the authentication method from the --auth-* flags and never " +
 				"accepts plaintext credentials. Omit every authentication flag for a public source.\n\n" +
 				"By default the command returns as soon as the server creates the job. Pass --wait to poll " +
 				"until it is READY, FAILED, or CANCELED. Progress is written to stderr and the final result " +
@@ -31,6 +31,15 @@ var commandVolumeSync = Command{
 							"baseten volume sync start",
 							"--source hf://<organization>/<repository>",
 							"--dest bdn:<namespace>/<volume>:<tag>",
+						},
+					},
+					{
+						Description: "Start a Hugging Face sync using OIDC with a configured trusted publisher.",
+						CommandLines: []string{
+							"baseten volume sync start",
+							"--source hf://<organization>/<repository>",
+							"--dest bdn:<namespace>/<volume>:<tag>",
+							"--auth-hf-oidc-resource <username-or-namespace/repository>",
 						},
 					},
 					{
@@ -150,6 +159,7 @@ type VolumeSyncStartFlags struct {
 	Exclude     []string `flag:"exclude" desc:"Glob selecting source-relative files to exclude. May be repeated."`
 
 	AuthSecretName                      string `flag:"auth-secret-name" desc:"Baseten secret containing source credentials. Supported by hf://, s3://, gs://, azure://, r2://, and cw:// sources." group:"authentication"`
+	AuthHFOIDCResource                  string `flag:"auth-hf-oidc-resource" desc:"Hugging Face username for an account CI/CD identity, or namespace/repository for a repository trusted publisher. Only for hf:// sources; configure trust in Hugging Face first." group:"authentication"`
 	AuthAWSAssumeRoleARN                string `flag:"auth-aws-assume-role-arn" desc:"AWS IAM role ARN for an s3:// source. Requires --auth-aws-assume-role-region." group:"authentication"`
 	AuthAWSAssumeRoleRegion             string `flag:"auth-aws-assume-role-region" desc:"AWS region for the AssumeRole session. Requires --auth-aws-assume-role-arn." group:"authentication"`
 	AuthAWSOIDCRoleARN                  string `flag:"auth-aws-oidc-role-arn" desc:"AWS IAM role ARN to assume through OIDC for an s3:// source. Requires --auth-aws-oidc-region." group:"authentication"`
