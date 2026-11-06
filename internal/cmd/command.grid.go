@@ -116,7 +116,7 @@ func gridSelectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup 
 		switch {
 		case setup && !d.Installed && explicit:
 			searched := "not on PATH"
-			locations := map[string]string{harness.Codex: harness.CodexDesktopLocations(), harness.OpenCode: harness.OpenCodeDesktopLocations()}
+			locations := map[string]string{harness.Codex: harness.CodexDesktopLocations(), harness.OpenCode: harness.OpenCodeDesktopLocations(), harness.Claude: harness.ClaudeDesktopLocations()}
 			if l := locations[h.Name()]; l != "" {
 				searched += " or in " + l
 			}
@@ -309,7 +309,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 	helper := ""
 	routers := slices.ContainsFunc(routes, func(r harness.Route) bool { return r.Router })
 	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool {
-		return t.record.CredentialSource == harness.CredentialSourceHelper || (routers && t.Name() == harness.ClaudeCode && !t.record.NoClaudeServedModel)
+		return t.record.CredentialSource == harness.CredentialSourceHelper || (routers && t.Name() == harness.Claude && !t.record.NoClaudeServedModel)
 	}) {
 		var warning string
 		if helper, warning, err = gridHelperPath(); err != nil {
@@ -350,7 +350,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
 		noOpenCodeServedModel := target.record.NoOpenCodeServedModel || !harness.HasOpenCode2(target.detection)
-		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel, GitContext: target.record.GitContext})
+		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, Installs: target.detection.Installs, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel, GitContext: target.record.GitContext})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -394,7 +394,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	}
 	passed := ctx.Command.Flags().Changed
 	noServedModel := passed("claude-served-model") && !f.ClaudeServedModel
-	if !passed("claude-served-model") && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.ClaudeCode) {
+	if !passed("claude-served-model") && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.Claude) {
 		show, err := gridAskServedModel(ctx, "Claude Code")
 		if err != nil {
 			return err
@@ -533,6 +533,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if !ctx.JSON {
 		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
 	}
+	gridHarnessClaudeDesktopHint(ctx, targets)
 	for i := range targets {
 		t := &targets[i]
 		if t.Name() == harness.Codex && !gridHarnessRestartCodexDaemon(ctx, filepath.Dir(t.detection.Path), f.Yes) {
@@ -557,6 +558,16 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		ctx.Logf("Undo with: %s\n", gridFollowupCommand("teardown", targets[i].gridSelectedHarness, f.ConfigDir))
 	}
 	return nil
+}
+
+// gridHarnessClaudeDesktopHint says to relaunch Claude Desktop, which reads its
+// config only at launch.
+func gridHarnessClaudeDesktopHint(ctx *CommandContext, targets []gridHarnessTarget) {
+	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool {
+		return t.Name() == harness.Claude && harness.HasClaudeDesktop(t.detection.Installs)
+	}) {
+		ctx.LogLine("Quit and reopen Claude Desktop to load the changes.")
+	}
 }
 
 func gridRequireGit(ctx *CommandContext, gitContext bool) error {
@@ -602,7 +613,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		harness string
 		set     func(*harness.Record)
 	}{
-		{"claude-served-model", harness.ClaudeCode, func(r *harness.Record) { r.NoClaudeServedModel = !f.ClaudeServedModel }},
+		{"claude-served-model", harness.Claude, func(r *harness.Record) { r.NoClaudeServedModel = !f.ClaudeServedModel }},
 		{"pi-served-model", harness.Pi, func(r *harness.Record) { r.NoPiServedModel = !f.PiServedModel }},
 		{"opencode-served-model", harness.OpenCode, func(r *harness.Record) { r.NoOpenCodeServedModel = !f.OpenCodeServedModel }},
 		{"git-context", "", func(r *harness.Record) { r.GitContext = f.GitContext }},
@@ -766,6 +777,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 	if !ctx.JSON {
 		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
 	}
+	gridHarnessClaudeDesktopHint(ctx, targets)
 	for i := range targets {
 		name := targets[i].Name()
 		plansChanged := slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Harness == name && p.Changed })
@@ -1004,7 +1016,8 @@ func gridHarnessDefaultModels(defaults *managementapi.GridHarnessDefaults, harne
 		return nil
 	}
 	switch harnessName {
-	case harness.ClaudeCode:
+	case harness.Claude:
+		// The API still names the harness claude_code.
 		return map[string]*managementapi.GridHarnessModel{
 			gridHarnessRolePrimary:    defaults.ClaudeCode.Primary,
 			gridHarnessRoleBackground: defaults.ClaudeCode.Background,
@@ -1290,7 +1303,7 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 		if s.Subagent != "" {
 			ctx.Outputf("  Subagent route    %s\n", accent.Render(s.Subagent))
 		}
-		if choice.Name() == harness.ClaudeCode {
+		if choice.Name() == harness.Claude {
 			ctx.Outputf("  Fallback route    %s\n", accent.Render(cmp.Or(s.Fallback, s.Primary)))
 		}
 		changed, replaced := false, false
@@ -1597,7 +1610,8 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 		primary := managementapi.UpdateGridBackgroundHarnessModels{Primary: gridOptional(f.PrimaryRouteID)}
 		background := managementapi.UpdateGridBackgroundHarnessModels{Primary: gridOptional(f.PrimaryRouteID), Background: gridOptional(f.BackgroundRouteID)}
 		switch f.Harness {
-		case "claude-code":
+		case harness.Claude:
+			// The API still names the harness claude_code.
 			defaults.ClaudeCode = managementapi.NewOptional(&background)
 		case "opencode":
 			defaults.Opencode = managementapi.NewOptional(&background)
@@ -1809,9 +1823,10 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 	if err != nil {
 		return err
 	}
-	record, ok := file.Harnesses[flags.Harness]
+	name := harness.Normalize(flags.Harness)
+	record, ok := file.Harnesses[name]
 	if !ok {
-		return fmt.Errorf("%s is not set up; run `baseten grid setup`", flags.Harness)
+		return fmt.Errorf("%s is not set up; run `baseten grid setup`", name)
 	}
 	teamID := record.TeamID
 	remote, err := ctx.authInfo.Remote()
