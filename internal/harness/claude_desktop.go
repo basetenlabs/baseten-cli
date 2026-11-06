@@ -37,7 +37,7 @@ var claudeDesktopHelperPaths = [][]string{{"inferenceCredentialHelper"}, {"infer
 var claudeDesktopPaths = append([][]string{
 	{"inferenceProvider"}, {"inferenceGatewayBaseUrl"}, {"inferenceGatewayAuthScheme"},
 	{"inferenceCredentialKind"}, claudeDesktopCredentialPath, {"inferenceCustomHeaders"},
-	{"modelDiscoveryEnabled"}, {"autoModeEnabled"}, {"inferenceModels"},
+	{"modelDiscoveryEnabled"}, {"toolSearchEnabled"}, {"autoModeEnabled"}, {"inferenceModels"},
 }, claudeDesktopHelperPaths...)
 
 // claudeDesktopHelperTTL is how long, in seconds, Claude Desktop keeps a helper
@@ -126,8 +126,22 @@ func claudeDesktopDeniedID(name string) bool {
 	return claudeDesktopDenied.MatchString(strings.ToLower(name))
 }
 
-func claudeDesktopModel(r Route) map[string]any {
-	return map[string]any{"name": claudeDesktopModelPrefix + r.ID, "labelOverride": cmp.Or(r.DisplayName, r.Name)}
+// claudeDesktopModel is one picker entry. The app knows nothing about an
+// alias: behavesAs gives it the Claude model's limits and effort levels, the
+// 1M keys its real window (else the app assumes 200k), and the sonnet tier
+// makes it the model Auto mode's checks go to.
+func claudeDesktopModel(r Route, sonnetTier bool) map[string]any {
+	model := map[string]any{"name": claudeDesktopModelPrefix + r.ID, "labelOverride": cmp.Or(r.DisplayName, r.Name)}
+	if r.Provider == ProviderAnthropic && r.UpstreamModel != "" {
+		model["behavesAs"] = r.UpstreamModel
+	}
+	if r.ContextWindow >= extendedContextWindow {
+		model["supports1m"], model["prefer1m"] = true, true
+	}
+	if sonnetTier {
+		model["anthropicFamilyTier"] = "sonnet"
+	}
+	return model
 }
 
 // claudeDesktopPrepare plans the app's files. routes are the routes Claude
@@ -144,14 +158,20 @@ func claudeDesktopPrepare(path string, routes []Route, selection Selection, endp
 	if len(listed) == 0 {
 		return nil, errors.New("Claude Desktop can list none of the routes: their model IDs match the app's denylist")
 	}
+	// Auto mode's checks go to the app's "sonnet" model: the background route
+	// when the app lists it, else the primary.
+	tier := s.Primary
+	if _, ok := routeByName(listed, s.Background); ok {
+		tier = s.Background
+	}
 	// The first model is Claude Desktop's default.
 	var models []any
 	if primary, ok := routeByName(listed, s.Primary); ok {
-		models = append(models, claudeDesktopModel(primary))
+		models = append(models, claudeDesktopModel(primary, primary.Name == tier))
 	}
 	for _, r := range listed {
 		if r.Name != s.Primary {
-			models = append(models, claudeDesktopModel(r))
+			models = append(models, claudeDesktopModel(r, r.Name == tier))
 		}
 	}
 	values := []setting{
@@ -160,7 +180,11 @@ func claudeDesktopPrepare(path string, routes []Route, selection Selection, endp
 		desired([]string{"inferenceGatewayAuthScheme"}, "bearer"),
 		desired([]string{"inferenceCustomHeaders"}, map[string]any{clientHeader: ClaudeCode}),
 		desired([]string{"modelDiscoveryEnabled"}, false),
-		desired([]string{"autoModeEnabled"}, false),
+		// Tool search keeps MCP tool schemas out of every request; without it a
+		// large MCP setup fills the context and trips model tool-count limits.
+		desired([]string{"toolSearchEnabled"}, true),
+		// Deleted, not false: the app's default offers Auto mode in Code sessions.
+		{Path: []string{"autoModeEnabled"}},
 		desired([]string{"inferenceModels"}, models),
 	}
 	credentialPath := claudeDesktopCredentialPath
