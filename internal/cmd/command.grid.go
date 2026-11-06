@@ -533,8 +533,8 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	}
 	if !ctx.JSON {
 		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
-		gridHarnessClaudeDesktopHint(ctx, targets)
 	}
+	gridHarnessClaudeDesktopHint(ctx, targets)
 	for i := range targets {
 		t := &targets[i]
 		if t.Name() == harness.Codex && !gridHarnessRestartCodexDaemon(ctx, filepath.Dir(t.detection.Path), f.Yes) {
@@ -749,8 +749,8 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 	}
 	if !ctx.JSON {
 		ctx.LogLine("Configuration saved. Restart the configured harnesses to load the changes.")
-		gridHarnessClaudeDesktopHint(ctx, targets)
 	}
+	gridHarnessClaudeDesktopHint(ctx, targets)
 	for i := range targets {
 		name := targets[i].Name()
 		plansChanged := slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Harness == name && p.Changed })
