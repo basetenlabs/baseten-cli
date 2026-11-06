@@ -1,5 +1,6 @@
-// Package harness configures coding harnesses (Claude Code, Codex, OpenCode,
-// Pi, and Claude Desktop) to use Baseten routes, and removes that configuration again.
+// Package harness configures coding harnesses (Claude, which is Claude Code
+// and Claude Desktop together, Codex, OpenCode, and Pi) to use Baseten routes,
+// and removes that configuration again.
 //
 // Setup overwrites a fixed set of integration settings in each harness's native
 // settings file. There are no backups: repeating setup refreshes the same
@@ -35,13 +36,26 @@ import (
 
 // Harness names, as accepted by --harness.
 const (
-	ClaudeCode = "claude-code"
-	Codex      = "codex"
-	OpenCode   = "opencode"
-	Pi         = "pi"
-	// ClaudeDesktop is Claude Desktop's third-party mode.
-	ClaudeDesktop = "claude-desktop"
+	// Claude configures Claude Code and, when the app is installed, Claude Desktop.
+	Claude   = "claude"
+	Codex    = "codex"
+	OpenCode = "opencode"
+	Pi       = "pi"
 )
+
+// ClaudeCode is the client name Claude Code and Claude Desktop send on the
+// wire, which Baseten keys their catalog, team defaults and usage on. It was
+// also the name of the claude harness before Claude Desktop joined it, so
+// configurations written then still pass it to 'grid token'.
+const ClaudeCode = "claude-code"
+
+// Normalize maps a harness name that has since changed to its current one.
+func Normalize(name string) string {
+	if name == ClaudeCode {
+		return Claude
+	}
+	return name
+}
 
 // Integration states reported by [Harness.Inspect].
 const (
@@ -94,10 +108,13 @@ type Harness interface {
 }
 
 type PrepareOptions struct {
-	Selection             Selection
-	Endpoint              string
-	Helper                *Helper
-	CLI                   string
+	Selection Selection
+	Endpoint  string
+	Helper    *Helper
+	CLI       string
+	// Installs are the copies of the harness Detect found, for a harness that
+	// configures each kind of install in its own files.
+	Installs              []Install
 	NoClaudeServedModel   bool
 	NoPiServedModel       bool
 	NoOpenCodeServedModel bool
@@ -131,7 +148,7 @@ func Supported() bool {
 
 // All returns every supported harness.
 func All() []Harness {
-	return []Harness{claudeCodeHarness{}, codexHarness{}, openCodeHarness{}, piHarness{}, claudeDesktopHarness{}}
+	return []Harness{claudeHarness{}, codexHarness{}, openCodeHarness{}, piHarness{}}
 }
 
 // Route is a Baseten route as shown in a harness's model picker, with the model

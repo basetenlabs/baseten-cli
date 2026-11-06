@@ -2,7 +2,6 @@ package harness
 
 import (
 	"cmp"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,10 +11,10 @@ import (
 	"strings"
 )
 
-// claudeDesktopHarness configures Claude Desktop's third-party mode, which
-// reads a config from its library, the library's applied config, and the
-// app's deployment mode, each in its own file.
-type claudeDesktopHarness struct{}
+// Claude Desktop's third-party mode reads a config from its library, the
+// library's applied config, and the app's deployment mode, each in its own
+// file. The claude harness writes them beside Claude Code's settings when the
+// app is installed.
 
 // claudeDesktopModelPrefix makes route model IDs Claude-shaped, since Claude
 // Desktop lists no others. Baseten resolves claude-desktop-<route id> to the route.
@@ -28,8 +27,7 @@ const claudeDesktopModelPrefix = "claude-desktop-"
 var claudeDesktopDenied = regexp.MustCompile(`ark-code|astron|command-r|deepseek|doubao|gemini|gemma|glm|gpt|grok|hermes|hy3|kimi|lfm|\bling\b|llama|longcat|mimo|minimax|mistral|mixtral|moonshot|nemotron|openai|phi-|qianfan|qwen|tc-code|\bunic\b|yi-|stepfun|step-3|seed-|bytedance|hunyuan|granite|amazon\.nova|nova-|devstral|ministral|ernie|codex|arcee|trinity|abab|phi\d|\bk2\.|\bm2\.|jamba|arctic|solar|mercury|zamba|kat-coder|\bds-|dpsk`)
 
 // claudeDesktopMarkerPath identifies Baseten's config in the library. The app
-// identifies as claude-code on the wire, so it shares that harness's team
-// defaults and attribution on Baseten's side.
+// identifies as claude-code on the wire, like Claude Code.
 var claudeDesktopMarkerPath = []string{"inferenceCustomHeaders", clientHeader}
 
 var claudeDesktopCredentialPath = []string{"inferenceGatewayApiKey"}
@@ -50,34 +48,9 @@ const claudeDesktopHelperTTL = 300
 // claudeDesktopSealedPrefix marks a static key Claude Desktop has encrypted in place.
 const claudeDesktopSealedPrefix = "__sealed__:"
 
-func (claudeDesktopHarness) Name() string { return ClaudeDesktop }
-
-// Detect finds the app bundle without running it, since running the app
-// opens it rather than printing a version, so it skips the shared detect().
-func (h claudeDesktopHarness) Detect(_ context.Context, execer Execer, dir string) (Detection, error) {
-	// dir is the config library, the directory that holds the config, as
-	// --config-dir and sync name it.
-	rel := []string{".config", "Claude-3p", "configLibrary"}
-	if runtime.GOOS == "darwin" {
-		rel = []string{"Library", "Application Support", "Claude-3p", "configLibrary"}
-	}
-	library, err := configDir(dir, "", rel...)
-	if err != nil {
-		return Detection{}, err
-	}
-	path, err := filepath.Abs(claudeDesktopConfigPath(library))
-	if err != nil {
-		return Detection{}, err
-	}
-	d := Detection{Name: h.Name(), Path: path}
-	for _, binary := range claudeDesktopBinaries() {
-		if bin, err := execer.LookPath(binary); err == nil {
-			d.Installs = append(d.Installs, Install{Kind: InstallDesktop, Binary: bin})
-		}
-	}
-	d.Installed = len(d.Installs) > 0
-	return d, nil
-}
+// claudeDesktopConfigID names Baseten's config in the library. Claude Desktop
+// names configs by v4 UUID; a fixed one keeps the path the same across calls.
+const claudeDesktopConfigID = "b45e7e00-c0de-4000-8000-000000000001"
 
 func claudeDesktopBinaries() []string {
 	switch runtime.GOOS {
@@ -101,11 +74,29 @@ func ClaudeDesktopLocations() string {
 	return ""
 }
 
-// claudeDesktopConfigID names Baseten's config in the library. Claude Desktop
-// names configs by v4 UUID; a fixed one keeps Detect the same across calls.
-const claudeDesktopConfigID = "b45e7e00-c0de-4000-8000-000000000001"
+// HasClaudeDesktop reports whether Detect found the Claude Desktop app.
+func HasClaudeDesktop(installs []Install) bool {
+	return slices.ContainsFunc(installs, func(i Install) bool { return i.Kind == InstallDesktop })
+}
 
-func claudeDesktopConfigPath(library string) string {
+// claudeDesktopConfig locates Baseten's Claude Desktop config from the Claude
+// Code settings path: in the app's own library when the settings are in Claude
+// Code's default directory, else under the settings directory, so --config-dir
+// keeps both apps' files together and sync finds them again.
+func claudeDesktopConfig(settingsPath string) string {
+	dir := filepath.Dir(settingsPath)
+	library := filepath.Join(dir, "Claude-3p", "configLibrary")
+	if def, err := configDir("", "CLAUDE_CONFIG_DIR", ".claude"); err == nil {
+		if abs, err := filepath.Abs(def); err == nil && abs == dir {
+			rel := []string{".config", "Claude-3p", "configLibrary"}
+			if runtime.GOOS == "darwin" {
+				rel = []string{"Library", "Application Support", "Claude-3p", "configLibrary"}
+			}
+			if native, err := configDir("", "", rel...); err == nil {
+				library = native
+			}
+		}
+	}
 	return filepath.Join(library, claudeDesktopConfigID+".json")
 }
 
@@ -131,46 +122,33 @@ func claudeDesktopModel(r Route) map[string]any {
 	return map[string]any{"name": claudeDesktopModelPrefix + r.ID, "labelOverride": cmp.Or(r.DisplayName, r.Name)}
 }
 
-func (claudeDesktopHarness) BackgroundRoute(Selection) string { return "" }
-
-// Routes keeps the routes that serve the Anthropic Messages API under a model
-// ID Claude Desktop accepts, so a denied route is absent everywhere, and an
-// explicit choice of one fails like any other unlisted route.
-func (claudeDesktopHarness) Routes(routes []Route) []Route {
-	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool {
-		return !r.Messages || claudeDesktopDeniedID(claudeDesktopModelPrefix+r.ID)
-	})
-}
-
-func (claudeDesktopHarness) SupportsSubagent() bool { return false }
-
-func (claudeDesktopHarness) SupportsHelper() bool { return true }
-
-func (claudeDesktopHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([]*Plan, error) {
-	s, helper := opts.Selection, opts.Helper
-	switch {
-	case s.Background != "":
-		return nil, errors.New("--background-route-id is supported only for Claude Code and OpenCode")
-	case s.Subagent != "":
-		return nil, errors.New("--subagent-route-id is supported only for Claude Code and OpenCode")
-	case s.Fallback != "":
-		return nil, errors.New("--fallback-route-id is supported only for Claude Code")
-	}
-	s, err := s.Resolve(routes)
+// claudeDesktopPrepare plans the app's files. routes are the routes Claude
+// Code lists; the app lists those under a model ID it accepts, the primary
+// first, so a denied route is absent from the app's picker.
+func claudeDesktopPrepare(path string, routes []Route, selection Selection, endpoint string, helper *Helper) ([]*Plan, error) {
+	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
 	}
+	listed := slices.DeleteFunc(slices.Clone(routes), func(r Route) bool {
+		return claudeDesktopDeniedID(claudeDesktopModelPrefix + r.ID)
+	})
+	if len(listed) == 0 {
+		return nil, errors.New("Claude Desktop can list none of the routes: their model IDs match the app's denylist")
+	}
 	// The first model is Claude Desktop's default.
-	primary, _ := routeByName(routes, s.Primary)
-	models := []any{claudeDesktopModel(primary)}
-	for _, r := range routes {
-		if r.Name != primary.Name {
+	var models []any
+	if primary, ok := routeByName(listed, s.Primary); ok {
+		models = append(models, claudeDesktopModel(primary))
+	}
+	for _, r := range listed {
+		if r.Name != s.Primary {
 			models = append(models, claudeDesktopModel(r))
 		}
 	}
 	values := []setting{
 		desired([]string{"inferenceProvider"}, "gateway"),
-		desired([]string{"inferenceGatewayBaseUrl"}, opts.Endpoint),
+		desired([]string{"inferenceGatewayBaseUrl"}, endpoint),
 		desired([]string{"inferenceGatewayAuthScheme"}, "bearer"),
 		desired([]string{"inferenceCustomHeaders"}, map[string]any{clientHeader: ClaudeCode}),
 		desired([]string{"modelDiscoveryEnabled"}, false),
@@ -183,7 +161,7 @@ func (claudeDesktopHarness) Prepare(path string, routes []Route, opts PrepareOpt
 		values = append(values,
 			desired([]string{"inferenceCredentialKind"}, "helper-script"),
 			desired(claudeDesktopHelperPaths[0], helper.Path),
-			desired(claudeDesktopHelperPaths[1], helper.args(ClaudeDesktop)),
+			desired(claudeDesktopHelperPaths[1], helper.args(Claude)),
 			desired(claudeDesktopHelperPaths[2], claudeDesktopHelperTTL),
 			setting{Path: claudeDesktopCredentialPath},
 		)
@@ -214,7 +192,9 @@ func (claudeDesktopHarness) Prepare(path string, routes []Route, opts PrepareOpt
 	return []*Plan{config, meta, mode}, nil
 }
 
-func (claudeDesktopHarness) Credential(path string) (string, error) {
+// claudeDesktopCredential returns the static key in the app's config, or ""
+// once the app has sealed it, since a sealed key is unreadable.
+func claudeDesktopCredential(path string) (string, error) {
 	_, data, err := readConfig(path)
 	if err != nil || !claudeDesktopOwned(data) {
 		return "", err
@@ -226,7 +206,7 @@ func (claudeDesktopHarness) Credential(path string) (string, error) {
 	return token, nil
 }
 
-func (claudeDesktopHarness) Teardown(path string) ([]*Plan, error) {
+func claudeDesktopTeardown(path string) ([]*Plan, error) {
 	_, data, err := readConfig(path)
 	if err != nil {
 		return nil, err
@@ -275,8 +255,10 @@ func (claudeDesktopHarness) Teardown(path string) ([]*Plan, error) {
 	return append(plans, meta, config), nil
 }
 
-func (claudeDesktopHarness) Inspect(d Detection) (Status, error) {
-	r, data, err := inspectConfig(d)
+// claudeDesktopInspect reports the app's integration state. Its routes are
+// route IDs with the app's labels, since the config holds no route names.
+func claudeDesktopInspect(path string) (Status, error) {
+	r, data, err := inspectConfig(Detection{Path: path})
 	if err != nil {
 		return r, err
 	}
@@ -285,15 +267,15 @@ func (claudeDesktopHarness) Inspect(d Detection) (Status, error) {
 		return r, nil
 	}
 	r.managed(data, claudeDesktopPaths)
-	_, meta, err := readConfig(claudeDesktopMetaPath(d.Path))
+	_, meta, err := readConfig(claudeDesktopMetaPath(path))
 	if err != nil {
 		return r, err
 	}
-	_, app, err := readConfig(claudeDesktopAppConfigPath(d.Path))
+	_, app, err := readConfig(claudeDesktopAppConfigPath(path))
 	if err != nil {
 		return r, err
 	}
-	if meta["appliedId"] != claudeDesktopID(d.Path) || app["deploymentMode"] != "3p" {
+	if meta["appliedId"] != claudeDesktopID(path) || app["deploymentMode"] != "3p" {
 		r.State = StateInactive
 	}
 	labels := map[string]string{}

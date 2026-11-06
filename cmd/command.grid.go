@@ -20,6 +20,7 @@ var commandGrid = Command{
 			Description: gridPrereleaseNotice +
 				"Configure installed harnesses with your team's routes and a Grid API key.\n\n" +
 				"Setup offers a picker of installed harnesses when --harness is omitted. Repeat --harness to select several. " +
+				"The claude harness configures Claude Code and, when the app is installed, Claude Desktop. " +
 				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code and Claude Desktop list the routes that serve " +
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the primary route unless --primary-route-id is set. " +
 				"Use 'baseten grid route list' to find route IDs; harness configurations use the corresponding route names.\n\n" +
@@ -41,12 +42,12 @@ var commandGrid = Command{
 					},
 					{
 						Description: "Install a pre-minted key from the environment instead of creating one.",
-						Command:     "baseten grid setup --harness claude-code --use-session-credential --yes",
+						Command:     "baseten grid setup --harness claude --use-session-credential --yes",
 					},
 					{
 						Description: "Preview configuration for one harness.",
 						CommandLines: []string{
-							"baseten grid setup --harness claude-code",
+							"baseten grid setup --harness claude",
 							"--primary-route-id <route-id> --dry-run",
 						},
 					},
@@ -60,7 +61,7 @@ var commandGrid = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print the configuration file paths.",
-					Command:     "baseten grid setup --harness claude-code --dry-run --jq '.items[].config'",
+					Command:     "baseten grid setup --harness claude --dry-run --jq '.items[].config'",
 				},
 			},
 		},
@@ -482,7 +483,7 @@ type GridTeamSettingsDescribeFlags struct {
 type GridTeamSettingsUpdateFlags struct {
 	CommandFlags
 	GridTeamFlags
-	Harness                  string               `flag:"harness" desc:"Harness whose default route IDs to update." enum:"claude-code,codex,opencode,pi"`
+	Harness                  string               `flag:"harness" desc:"Harness whose default route IDs to update." enum:"claude,codex,opencode,pi"`
 	PrimaryRouteID           OptionalFlag[string] `flag:"primary-route-id" desc:"Primary route ID; null clears the configured default. Requires --harness." nullable:"true"`
 	BackgroundRouteID        OptionalFlag[string] `flag:"background-route-id" desc:"Background route ID for Claude Code or OpenCode; null clears it. Requires --harness." nullable:"true"`
 	ClearHarnessDefaults     bool                 `flag:"clear-harness-defaults" desc:"Clear all configured harness defaults. Cannot be combined with --harness or route flags."`
@@ -609,14 +610,14 @@ type GridStatusList struct {
 
 // GridHarnessFlags selects the harnesses a command applies to.
 type GridHarnessFlags struct {
-	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude-code,codex,opencode,pi,claude-desktop"`
+	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude,codex,opencode,pi"`
 	ConfigDir string   `flag:"config-dir" desc:"Harness configuration directory. Requires exactly one --harness. Defaults to the harness's own location."`
 }
 
 // GridTokenFlags are the flags for `baseten grid token`.
 type GridTokenFlags struct {
 	CommandFlags
-	Harness string `flag:"harness" desc:"Harness the token is for, as configured by 'grid setup'." enum:"claude-code,codex,opencode,pi,claude-desktop" required:"true"`
+	Harness string `flag:"harness" desc:"Harness the token is for, as configured by 'grid setup'. claude-code is accepted for settings written before the claude harness covered Claude Desktop." enum:"claude,codex,opencode,pi,claude-code" required:"true"`
 	Team    string `flag:"team" desc:"Team name or ID the token is for. Defaults to the team the harness was set up with."`
 }
 
