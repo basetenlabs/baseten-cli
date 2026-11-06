@@ -16,7 +16,8 @@ var commandAuth = Command{
 				"(suitable for non-TTY environments). Use --with-api-key to provide an API key " +
 				"(reads from stdin, or prompts interactively if TTY).\n\n" +
 				"Browser logins name the profile after your email; API key logins require an " +
-				"explicit --profile name. The new profile becomes current unless --no-switch is given.",
+				"explicit --profile name. The new profile becomes current unless --no-switch is given or " +
+				"explicit profile selection is required (see `baseten auth config update`).",
 			Flags: AuthLoginFlags{},
 			Output: &CommandOutput[AuthLoginResult]{
 				TextDescription: "Prints \"Logged in as <email> (<workspace>) as profile <profile>\" to stdout on success.",
@@ -37,10 +38,11 @@ var commandAuth = Command{
 			},
 		},
 		{
-			Name:        "logout",
-			Summary:     "Remove a stored profile",
-			Description: "Remove a stored profile and its credentials. Defaults to the current profile; pass --profile to choose another. For OAuth credentials, also revokes the session.",
-			Flags:       AuthLogoutFlags{},
+			Name:    "logout",
+			Summary: "Remove a stored profile",
+			Description: "Remove a stored profile and its credentials. Defaults to the current profile; pass --profile to choose another. " +
+				"When explicit profile selection is required, prompts for a profile on a terminal. For OAuth credentials, also revokes the session.",
+			Flags: AuthLogoutFlags{},
 			Output: &CommandOutput[AuthLogoutResult]{
 				TextDescription: "Prints \"Logged out <profile>\" to stdout on success.",
 				Examples: []CommandExample{
@@ -60,10 +62,11 @@ var commandAuth = Command{
 			},
 		},
 		{
-			Name:        "switch",
-			Summary:     "Switch the current profile",
-			Description: "Set the current profile used when no profile is selected via --profile or BASETEN_PROFILE.",
-			Flags:       AuthSwitchFlags{},
+			Name:    "switch",
+			Summary: "Switch the current profile",
+			Description: "Set the current profile used when no profile is selected via --profile or BASETEN_PROFILE. " +
+				"Not available when explicit profile selection is required.",
+			Flags: AuthSwitchFlags{},
 			Output: &CommandOutput[AuthSwitchResult]{
 				TextDescription: "Prints \"Switched to <profile>\" to stdout on success.",
 				Examples: []CommandExample{
@@ -118,7 +121,64 @@ var commandAuth = Command{
 				},
 			},
 		},
+		{
+			Name:    "config",
+			Summary: "Manage settings that apply across profiles",
+			Children: []Command{
+				{
+					Name:        "describe",
+					Summary:     "Show auth settings",
+					Description: "Show settings that apply across all profiles.",
+					Flags:       AuthConfigDescribeFlags{},
+					Output: &CommandOutput[AuthConfigResult]{
+						TextDescription: "Each setting and its value.",
+						Examples: []CommandExample{
+							{
+								Description: "Show auth settings.",
+								Command:     "baseten auth config describe",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print whether explicit profile selection is required.",
+							Command:     "baseten auth config describe --jq '.require_explicit_profile'",
+						},
+					},
+				},
+				{
+					Name:    "update",
+					Summary: "Update auth settings",
+					Description: "Update settings that apply across all profiles.\n\n" +
+						"With --require-explicit-profile, there is no current profile: every command must select " +
+						"a profile via --profile, BASETEN_PROFILE, or BASETEN_API_KEY. Otherwise it prompts for " +
+						"one on a terminal and fails when not on a terminal. Enabling clears the current profile.",
+					Flags: AuthConfigUpdateFlags{},
+					Output: &CommandOutput[AuthConfigResult]{
+						TextDescription: "Each setting and its updated value.",
+						Examples: []CommandExample{
+							{
+								Description: "Require an explicit profile on every command.",
+								Command:     "baseten auth config update --require-explicit-profile",
+							},
+							{
+								Description: "Go back to using the current profile.",
+								Command:     "baseten auth config update --require-explicit-profile=false",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print whether explicit profile selection is required.",
+							Command:     "baseten auth config update --require-explicit-profile --jq '.require_explicit_profile'",
+						},
+					},
+				},
+			},
+		},
 	},
+}
+
+// AuthConfigResult is the JSON output of `baseten auth config describe` and
+// `baseten auth config update`.
+type AuthConfigResult struct {
+	RequireExplicitProfile bool `json:"require_explicit_profile"`
 }
 
 // AuthLoginResult is the JSON output of `baseten auth login`.
@@ -142,9 +202,10 @@ type AuthSwitchResult struct {
 
 // AuthStatusResult is the JSON output of `baseten auth status`.
 type AuthStatusResult struct {
-	Profile   string `json:"profile"`
-	RemoteURL string `json:"remote_url"`
-	AuthType  string `json:"auth_type"`
+	Profile                string `json:"profile"`
+	RemoteURL              string `json:"remote_url"`
+	AuthType               string `json:"auth_type"`
+	RequireExplicitProfile bool   `json:"require_explicit_profile"`
 }
 
 // AuthListResult is the JSON output of `baseten auth list`.
@@ -188,4 +249,15 @@ type AuthStatusFlags struct {
 // AuthListFlags are the flags for baseten auth list.
 type AuthListFlags struct {
 	CommandFlags
+}
+
+// AuthConfigDescribeFlags are the flags for baseten auth config describe.
+type AuthConfigDescribeFlags struct {
+	CommandFlags
+}
+
+// AuthConfigUpdateFlags are the flags for baseten auth config update.
+type AuthConfigUpdateFlags struct {
+	CommandFlags
+	RequireExplicitProfile bool `flag:"require-explicit-profile" desc:"Require every command to select a profile instead of using the current profile"`
 }
