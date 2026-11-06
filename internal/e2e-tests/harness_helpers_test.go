@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -19,19 +21,28 @@ import (
 )
 
 const (
-	harnessProcessTimeout = 150 * time.Second
-	harnessProviderID     = "baseten-harness"
+	harnessProcessTimeout    = 150 * time.Second
+	harnessProviderID        = "baseten-harness"
+	harnessOpenCodeSettings  = "opencode.json"
+	harnessRouterRoutePrefix = "auto-"
+	harnessLongContextSuffix = "[1m]"
 
-	harnessThinkingMarker   = "THINKING-MARKER-391"
-	harnessClaudeToolWord   = "CLAUDE-TOOL-CALL-OK"
-	harnessCodexToolWord    = "CODEX-TOOL-CALL-OK"
-	harnessClaudeSwitchWord = "SWITCH-CLAUDE-STAGE-OK"
-	harnessCodexSwitchWord  = "SWITCH-CODEX-STAGE-OK"
-	harnessPiSwitchWord     = "SWITCH-PI-STAGE-OK"
-	harnessClaudeRecallWord = "RECALL-CLAUDE-9"
-	harnessCodexRecallWord  = "RECALL-CODEX-7"
-	harnessPiRecallWord     = "RECALL-PI-3"
+	harnessThinkingMarker     = "THINKING-MARKER-391"
+	harnessClaudeToolWord     = "CLAUDE-TOOL-CALL-OK"
+	harnessCodexToolWord      = "CODEX-TOOL-CALL-OK"
+	harnessPiToolWord         = "PI-TOOL-CALL-OK"
+	harnessOpenCodeToolWord   = "OPENCODE-TOOL-CALL-OK"
+	harnessClaudeSwitchWord   = "SWITCH-CLAUDE-STAGE-OK"
+	harnessCodexSwitchWord    = "SWITCH-CODEX-STAGE-OK"
+	harnessPiSwitchWord       = "SWITCH-PI-STAGE-OK"
+	harnessOpenCodeSwitchWord = "SWITCH-OPENCODE-STAGE-OK"
+	harnessClaudeRecallWord   = "RECALL-CLAUDE-9"
+	harnessCodexRecallWord    = "RECALL-CODEX-7"
+	harnessPiRecallWord       = "RECALL-PI-3"
+	harnessOpenCodeRecallWord = "RECALL-OPENCODE-5"
 )
+
+var harnessEffortLevels = []string{"max", "xhigh", "high", "medium", "low", "minimal"}
 
 type harnessModelOption struct {
 	id    string
@@ -45,9 +56,16 @@ type harnessPiModel struct {
 	levels    []string
 }
 
+type harnessOpenCodeModel struct {
+	id        string
+	anthropic bool
+	variants  []string
+}
+
 type harnessTest struct {
 	name      string
 	binary    string
+	prefix    []string
 	root      string
 	configDir string
 	endpoint  string
@@ -58,12 +76,56 @@ type harnessTest struct {
 
 	piModels []harnessPiModel
 
-	codexDefault   string
-	codexSlugs     []string
-	codexWebSearch bool
+	codexDefault string
+	codexSlugs   []string
+	codexEfforts map[string][]string
+
+	openCodeDefault string
+	openCodeModels  []harnessOpenCodeModel
+}
+
+type harnessVariant struct {
+	binary string
+	major  string
+	prefix []string
+	seed   map[string]string
+}
+
+type harnessOpenCodeVariant struct {
+	label     string
+	opencode2 bool
+	v2Config  bool
+}
+
+var harnessOpenCodeVariants = []harnessOpenCodeVariant{
+	{label: "opencode"},
+	{label: "opencode2/v1", opencode2: true},
+	{label: "opencode2/v2", opencode2: true, v2Config: true},
 }
 
 func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
+	t.Helper()
+	return newHarnessVariantTest(t, name, harnessVariant{binary: binary})
+}
+
+func newOpenCodeHarnessTest(t *testing.T, variant harnessOpenCodeVariant) *harnessTest {
+	t.Helper()
+	if !variant.opencode2 {
+		return newHarnessVariantTest(t, "opencode", harnessVariant{binary: "opencode", major: "1"})
+	}
+	binary := os.Getenv("BASETEN_TEST_OPENCODE2")
+	if binary == "" {
+		t.Skip("BASETEN_TEST_OPENCODE2 not set")
+	}
+	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	spec := harnessVariant{binary: binary, prefix: []string{"--standalone"}}
+	if variant.v2Config {
+		spec.seed = map[string]string{harnessOpenCodeSettings: `{"providers": {}}`}
+	}
+	return newHarnessVariantTest(t, "opencode", spec)
+}
+
+func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *harnessTest {
 	t.Helper()
 	apiKey := os.Getenv("BASETEN_E2E_TEST_API_KEY")
 	if apiKey == "" {
@@ -77,9 +139,9 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
 	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
 
-	found, err := exec.LookPath(binary)
+	found, err := exec.LookPath(variant.binary)
 	if err != nil {
-		t.Skipf("%s is not on PATH", binary)
+		t.Skipf("%s is not on PATH", variant.binary)
 	}
 
 	root, err := os.MkdirTemp("", "baseten-cli-e2e-")
@@ -94,7 +156,7 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 			t.Logf("harness root %s not fully removed: %v", root, err)
 		}
 	})
-	h := &harnessTest{name: name, binary: found, root: root}
+	h := &harnessTest{name: name, binary: found, prefix: variant.prefix, root: root}
 	switch name {
 	case "claude-code":
 		h.configDir = filepath.Join(h.root, ".claude")
@@ -102,8 +164,24 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 		h.configDir = filepath.Join(h.root, ".codex")
 	case "pi":
 		h.configDir = filepath.Join(h.root, ".pi", "agent")
+	case "opencode":
+		h.configDir = filepath.Join(h.root, ".config", "opencode")
 	default:
 		t.Fatalf("unsupported harness %q", name)
+	}
+	for _, entry := range harnessHomeEnv(t, h.root, h.configDir) {
+		key, value, _ := strings.Cut(entry, "=")
+		t.Setenv(key, value)
+	}
+	if variant.major != "" {
+		stdout, _ := h.run(t, t.TempDir(), "--version")
+		if version := strings.TrimSpace(stdout); !strings.HasPrefix(version, variant.major+".") {
+			t.Skipf("%s on PATH is %s, not v%s", variant.binary, version, variant.major)
+		}
+	}
+	for file, content := range variant.seed {
+		require.NoError(t, os.MkdirAll(h.configDir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(h.configDir, file), []byte(content), 0o600))
 	}
 	out, errOut, err := cli(t, "grid", "setup", "--harness", name, "--config-dir", h.configDir, "--use-session-credential", "--yes", "--team", team)
 	if err != nil {
@@ -146,6 +224,8 @@ func (h *harnessTest) loadConfig(t *testing.T) {
 		h.loadCodexConfig(t)
 	case "pi":
 		h.loadPiConfig(t)
+	case "opencode":
+		h.loadOpenCodeConfig(t)
 	default:
 		t.Fatalf("unsupported harness %q", h.name)
 	}
@@ -207,7 +287,7 @@ func (h *harnessTest) loadPiConfig(t *testing.T) {
 		model.api, _ = row["api"].(string)
 		model.reasoning, _ = row["reasoning"].(bool)
 		if levels, ok := row["thinkingLevelMap"].(map[string]any); ok {
-			for _, level := range []string{"max", "xhigh", "high", "medium", "low", "minimal"} {
+			for _, level := range harnessEffortLevels {
 				if value, ok := levels[level]; ok && value != nil {
 					model.levels = append(model.levels, level)
 				}
@@ -226,37 +306,71 @@ func (h *harnessTest) loadCodexConfig(t *testing.T) {
 	require.NotNil(t, provider, "codex config.toml has no %s provider", harnessProviderID)
 	baseURL, _ := provider["base_url"].(string)
 	h.endpoint = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
-	if value, ok := data["web_search"]; ok {
-		h.codexWebSearch = harnessCodexWebSearchEnabled(value)
-	} else if tools, ok := data["tools"].(map[string]any); ok {
-		if value, ok := tools["web_search"]; ok {
-			h.codexWebSearch = harnessCodexWebSearchEnabled(value)
-		}
-	}
 	catalogPath, _ := data["model_catalog_json"].(string)
 	require.NotEmpty(t, catalogPath, "codex config.toml has no model_catalog_json")
 	catalog := harnessReadJSON(t, catalogPath)
 	models, _ := catalog["models"].([]any)
+	h.codexEfforts = map[string][]string{}
 	for _, entry := range models {
 		row, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
 		slug, _ := row["slug"].(string)
-		if slug != "" {
-			h.codexSlugs = append(h.codexSlugs, slug)
+		if slug == "" {
+			continue
+		}
+		h.codexSlugs = append(h.codexSlugs, slug)
+		levels, _ := row["supported_reasoning_levels"].([]any)
+		for _, level := range levels {
+			option, _ := level.(map[string]any)
+			if effort, _ := option["effort"].(string); effort != "" {
+				h.codexEfforts[slug] = append(h.codexEfforts[slug], effort)
+			}
 		}
 	}
 }
 
-func harnessCodexWebSearchEnabled(value any) bool {
-	switch search := value.(type) {
-	case bool:
-		return search
-	case string:
-		return search != "" && search != "disabled" && search != "false"
+func (h *harnessTest) loadOpenCodeConfig(t *testing.T) {
+	t.Helper()
+	data := harnessReadJSON(t, filepath.Join(h.configDir, harnessOpenCodeSettings))
+	h.openCodeDefault, _ = data["model"].(string)
+	providers, v2 := data["providers"].(map[string]any)
+	if !v2 {
+		providers, _ = data["provider"].(map[string]any)
 	}
-	return false
+	provider, _ := providers[harnessProviderID].(map[string]any)
+	require.NotNil(t, provider, "opencode %s has no %s provider", harnessOpenCodeSettings, harnessProviderID)
+	optionsKey := "options"
+	if v2 {
+		optionsKey = "settings"
+	}
+	options, _ := provider[optionsKey].(map[string]any)
+	baseURL, _ := options["baseURL"].(string)
+	h.endpoint = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
+	models, _ := provider["models"].(map[string]any)
+	for _, key := range slices.Sorted(maps.Keys(models)) {
+		row, _ := models[key].(map[string]any)
+		model := harnessOpenCodeModel{id: harnessProviderID + "/" + key}
+		if v2 {
+			pkg, _ := row["package"].(string)
+			model.anthropic = strings.Contains(pkg, "anthropic")
+			variants, _ := row["variants"].([]any)
+			for _, entry := range variants {
+				variant, _ := entry.(map[string]any)
+				if id, _ := variant["id"].(string); id != "" {
+					model.variants = append(model.variants, id)
+				}
+			}
+		} else {
+			override, _ := row["provider"].(map[string]any)
+			npm, _ := override["npm"].(string)
+			model.anthropic = npm == "@ai-sdk/anthropic"
+			variants, _ := row["variants"].(map[string]any)
+			model.variants = slices.Sorted(maps.Keys(variants))
+		}
+		h.openCodeModels = append(h.openCodeModels, model)
+	}
 }
 
 func harnessReadJSON(t *testing.T, path string) map[string]any {
@@ -277,10 +391,10 @@ func harnessReadTOML(t *testing.T, path string) map[string]any {
 	return parsed
 }
 
-func harnessProcessEnv(t *testing.T, root, configDir string) []string {
+func harnessHomeEnv(t *testing.T, root, configDir string) []string {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o700))
-	env := []string{
+	return []string{
 		"HOME=" + root,
 		"USERPROFILE=" + root,
 		"CLAUDE_CONFIG_DIR=" + configDir,
@@ -293,9 +407,12 @@ func harnessProcessEnv(t *testing.T, root, configDir string) []string {
 		"APPDATA=" + filepath.Join(root, "AppData", "Roaming"),
 		"LOCALAPPDATA=" + filepath.Join(root, "AppData", "Local"),
 		"TMPDIR=" + filepath.Join(root, "tmp"),
-		"DISABLE_TELEMETRY=1",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 	}
+}
+
+func harnessProcessEnv(t *testing.T, root, configDir string) []string {
+	t.Helper()
+	env := append(harnessHomeEnv(t, root, configDir), "DISABLE_TELEMETRY=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
 	for _, name := range []string{"PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "TEMP", "TMP", "PROGRAMFILES", "PROGRAMDATA"} {
 		if value, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+value)
@@ -311,6 +428,7 @@ func (h *harnessTest) run(t *testing.T, dir string, args ...string) (string, str
 
 func (h *harnessTest) runWithTimeout(t *testing.T, dir string, timeout time.Duration, args ...string) (string, string) {
 	t.Helper()
+	args = append(slices.Clone(h.prefix), args...)
 	step(t, "%s: %s %s", h.name, h.binary, strings.Join(args, " "))
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
@@ -517,58 +635,292 @@ func piErrorTurns(objects []map[string]any) int {
 	return count
 }
 
+func harnessEventsOf(objects []map[string]any, kind string) []map[string]any {
+	var events []map[string]any
+	for _, object := range objects {
+		if event, _ := object["type"].(string); event == kind {
+			events = append(events, object)
+		}
+	}
+	return events
+}
+
+func piToolErrors(objects []map[string]any) int {
+	count := 0
+	for _, event := range harnessEventsOf(objects, "tool_execution_end") {
+		if failed, _ := event["isError"].(bool); failed {
+			count++
+		}
+	}
+	return count
+}
+
+func codexCompletedItems(objects []map[string]any, kind string) []map[string]any {
+	var items []map[string]any
+	for _, event := range harnessEventsOf(objects, "item.completed") {
+		item, _ := event["item"].(map[string]any)
+		if itemKind, _ := item["type"].(string); itemKind == kind {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func codexCompletedItemTypes(objects []map[string]any) []string {
+	var kinds []string
+	for _, event := range harnessEventsOf(objects, "item.completed") {
+		item, _ := event["item"].(map[string]any)
+		kind, _ := item["type"].(string)
+		kinds = append(kinds, kind)
+	}
+	return kinds
+}
+
+func codexCompletedTools(objects []map[string]any) []string {
+	return slices.DeleteFunc(codexCompletedItemTypes(objects), func(kind string) bool {
+		return kind != "command_execution" && kind != "file_change"
+	})
+}
+
+func codexLastAgentMessage(objects []map[string]any) string {
+	messages := codexCompletedItems(objects, "agent_message")
+	if len(messages) == 0 {
+		return ""
+	}
+	text, _ := messages[len(messages)-1]["text"].(string)
+	return text
+}
+
+func codexReasoningTokens(objects []map[string]any) float64 {
+	total := 0.0
+	for _, event := range harnessEventsOf(objects, "turn.completed") {
+		usage, _ := event["usage"].(map[string]any)
+		tokens, _ := usage["reasoning_output_tokens"].(float64)
+		total += tokens
+	}
+	return total
+}
+
+func openCodePart(event map[string]any) map[string]any {
+	part, _ := event["part"].(map[string]any)
+	return part
+}
+
+func openCodeEventText(objects []map[string]any, kind string) string {
+	var text strings.Builder
+	for _, event := range harnessEventsOf(objects, kind) {
+		value, _ := openCodePart(event)["text"].(string)
+		text.WriteString(value)
+	}
+	return text.String()
+}
+
+func openCodeReasoningTokens(objects []map[string]any) float64 {
+	total := 0.0
+	for _, event := range harnessEventsOf(objects, "step_finish") {
+		tokens, _ := openCodePart(event)["tokens"].(map[string]any)
+		reasoning, _ := tokens["reasoning"].(float64)
+		total += reasoning
+	}
+	return total
+}
+
+func openCodeCompletedTools(objects []map[string]any) []string {
+	var tools []string
+	for _, event := range harnessEventsOf(objects, "tool_use") {
+		part := openCodePart(event)
+		state, _ := part["state"].(map[string]any)
+		if status, _ := state["status"].(string); status == "completed" {
+			tool, _ := part["tool"].(string)
+			tools = append(tools, tool)
+		}
+	}
+	return tools
+}
+
+func openCodeSessionID(objects []map[string]any) string {
+	for _, object := range objects {
+		if id, _ := object["sessionID"].(string); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func harnessRouterRoute(model string) bool {
+	model = strings.TrimSuffix(model, harnessLongContextSuffix)
+	return strings.HasPrefix(model[strings.LastIndex(model, "/")+1:], harnessRouterRoutePrefix)
+}
+
+func harnessModelPair(t *testing.T, harness string, ids []string) (string, string) {
+	t.Helper()
+	ids = slices.DeleteFunc(slices.Clone(ids), harnessRouterRoute)
+	if len(ids) < 2 {
+		t.Skipf("the team has %d non-router route(s) %s can call; model switching needs at least 2", len(ids), harness)
+	}
+	return ids[0], ids[1]
+}
+
+func harnessDefaultModelArgs(t *testing.T, flag, defaultModel string, models []string) []string {
+	t.Helper()
+	if !harnessRouterRoute(defaultModel) {
+		return nil
+	}
+	for _, model := range models {
+		if !harnessRouterRoute(model) {
+			step(t, "default model %s is a router route; using %s", defaultModel, model)
+			return []string{flag, model}
+		}
+	}
+	t.Skipf("the default model %s is a router route and the team has no other route (models: %s)", defaultModel, strings.Join(models, ", "))
+	return nil
+}
+
+func (h *harnessTest) claudeIDs() []string {
+	ids := make([]string, 0, len(h.claudeOptions))
+	for _, option := range h.claudeOptions {
+		ids = append(ids, option.id)
+	}
+	return ids
+}
+
 func (h *harnessTest) claudePair(t *testing.T) (string, string) {
 	t.Helper()
-	if len(h.claudeOptions) < 2 {
-		t.Skipf("the team has %d route(s) Claude Code can call; model switching needs at least 2", len(h.claudeOptions))
-	}
-	return h.claudeOptions[0].id, h.claudeOptions[1].id
+	return harnessModelPair(t, "Claude Code", h.claudeIDs())
 }
 
 func (h *harnessTest) codexPair(t *testing.T) (string, string) {
 	t.Helper()
-	if len(h.codexSlugs) < 2 {
-		t.Skipf("the team has %d route(s) Codex can call; model switching needs at least 2", len(h.codexSlugs))
-	}
-	return h.codexSlugs[0], h.codexSlugs[1]
+	return harnessModelPair(t, "Codex", h.codexSlugs)
 }
 
 func (h *harnessTest) piPair(t *testing.T) (string, string) {
 	t.Helper()
-	if len(h.piModels) < 2 {
-		t.Skipf("the team has %d route(s) Pi can call; model switching needs at least 2", len(h.piModels))
+	ids := make([]string, 0, len(h.piModels))
+	for _, model := range h.piModels {
+		ids = append(ids, model.id)
 	}
-	return h.piModels[0].id, h.piModels[1].id
+	return harnessModelPair(t, "Pi", ids)
 }
 
 func (h *harnessTest) claudeThinkingModel(t *testing.T) string {
 	t.Helper()
 	names := make([]string, 0, len(h.claudeOptions))
 	for _, option := range h.claudeOptions {
-		if _, ok := h.claudeEfforts[option.id]; ok {
+		if _, ok := h.claudeEfforts[option.id]; ok && !harnessRouterRoute(option.id) {
 			return option.id
 		}
 		names = append(names, option.id)
 	}
-	t.Skipf("the team's routes include no model with an effort ceiling for Claude Code to think with (models: %s)", strings.Join(names, ", "))
+	t.Skipf("the team's routes include no non-router model with an effort ceiling for Claude Code to think with (models: %s)", strings.Join(names, ", "))
 	return ""
 }
 
 func (h *harnessTest) piAnthropicThinkingModel(t *testing.T) (string, string) {
 	t.Helper()
 	for _, model := range h.piModels {
-		if model.api == "anthropic-messages" && model.reasoning && len(model.levels) > 0 {
+		if model.api == "anthropic-messages" && model.reasoning && len(model.levels) > 0 && !harnessRouterRoute(model.id) {
 			return model.id, model.levels[0]
 		}
 	}
-	t.Skipf("the team's routes include no Anthropic-format model with reasoning for pi to think with (models: %s)", harnessPiModelNames(h.piModels))
+	t.Skipf("the team's routes include no non-router Anthropic-format model with reasoning for pi to think with (models: %s)", harnessPiModelNames(h.piModels))
 	return "", ""
+}
+
+func (h *harnessTest) piNonAnthropicModel(t *testing.T) string {
+	t.Helper()
+	for _, model := range h.piModels {
+		if model.api != "anthropic-messages" && !harnessRouterRoute(model.id) {
+			return model.id
+		}
+	}
+	t.Skipf("the team's routes include no non-router, non-Anthropic-format model for pi; Anthropic routes intermittently refuse this prompt with a content filter while pi exits 0 (models: %s)", harnessPiModelNames(h.piModels))
+	return ""
 }
 
 func harnessPiModelNames(models []harnessPiModel) string {
 	names := make([]string, 0, len(models))
 	for _, model := range models {
 		names = append(names, model.id+"("+model.api+")")
+	}
+	return strings.Join(names, ", ")
+}
+
+func (h *harnessTest) codexThinkingModel(t *testing.T) string {
+	t.Helper()
+	if slices.Contains(h.codexEfforts[h.codexDefault], "high") && !harnessRouterRoute(h.codexDefault) {
+		return h.codexDefault
+	}
+	for _, slug := range h.codexSlugs {
+		if slices.Contains(h.codexEfforts[slug], "high") && !harnessRouterRoute(slug) {
+			return slug
+		}
+	}
+	t.Skipf("the team's routes include no non-router model Codex can run at high reasoning effort (models: %s)", strings.Join(h.codexSlugs, ", "))
+	return ""
+}
+
+func (h *harnessTest) openCodeThinkingModel(t *testing.T) (string, string) {
+	t.Helper()
+	for _, pick := range []func(harnessOpenCodeModel) bool{
+		func(model harnessOpenCodeModel) bool { return model.id == h.openCodeDefault },
+		func(model harnessOpenCodeModel) bool { return model.anthropic },
+		func(harnessOpenCodeModel) bool { return true },
+	} {
+		for _, model := range h.openCodeModels {
+			if !pick(model) || harnessRouterRoute(model.id) {
+				continue
+			}
+			for _, level := range harnessEffortLevels {
+				if slices.Contains(model.variants, level) {
+					return model.id, level
+				}
+			}
+		}
+	}
+	t.Skipf("the team's routes include no non-router model with a reasoning variant for opencode to think with (models: %s)", harnessOpenCodeModelNames(h.openCodeModels))
+	return "", ""
+}
+
+func (h *harnessTest) openCodeFirstModel(anthropic bool) string {
+	for _, model := range h.openCodeModels {
+		if model.anthropic == anthropic && !harnessRouterRoute(model.id) {
+			return model.id
+		}
+	}
+	return ""
+}
+
+func (h *harnessTest) openCodeToolModel(t *testing.T) string {
+	t.Helper()
+	model := h.openCodeFirstModel(false)
+	if model == "" {
+		t.Skipf("the team's routes include no non-router, non-Anthropic model for opencode's tool call (models: %s)", harnessOpenCodeModelNames(h.openCodeModels))
+	}
+	return model
+}
+
+func (h *harnessTest) openCodePair(t *testing.T) (string, string) {
+	t.Helper()
+	modelA, modelB := h.openCodeFirstModel(false), h.openCodeFirstModel(true)
+	if modelA != "" && modelB != "" {
+		return modelA, modelB
+	}
+	ids := make([]string, 0, len(h.openCodeModels))
+	for _, model := range h.openCodeModels {
+		ids = append(ids, model.id)
+	}
+	return harnessModelPair(t, "opencode", ids)
+}
+
+func harnessOpenCodeModelNames(models []harnessOpenCodeModel) string {
+	names := make([]string, 0, len(models))
+	for _, model := range models {
+		name := model.id
+		if model.anthropic {
+			name += "(anthropic)"
+		}
+		names = append(names, name)
 	}
 	return strings.Join(names, ", ")
 }
