@@ -350,6 +350,41 @@ func Test_Grid_Setup_CodexDesktopWithoutCLI(t *testing.T) {
 	h.Require.Equal("configured", statuses.Items[0].State)
 }
 
+func Test_Grid_Setup_Status_Teardown_ClaudeDesktop(t *testing.T) {
+	skipUnlessSupported(t)
+	binary := "claude-desktop"
+	if runtime.GOOS == "darwin" {
+		binary = "/Applications/Claude.app/Contents/MacOS/Claude"
+	}
+	h, _ := gridAPI(t, "")
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{binary: binary})
+	library := filepath.Join(t.TempDir(), "configLibrary")
+	appConfig := filepath.Join(filepath.Dir(library), "claude_desktop_config.json")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude-desktop", "--config-dir", library, "--yes"))
+	configs, err := filepath.Glob(filepath.Join(library, "*-*.json"))
+	h.Require.NoError(err)
+	h.Require.Len(configs, 1, "one Baseten config in the library")
+	settings := readHarnessSettings(t, "claude-desktop", configs[0])
+	h.Require.Equal("gateway", settings["inferenceProvider"])
+	h.Require.Equal(map[string]any{"X-Baseten-Client": "claude-code"}, settings["inferenceCustomHeaders"])
+	h.Require.Equal([]any{map[string]any{"name": "claude-desktop-route-primary", "labelOverride": "Primary"}}, settings["inferenceModels"])
+	h.Require.Equal(strings.TrimSuffix(filepath.Base(configs[0]), ".json"), readHarnessSettings(t, "claude-desktop", filepath.Join(library, "_meta.json"))["appliedId"])
+	h.Require.Equal("3p", readHarnessSettings(t, "claude-desktop", appConfig)["deploymentMode"])
+	h.Require.NoError(h.Execute("grid", "status", "--harness", "claude-desktop", "--config-dir", library, "--output", "json"))
+	var statuses public.GridStatusList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
+	h.Require.Len(statuses.Items, 1)
+	h.Require.True(statuses.Items[0].Installed)
+	h.Require.Equal("configured", statuses.Items[0].State)
+	// The app config holds route IDs and labels, not route names.
+	h.Require.Equal("route-primary", statuses.Items[0].DefaultRoute)
+	h.Require.Equal([]public.GridHarnessRoute{{Name: "route-primary", DisplayName: "Primary"}}, statuses.Items[0].Routes)
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude-desktop", "--config-dir", library, "--yes"))
+	h.Require.Equal("1p", readHarnessSettings(t, "claude-desktop", appConfig)["deploymentMode"])
+	h.Require.NotContains(readHarnessSettings(t, "claude-desktop", filepath.Join(library, "_meta.json")), "appliedId")
+	h.Require.NoFileExists(configs[0])
+}
+
 func Test_Grid_Setup_TextSummary(t *testing.T) {
 	skipUnlessSupported(t)
 	h, _ := fakeGridAPI(t)

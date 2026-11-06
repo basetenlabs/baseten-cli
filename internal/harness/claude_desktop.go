@@ -3,9 +3,7 @@ package harness
 import (
 	"cmp"
 	"context"
-	"crypto/rand"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,7 +23,8 @@ const claudeDesktopModelPrefix = "claude-desktop-"
 
 // claudeDesktopDenied is Claude Desktop's own model ID denylist, which it
 // matches against the lowercased ID before the Claude-name check; an ID it
-// matches never reaches the picker.
+// matches never reaches the picker. Copied from Claude Desktop 4.16336.0
+// (app.asar) on 2026-11-05, as were the setting names below.
 var claudeDesktopDenied = regexp.MustCompile(`ark-code|astron|command-r|deepseek|doubao|gemini|gemma|glm|gpt|grok|hermes|hy3|kimi|lfm|\bling\b|llama|longcat|mimo|minimax|mistral|mixtral|moonshot|nemotron|openai|phi-|qianfan|qwen|tc-code|\bunic\b|yi-|stepfun|step-3|seed-|bytedance|hunyuan|granite|amazon\.nova|nova-|devstral|ministral|ernie|codex|arcee|trinity|abab|phi\d|\bk2\.|\bm2\.|jamba|arctic|solar|mercury|zamba|kat-coder|\bds-|dpsk`)
 
 // claudeDesktopMarkerPath identifies Baseten's config in the library. The app
@@ -54,7 +53,7 @@ const claudeDesktopSealedPrefix = "__sealed__:"
 func (claudeDesktopHarness) Name() string { return ClaudeDesktop }
 
 // Detect finds the app bundle without running it, since running the app
-// opens it rather than printing a version.
+// opens it rather than printing a version, so it skips the shared detect().
 func (h claudeDesktopHarness) Detect(_ context.Context, execer Execer, dir string) (Detection, error) {
 	// dir is the config library, the directory that holds the config, as
 	// --config-dir and sync name it.
@@ -94,24 +93,20 @@ func claudeDesktopBinaries() []string {
 	return nil
 }
 
-// claudeDesktopConfigPath is the library config setup wrote before, else a new
-// one named by a random v4 UUID, as Claude Desktop names its configs.
-func claudeDesktopConfigPath(library string) string {
-	entries, _ := os.ReadDir(library)
-	for _, e := range entries {
-		path := filepath.Join(library, e.Name())
-		if e.Name() == "_meta.json" || filepath.Ext(path) != ".json" {
-			continue
-		}
-		if _, data, err := readConfig(path); err == nil && claudeDesktopOwned(data) {
-			return path
-		}
+// ClaudeDesktopLocations names where Detect looks for the app, for error messages.
+func ClaudeDesktopLocations() string {
+	if runtime.GOOS == "darwin" {
+		return "Claude.app"
 	}
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	b[6] = b[6]&0x0f | 0x40
-	b[8] = b[8]&0x3f | 0x80
-	return filepath.Join(library, fmt.Sprintf("%x-%x-%x-%x-%x.json", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]))
+	return ""
+}
+
+// claudeDesktopConfigID names Baseten's config in the library. Claude Desktop
+// names configs by v4 UUID; a fixed one keeps Detect the same across calls.
+const claudeDesktopConfigID = "b45e7e00-c0de-4000-8000-000000000001"
+
+func claudeDesktopConfigPath(library string) string {
+	return filepath.Join(library, claudeDesktopConfigID+".json")
 }
 
 func claudeDesktopOwned(data map[string]any) bool {
@@ -243,7 +238,9 @@ func (claudeDesktopHarness) Teardown(path string) ([]*Plan, error) {
 	}
 	var plans []*Plan
 	// 1p mode comes back only while the app still applies Baseten's config; a
-	// config the user applied since stays in charge.
+	// config the user applied since stays in charge. The mode is written, not
+	// deleted: the app treats a missing deploymentMode as a first run before
+	// sign-in.
 	if claudeDesktopOwned(data) && applied["appliedId"] == id {
 		mode, err := prepareSettings(claudeDesktopAppConfigPath(path), nil, func(map[string]any) ([]setting, error) {
 			return []setting{desired([]string{"deploymentMode"}, "1p")}, nil

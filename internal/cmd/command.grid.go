@@ -116,7 +116,7 @@ func gridSelectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup 
 		switch {
 		case setup && !d.Installed && explicit:
 			searched := "not on PATH"
-			locations := map[string]string{harness.Codex: harness.CodexDesktopLocations(), harness.OpenCode: harness.OpenCodeDesktopLocations()}
+			locations := map[string]string{harness.Codex: harness.CodexDesktopLocations(), harness.OpenCode: harness.OpenCodeDesktopLocations(), harness.ClaudeDesktop: harness.ClaudeDesktopLocations()}
 			if l := locations[h.Name()]; l != "" {
 				searched += " or in " + l
 			}
@@ -1637,10 +1637,11 @@ func outputGridTeamSettings(ctx *CommandContext, settings *managementapi.GridTea
 	ctx.Outputf("Team-wide monthly limit USD:   %s\n", gridSettingText(settings.SpendLimit.TeamWideMonthlyLimitUsd))
 	var rows [][]string
 	for _, h := range harness.All() {
-		models := gridHarnessDefaultModels(&settings.HarnessDefaults, h.Name())
-		if models == nil {
+		if h.Name() == harness.ClaudeDesktop {
+			// Claude Desktop follows Claude Code's defaults and has none of its own.
 			continue
 		}
+		models := gridHarnessDefaultModels(&settings.HarnessDefaults, h.Name())
 		rows = append(rows, []string{
 			h.Name(),
 			gridTeamSettingsHarnessDefaultLabel(models[gridHarnessRolePrimary], true),

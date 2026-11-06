@@ -1078,7 +1078,7 @@ func TestClaudeDesktopDetectDir(t *testing.T) {
 	d, err := claudeDesktopHarness{}.Detect(t.Context(), fakeExecer{missing: true}, dir)
 	require.NoError(t, err)
 	require.Equal(t, dir, filepath.Dir(d.Path))
-	require.Regexp(t, `^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}\.json$`, filepath.Base(d.Path))
+	require.Equal(t, claudeDesktopConfigID+".json", filepath.Base(d.Path))
 	for _, name := range []string{"claude-desktop-b0dgYBn", "claude-desktop-XP9WlBD"} {
 		require.False(t, claudeDesktopDeniedID(name), name)
 	}
