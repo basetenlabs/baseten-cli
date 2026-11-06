@@ -1479,12 +1479,12 @@ func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFla
 	if err != nil {
 		return err
 	}
-	params := managementapi.GetV1GridClassifiersParams{}
-	var items []managementapi.GridClassifier
+	params := managementapi.GetV1GridRouteClassifiersParams{}
+	var items []managementapi.GridRouteClassifier
 	for {
-		page, err := cl.API().GetGridClassifiers(ctx, params)
+		page, err := cl.API().GetGridRouteClassifiers(ctx, params)
 		if err != nil {
-			return fmt.Errorf("listing classifiers: %w", err)
+			return fmt.Errorf("listing route classifiers: %w", err)
 		}
 		items = append(items, page.Items...)
 		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
@@ -1497,14 +1497,19 @@ func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFla
 		return nil
 	}
 	if len(items) == 0 {
-		ctx.LogLine("No classifiers found.")
+		ctx.LogLine("No route classifiers found.")
 		return nil
 	}
 	var rows [][]string
-	for _, classifier := range items {
-		rows = append(rows, []string{classifier.Id, classifier.Name})
+	for _, routeClassifier := range items {
+		rows = append(rows, []string{
+			routeClassifier.Id,
+			routeClassifier.Name,
+			gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs),
+			strings.Join(routeClassifier.DecidableModels, ", "),
+		})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME", "TRADEOFFS", "DECIDABLE MODELS"}, Rows: rows})
 	return nil
 }
 
@@ -1516,17 +1521,31 @@ func commandGridClassifierDescribe(ctx *CommandContext, f *cmd.GridClassifierDes
 	if err != nil {
 		return err
 	}
-	classifier, err := cl.API().GetGridClassifiersClassifierId(ctx, f.ID)
+	routeClassifier, err := cl.API().GetGridRouteClassifiersRouteClassifierId(ctx, f.ID)
 	if err != nil {
-		return fmt.Errorf("getting classifier: %w", err)
+		return fmt.Errorf("getting route classifier: %w", err)
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(classifier)
+		ctx.OutputJSON(routeClassifier)
 		return nil
 	}
-	ctx.Outputf("ID:   %s\n", classifier.Id)
-	ctx.Outputf("Name: %s\n", classifier.Name)
+	ctx.Outputf("ID:               %s\n", routeClassifier.Id)
+	ctx.Outputf("Name:             %s\n", routeClassifier.Name)
+	ctx.Outputf("Tradeoffs:        %s\n", gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs))
+	ctx.Outputf("Decidable Models: %s\n", strings.Join(routeClassifier.DecidableModels, ", "))
 	return nil
+}
+
+// The API returns no tradeoffs when the route classifier supports all of them.
+func gridRouteClassifierTradeoffsText(tradeoffs []managementapi.GridRouteClassifierSupportedTradeoffs) string {
+	if len(tradeoffs) == 0 {
+		return "all"
+	}
+	names := make([]string, 0, len(tradeoffs))
+	for _, tradeoff := range tradeoffs {
+		names = append(names, string(tradeoff))
+	}
+	return strings.Join(names, ", ")
 }
 
 func gridTeamID(ctx *CommandContext, api *managementapi.Client, team string) (*string, error) {
