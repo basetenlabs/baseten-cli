@@ -20,6 +20,9 @@ type openCodeHarness struct{}
 //go:embed opencode-served-model
 var openCodeServedModelSource embed.FS
 
+//go:embed opencode_git_context.js
+var openCodeGitContextSource []byte
+
 const (
 	openCodeServedModelSourceDir = "opencode-served-model"
 	openCodeServedModelRoutes    = "routes.json"
@@ -256,7 +259,20 @@ func (openCodeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 		return nil, err
 	}
 	p.bearerPath = bearerPath
-	return withOpenCodeServedModel(p, routes, opts.NoOpenCodeServedModel)
+	plans, err := withOpenCodeServedModel(p, routes, opts.NoOpenCodeServedModel)
+	if err != nil {
+		return nil, err
+	}
+	var gitContext []*Plan
+	if opts.GitContext {
+		gitContext, err = prepareSealedFile(openCodeGitContextPath(path), openCodeGitContextSource, "OpenCode sessions will not include the git repository, branch, and commit")
+	} else {
+		gitContext, err = prepareSealedFileRemoval(openCodeGitContextPath(path))
+	}
+	if err != nil {
+		return nil, err
+	}
+	return append(plans, gitContext...), nil
 }
 
 func HasOpenCode2(d Detection) bool {
@@ -274,6 +290,10 @@ func openCodeMajorVersion(version string) int {
 
 func openCodeServedModelDir(path string) string {
 	return filepath.Join(filepath.Dir(path), "plugins", "baseten-served-model")
+}
+
+func openCodeGitContextPath(path string) string {
+	return filepath.Join(filepath.Dir(path), "plugins", "baseten-git-context.js")
 }
 
 func withOpenCodeServedModel(p *Plan, routes []Route, off bool) ([]*Plan, error) {
@@ -503,7 +523,15 @@ func (openCodeHarness) Teardown(path string) ([]*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	return withOpenCodeServedModel(p, nil, true)
+	plans, err := withOpenCodeServedModel(p, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	gitContext, err := prepareSealedFileRemoval(openCodeGitContextPath(path))
+	if err != nil {
+		return nil, err
+	}
+	return append(plans, gitContext...), nil
 }
 
 func (openCodeHarness) Inspect(d Detection) (Status, error) {
