@@ -931,6 +931,7 @@ type harnessGateway struct {
 	models         []string
 	clients        []string
 	requestClasses []string
+	bodies         []string
 }
 
 func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -943,6 +944,7 @@ func (g *harnessGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.models = append(g.models, body.Model)
 		g.clients = append(g.clients, r.Header.Get("X-Baseten-Grid-Client"))
 		g.requestClasses = append(g.requestClasses, r.Header.Get("x-claude-code-request-class"))
+		g.bodies = append(g.bodies, string(raw))
 		g.mu.Unlock()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -958,10 +960,27 @@ func (g *harnessGateway) requested() []string {
 
 func (g *harnessGateway) saw(model string) bool { return slices.Contains(g.requested(), model) }
 
+func (g *harnessGateway) sawWith(model, text string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for i, requested := range g.models {
+		if requested == model && strings.Contains(g.bodies[i], text) {
+			return true
+		}
+	}
+	return false
+}
+
 func (g *harnessGateway) sentClients() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return slices.Clone(g.clients)
+}
+
+func (g *harnessGateway) sentBodies() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.bodies)
 }
 
 func (g *harnessGateway) sentRequestClasses() []string {
@@ -990,7 +1009,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 	cases := []harnessCase{
 		{label: "claude-code", name: "claude-code", binary: "claude", args: []string{"-p", "Reply with OK."}},
 		{label: "codex", name: "codex", binary: "codex", args: []string{"exec", "--skip-git-repo-check", "Reply with OK."}},
-		{label: "opencode/v1", name: "opencode", binary: "opencode", args: []string{"run", "Reply with OK."}},
+		{label: "opencode/v1", name: "opencode", binary: "opencode", args: []string{"run", "Reply with OK."}, seed: `{"snapshot": false}`},
 		{label: "pi", name: "pi", binary: "pi", args: []string{"--print", "Reply with OK."}},
 	}
 	if opencode2 := os.Getenv("BASETEN_TEST_OPENCODE2"); opencode2 != "" {
@@ -998,8 +1017,8 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 		// private one keeps the test off the developer's.
 		args := []string{"run", "--standalone", "Reply with OK."}
 		cases = append(cases,
-			harnessCase{label: "opencode2/v1", name: "opencode", binary: opencode2, args: args},
-			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}}`},
+			harnessCase{label: "opencode2/v1", name: "opencode", binary: opencode2, args: args, seed: `{"snapshot": false}`},
+			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}, "snapshot": false}`},
 		)
 	}
 	for _, tc := range cases {
@@ -1024,12 +1043,16 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 				h.Require.NoError(os.WriteFile(harnessSettingsFile(tc.name, configDir), []byte(tc.seed), 0o600))
 			}
 			// The token helper would run this test binary, so the session's key is installed instead.
-			h.Require.NoError(h.Execute("grid", "setup", "--harness", tc.name, "--config-dir", configDir, "--use-session-credential", "--yes"))
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", tc.name, "--config-dir", configDir, "--use-session-credential", "--yes", "--git-context"))
 
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			defer cancel()
 			run := exec.CommandContext(ctx, binary, tc.args...)
 			run.Dir = t.TempDir()
+			var gitContext string
+			if tc.name != "codex" {
+				gitContext = initHarnessGitRepo(t, run.Dir)
+			}
 			// A minimal environment: anything inherited could point the harness at
 			// a real provider and make the test pass for the wrong reason.
 			run.Env = []string{
@@ -1059,7 +1082,7 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			// The gateway refuses every request, so stop the harness once it asks
 			// for the route rather than waiting out its retries.
 			exited := false
-			for !gateway.saw("acme/primary") && !exited && ctx.Err() == nil {
+			for !gateway.sawWith("acme/primary", gitContext) && !exited && ctx.Err() == nil {
 				select {
 				case <-done:
 					exited = true
@@ -1075,11 +1098,32 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 				t.Fatalf("%s did not request acme/primary; requested %v\n%s", tc.binary, gateway.requested(), output.String())
 			}
 			h.Require.Contains(gateway.sentClients(), tc.name, "X-Baseten-Grid-Client")
+			if gitContext != "" {
+				h.Require.True(slices.ContainsFunc(gateway.sentBodies(), func(body string) bool { return strings.Contains(body, gitContext) }), "git context %q", gitContext)
+			}
 			if tc.name == "claude-code" {
 				h.Require.True(slices.ContainsFunc(gateway.sentRequestClasses(), func(v string) bool { return v != "" }), "x-claude-code-request-class")
 			}
 		})
 	}
+}
+
+func initHarnessGitRepo(t *testing.T, dir string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	run := func(args ...string) string {
+		command := exec.Command("git", args...)
+		command.Dir = dir
+		out, err := command.Output()
+		require.NoError(t, err)
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-q")
+	run("-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
+	run("remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
+	return "repo=https://example.com/org/repo.git branch=" + run("branch", "--show-current") + " commit=" + run("rev-parse", "HEAD")
 }
 
 func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
@@ -1783,6 +1827,10 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 
 func piServedModelFile(dir string) string {
 	return filepath.Join(dir, "extensions", "baseten-served-model.ts")
+}
+
+func piGitContextFile(dir string) string {
+	return filepath.Join(dir, "extensions", "baseten-git-context.ts")
 }
 
 func piServedModelRouters(t *testing.T, path string) map[string]string {
@@ -2855,6 +2903,140 @@ func Test_Grid_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	connections := api.FindCall("GET", "/v1/grid/connections")
 	h.Require.NotNil(connections)
 	h.Require.Contains(connections.RawQuery, "team_id=team-a")
+}
+
+func Test_Grid_Setup_GitContext(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	root := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
+	setup := []string{"grid", "setup", "--harness", "claude-code", "--harness", "opencode", "--harness", "pi", "--yes"}
+
+	h.Context = internalcmd.WithExecer(h.Context, versionedHarnessExecer{"claude": "2.1.0 (Claude Code)", "opencode": "1.2.3", "pi": "1.2.3"})
+	h.Require.ErrorContains(h.Execute(append(setup, "--git-context")...), "git not found on PATH, required by --git-context")
+	h.Require.Empty(api.Calls())
+	h.Require.NoFileExists(filepath.Join(recordDir(t), "harness.json"))
+	entries, err := os.ReadDir(root)
+	h.Require.NoError(err)
+	h.Require.Empty(entries)
+	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
+
+	installed := func() []bool {
+		hooks, _ := readHarnessSettings(t, "claude-code", filepath.Join(root, "claude", "settings.json"))["hooks"].(map[string]any)
+		_, claude := hooks["SessionStart"]
+		return []bool{claude, fileExists(filepath.Join(root, "opencode", "plugins", "baseten-git-context.js")), fileExists(piGitContextFile(filepath.Join(root, "pi")))}
+	}
+	record := func() string {
+		raw, err := os.ReadFile(filepath.Join(recordDir(t), "harness.json"))
+		h.Require.NoError(err)
+		return string(raw)
+	}
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]bool{false, false, false}, installed())
+	h.Require.NotContains(record(), "git_context")
+
+	h.Require.NoError(h.Execute(append(setup, "--git-context")...))
+	h.Require.Equal([]bool{true, true, true}, installed())
+	h.Require.Equal(3, strings.Count(record(), `"git_context": true`))
+	h.Require.True(harnessRecordFile(t).Harnesses["pi"].GitContext)
+
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Equal([]bool{true, true, true}, installed(), "sync replays the recorded opt-in")
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]bool{false, false, false}, installed(), "setup without the flag removes them")
+	h.Require.NotContains(record(), "git_context")
+}
+
+func Test_Grid_PiGitContext_RealPi(t *testing.T) {
+	skipUnlessSupported(t)
+	binary, err := exec.LookPath("pi")
+	if err != nil {
+		t.Skip("pi is not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	var mu sync.Mutex
+	var systems []string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		if len(body.Messages) > 0 && body.Messages[0].Role == "system" {
+			systems = append(systems, body.Messages[0].Content)
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, chunk := range []map[string]any{
+			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": "OK."}, "finish_reason": nil}}},
+			{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}},
+		} {
+			chunk["id"], chunk["object"], chunk["created"], chunk["model"] = "chatcmpl-git", "chat.completion.chunk", 1, "acme/primary"
+			raw, _ := json.Marshal(chunk)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(gateway.Close)
+	h, api := gridAPI(t, gateway.URL)
+	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
+		"items":      []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}}},
+		"pagination": map[string]any{"has_more": false},
+	})
+	root := t.TempDir()
+	configDir := filepath.Join(root, ".pi", "agent")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "pi", "--config-dir", configDir, "--use-session-credential", "--yes", "--no-pi-served-model", "--git-context"))
+	h.Require.FileExists(piGitContextFile(configDir))
+	h.Require.NoFileExists(piServedModelFile(configDir))
+
+	run := func(dir string, args ...string) string {
+		command := exec.Command(args[0], args[1:]...)
+		command.Dir = dir
+		out, err := command.CombinedOutput()
+		h.Require.NoError(err, string(out))
+		return strings.TrimSpace(string(out))
+	}
+	prompt := func(dir string) string {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		command := exec.CommandContext(ctx, binary, "--print", "--no-session", "Reply with OK.")
+		command.Dir = dir
+		command.Env = []string{
+			"HOME=" + root, "PI_CODING_AGENT_DIR=" + configDir, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + t.TempDir(), "PI_OFFLINE=1", "PI_TELEMETRY=0",
+			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
+			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
+		}
+		command.WaitDelay = 5 * time.Second
+		out, err := command.CombinedOutput()
+		h.Require.NoError(err, string(out))
+		h.Require.Equal("OK.", strings.TrimSpace(string(out)))
+		mu.Lock()
+		defer mu.Unlock()
+		h.Require.NotEmpty(systems)
+		return systems[len(systems)-1]
+	}
+
+	h.Require.NotContains(prompt(t.TempDir()), "repo=")
+	repo := t.TempDir()
+	run(repo, "git", "init", "-b", "main")
+	h.Require.Contains(prompt(repo), "<baseten_git_context>\nrepo= branch=main commit=\n</baseten_git_context>")
+	run(repo, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	run(repo, "git", "remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
+	commit := run(repo, "git", "rev-parse", "HEAD")
+	h.Require.Contains(prompt(repo), "<baseten_git_context>\nrepo=https://example.com/org/repo.git branch=main commit="+commit+"\n</baseten_git_context>")
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "pi", "--config-dir", configDir, "--yes"))
+	h.Require.NoFileExists(piGitContextFile(configDir))
 }
 
 func Test_Grid_Setup_PiFirstPartyRoutes(t *testing.T) {
@@ -4190,7 +4372,8 @@ func gridSettingsFixture() map[string]any {
 		"harness_defaults": map[string]any{
 			"claude_code": map[string]any{"primary": nil, "background": nil},
 			"opencode":    map[string]any{"primary": nil, "background": nil},
-			"codex":       map[string]any{"primary": nil}, "pi": map[string]any{"primary": nil},
+			"codex":       map[string]any{"primary": nil, "background": nil},
+			"pi":          map[string]any{"primary": nil, "background": nil},
 		},
 		"spend_limit": map[string]any{"per_member_monthly_limit_usd": "100", "team_wide_monthly_limit_usd": nil},
 	}

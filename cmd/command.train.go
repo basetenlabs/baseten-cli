@@ -424,7 +424,7 @@ var commandTrainJob = Command{
 			Summary: "Update a queued training job's priority or capacity",
 			Description: "Update a queued training job's queue priority, its availability model, or both. " +
 				"Higher priorities are dequeued first, and the availability model selects the capacity " +
-				"the job is admitted under, so a job waiting on full dedicated capacity can be moved to " +
+				"the job is admitted under, so a job waiting on full standard capacity can be moved to " +
 				"spot without resubmitting.\n\n" +
 				"Only jobs in the PENDING state can be updated. Pass at least one of --priority or " +
 				"--availability-model.",
@@ -752,7 +752,7 @@ type TrainJobUpdateFlags struct {
 	TrainJobRefFlags
 
 	Priority          int    `flag:"priority" desc:"New queue priority. Higher values are dequeued first."`
-	AvailabilityModel string `flag:"availability-model" desc:"New capacity guarantee. 'dedicated' runs on on-demand capacity that is not preempted; 'spot' runs on interruptible capacity that may be preempted, and checkpointing your own progress is up to you." enum:"dedicated,spot"`
+	AvailabilityModel string `flag:"availability-model" desc:"New capacity guarantee. 'standard' runs on capacity that is not preempted; 'spot' runs on interruptible capacity that may be preempted, and checkpointing your own progress is up to you." enum:"standard,spot"`
 }
 
 // TrainJobDownloadFlags configures `baseten train job download`.

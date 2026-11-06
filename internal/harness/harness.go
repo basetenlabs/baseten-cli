@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -99,6 +100,7 @@ type PrepareOptions struct {
 	NoClaudeServedModel   bool
 	NoPiServedModel       bool
 	NoOpenCodeServedModel bool
+	GitContext            bool
 }
 
 // Helper is the credential command a harness runs instead of storing a key:
@@ -738,6 +740,35 @@ func prepareFilesRemoval(dir string, files []ownedFile) *Plan {
 	}
 	p.Managed, p.Changed = len(p.files) > 0, len(p.files) > 0
 	return p
+}
+
+func prepareSealedFile(path string, body []byte, missing string) ([]*Plan, error) {
+	f, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if f.exists && !gridSetupSealed(f.data) {
+		return []*Plan{{Path: path, Notes: []string{"warning: existing " + path + " left unchanged; " + missing}, file: f, data: f.data}}, nil
+	}
+	data := append(slices.Clone(body), gridSetupSeal(body)...)
+	return []*Plan{{Path: path, Managed: true, Changed: !bytes.Equal(data, f.data), file: f, data: data}}, nil
+}
+
+func prepareSealedFileRemoval(path string) ([]*Plan, error) {
+	f, err := readFile(path)
+	if err != nil || !f.exists || !gridSetupSealed(f.data) {
+		return nil, err
+	}
+	return []*Plan{{Path: path, Managed: true, Changed: true, file: f, teardown: true, remove: true}}, nil
+}
+
+func gridSetupSeal(body []byte) string {
+	return fmt.Sprintf("export const basetenGridSetupSha256 = \"%x\";\n", sha256.Sum256(body))
+}
+
+func gridSetupSealed(data []byte) bool {
+	i := bytes.LastIndexByte(bytes.TrimSuffix(data, []byte("\n")), '\n')
+	return string(data[i+1:]) == gridSetupSeal(data[:i+1])
 }
 
 func (p *Plan) encode() error {

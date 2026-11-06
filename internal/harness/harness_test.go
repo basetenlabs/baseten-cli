@@ -404,6 +404,14 @@ func setup(t *testing.T, h Harness, path string, routes []Route, s Selection) []
 	return plans
 }
 
+func setupGitContext(t *testing.T, h Harness, path string) []*Plan {
+	t.Helper()
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, GitContext: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	return plans
+}
+
 func teardown(t *testing.T, h Harness, path string) []*Plan {
 	t.Helper()
 	plans, err := h.Teardown(path)
@@ -661,6 +669,210 @@ func TestClaudeAnthropicModelEnvIsManaged(t *testing.T) {
 	require.Contains(t, status.Managed, "env.ANTHROPIC_MODEL")
 	teardown(t, claudeCodeHarness{}, path)
 	require.False(t, get(load(t, path), []string{"env", "ANTHROPIC_MODEL"}).Exists)
+}
+
+func TestClaudeSessionStartHookIsInstalledOnce(t *testing.T) {
+	h := claudeCodeHarness{}
+	path := settingsPath(t, h)
+	save(t, path, map[string]any{"theme": "dark"})
+	ours := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeSessionStartCommand}}}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NotContains(t, load(t, path), "hooks")
+	setupGitContext(t, h, path)
+	require.Equal(t, []any{ours}, get(load(t, path), claudeSessionStartHooksPath).Data)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	for _, p := range setupGitContext(t, h, path) {
+		require.False(t, p.Changed, "repeating setup changes nothing")
+	}
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, string(before), string(after))
+	status, err := h.Inspect(Detection{Name: ClaudeCode, Path: path})
+	require.NoError(t, err)
+	require.Contains(t, status.Managed, pathKey(claudeSessionStartHooksPath))
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NotContains(t, load(t, path), "hooks")
+	setupGitContext(t, h, path)
+	teardown(t, h, path)
+	require.Equal(t, map[string]any{"theme": "dark"}, load(t, path))
+}
+
+func TestClaudeSessionStartHookKeepsUserHooks(t *testing.T) {
+	h := claudeCodeHarness{}
+	path := settingsPath(t, h)
+	user := []any{
+		map[string]any{"matcher": "startup", "hooks": []any{map[string]any{"type": "command", "command": "echo hi"}}},
+		map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "date"}}},
+	}
+	save(t, path, map[string]any{"hooks": map[string]any{"SessionStart": user}})
+	ours := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeSessionStartCommand}}}
+	for range 2 {
+		plans := setupGitContext(t, h, path)
+		require.Empty(t, plans[0].Replaced)
+		require.Equal(t, append(slices.Clone(user), ours), get(load(t, path), claudeSessionStartHooksPath).Data)
+	}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.Equal(t, user, get(load(t, path), claudeSessionStartHooksPath).Data)
+	teardown(t, h, path)
+	require.Equal(t, map[string]any{"hooks": map[string]any{"SessionStart": user}}, load(t, path))
+}
+
+func TestClaudeSessionStartHookPrintsGitContext(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh is not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	run := func(dir string, args ...string) string {
+		t.Helper()
+		command := exec.Command(args[0], args[1:]...)
+		command.Dir = dir
+		out, err := command.Output()
+		require.NoError(t, err)
+		return string(out)
+	}
+	require.Empty(t, run(t.TempDir(), "sh", "-c", claudeSessionStartCommand))
+	repo := t.TempDir()
+	run(repo, "git", "init")
+	require.Empty(t, run(filepath.Join(repo, ".git"), "sh", "-c", claudeSessionStartCommand))
+	branch := strings.TrimSpace(run(repo, "git", "branch", "--show-current"))
+	require.Equal(t, "repo= branch="+branch+" commit=\n", run(repo, "sh", "-c", claudeSessionStartCommand))
+	run(repo, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	run(repo, "git", "remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
+	commit := strings.TrimSpace(run(repo, "git", "rev-parse", "HEAD"))
+	require.Equal(t, "repo=https://example.com/org/repo.git branch="+branch+" commit="+commit+"\n", run(repo, "sh", "-c", claudeSessionStartCommand))
+}
+
+func TestOpenCodeGitContextPluginIsOptIn(t *testing.T) {
+	h := openCodeHarness{}
+	path := settingsPath(t, h)
+	save(t, path, map[string]any{"theme": "dark"})
+	plugin := openCodeGitContextPath(path)
+	mine := filepath.Join(filepath.Dir(plugin), "mine.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(mine), 0o700))
+	require.NoError(t, os.WriteFile(mine, []byte("export default {}\n"), 0o600))
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, plugin)
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, NoOpenCodeServedModel: true, GitContext: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	written, err := os.ReadFile(plugin)
+	require.NoError(t, err)
+	require.True(t, gridSetupSealed(written))
+	require.True(t, strings.HasPrefix(string(written), string(openCodeGitContextSource)))
+	for _, p := range setupGitContext(t, h, path) {
+		require.False(t, p.Changed, "repeating setup changes nothing")
+	}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, plugin)
+	require.FileExists(t, mine)
+	setupGitContext(t, h, path)
+	teardown(t, h, path)
+	require.NoFileExists(t, plugin)
+	require.FileExists(t, mine)
+	require.Equal(t, map[string]any{"theme": "dark"}, load(t, path))
+}
+
+func TestOpenCodeGitContextPluginKeepsUserFile(t *testing.T) {
+	h := openCodeHarness{}
+	path := settingsPath(t, h)
+	plugin := openCodeGitContextPath(path)
+	require.NoError(t, os.MkdirAll(filepath.Dir(plugin), 0o700))
+	require.NoError(t, os.WriteFile(plugin, []byte("export default {}\n"), 0o600))
+	plans := setupGitContext(t, h, path)
+	require.True(t, slices.ContainsFunc(plans, func(p *Plan) bool {
+		return slices.ContainsFunc(p.Notes, func(note string) bool { return strings.Contains(note, plugin+" left unchanged") })
+	}))
+	teardown(t, h, path)
+	written, err := os.ReadFile(plugin)
+	require.NoError(t, err)
+	require.Equal(t, "export default {}\n", string(written))
+}
+
+func TestGitContextSanitizesOriginURL(t *testing.T) {
+	for _, tool := range []string{"sh", "git", "node"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " is not on PATH")
+		}
+	}
+	dir := t.TempDir()
+	plugin := filepath.Join(dir, "plugin.mjs")
+	require.NoError(t, os.WriteFile(plugin, openCodeGitContextSource, 0o600))
+	extension := filepath.Join(dir, "extension.mts")
+	require.NoError(t, os.WriteFile(extension, piGitContextSource, 0o600))
+	openCodeDriver := `const { pathToFileURL } = await import("node:url"); const { default: plugin } = await import(pathToFileURL(process.argv[1]).href); const hooks = await plugin.server({ directory: process.cwd() }); const out = { system: [] }; await hooks["experimental.chat.system.transform"]({ sessionID: "s" }, out); process.stdout.write(out.system.map((line) => line + "\n").join(""))`
+	piDriver := `const { pathToFileURL } = await import("node:url"); const { execFile } = await import("node:child_process"); const { default: extension } = await import(pathToFileURL(process.argv[1]).href); const handlers = {}; extension({ on: (event, fn) => { handlers[event] = fn }, exec: (cmd, args, opts) => new Promise((resolve) => execFile(cmd, args, opts, (error, stdout) => resolve({ code: error ? 1 : 0, stdout: String(stdout) }))) }); await handlers.session_start({}, { cwd: process.cwd() }); const event = { systemPromptOptions: { sections: {} } }; await handlers.before_agent_start(event); const line = event.systemPromptOptions.sections.baseten_git_context; if (line) process.stdout.write(line + "\n")`
+	run := func(t *testing.T, dir string, args ...string) string {
+		t.Helper()
+		command := exec.Command(args[0], args[1:]...)
+		command.Dir = dir
+		out, err := command.Output()
+		require.NoError(t, err)
+		return string(out)
+	}
+	repo := t.TempDir()
+	run(t, repo, "git", "init", "-q")
+	branch := strings.TrimSpace(run(t, repo, "git", "branch", "--show-current"))
+	stripTypes := exec.Command("node", "--experimental-strip-types", "-e", "").Run() == nil
+	vectors := [][2]string{
+		{"https://user:secret@example.com/org/repo.git", "https://example.com/org/repo.git"},
+		{"https://token@github.com/org/repo", "https://github.com/org/repo"},
+		{"https://git@github.com/org/repo.git", "https://github.com/org/repo.git"},
+		{"https://alice%40example.com:secret%3Atoken@github.com/org/repo.git", "https://github.com/org/repo.git"},
+		{"https://a@b@example.com/org/repo.git", "https://example.com/org/repo.git"},
+		{"ssh://git@github.com/org/repo.git", "ssh://git@github.com/org/repo.git"},
+		{"ssh://git:secret@github.com/org/repo.git", "ssh://git@github.com/org/repo.git"},
+		{"ssh://bob@host.example:2222/up.git", "ssh://host.example:2222/up.git"},
+		{"git+ssh://git@github.com/org/repo.git", "git+ssh://git@github.com/org/repo.git"},
+		{"ssh+git://git@github.com/org/repo.git", "ssh+git://git@github.com/org/repo.git"},
+		{"SSH://git@github.com/org/repo.git", "SSH://github.com/org/repo.git"},
+		{"ssh://GIT@github.com/org/repo.git", "ssh://github.com/org/repo.git"},
+		{"git@github.com:org/gh.git", "git@github.com:org/gh.git"},
+		{"alice@host.example:org/scp.git", "host.example:org/scp.git"},
+		{"GIT@github.com:org/repo.git", "github.com:org/repo.git"},
+		{"git:secret@github.com:org/repo.git", "git@github.com:org/repo.git"},
+		{"alice:pw@github.com:org/repo.git", "github.com:org/repo.git"},
+		{"@host:path", "host:path"},
+		{"alice@[2001:db8::1]:org/repo.git", "[2001:db8::1]:org/repo.git"},
+		{"git@[2001:db8::1]:org/repo.git", "git@[2001:db8::1]:org/repo.git"},
+		{"host.example:org/noUser.git", "host.example:org/noUser.git"},
+		{"/srv/git/repo.git", "/srv/git/repo.git"},
+		{"file:///srv/git/repo.git", "file:///srv/git/repo.git"},
+		{"file://alice:secret@localhost/repo.git", "file://localhost/repo.git"},
+		{"https://example.com/org/repo.git?token=abc#frag", "https://example.com/org/repo.git"},
+		{"https://example.com/org/repo.git#frag", "https://example.com/org/repo.git"},
+		{"https://example.com/org/repo.git?token=abc", "https://example.com/org/repo.git"},
+		{"https://alice:pw@example.com/org/repo.git?token=abc#frag", "https://example.com/org/repo.git"},
+		{"https://example.com?ref=a@b", "https://example.com"},
+		{"http://[::1]:8080/org/repo.git", "http://[::1]:8080/org/repo.git"},
+		{"hg::https://alice:secret@example.invalid/org/repo.git", "hg::https://example.invalid/org/repo.git"},
+		{"hg::https://alice:secret@example.invalid/org/repo.git?x=1", "hg::https://example.invalid/org/repo.git"},
+		{"remote-hg::git@github.com:org/repo.git", "remote-hg::git@github.com:org/repo.git"},
+		{"ext::ssh alice:secret-token@example.com git-upload-pack /repo", ""},
+		{"alice@host.example", "alice@host.example"},
+		{"C:\\srv\\repo.git", "C:\\srv\\repo.git"},
+	}
+	for _, column := range []struct {
+		name    string
+		command []string
+	}{
+		{"claude-code", []string{"sh", "-c", claudeSessionStartCommand}},
+		{"opencode", []string{"node", "--input-type=module", "-e", openCodeDriver, plugin}},
+		{"pi", []string{"node", "--experimental-strip-types", "--input-type=module", "-e", piDriver, extension}},
+	} {
+		t.Run(column.name, func(t *testing.T) {
+			if column.name == "pi" && !stripTypes {
+				t.Skip("node cannot strip TypeScript types")
+			}
+			require.Empty(t, run(t, t.TempDir(), column.command...))
+			for _, v := range vectors {
+				run(t, repo, "git", "config", "remote.origin.url", v[0])
+				require.Equal(t, "repo="+v[1]+" branch="+branch+" commit=\n", run(t, repo, column.command...), v[0])
+			}
+		})
+	}
 }
 
 func TestUnsupportedSelectionsAreRejected(t *testing.T) {
@@ -1046,6 +1258,45 @@ func TestPiTeardownPreservesAnotherProviderSelection(t *testing.T) {
 	require.NoError(t, put(models, piProviderPath, value{}))
 	require.Equal(t, models, load(t, path))
 	require.Equal(t, settings, load(t, piSettingsPath(path)))
+}
+
+func TestPiGitContextExtensionIsOptIn(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	target := piGitContextPath(path)
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, target)
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, NoPiServedModel: true, GitContext: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	raw, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, string(piGitContextSource)+gridSetupSeal(piGitContextSource), string(raw))
+	require.True(t, gridSetupSealed(raw))
+	require.NoFileExists(t, piServedModelPath(path))
+	for _, p := range setupGitContext(t, h, path) {
+		require.False(t, p.Changed && p.Path == target, "repeating setup leaves the extension alone")
+	}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, target)
+	setupGitContext(t, h, path)
+	teardown(t, h, path)
+	require.NoFileExists(t, target)
+}
+
+func TestPiGitContextExtensionKeepsUserFile(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	target := piGitContextPath(path)
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
+	user := "export default function () {}\n"
+	require.NoError(t, os.WriteFile(target, []byte(user), 0o600))
+	plans := setupGitContext(t, h, path)
+	require.Contains(t, plans[len(plans)-1].Notes, "warning: existing "+target+" left unchanged; Pi sessions will not include the git repository, branch, and commit")
+	teardown(t, h, path)
+	raw, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, user, string(raw))
 }
 
 func TestPiIncomplete(t *testing.T) {
