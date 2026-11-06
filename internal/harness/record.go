@@ -70,6 +70,13 @@ func LoadRecords(dir string) (RecordFile, error) {
 	if file.Harnesses == nil {
 		file.Harnesses = map[string]Record{}
 	}
+	// The claude harness was recorded as claude-code before Claude Desktop joined it.
+	if record, ok := file.Harnesses[ClaudeCode]; ok {
+		if _, ok := file.Harnesses[Claude]; !ok {
+			file.Harnesses[Claude] = record
+		}
+		delete(file.Harnesses, ClaudeCode)
+	}
 	return file, nil
 }
 

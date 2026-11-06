@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-type claudeCodeHarness struct{}
+type claudeHarness struct{}
 
 // claudeMarker identifies Baseten's settings, since Claude Code has no named
 // provider block to look for.
@@ -101,32 +101,46 @@ var claudePaths = [][]string{
 	{"env", "ANTHROPIC_DEFAULT_SONNET_MODEL"},
 	{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}, {"env", "ANTHROPIC_DEFAULT_FABLE_MODEL"},
 	{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}, {"env", "ANTHROPIC_SMALL_FAST_MODEL"},
+	{"env", "CLAUDE_CODE_AUTO_MODE_MODEL"},
 	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"}, {"env", "ANTHROPIC_CUSTOM_HEADERS"},
 	{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}, {"env", "ENABLE_TOOL_SEARCH"},
 	{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"},
 }
 
-func (claudeCodeHarness) Name() string { return ClaudeCode }
+func (claudeHarness) Name() string { return Claude }
 
-func (h claudeCodeHarness) Detect(ctx context.Context, execer Execer, dir string) (Detection, error) {
+// Detect finds Claude Code's settings file and the Claude Code CLI, and looks
+// for the Claude Desktop app without running it, since running the app opens
+// it rather than printing a version.
+func (h claudeHarness) Detect(ctx context.Context, execer Execer, dir string) (Detection, error) {
 	dir, err := configDir(dir, "CLAUDE_CONFIG_DIR", ".claude")
 	if err != nil {
 		return Detection{}, err
 	}
-	return detect(ctx, execer, h.Name(), []candidate{cliCandidate("claude")}, filepath.Join(dir, "settings.json"))
+	d, err := detect(ctx, execer, h.Name(), []candidate{cliCandidate("claude")}, filepath.Join(dir, "settings.json"))
+	if err != nil {
+		return d, err
+	}
+	for _, binary := range claudeDesktopBinaries() {
+		if bin, err := execer.LookPath(binary); err == nil {
+			d.Installs = append(d.Installs, Install{Kind: InstallDesktop, Binary: bin})
+		}
+	}
+	d.Installed = len(d.Installs) > 0
+	return d, nil
 }
 
-func (claudeCodeHarness) BackgroundRoute(s Selection) string {
+func (claudeHarness) BackgroundRoute(s Selection) string {
 	return cmp.Or(s.Background, defaultBackgroundRoute)
 }
 
 // Routes keeps the routes that serve the Anthropic Messages API, which Claude
 // Code uses for every route.
-func (claudeCodeHarness) Routes(routes []Route) []Route {
+func (claudeHarness) Routes(routes []Route) []Route {
 	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Messages })
 }
 
-func (h claudeCodeHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([]*Plan, error) {
+func (h claudeHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([]*Plan, error) {
 	s, endpoint, helper, cli := opts.Selection, opts.Endpoint, opts.Helper, opts.CLI
 	credentialPath := claudeCredentialPath
 	if helper != nil {
@@ -144,7 +158,15 @@ func (h claudeCodeHarness) Prepare(path string, routes []Route, opts PrepareOpti
 	if claudeHasServedModelHook(p.config) {
 		p.Notes = append(p.Notes, "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
 	}
-	return []*Plan{p}, nil
+	plans := []*Plan{p}
+	if HasClaudeDesktop(opts.Installs) {
+		desktop, err := claudeDesktopPrepare(claudeDesktopConfig(path), routes, s, endpoint, helper)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, desktop...)
+	}
+	return plans, nil
 }
 
 func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string, noServedModel, gitContext bool) ([]setting, error) {
@@ -197,6 +219,7 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{"ANTHROPIC_DEFAULT_OPUS_MODEL", modelID(s.Primary)},
 		{"ANTHROPIC_DEFAULT_FABLE_MODEL", modelID(s.Primary)},
 		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", modelID(background)},
+		{"CLAUDE_CODE_AUTO_MODE_MODEL", modelID(background)},
 		{"ANTHROPIC_SMALL_FAST_MODEL", modelID(background)},
 		{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"},
 		{"ANTHROPIC_CUSTOM_HEADERS", clientHeader + ": " + ClaudeCode},
@@ -495,20 +518,24 @@ func claudeTeardownPaths(data map[string]any) [][]string {
 	return paths
 }
 
-func (claudeCodeHarness) SupportsSubagent() bool { return true }
+func (claudeHarness) SupportsSubagent() bool { return true }
 
-func (claudeCodeHarness) SupportsHelper() bool { return true }
+func (claudeHarness) SupportsHelper() bool { return true }
 
-func (claudeCodeHarness) Credential(path string) (string, error) {
+func (claudeHarness) Credential(path string) (string, error) {
 	_, data, err := readConfig(path)
-	if err != nil || get(data, []string{"env", claudeMarker}).Data != "1" {
+	if err != nil {
 		return "", err
 	}
-	token, _ := get(data, claudeCredentialPath).Data.(string)
-	return token, nil
+	if get(data, []string{"env", claudeMarker}).Data == "1" {
+		if token, _ := get(data, claudeCredentialPath).Data.(string); token != "" {
+			return token, nil
+		}
+	}
+	return claudeDesktopCredential(claudeDesktopConfig(path))
 }
 
-func (claudeCodeHarness) Teardown(path string) ([]*Plan, error) {
+func (claudeHarness) Teardown(path string) ([]*Plan, error) {
 	p, err := prepareTeardown(path, claudeTeardownPaths)
 	if err != nil {
 		return nil, err
@@ -529,25 +556,47 @@ func (claudeCodeHarness) Teardown(path string) ([]*Plan, error) {
 			return nil, err
 		}
 	}
-	return []*Plan{p}, nil
+	plans := []*Plan{p}
+	if desktop := claudeDesktopConfig(path); fileExists(desktop) {
+		more, err := claudeDesktopTeardown(desktop)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, more...)
+	}
+	return plans, nil
 }
 
-func (claudeCodeHarness) Inspect(d Detection) (Status, error) {
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func (claudeHarness) Inspect(d Detection) (Status, error) {
 	r, data, err := inspectConfig(d)
 	if err != nil {
 		return r, err
 	}
 	r.managed(data, claudeTeardownPaths(data))
+	if r.State != StateNotConfigured {
+		if claudeHasServedModelHook(data) {
+			r.Managed = append(r.Managed, pathKey(claudeStopHooksPath))
+		}
+		if _, ok := claudeHooksSetting(claudeSessionStartHooksPath, claudeSessionStartOwned, data, nil); ok {
+			r.Managed = append(r.Managed, pathKey(claudeSessionStartHooksPath))
+		}
+		r.BackgroundRoute, _ = get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string)
+		r.addRoutes(claudeRoutes(data))
+	}
+	// Claude Desktop's files belong to the same harness; they describe it when
+	// only the app is configured.
+	desktop, err := claudeDesktopInspect(claudeDesktopConfig(d.Path))
+	if err != nil || desktop.State == StateNotConfigured {
+		return r, err
+	}
 	if r.State == StateNotConfigured {
-		return r, nil
+		r.State, r.DefaultRoute, r.Routes = desktop.State, desktop.DefaultRoute, desktop.Routes
 	}
-	if claudeHasServedModelHook(data) {
-		r.Managed = append(r.Managed, pathKey(claudeStopHooksPath))
-	}
-	if _, ok := claudeHooksSetting(claudeSessionStartHooksPath, claudeSessionStartOwned, data, nil); ok {
-		r.Managed = append(r.Managed, pathKey(claudeSessionStartHooksPath))
-	}
-	r.BackgroundRoute, _ = get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string)
-	r.addRoutes(claudeRoutes(data))
+	r.Managed = append(r.Managed, desktop.Managed...)
 	return r, nil
 }

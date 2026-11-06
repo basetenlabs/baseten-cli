@@ -23,7 +23,7 @@ const testEndpoint = "https://inference.example.com"
 
 func testRoute(name, displayName string) Route {
 	return Route{
-		Name: name, DisplayName: displayName,
+		ID: name, Name: name, DisplayName: displayName,
 		ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, Responses: true,
 		TargetAPI: TargetAPIChatCompletions,
 	}
@@ -217,8 +217,10 @@ func testRoutes() []Route {
 
 type fakeExecer struct{ missing bool }
 
+// LookPath finds every bare name, as on PATH, and no desktop app, which is
+// looked up by its absolute path.
 func (e fakeExecer) LookPath(name string) (string, error) {
-	if e.missing {
+	if e.missing || filepath.IsAbs(name) {
 		return "", exec.ErrNotFound
 	}
 	return filepath.Join(string(filepath.Separator), "fake", name), nil
@@ -464,7 +466,7 @@ func TestSetupRefreshAndTeardownKeepUnrelatedSettings(t *testing.T) {
 			teardown(t, h, path)
 			want := map[string]any{"theme": "light", "user-added": "keep"}
 			if h.Name() == Pi {
-				// Pi's default model is in settings.json, so setup leaves models.json's alone.
+				// Pi's default model is in settings.json, so setup leaves this file's model alone.
 				want["model"] = "original-model"
 			}
 			require.Equal(t, want, load(t, path))
@@ -499,7 +501,7 @@ func TestCredential(t *testing.T) {
 }
 
 func TestHelperCredential(t *testing.T) {
-	for _, h := range []Harness{claudeCodeHarness{}, codexHarness{}, piHarness{}} {
+	for _, h := range []Harness{claudeHarness{}, codexHarness{}, piHarness{}} {
 		t.Run(h.Name(), func(t *testing.T) {
 			path := settingsPath(t, h)
 			setup(t, h, path, testRoutes(), Selection{})
@@ -603,7 +605,7 @@ func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 }
 
 func TestOptionalSubagentCleanup(t *testing.T) {
-	for _, h := range []Harness{claudeCodeHarness{}, openCodeHarness{}} {
+	for _, h := range []Harness{claudeHarness{}, openCodeHarness{}} {
 		for _, explicit := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/explicit=%t", h.Name(), explicit), func(t *testing.T) {
 				path := settingsPath(t, h)
@@ -642,8 +644,8 @@ func TestBackgroundRouteDefaultAndOverride(t *testing.T) {
 			want = defaultBackgroundRoute
 		}
 		t.Run(ClaudeCode+"/"+want, func(t *testing.T) {
-			path := settingsPath(t, claudeCodeHarness{})
-			setup(t, claudeCodeHarness{}, path, testRoutes(), Selection{Background: background})
+			path := settingsPath(t, claudeHarness{})
+			setup(t, claudeHarness{}, path, testRoutes(), Selection{Background: background})
 			d := load(t, path)
 			require.Equal(t, want, get(d, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data)
 			require.Equal(t, want, get(d, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data)
@@ -660,19 +662,19 @@ func TestBackgroundRouteDefaultAndOverride(t *testing.T) {
 }
 
 func TestClaudeAnthropicModelEnvIsManaged(t *testing.T) {
-	path := settingsPath(t, claudeCodeHarness{})
-	setup(t, claudeCodeHarness{}, path, testRoutes(), Selection{Primary: "acme/primary"})
+	path := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, path, testRoutes(), Selection{Primary: "acme/primary"})
 	d := load(t, path)
 	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
-	status, err := claudeCodeHarness{}.Inspect(Detection{Name: ClaudeCode, Path: path})
+	status, err := claudeHarness{}.Inspect(Detection{Name: ClaudeCode, Path: path})
 	require.NoError(t, err)
 	require.Contains(t, status.Managed, "env.ANTHROPIC_MODEL")
-	teardown(t, claudeCodeHarness{}, path)
+	teardown(t, claudeHarness{}, path)
 	require.False(t, get(load(t, path), []string{"env", "ANTHROPIC_MODEL"}).Exists)
 }
 
 func TestClaudeSessionStartHookIsInstalledOnce(t *testing.T) {
-	h := claudeCodeHarness{}
+	h := claudeHarness{}
 	path := settingsPath(t, h)
 	save(t, path, map[string]any{"theme": "dark"})
 	ours := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeSessionStartCommand}}}
@@ -699,7 +701,7 @@ func TestClaudeSessionStartHookIsInstalledOnce(t *testing.T) {
 }
 
 func TestClaudeSessionStartHookKeepsUserHooks(t *testing.T) {
-	h := claudeCodeHarness{}
+	h := claudeHarness{}
 	path := settingsPath(t, h)
 	user := []any{
 		map[string]any{"matcher": "startup", "hooks": []any{map[string]any{"type": "command", "command": "echo hi"}}},
@@ -858,7 +860,7 @@ func TestGitContextSanitizesOriginURL(t *testing.T) {
 		name    string
 		command []string
 	}{
-		{"claude-code", []string{"sh", "-c", claudeSessionStartCommand}},
+		{"claude", []string{"sh", "-c", claudeSessionStartCommand}},
 		{"opencode", []string{"node", "--input-type=module", "-e", openCodeDriver, plugin}},
 		{"pi", []string{"node", "--experimental-strip-types", "--input-type=module", "-e", piDriver, extension}},
 	} {
@@ -893,7 +895,7 @@ func TestUnsupportedSelectionsAreRejected(t *testing.T) {
 			require.ErrorContains(t, err, "supported only")
 		})
 	}
-	_, err := claudeCodeHarness{}.Prepare(settingsPath(t, claudeCodeHarness{}), testRoutes(), PrepareOptions{Selection: Selection{Primary: "acme/missing"}, Endpoint: testEndpoint})
+	_, err := claudeHarness{}.Prepare(settingsPath(t, claudeHarness{}), testRoutes(), PrepareOptions{Selection: Selection{Primary: "acme/missing"}, Endpoint: testEndpoint})
 	require.ErrorContains(t, err, "not one of the team's routes")
 }
 
@@ -1320,21 +1322,22 @@ func TestPiIncomplete(t *testing.T) {
 
 func TestClientHeaderNamesHarness(t *testing.T) {
 	paths := map[string][]string{
-		ClaudeCode: {"env", "ANTHROPIC_CUSTOM_HEADERS"},
-		Codex:      {"model_providers", providerID, "http_headers", clientHeader},
-		OpenCode:   {"provider", providerID, "options", "headers", clientHeader},
-		Pi:         {"providers", providerID, "headers", clientHeader},
+		Claude:   {"env", "ANTHROPIC_CUSTOM_HEADERS"},
+		Codex:    {"model_providers", providerID, "http_headers", clientHeader},
+		OpenCode: {"provider", providerID, "options", "headers", clientHeader},
+		Pi:       {"providers", providerID, "headers", clientHeader},
 	}
 	for _, h := range All() {
 		t.Run(h.Name(), func(t *testing.T) {
 			path := settingsPath(t, h)
 			setup(t, h, path, testRoutes(), Selection{})
 			want := h.Name()
-			if h.Name() == ClaudeCode {
+			if h.Name() == Claude {
+				// Claude Code and Claude Desktop identify as claude-code on the wire.
 				want = clientHeader + ": " + ClaudeCode
 			}
 			require.Equal(t, want, get(load(t, path), paths[h.Name()]).Data)
-			if h.Name() == ClaudeCode {
+			if h.Name() == Claude {
 				require.Equal(t, "1", get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Data)
 				require.Equal(t, "true", get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Data)
 				teardown(t, h, path)
@@ -1378,7 +1381,7 @@ func TestDetect(t *testing.T) {
 		env                string
 		defaultPath, inEnv string
 	}{
-		{claudeCodeHarness{}, "CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude", "settings.json"), filepath.Join(custom, "settings.json")},
+		{claudeHarness{}, "CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude", "settings.json"), filepath.Join(custom, "settings.json")},
 		{codexHarness{}, "CODEX_HOME", filepath.Join(home, ".codex", "config.toml"), filepath.Join(custom, "config.toml")},
 		{openCodeHarness{}, "XDG_CONFIG_HOME", filepath.Join(home, ".config", "opencode", "opencode.json"), filepath.Join(custom, "opencode", "opencode.json")},
 		{piHarness{}, "PI_CODING_AGENT_DIR", filepath.Join(home, ".pi", "agent", "models.json"), filepath.Join(custom, "models.json")},
@@ -1386,10 +1389,7 @@ func TestDetect(t *testing.T) {
 		t.Run(tc.h.Name(), func(t *testing.T) {
 			d, err := tc.h.Detect(t.Context(), fakeExecer{}, "")
 			require.NoError(t, err)
-			// fakeExecer finds every binary, so desktop installs are listed too.
-			require.NotEmpty(t, d.Installs)
-			d.Installs = d.Installs[:1]
-			binary := map[string]string{ClaudeCode: "claude", Codex: "codex", OpenCode: "opencode", Pi: "pi"}[tc.h.Name()]
+			binary := map[string]string{Claude: "claude", Codex: "codex", OpenCode: "opencode", Pi: "pi"}[tc.h.Name()]
 			want := Detection{Name: tc.h.Name(), Path: tc.defaultPath, Installed: true,
 				Installs: []Install{cli(filepath.Join(string(filepath.Separator), "fake", binary), "1.2.3")}}
 			require.Equal(t, want, d)
@@ -1403,6 +1403,79 @@ func TestDetect(t *testing.T) {
 			require.Equal(t, dir, filepath.Dir(d.Path), "--config-dir wins over the environment")
 		})
 	}
+}
+
+func TestLoadRecordsRenamesClaudeCode(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, SaveRecords(dir, RecordFile{Harnesses: map[string]Record{ClaudeCode: {TeamID: "team-a"}}}))
+	file, err := LoadRecords(dir)
+	require.NoError(t, err)
+	require.Equal(t, map[string]Record{Claude: {TeamID: "team-a"}}, file.Harnesses)
+}
+
+func TestClaudeDesktopConfigFollowsClaudeCodeSettings(t *testing.T) {
+	// The app's files are in its own library when the settings are in Claude
+	// Code's default directory, else under the settings directory, so that
+	// --config-dir keeps both apps' files together.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	native := claudeDesktopConfig(filepath.Join(home, ".claude", "settings.json"))
+	require.Equal(t, claudeDesktopConfigID+".json", filepath.Base(native))
+	require.Contains(t, native, "Claude-3p")
+	require.NotContains(t, native, ".claude")
+	dir := t.TempDir()
+	require.Equal(t, filepath.Join(dir, "Claude-3p", "configLibrary", claudeDesktopConfigID+".json"), claudeDesktopConfig(filepath.Join(dir, "settings.json")))
+	for _, name := range []string{"claude-desktop-b0dgYBn", "claude-desktop-XP9WlBD"} {
+		require.False(t, claudeDesktopDeniedID(name), name)
+	}
+	require.True(t, claudeDesktopDeniedID("claude-desktop-aGLMbcd"))
+}
+
+func TestClaudeDesktopFilesWithClaudeCodeSettings(t *testing.T) {
+	h := claudeHarness{}
+	path := settingsPath(t, h)
+	opts := PrepareOptions{Endpoint: testEndpoint, Installs: []Install{{Kind: InstallDesktop, Binary: "/Applications/Claude.app/Contents/MacOS/Claude"}}}
+	plans, err := h.Prepare(path, testRoutes(), opts)
+	require.NoError(t, err)
+	require.Len(t, plans, 4, "Claude Code's settings, the app config, the library's applied config, and the app's mode")
+	require.NoError(t, ApplyPlans(plans, testToken))
+	config := claudeDesktopConfig(path)
+	data := load(t, config)
+	require.Equal(t, ClaudeCode, get(data, claudeDesktopMarkerPath).Data)
+	require.Equal(t, true, get(data, []string{"autoModeEnabled"}).Data, "Auto mode is offered in Cowork as well as Code")
+	require.Equal(t, true, get(data, []string{"toolSearchEnabled"}).Data)
+	models := data["inferenceModels"].([]any)
+	require.Equal(t, "sonnet", models[0].(map[string]any)["anthropicFamilyTier"], "no listed background route, so the primary serves Auto mode")
+	for _, m := range models[1:] {
+		require.NotContains(t, m.(map[string]any), "anthropicFamilyTier")
+	}
+	require.Equal(t, testToken, data["inferenceGatewayApiKey"])
+	require.Equal(t, claudeDesktopID(config), load(t, claudeDesktopMetaPath(config))["appliedId"])
+	require.Equal(t, "3p", load(t, claudeDesktopAppConfigPath(config))["deploymentMode"])
+	status, err := h.Inspect(Detection{Name: Claude, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateConfigured, status.State)
+	require.Contains(t, status.Managed, "inferenceModels")
+
+	plans, err = h.Prepare(path, testRoutes(), opts)
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	for _, p := range plans {
+		require.False(t, p.Changed, "repeating setup changes nothing: %s", p.Path)
+	}
+
+	// Without the app, setup leaves its files alone and teardown still removes them.
+	plans, err = h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint})
+	require.NoError(t, err)
+	require.Len(t, plans, 1)
+	teardown(t, h, path)
+	require.NoFileExists(t, config)
+	require.NotContains(t, load(t, claudeDesktopMetaPath(config)), "appliedId")
+	require.Equal(t, "1p", load(t, claudeDesktopAppConfigPath(config))["deploymentMode"])
+	status, err = h.Inspect(Detection{Name: Claude, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateNotConfigured, status.State)
 }
 
 func TestMalformedSettingsAreReported(t *testing.T) {
@@ -1426,10 +1499,13 @@ type codexDaemonExecer struct {
 }
 
 func (e *codexDaemonExecer) LookPath(name string) (string, error) {
-	if e.binaries != nil && !e.binaries[name] {
+	if e.binaries == nil {
+		return e.fakeExecer.LookPath(name)
+	}
+	if !e.binaries[name] {
 		return "", exec.ErrNotFound
 	}
-	return e.fakeExecer.LookPath(name)
+	return filepath.Join(string(filepath.Separator), "fake", name), nil
 }
 
 func (e *codexDaemonExecer) Exec(command *exec.Cmd) error {
