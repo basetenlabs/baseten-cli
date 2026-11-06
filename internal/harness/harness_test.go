@@ -953,7 +953,7 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	routes[2].TargetAPI = TargetAPIChatCompletions
 	routes[3].TargetAPI, routes[3].UpstreamModel = TargetAPIMessages, "claude-opus-4-5"
 	for i := range routes {
-		routes[i].ReasoningLevels = []string{"high"}
+		routes[i].ReasoningLevels = []string{"none", "high"}
 	}
 	setup(t, openCodeHarness{}, path, routes, Selection{})
 	data := load(t, path)
@@ -965,7 +965,7 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.NotContains(t, models["acme/subagent"], "provider")
 	require.Equal(t, map[string]any{"high": map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}, "effort": "high"}}, models["acme/primary"].(map[string]any)["variants"])
 	for _, name := range []string{"acme/background", "acme/subagent", "acme/fallback"} {
-		require.Equal(t, map[string]any{"high": map[string]any{"reasoningEffort": "high"}}, models[name].(map[string]any)["variants"], name)
+		require.Equal(t, map[string]any{"none": map[string]any{"reasoningEffort": "none"}, "high": map[string]any{"reasoningEffort": "high"}}, models[name].(map[string]any)["variants"], name)
 	}
 }
 
@@ -1020,9 +1020,10 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	cacheRead := 0.3
 	routes := testRoutes()
 	routes[0].TargetAPI = TargetAPIMessages
-	routes[0].ReasoningLevels = []string{"low", "max"}
+	routes[0].ReasoningLevels = []string{"none", "low", "max"}
 	routes[0].Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, LongContext: &Cost{Input: 6, Output: 22.5}}
 	routes[1].TargetAPI = TargetAPIResponses
+	routes[3].ReasoningLevels = []string{"none"}
 	plans := setup(t, openCodeHarness{}, path, routes, Selection{Subagent: "acme/subagent"})
 	require.Equal(t, []string{"model"}, plans[0].Replaced)
 	d := load(t, path)
@@ -1067,6 +1068,7 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	require.NotContains(t, subagent, "package")
 	require.NotContains(t, subagent, "cost")
 	require.Equal(t, []any{}, subagent["variants"])
+	require.Equal(t, []any{map[string]any{"id": "none", "settings": map[string]any{"reasoningEffort": "none"}}}, models["acme/fallback"].(map[string]any)["variants"])
 	for _, key := range []string{"tool_call", "modalities", "reasoning", "provider"} {
 		require.NotContains(t, primary, key, "no V1 model fields in a V2 file")
 	}
