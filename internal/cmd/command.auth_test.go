@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -663,6 +664,9 @@ func Test_Auth_Status_ExplicitProfilePrompts(t *testing.T) {
 }
 
 func Test_Auth_Status_ExplicitProfileAccessiblePromptKeepsJSONClean(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("accessible prompt is tested through a Unix pseudo-terminal")
+	}
 	h := newExplicitProfileHarness(t)
 	// TERM=dumb puts huh in accessible mode, whose output defaults to stdout.
 	t.Setenv("TERM", "dumb")
