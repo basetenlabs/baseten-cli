@@ -34,7 +34,7 @@ func newSandboxTestAPI(h *CommandHarness) *MockManagementAPI {
 func sandboxTestRecord(m *MockManagementAPI, name, status string) map[string]any {
 	return map[string]any{
 		"name": name, "status": status, "url": m.URL,
-		"image": "baseten/base-image:latest", "memory": 4096, "region": "us-was-1",
+		"image": "baseten/base-image:latest", "memory": 4096, "cpu": 2, "region": "us-was-1",
 		"labels":     map[string]string{"b": "2", "a": "1"},
 		"envs":       []any{map[string]any{"name": "TOKEN", "value": "****", "secret": true}},
 		"created_at": sandboxTestTime,
@@ -212,14 +212,14 @@ func Test_Sandbox_Create_SendsOnlySetFields(t *testing.T) {
 	h.Require.Equal(map[string]any{}, sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[0].BodyJSON(t))
 
 	h.Require.NoError(h.Execute("sandbox", "create", "--name", "sbx-1", "--if-not-exists",
-		"--region", "us-was-1", "--memory", "8192", "--image", "img:latest",
+		"--region", "us-was-1", "--memory", "8192", "--cpu", "4", "--image", "img:latest",
 		"--env", "TOKEN=s3cret", "--plain-env", "WORKERS=4", "--label", "team=cli",
 		"--idle-ttl", "30m", "--max-age", "2d", "--expires-at", "2026-11-01T12:00:00Z",
 		"--terminated-retention", "1h"))
 	body := sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[1].BodyJSON(t)
 	h.Require.Equal(map[string]any{
 		"name": "sbx-1", "create_if_not_exists": true, "region": "us-was-1", "memory": float64(8192),
-		"image": "img:latest", "labels": map[string]any{"team": "cli"},
+		"cpu": float64(4), "image": "img:latest", "labels": map[string]any{"team": "cli"},
 		// --env leaves secret to the server's default.
 		"envs": []any{
 			map[string]any{"name": "TOKEN", "value": "s3cret"},
@@ -238,8 +238,8 @@ func Test_Sandbox_Create_SendsOnlySetFields(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "Labels:       a=1, b=2")
 
 	// A passed 0 is sent for the server to reject, not dropped as unset.
-	h.Require.NoError(h.Execute("sandbox", "create", "--memory", "0"))
-	h.Require.Equal(map[string]any{"memory": float64(0)},
+	h.Require.NoError(h.Execute("sandbox", "create", "--memory", "0", "--cpu", "0"))
+	h.Require.Equal(map[string]any{"memory": float64(0), "cpu": float64(0)},
 		sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[2].BodyJSON(t))
 }
 
@@ -310,7 +310,7 @@ func Test_Sandbox_Describe_ShowSecretsAndText(t *testing.T) {
 	h.Require.Empty(sandboxTestCalls(m, "GET", "/v1/sandboxes/instances/sbx-1")[0].Query().Get("show_secrets"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Status:       DEPLOYED")
-	h.Require.Contains(out, "Memory:       4096 MB")
+	h.Require.Contains(out, "Memory:       4096 MB\nCPU:          2 vCPU\n")
 	h.Require.Contains(out, "Envs:         TOKEN=****")
 	h.Require.Contains(out, "Idle TTL:     30m\nMax age:      2d\nExpires at:   2026-11-01T12:00:00Z\n"+
 		"Expiry:       SOMETHING_NEW\n")

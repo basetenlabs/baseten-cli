@@ -46,7 +46,7 @@ func trainJobFixture(id, status string) map[string]any {
 		"instance_type":       trainInstanceTypeFixture(),
 		"node_count":          2,
 		"priority":            5,
-		"availability_model":  "DEDICATED",
+		"availability_model":  "standard",
 		"training_project":    map[string]any{"id": "proj-1", "name": "my-project"},
 		"training_project_id": "proj-1",
 		"user":                map[string]any{"email": "owner@example.com"},
@@ -250,12 +250,12 @@ func Test_Train_Job_Update_PriorityAndAvailabilityModel(t *testing.T) {
 	})
 
 	h.Require.NoError(h.Execute("train", "job", "update", "--job-id", "job-1",
-		"--priority", "7", "--availability-model", "dedicated"))
+		"--priority", "7", "--availability-model", "standard"))
 	body := m.FindCall("PATCH", trainJobPath).BodyJSON(t)
 	h.Require.Equal(float64(7), body["priority"])
-	h.Require.Equal("dedicated", body["availability_model"])
+	h.Require.Equal("standard", body["availability_model"])
 	h.Require.Contains(h.Stderr.String(), "priority to 7")
-	h.Require.Contains(h.Stderr.String(), "availability model to dedicated")
+	h.Require.Contains(h.Stderr.String(), "availability model to standard")
 }
 
 func Test_Train_Job_Update_ZeroPriorityIsSent(t *testing.T) {

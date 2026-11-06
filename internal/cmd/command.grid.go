@@ -1567,7 +1567,7 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 		body.HarnessDefaults = managementapi.NewOptional[managementapi.UpdateGridHarnessDefaults](nil)
 	} else if roles {
 		defaults := managementapi.UpdateGridHarnessDefaults{}
-		primary := managementapi.UpdateGridPrimaryHarnessModels{Primary: gridOptional(f.PrimaryRouteID)}
+		primary := managementapi.UpdateGridBackgroundHarnessModels{Primary: gridOptional(f.PrimaryRouteID)}
 		background := managementapi.UpdateGridBackgroundHarnessModels{Primary: gridOptional(f.PrimaryRouteID), Background: gridOptional(f.BackgroundRouteID)}
 		switch f.Harness {
 		case "claude-code":
