@@ -379,7 +379,7 @@ func Test_Grid_Setup_Status_Teardown_ClaudeDesktop(t *testing.T) {
 	h.Require.Equal("gateway", settings["inferenceProvider"])
 	h.Require.Equal(map[string]any{"X-Baseten-Grid-Client": "claude-code"}, settings["inferenceCustomHeaders"])
 	h.Require.Equal([]any{map[string]any{"name": "claude-desktop-route-primary", "labelOverride": "Primary", "anthropicFamilyTier": "sonnet"}}, settings["inferenceModels"])
-	h.Require.NotContains(settings, "autoModeEnabled")
+	h.Require.Equal(true, settings["autoModeEnabled"])
 	h.Require.Equal(true, settings["toolSearchEnabled"])
 	h.Require.Equal([]any{"grid", "token", "--harness", "claude", "--profile", "alice"}, settings["inferenceCredentialHelperArgs"])
 	h.Require.Equal(strings.TrimSuffix(filepath.Base(configs[0]), ".json"), readHarnessSettings(t, "claude", filepath.Join(library, "_meta.json"))["appliedId"])

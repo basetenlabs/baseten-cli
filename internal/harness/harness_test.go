@@ -1443,7 +1443,7 @@ func TestClaudeDesktopFilesWithClaudeCodeSettings(t *testing.T) {
 	config := claudeDesktopConfig(path)
 	data := load(t, config)
 	require.Equal(t, ClaudeCode, get(data, claudeDesktopMarkerPath).Data)
-	require.False(t, get(data, []string{"autoModeEnabled"}).Exists, "Auto mode is left at the app's default")
+	require.Equal(t, true, get(data, []string{"autoModeEnabled"}).Data, "Auto mode is offered in Cowork as well as Code")
 	require.Equal(t, true, get(data, []string{"toolSearchEnabled"}).Data)
 	models := data["inferenceModels"].([]any)
 	require.Equal(t, "sonnet", models[0].(map[string]any)["anthropicFamilyTier"], "no listed background route, so the primary serves Auto mode")

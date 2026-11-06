@@ -183,8 +183,8 @@ func claudeDesktopPrepare(path string, routes []Route, selection Selection, endp
 		// Tool search keeps MCP tool schemas out of every request; without it a
 		// large MCP setup fills the context and trips model tool-count limits.
 		desired([]string{"toolSearchEnabled"}, true),
-		// Deleted, not false: the app's default offers Auto mode in Code sessions.
-		{Path: []string{"autoModeEnabled"}},
+		// Unset, the app offers Auto mode in Code sessions only; true adds Cowork.
+		desired([]string{"autoModeEnabled"}, true),
 		desired([]string{"inferenceModels"}, models),
 	}
 	credentialPath := claudeDesktopCredentialPath
