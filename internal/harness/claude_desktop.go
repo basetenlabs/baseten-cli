@@ -52,6 +52,11 @@ const claudeDesktopSealedPrefix = "__sealed__:"
 // names configs by v4 UUID; a fixed one keeps the path the same across calls.
 const claudeDesktopConfigID = "b45e7e00-c0de-4000-8000-000000000001"
 
+// linuxDesktopClaude is where the community Claude Desktop .deb package
+// installs its launcher. Desktop apps are looked up by absolute path, never
+// by a bare name on PATH.
+const linuxDesktopClaude = "/usr/bin/claude-desktop"
+
 func claudeDesktopBinaries() []string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -61,15 +66,18 @@ func claudeDesktopBinaries() []string {
 		}
 		return binaries
 	case "linux":
-		return []string{"claude-desktop"}
+		return []string{linuxDesktopClaude}
 	}
 	return nil
 }
 
 // ClaudeDesktopLocations names where Detect looks for the app, for error messages.
 func ClaudeDesktopLocations() string {
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		return "Claude.app"
+	case "linux":
+		return linuxDesktopClaude
 	}
 	return ""
 }

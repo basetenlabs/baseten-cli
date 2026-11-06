@@ -361,7 +361,7 @@ func Test_Grid_Setup_Status_Teardown_ClaudeDesktop(t *testing.T) {
 	skipUnlessSupported(t)
 	// Only the app is installed; the claude harness still counts as installed
 	// and writes the app's files beside Claude Code's settings.
-	binary := "claude-desktop"
+	binary := "/usr/bin/claude-desktop"
 	if runtime.GOOS == "darwin" {
 		binary = "/Applications/Claude.app/Contents/MacOS/Claude"
 	}
