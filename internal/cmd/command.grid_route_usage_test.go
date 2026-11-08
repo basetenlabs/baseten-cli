@@ -267,3 +267,23 @@ func gridUsageMonth() map[string]any {
 		),
 	)
 }
+
+func Test_Grid_Route_Usage_ChartsOnATerminal(t *testing.T) {
+	h, _ := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
+	h.Context = cmd.WithTerminalWidth(h.Context, 40)
+
+	h.Require.NoError(h.Execute("grid", "route", "usage", "--since", "7d"))
+	h.Require.Equal(
+		"Total                $2.25\n"+
+			"\n"+
+			"  $1 ┤──────────╮         ╭─────────\n"+
+			"  $0 ┼──────────╰─────────╯─────────\n"+
+			"        Sep 1     Sep 2     Sep 3\n"+
+			"\n"+
+			"  ● claude-sonnet-5  $1.25  (56%)\n"+
+			"  ● glm-5.2          $0.50  (22%)\n"+
+			"  ● gpt-5.2          $0.50  (22%)\n"+
+			"\n"+
+			"Your spend this month in Engineering: $12.50 of $100.00 (12%)\n",
+		h.Stdout.String(), "a chart of each day's spend per model above a legend, in whole dollars with any spend kept off the zero line")
+}

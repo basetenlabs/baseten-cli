@@ -6,7 +6,6 @@ import (
 	"maps"
 	"math"
 	"math/big"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/term"
 )
 
 func init() {
@@ -449,9 +447,8 @@ func (c *gridRouteUsageChart) render(ctx *CommandContext) {
 	}
 	chart := ""
 	// A single day has no trend to chart.
-	if f, ok := ctx.Stdout.(*os.File); ok && c.days > 1 && term.IsTerminal(f.Fd()) {
-		w, _, _ := term.GetSize(f.Fd())
-		chart = renderGridUsageChart(c.first, daily, cmp.Or(w, 80)-2, paint)
+	if w, ok := ctx.TerminalWidth(); ok && c.days > 1 {
+		chart = renderGridUsageChart(c.first, daily, w-2, paint)
 	}
 	indent := "  "
 	if chart != "" {
