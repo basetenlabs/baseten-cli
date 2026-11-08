@@ -14,6 +14,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/codex"
+	"github.com/basetenlabs/baseten-cli/internal/harness"
 )
 
 func init() {
@@ -143,7 +144,7 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	result.Profile = codexConfigChange(profilePath, profileChange)
 	result.Active = flags.Default || config["model_provider"] == codexMAPIProvider
 	if !flags.DryRun && flags.Default {
-		gridHarnessLogoutCodex(ctx, dir, false)
+		codexDropWorkspacePolicy(ctx, dir)
 		if len(change.Added)+len(change.Replaced)+len(change.Removed) > 0 {
 			gridHarnessRestartCodexDaemon(ctx, dir, false)
 		}
@@ -234,7 +235,7 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 	}
 	result := cmd.CodexUseResult{Provider: flags.Provider, Config: codexConfigChange(configPath, change)}
 	if flags.Provider == codexProfile {
-		gridHarnessLogoutCodex(ctx, dir, false)
+		codexDropWorkspacePolicy(ctx, dir)
 	}
 	// The background server shared by plain codex and the desktop app loads
 	// the model catalog only at startup.
@@ -336,6 +337,16 @@ func commandCodexTeardown(ctx *CommandContext, flags *cmd.CodexTeardownFlags) er
 		ctx.OutputLine("Baseten Model APIs are not set up for Codex; nothing to remove.")
 	}
 	return nil
+}
+
+// codexDropWorkspacePolicy deletes the cached ChatGPT workspace policy, whose
+// default model overrides config.toml in Codex's background server. With
+// forced_login_method = "api" set, Codex itself signs a ChatGPT login out on
+// its next start rather than fetching the policy again.
+func codexDropWorkspacePolicy(ctx *CommandContext, dir string) {
+	if err := harness.CodexClearCloudConfig(dir); err != nil {
+		ctx.Logf("warning: could not remove %s: %v\n", harness.CodexCloudConfigPath(dir), err)
+	}
 }
 
 // codexSelectBaseten adds the settings that select Baseten Model APIs to set.
