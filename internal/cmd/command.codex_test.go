@@ -327,6 +327,7 @@ func Test_Codex_Use(t *testing.T) {
 	err := h.Execute("codex", "use", "--provider", "baseten")
 	h.Require.Error(err)
 	h.Require.Contains(err.Error(), "run 'baseten codex setup' first")
+	h.Require.Contains(err.Error(), "baseten.config.toml has no model_catalog_json")
 
 	h.Require.NoError(os.MkdirAll(dir, 0o700))
 	h.Require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model_provider = \"openai\"\n"), 0o600))
@@ -417,4 +418,13 @@ func Test_Codex_Use_OpenAIKeepsOtherProvider(t *testing.T) {
 	after, err := os.ReadFile(config)
 	h.Require.NoError(err)
 	h.Require.Equal(string(data), string(after))
+}
+
+func Test_Codex_Use_OpenAIAlreadyExplicit(t *testing.T) {
+	h, dir, _ := codexHarness(t, codexInferenceModels)
+	h.Require.NoError(os.MkdirAll(dir, 0o700))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model_provider = \"openai\"\n"), 0o600))
+	h.Require.NoError(h.Execute("codex", "use", "--provider", "openai"))
+	h.Require.Contains(h.Stdout.String(), "Codex already uses openai")
+	h.Require.Equal("openai", readCodexConfig(t, dir)["model_provider"])
 }

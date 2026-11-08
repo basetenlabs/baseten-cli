@@ -188,18 +188,23 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 	switch flags.Provider {
 	case codexProfile:
 		providers, _ := config["model_providers"].(map[string]any)
-		if catalog == "" || providers[codexMAPIProvider] == nil {
-			return cmd.NewErrUsagef("Baseten Model APIs are not set up for Codex; run 'baseten codex setup' first")
+		switch {
+		case catalog == "":
+			return cmd.NewErrUsagef("Baseten Model APIs are not set up for Codex: %s has no model_catalog_json; run 'baseten codex setup' first", profilePath)
+		case providers[codexMAPIProvider] == nil:
+			return cmd.NewErrUsagef("Baseten Model APIs are not set up for Codex: %s has no [model_providers.%s]; run 'baseten codex setup' first", configPath, codexMAPIProvider)
 		}
 		codexSelectBaseten(set, config, catalog, slugs)
 	default:
 		// Only undo a Baseten selection; another provider, such as Grid's, is
 		// left for its own tooling.
-		if current, ok := config["model_provider"]; ok && current != codexMAPIProvider {
+		if current, ok := config["model_provider"]; ok && current != codexMAPIProvider && current != "openai" {
 			return cmd.NewErrUsagef("Codex uses the %v provider, not Baseten Model APIs; change model_provider in %s yourself", current, configPath)
 		}
-		// OpenAI is Codex's default provider.
-		set["model_provider"] = nil
+		// OpenAI is Codex's default provider; an explicit "openai" stays.
+		if config["model_provider"] == codexMAPIProvider {
+			set["model_provider"] = nil
+		}
 		if config["model_catalog_json"] == catalog {
 			set["model_catalog_json"] = nil
 		}
