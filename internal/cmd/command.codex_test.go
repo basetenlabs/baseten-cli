@@ -437,6 +437,7 @@ func Test_Codex_Teardown(t *testing.T) {
 	h.Require.NoError(h.Execute("codex", "setup", "--default"))
 
 	h.Require.NoError(h.Execute("codex", "teardown", "--dry-run"))
+	h.Require.Contains(h.Stdout.String(), "would delete ")
 	h.Require.FileExists(filepath.Join(dir, "baseten.config.toml"))
 
 	h.Require.NoError(h.Execute("codex", "teardown"))

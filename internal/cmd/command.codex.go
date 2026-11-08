@@ -287,14 +287,16 @@ func commandCodexTeardown(ctx *CommandContext, flags *cmd.CodexTeardownFlags) er
 		ctx.OutputJSON(result)
 		return nil
 	}
+	removed, deleted := "removed", "deleted"
 	if flags.DryRun {
 		ctx.OutputLine("Dry run: no files were changed.")
+		removed, deleted = "would remove", "would delete"
 	}
 	for _, key := range change.Removed {
-		ctx.Outputf("removed %s from %s\n", key, configPath)
+		ctx.Outputf("%s %s from %s\n", removed, key, configPath)
 	}
 	for _, path := range result.RemovedFiles {
-		ctx.Outputf("deleted %s\n", path)
+		ctx.Outputf("%s %s\n", deleted, path)
 	}
 	if len(change.Removed)+len(result.RemovedFiles) == 0 {
 		ctx.OutputLine("Baseten Model APIs are not set up for Codex; nothing to remove.")
