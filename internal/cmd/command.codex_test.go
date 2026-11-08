@@ -146,7 +146,8 @@ func Test_Codex_Setup_FreshConfig(t *testing.T) {
 	h.Require.Contains(out, "5 keys added, 0 replaced, 0 preserved")
 	h.Require.Contains(out, "codex --profile baseten")
 	h.Require.Contains(out, "run 'baseten codex use --provider baseten'")
-	h.Require.Equal(map[string]any{"model_provider": "baseten-mapi", "model_catalog_json": catalogPath}, readCodexFile(t, filepath.Join(dir, "baseten.config.toml")))
+	h.Require.Equal(map[string]any{"model_provider": "baseten-mapi", "model_catalog_json": catalogPath, "model": "zai-org/GLM-5.3-Flash"}, readCodexFile(t, filepath.Join(dir, "baseten.config.toml")),
+		"the profile sets a Baseten model so it never inherits config.toml's")
 	h.Require.Contains(out, "No OPENAI_MARKETPLACE_ID found. If you are in the OpenAI marketplace program, set it and re-run.")
 }
 
@@ -362,4 +363,58 @@ func Test_Codex_Setup_InvalidConfigWritesNothing(t *testing.T) {
 	h.Require.Contains(err.Error(), "repair it before continuing")
 	h.Require.NoFileExists(filepath.Join(dir, "baseten-mapi-models.json"))
 	h.Require.NoFileExists(filepath.Join(dir, "baseten.config.toml"))
+}
+
+func Test_Codex_Setup_ProfileModel(t *testing.T) {
+	h, dir, _ := codexHarness(t, codexInferenceModels)
+	profile := filepath.Join(dir, "baseten.config.toml")
+	h.Require.NoError(os.MkdirAll(dir, 0o700))
+
+	// Codex saves a model picked in a profile session to the profile; keep it.
+	h.Require.NoError(os.WriteFile(profile, []byte("model = \"moonshotai/Kimi-K3\"\n"), 0o600))
+	h.Require.NoError(h.Execute("codex", "setup"))
+	h.Require.Equal("moonshotai/Kimi-K3", readCodexFile(t, profile)["model"])
+
+	// A model no longer in the catalog is replaced with the first one.
+	h.Require.NoError(os.WriteFile(profile, []byte("model = \"gpt-6\"\n"), 0o600))
+	h.Require.NoError(h.Execute("codex", "setup"))
+	h.Require.Equal("zai-org/GLM-5.3-Flash", readCodexFile(t, profile)["model"])
+}
+
+func Test_Codex_Setup_InvalidProfileWritesNothing(t *testing.T) {
+	h, dir, _ := codexHarness(t, codexInferenceModels)
+	h.Require.NoError(os.MkdirAll(dir, 0o700))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "baseten.config.toml"), []byte("model = \n"), 0o600))
+	err := h.Execute("codex", "setup")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "repair it before continuing")
+	h.Require.NoFileExists(filepath.Join(dir, "baseten-mapi-models.json"))
+	h.Require.NoFileExists(filepath.Join(dir, "config.toml"))
+}
+
+func Test_Codex_Setup_DryRunReportsActive(t *testing.T) {
+	h, dir, _ := codexHarness(t, codexInferenceModels)
+	h.Require.NoError(os.MkdirAll(dir, 0o700))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model_provider = \"baseten-mapi\"\n"), 0o600))
+	h.Require.NoError(h.Execute("codex", "setup", "--dry-run", "--output", "json"))
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	h.Require.Equal(true, result["active"])
+}
+
+func Test_Codex_Use_OpenAIKeepsOtherProvider(t *testing.T) {
+	h, dir, _ := codexHarness(t, codexInferenceModels)
+	h.Require.NoError(h.Execute("codex", "setup"))
+	config := filepath.Join(dir, "config.toml")
+	data, err := os.ReadFile(config)
+	h.Require.NoError(err)
+	data = append([]byte("model_provider = \"baseten\"\n"), data...)
+	h.Require.NoError(os.WriteFile(config, data, 0o600))
+
+	err = h.Execute("codex", "use", "--provider", "openai")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "Codex uses the baseten provider")
+	after, err := os.ReadFile(config)
+	h.Require.NoError(err)
+	h.Require.Equal(string(data), string(after))
 }

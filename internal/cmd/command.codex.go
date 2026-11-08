@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -75,16 +74,19 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 		return err
 	}
 
-	configPath := filepath.Join(dir, "config.toml")
-	for _, path := range []string{configPath, codexProfilePath(dir)} {
+	configPath, profilePath := filepath.Join(dir, "config.toml"), codexProfilePath(dir)
+	// Reject a catalog path that aliases a settings file, and unreadable
+	// settings, before writing anything.
+	files := map[string]map[string]any{}
+	for _, path := range []string{configPath, profilePath} {
 		if sameFile(catalogPath, path) {
 			return cmd.NewErrUsagef("--catalog-path must not be a Codex settings file (%s)", path)
 		}
+		if files[path], err = codexReadTOML(path); err != nil {
+			return err
+		}
 	}
-	// Reject an unreadable config.toml before writing anything.
-	if _, err := codex.Patch(configPath, nil, nil, false); err != nil {
-		return fmt.Errorf("reading %s: %w", configPath, err)
-	}
+	config, profile := files[configPath], files[profilePath]
 
 	result := cmd.CodexSetupResult{DryRun: flags.DryRun, Found: len(models), Included: []string{}, Excluded: []cmd.CodexExcludedModel{}}
 	var catalog []map[string]any
@@ -111,17 +113,9 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	if id := os.Getenv("OPENAI_MARKETPLACE_ID"); id != "" {
 		set["model_providers"] = map[string]any{codexMAPIProvider: map[string]any{"http_headers": map[string]any{codexMarketplaceHeader: id}}}
 	}
-	// The profile selects Baseten for `codex --profile`; --default also selects
-	// it in config.toml, for the desktop app.
-	selection := map[string]any{"model_provider": codexMAPIProvider, "model_catalog_json": catalogPath}
+	// --default also selects Baseten in config.toml, for the desktop app.
 	if flags.Default {
-		maps.Copy(set, selection)
-		current := map[string]any{}
-		_, _ = toml.DecodeFile(configPath, &current)
-		// Clear a model saved for another provider; see commandCodexUse.
-		if model, ok := current["model"].(string); ok && !slices.Contains(result.Included, model) {
-			set["model"] = nil
-		}
+		codexSelectBaseten(set, config, catalogPath, result.Included)
 	}
 	change, err := codex.Patch(configPath, map[string]any{
 		"model_providers": map[string]any{codexMAPIProvider: provider},
@@ -130,16 +124,21 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 		return fmt.Errorf("updating %s: %w", configPath, err)
 	}
 	result.Config = codexConfigChange(configPath, change)
-	profilePath := codexProfilePath(dir)
-	profile, err := codex.Patch(profilePath, nil, selection, !flags.DryRun)
+	// The profile selects Baseten for `codex --profile baseten`. It sets model
+	// too, or the session would inherit an OpenAI model from config.toml.
+	// Codex saves a model picked in the session to the profile, so keep it
+	// while it is still in the catalog.
+	selection := map[string]any{}
+	codexSelectBaseten(selection, profile, catalogPath, result.Included)
+	if model, _ := profile["model"].(string); !slices.Contains(result.Included, model) && len(result.Included) > 0 {
+		selection["model"] = result.Included[0]
+	}
+	profileChange, err := codex.Patch(profilePath, nil, selection, !flags.DryRun)
 	if err != nil {
 		return fmt.Errorf("updating %s: %w", profilePath, err)
 	}
-	result.Profile = codexConfigChange(profilePath, profile)
-	config := map[string]any{}
-	// Patch already rejected an unreadable file.
-	_, _ = toml.DecodeFile(configPath, &config)
-	result.Active = flags.Default || (!flags.DryRun && config["model_provider"] == codexMAPIProvider)
+	result.Profile = codexConfigChange(profilePath, profileChange)
+	result.Active = flags.Default || config["model_provider"] == codexMAPIProvider
 	if os.Getenv("OPENAI_MARKETPLACE_ID") == "" {
 		providers, _ := config["model_providers"].(map[string]any)
 		provider, _ := providers[codexMAPIProvider].(map[string]any)
@@ -175,14 +174,16 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 		return err
 	}
 	configPath, profilePath := filepath.Join(dir, "config.toml"), codexProfilePath(dir)
-	profile, config := map[string]any{}, map[string]any{}
-	if _, err := toml.DecodeFile(profilePath, &profile); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("reading %s: %w", profilePath, err)
+	profile, err := codexReadTOML(profilePath)
+	if err != nil {
+		return err
 	}
-	if _, err := toml.DecodeFile(configPath, &config); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("reading %s: %w", configPath, err)
+	config, err := codexReadTOML(configPath)
+	if err != nil {
+		return err
 	}
 	catalog, _ := profile["model_catalog_json"].(string)
+	slugs := codexCatalogSlugs(catalog)
 	set := map[string]any{}
 	switch flags.Provider {
 	case codexProfile:
@@ -190,18 +191,22 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 		if catalog == "" || providers[codexMAPIProvider] == nil {
 			return cmd.NewErrUsagef("Baseten Model APIs are not set up for Codex; run 'baseten codex setup' first")
 		}
-		set["model_provider"], set["model_catalog_json"] = codexMAPIProvider, catalog
+		codexSelectBaseten(set, config, catalog, slugs)
 	default:
+		// Only undo a Baseten selection; another provider, such as Grid's, is
+		// left for its own tooling.
+		if current, ok := config["model_provider"]; ok && current != codexMAPIProvider {
+			return cmd.NewErrUsagef("Codex uses the %v provider, not Baseten Model APIs; change model_provider in %s yourself", current, configPath)
+		}
 		// OpenAI is Codex's default provider.
 		set["model_provider"] = nil
 		if config["model_catalog_json"] == catalog {
 			set["model_catalog_json"] = nil
 		}
-	}
-	// Codex saves the model picked in a session to config.toml, so a Baseten
-	// model can be left selected for OpenAI, or the reverse.
-	if model, ok := config["model"].(string); ok && slices.Contains(codexCatalogSlugs(catalog), model) != (flags.Provider == codexProfile) {
-		set["model"] = nil
+		// Codex saves a model picked in a session to config.toml.
+		if model, ok := config["model"].(string); ok && slices.Contains(slugs, model) {
+			set["model"] = nil
+		}
 	}
 	change, err := codex.Patch(configPath, nil, set, true)
 	if err != nil {
@@ -221,6 +226,25 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 	}
 	ctx.Outputf("Codex now uses %s. Restart the ChatGPT desktop app and any running Codex sessions to apply it.\n", flags.Provider)
 	return nil
+}
+
+// codexSelectBaseten adds the settings that select Baseten Model APIs to set,
+// clearing a model in current that is not in the catalog's slugs, such as an
+// OpenAI model Codex saved from an earlier session.
+func codexSelectBaseten(set, current map[string]any, catalogPath string, slugs []string) {
+	set["model_provider"], set["model_catalog_json"] = codexMAPIProvider, catalogPath
+	if model, ok := current["model"].(string); ok && !slices.Contains(slugs, model) {
+		set["model"] = nil
+	}
+}
+
+// codexReadTOML reads a Codex settings file; a missing file is empty.
+func codexReadTOML(path string) (map[string]any, error) {
+	data := map[string]any{}
+	if _, err := toml.DecodeFile(path, &data); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("invalid %s; repair it before continuing: %w", path, err)
+	}
+	return data, nil
 }
 
 // codexCatalogSlugs lists the models in the catalog at path, if readable.

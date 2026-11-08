@@ -15,7 +15,7 @@ var commandCodex = Command{
 				"The catalog is regenerated on every run; models under vllmtest/ and models with no supported features are left out. " +
 				"config.toml only gains missing keys: existing values are never overwritten, except model_provider and model_catalog_json with --default, " +
 				"and the OpenAI-Marketplace-Id header under [model_providers.baseten-mapi.http_headers], which is set from OPENAI_MARKETPLACE_ID when that is set. " +
-				"Rewriting config.toml drops its comments. Setup does not set model or model_reasoning_effort.\n\n" +
+				"Rewriting config.toml drops its comments. Setup never sets model or model_reasoning_effort in config.toml; the baseten profile sets model to a Baseten model, keeping the one picked in an earlier profile session while it is still in the catalog.\n\n" +
 				"Codex reads BASETEN_API_KEY from the environment at runtime. Setup never writes the key to disk. " +
 				"It coexists with 'baseten grid setup', which uses the baseten provider and its own catalog. Running setup again is safe.",
 			Flags: CodexSetupFlags{},
@@ -37,7 +37,7 @@ var commandCodex = Command{
 			Summary: "Switch Codex's default provider between Baseten Model APIs and OpenAI",
 			Description: "Set model_provider in Codex's config.toml, which the ChatGPT desktop app and plain 'codex' use. " +
 				"baseten selects Baseten Model APIs (the baseten-mapi provider) and their catalog, as written by 'baseten codex setup'. " +
-				"openai removes model_provider, so Codex falls back to OpenAI, and removes model_catalog_json when it points at the Baseten catalog. " +
+				"openai removes model_provider when it is baseten-mapi, so Codex falls back to OpenAI, and removes model_catalog_json when it points at the Baseten catalog; it fails if another provider is selected. " +
 				"Restart the desktop app afterwards. Threads keep the provider they started with.",
 			Flags: CodexUseFlags{},
 			Output: &CommandOutput[CodexUseResult]{
@@ -112,8 +112,7 @@ type CodexConfigChange struct {
 	Path      string   `json:"path"`
 	Added     []string `json:"added"`
 	Preserved []string `json:"preserved"`
-	// Replaced lists keys overwritten from the environment
-	// (OPENAI_MARKETPLACE_ID).
+	// Replaced lists keys whose values were overwritten.
 	Replaced []string `json:"replaced"`
 	Removed  []string `json:"removed"`
 }
