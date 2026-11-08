@@ -81,6 +81,10 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 			return cmd.NewErrUsagef("--catalog-path must not be a Codex settings file (%s)", path)
 		}
 	}
+	// Reject an unreadable config.toml before writing anything.
+	if _, err := codex.Patch(configPath, nil, nil, false); err != nil {
+		return fmt.Errorf("reading %s: %w", configPath, err)
+	}
 
 	result := cmd.CodexSetupResult{DryRun: flags.DryRun, Found: len(models), Included: []string{}, Excluded: []cmd.CodexExcludedModel{}}
 	var catalog []map[string]any

@@ -345,3 +345,14 @@ func Test_Codex_Use(t *testing.T) {
 	h.Require.NotContains(config, "model_catalog_json")
 	h.Require.Contains(config["model_providers"], "baseten-mapi", "the provider stays defined for the profile")
 }
+
+func Test_Codex_Setup_InvalidConfigWritesNothing(t *testing.T) {
+	h, dir, _ := codexHarness(t, codexInferenceModels)
+	h.Require.NoError(os.MkdirAll(dir, 0o700))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model = \"a\"\nmodel = \"b\"\n"), 0o600))
+	err := h.Execute("codex", "setup")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "repair it before continuing")
+	h.Require.NoFileExists(filepath.Join(dir, "baseten-mapi-models.json"))
+	h.Require.NoFileExists(filepath.Join(dir, "baseten-mapi.config.toml"))
+}
