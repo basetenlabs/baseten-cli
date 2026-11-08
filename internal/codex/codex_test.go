@@ -27,6 +27,7 @@ func TestPatch(t *testing.T) {
 		Added:     []string{"model_providers.added.http_headers", "model_providers.added.name", "model_providers.mine.base_url"},
 		Preserved: []string{"model", "model_providers.mine.name"},
 		Replaced:  []string{"model_providers.mine.http_headers.Id"},
+		Removed:   []string{},
 	}, change)
 	unchanged, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -87,4 +88,15 @@ func TestWriteCatalogEmpty(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"models": []}`, string(data))
+}
+
+func TestPatchRemoves(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("a = 1\nb = 2\n"), 0o600))
+	change, err := Patch(path, nil, map[string]any{"a": nil, "c": nil}, true)
+	require.NoError(t, err)
+	require.Equal(t, []string{"a"}, change.Removed)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "b = 2\n", string(data))
 }

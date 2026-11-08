@@ -65,8 +65,13 @@ func (r rewriteHost) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func readCodexConfig(t *testing.T, dir string) map[string]any {
 	t.Helper()
+	return readCodexFile(t, filepath.Join(dir, "config.toml"))
+}
+
+func readCodexFile(t *testing.T, path string) map[string]any {
+	t.Helper()
 	config := map[string]any{}
-	_, err := toml.DecodeFile(filepath.Join(dir, "config.toml"), &config)
+	_, err := toml.DecodeFile(path, &config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,8 +126,8 @@ func Test_Codex_Setup_FreshConfig(t *testing.T) {
 	h.Require.Equal([]any{"text", "image"}, kimi["input_modalities"], "Codex rejects unknown modalities")
 
 	config := readCodexConfig(t, dir)
-	h.Require.Equal(catalogPath, config["model_catalog_json"])
-	h.Require.Equal("baseten-mapi", config["model_provider"])
+	h.Require.NotContains(config, "model_catalog_json", "plain codex keeps its provider")
+	h.Require.NotContains(config, "model_provider")
 	h.Require.NotContains(config, "model")
 	h.Require.NotContains(config, "model_reasoning_effort")
 	h.Require.Equal(map[string]any{
@@ -138,7 +143,10 @@ func Test_Codex_Setup_FreshConfig(t *testing.T) {
 	h.Require.Contains(out, "excluded vllmtest/llama (internal test endpoint)")
 	h.Require.Contains(out, "excluded decision-models/joey (no supported features)")
 	h.Require.Contains(out, "2 added, 0 removed, 0 modified")
-	h.Require.Contains(out, "7 keys added, 0 replaced, 0 preserved")
+	h.Require.Contains(out, "5 keys added, 0 replaced, 0 preserved")
+	h.Require.Contains(out, "codex --profile baseten-mapi")
+	h.Require.Contains(out, "run 'baseten codex use --provider baseten-mapi'")
+	h.Require.Equal(map[string]any{"model_provider": "baseten-mapi", "model_catalog_json": catalogPath}, readCodexFile(t, filepath.Join(dir, "baseten-mapi.config.toml")))
 	h.Require.Contains(out, "No OPENAI_MARKETPLACE_ID found. If you are in the OpenAI marketplace program, set it and re-run.")
 }
 
@@ -199,7 +207,7 @@ OpenAI-Marketplace-Id = "mkt-123"
 	grid, _ := os.ReadFile(gridCatalog)
 	h.Require.Equal(`{"models":[]}`, string(grid))
 	h.Require.FileExists(filepath.Join(dir, "baseten-mapi-models.json"))
-	h.Require.Contains(h.Stdout.String(), "3 keys added, 0 replaced, 4 preserved")
+	h.Require.Contains(h.Stdout.String(), "3 keys added, 0 replaced, 2 preserved")
 	h.Require.NotContains(h.Stdout.String(), "No OPENAI_MARKETPLACE_ID found")
 }
 
@@ -296,4 +304,44 @@ func Test_Codex_Setup_RejectsCatalogPathAtConfig(t *testing.T) {
 	data, err := os.ReadFile(config)
 	h.Require.NoError(err)
 	h.Require.Equal("model = \"gpt-5\"\n", string(data))
+}
+
+func Test_Codex_Setup_Default(t *testing.T) {
+	h, dir, _ := codexHarness(t, codexInferenceModels)
+	h.Require.NoError(os.MkdirAll(dir, 0o700))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model_provider = \"openai\"\nmodel = \"gpt-6\"\n"), 0o600))
+	h.Require.NoError(h.Execute("codex", "setup", "--default"))
+	config := readCodexConfig(t, dir)
+	h.Require.Equal("baseten-mapi", config["model_provider"])
+	h.Require.Equal(filepath.Join(dir, "baseten-mapi-models.json"), config["model_catalog_json"])
+	h.Require.Equal("gpt-6", config["model"])
+	out := h.Stdout.String()
+	h.Require.Contains(out, "replaced model_provider")
+	h.Require.Contains(out, "Baseten Model APIs are the default provider")
+}
+
+func Test_Codex_Use(t *testing.T) {
+	h, dir, _ := codexHarness(t, codexInferenceModels)
+	err := h.Execute("codex", "use", "--provider", "baseten-mapi")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), "run 'baseten codex setup' first")
+
+	h.Require.NoError(os.MkdirAll(dir, 0o700))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model_provider = \"openai\"\n"), 0o600))
+	h.Require.NoError(h.Execute("codex", "setup"))
+
+	h.Require.NoError(h.Execute("codex", "use", "--provider", "baseten-mapi"))
+	h.Require.Contains(h.Stdout.String(), "Codex now uses baseten-mapi")
+	config := readCodexConfig(t, dir)
+	h.Require.Equal("baseten-mapi", config["model_provider"])
+	h.Require.Equal(filepath.Join(dir, "baseten-mapi-models.json"), config["model_catalog_json"])
+
+	h.Require.NoError(h.Execute("codex", "use", "--provider", "baseten-mapi"))
+	h.Require.Contains(h.Stdout.String(), "Codex already uses baseten-mapi")
+
+	h.Require.NoError(h.Execute("codex", "use", "--provider", "openai"))
+	config = readCodexConfig(t, dir)
+	h.Require.NotContains(config, "model_provider")
+	h.Require.NotContains(config, "model_catalog_json")
+	h.Require.Contains(config["model_providers"], "baseten-mapi", "the provider stays defined for the profile")
 }

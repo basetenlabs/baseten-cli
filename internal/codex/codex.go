@@ -39,14 +39,16 @@ type ConfigChange struct {
 	Added     []string `json:"added"`
 	Preserved []string `json:"preserved"`
 	Replaced  []string `json:"replaced"`
+	Removed   []string `json:"removed"`
 }
 
 // Patch merges two nested maps of settings into the TOML file at path. Keys in
-// add are written only when missing; keys in set are always written. Tables
+// add are written only when missing; keys in set are always written, and a nil
+// value in set removes the key. Tables
 // merge key by key. The file is written only when write is set and something
 // changed.
 func Patch(path string, add, set map[string]any, write bool) (ConfigChange, error) {
-	change := ConfigChange{Added: []string{}, Preserved: []string{}, Replaced: []string{}}
+	change := ConfigChange{Added: []string{}, Preserved: []string{}, Replaced: []string{}, Removed: []string{}}
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return change, err
@@ -57,7 +59,7 @@ func Patch(path string, add, set map[string]any, write bool) (ConfigChange, erro
 	}
 	merge(config, set, "", true, &change)
 	merge(config, add, "", false, &change)
-	if !write || len(change.Added)+len(change.Replaced) == 0 {
+	if !write || len(change.Added)+len(change.Replaced)+len(change.Removed) == 0 {
 		return change, nil
 	}
 	// Re-encoding drops comments and reorders keys.
@@ -75,6 +77,11 @@ func merge(dst, src map[string]any, prefix string, overwrite bool, change *Confi
 		child, isTable := src[k].(map[string]any)
 		existing, wasTable := current.(map[string]any)
 		switch {
+		case src[k] == nil:
+			if overwrite && exists {
+				delete(dst, k)
+				change.Removed = append(change.Removed, key)
+			}
 		case isTable && len(child) > 0 && !exists:
 			// Report a new table by its keys.
 			existing = map[string]any{}

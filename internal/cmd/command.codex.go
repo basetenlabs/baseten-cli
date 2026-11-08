@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,11 +19,16 @@ import (
 
 func init() {
 	Register("codex setup", commandCodexSetup)
+	Register("codex use", commandCodexUse)
 }
 
 // codexMAPIProvider is the config.toml provider id for Model APIs. Grid uses
 // "baseten", so both can be configured side by side.
 const codexMAPIProvider = "baseten-mapi"
+
+// codexProfile is the Codex profile setup writes, selected with
+// `codex --profile baseten-mapi`.
+const codexProfile = codexMAPIProvider
 
 const (
 	codexMarketplaceHeader = "OpenAI-Marketplace-Id"
@@ -69,8 +76,10 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	}
 
 	configPath := filepath.Join(dir, "config.toml")
-	if sameFile(catalogPath, configPath) {
-		return cmd.NewErrUsagef("--catalog-path must not be Codex's config.toml (%s)", configPath)
+	for _, path := range []string{configPath, codexProfilePath(dir)} {
+		if sameFile(catalogPath, path) {
+			return cmd.NewErrUsagef("--catalog-path must not be a Codex settings file (%s)", path)
+		}
 	}
 
 	result := cmd.CodexSetupResult{DryRun: flags.DryRun, Found: len(models), Included: []string{}, Excluded: []cmd.CodexExcludedModel{}}
@@ -98,19 +107,30 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	if id := os.Getenv("OPENAI_MARKETPLACE_ID"); id != "" {
 		set["model_providers"] = map[string]any{codexMAPIProvider: map[string]any{"http_headers": map[string]any{codexMarketplaceHeader: id}}}
 	}
+	// The profile selects Baseten for `codex --profile`; --default also selects
+	// it in config.toml, for the desktop app.
+	selection := map[string]any{"model_provider": codexMAPIProvider, "model_catalog_json": catalogPath}
+	if flags.Default {
+		maps.Copy(set, selection)
+	}
 	change, err := codex.Patch(configPath, map[string]any{
-		"model_catalog_json": catalogPath,
-		"model_provider":     codexMAPIProvider,
-		"model_providers":    map[string]any{codexMAPIProvider: provider},
+		"model_providers": map[string]any{codexMAPIProvider: provider},
 	}, set, !flags.DryRun)
 	if err != nil {
 		return fmt.Errorf("updating %s: %w", configPath, err)
 	}
-	result.Config = cmd.CodexConfigChange{Path: configPath, Added: change.Added, Preserved: change.Preserved, Replaced: change.Replaced}
-	if len(set) == 0 {
-		config := map[string]any{}
-		// Patch already rejected an unreadable file.
-		_, _ = toml.DecodeFile(configPath, &config)
+	result.Config = codexConfigChange(configPath, change)
+	profilePath := codexProfilePath(dir)
+	profile, err := codex.Patch(profilePath, nil, selection, !flags.DryRun)
+	if err != nil {
+		return fmt.Errorf("updating %s: %w", profilePath, err)
+	}
+	result.Profile = codexConfigChange(profilePath, profile)
+	config := map[string]any{}
+	// Patch already rejected an unreadable file.
+	_, _ = toml.DecodeFile(configPath, &config)
+	result.Active = flags.Default || (!flags.DryRun && config["model_provider"] == codexMAPIProvider)
+	if os.Getenv("OPENAI_MARKETPLACE_ID") == "" {
 		providers, _ := config["model_providers"].(map[string]any)
 		provider, _ := providers[codexMAPIProvider].(map[string]any)
 		headers, _ := provider["http_headers"].(map[string]any)
@@ -126,6 +146,62 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 		return nil
 	}
 	writeCodexSetup(ctx, result)
+	return nil
+}
+
+func codexProfilePath(dir string) string {
+	return filepath.Join(dir, codexProfile+".config.toml")
+}
+
+func codexConfigChange(path string, c codex.ConfigChange) cmd.CodexConfigChange {
+	return cmd.CodexConfigChange{Path: path, Added: c.Added, Preserved: c.Preserved, Replaced: c.Replaced, Removed: c.Removed}
+}
+
+// commandCodexUse selects the provider in config.toml, which the desktop app
+// reads; the CLI can select a profile per run instead.
+func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
+	dir, err := codex.Dir()
+	if err != nil {
+		return err
+	}
+	configPath, profilePath := filepath.Join(dir, "config.toml"), codexProfilePath(dir)
+	profile, config := map[string]any{}, map[string]any{}
+	if _, err := toml.DecodeFile(profilePath, &profile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("reading %s: %w", profilePath, err)
+	}
+	if _, err := toml.DecodeFile(configPath, &config); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("reading %s: %w", configPath, err)
+	}
+	catalog, _ := profile["model_catalog_json"].(string)
+	set := map[string]any{}
+	switch flags.Provider {
+	case codexMAPIProvider:
+		providers, _ := config["model_providers"].(map[string]any)
+		if catalog == "" || providers[codexMAPIProvider] == nil {
+			return cmd.NewErrUsagef("Baseten Model APIs are not set up for Codex; run 'baseten codex setup' first")
+		}
+		set["model_provider"], set["model_catalog_json"] = codexMAPIProvider, catalog
+	default:
+		// OpenAI is Codex's default provider.
+		set["model_provider"] = nil
+		if config["model_catalog_json"] == catalog {
+			set["model_catalog_json"] = nil
+		}
+	}
+	change, err := codex.Patch(configPath, nil, set, true)
+	if err != nil {
+		return fmt.Errorf("updating %s: %w", configPath, err)
+	}
+	result := cmd.CodexUseResult{Provider: flags.Provider, Config: codexConfigChange(configPath, change)}
+	if ctx.JSON {
+		ctx.OutputJSON(result)
+		return nil
+	}
+	if len(change.Replaced)+len(change.Added)+len(change.Removed) == 0 {
+		ctx.Outputf("Codex already uses %s.\n", flags.Provider)
+		return nil
+	}
+	ctx.Outputf("Codex now uses %s. Restart the ChatGPT desktop app and any running Codex sessions to apply it.\n", flags.Provider)
 	return nil
 }
 
@@ -255,17 +331,29 @@ func writeCodexSetup(ctx *CommandContext, r cmd.CodexSetupResult) {
 			ctx.Outputf("  %s %s\n", change.label, slug)
 		}
 	}
-	ctx.Outputf("Config %s: %d keys added, %d replaced, %d preserved\n", r.Config.Path, len(r.Config.Added), len(r.Config.Replaced), len(r.Config.Preserved))
-	for _, key := range r.Config.Added {
-		ctx.Outputf("  added %s\n", key)
-	}
-	for _, key := range r.Config.Replaced {
-		ctx.Outputf("  replaced %s\n", key)
-	}
-	for _, key := range r.Config.Preserved {
-		ctx.Outputf("  preserved %s\n", key)
+	for _, c := range []struct {
+		label  string
+		change cmd.CodexConfigChange
+	}{{"Config", r.Config}, {"Profile", r.Profile}} {
+		ctx.Outputf("%s %s: %d keys added, %d replaced, %d preserved\n", c.label, c.change.Path, len(c.change.Added), len(c.change.Replaced), len(c.change.Preserved))
+		for _, key := range c.change.Added {
+			ctx.Outputf("  added %s\n", key)
+		}
+		for _, key := range c.change.Replaced {
+			ctx.Outputf("  replaced %s\n", key)
+		}
+		for _, key := range c.change.Preserved {
+			ctx.Outputf("  preserved %s\n", key)
+		}
 	}
 	if r.MarketplaceIDMissing {
 		ctx.OutputLine("No OPENAI_MARKETPLACE_ID found. If you are in the OpenAI marketplace program, set it and re-run.")
+	}
+	ctx.OutputLine("")
+	ctx.OutputLine("Codex CLI: run 'codex --profile " + codexProfile + "' to use Baseten Model APIs.")
+	if r.Active {
+		ctx.OutputLine("ChatGPT desktop app: Baseten Model APIs are the default provider. Restart the app to apply it; run 'baseten codex use --provider openai' to switch back.")
+	} else {
+		ctx.OutputLine("ChatGPT desktop app: run 'baseten codex use --provider " + codexMAPIProvider + "', or rerun setup with --default, then restart the app.")
 	}
 }
