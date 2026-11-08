@@ -137,6 +137,9 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	}
 	result.Profile = codexConfigChange(profilePath, profileChange)
 	result.Active = flags.Default || config["model_provider"] == codexMAPIProvider
+	if !flags.DryRun && flags.Default && len(change.Added)+len(change.Replaced)+len(change.Removed) > 0 {
+		gridHarnessRestartCodexDaemon(ctx, dir, false)
+	}
 	if os.Getenv("OPENAI_MARKETPLACE_ID") == "" {
 		providers, _ := config["model_providers"].(map[string]any)
 		provider, _ := providers[codexMAPIProvider].(map[string]any)
@@ -216,6 +219,11 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 		return fmt.Errorf("updating %s: %w", configPath, err)
 	}
 	result := cmd.CodexUseResult{Provider: flags.Provider, Config: codexConfigChange(configPath, change)}
+	// The background server shared by plain codex and the desktop app loads
+	// the model catalog only at startup.
+	if len(change.Added)+len(change.Replaced)+len(change.Removed) > 0 {
+		gridHarnessRestartCodexDaemon(ctx, dir, false)
+	}
 	if ctx.JSON {
 		ctx.OutputJSON(result)
 		return nil
@@ -272,6 +280,9 @@ func commandCodexTeardown(ctx *CommandContext, flags *cmd.CodexTeardownFlags) er
 		return fmt.Errorf("updating %s: %w", configPath, err)
 	}
 	result := cmd.CodexTeardownResult{DryRun: flags.DryRun, Config: codexConfigChange(configPath, change), RemovedFiles: []string{}}
+	if !flags.DryRun && config["model_provider"] == codexMAPIProvider {
+		gridHarnessRestartCodexDaemon(ctx, dir, false)
+	}
 	for _, path := range []string{profilePath, catalog} {
 		if _, err := os.Stat(path); err != nil {
 			continue
