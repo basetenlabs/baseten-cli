@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -55,7 +56,7 @@ func Patch(path string, add, set map[string]any, write bool) (ConfigChange, erro
 	}
 	config := map[string]any{}
 	if _, err := toml.Decode(string(data), &config); err != nil {
-		return change, errors.New("invalid " + path + "; repair it before continuing")
+		return change, fmt.Errorf("invalid %s; repair it before continuing: %w", path, err)
 	}
 	merge(config, set, "", true, &change)
 	merge(config, add, "", false, &change)

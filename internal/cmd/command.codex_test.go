@@ -314,9 +314,10 @@ func Test_Codex_Setup_Default(t *testing.T) {
 	config := readCodexConfig(t, dir)
 	h.Require.Equal("baseten-mapi", config["model_provider"])
 	h.Require.Equal(filepath.Join(dir, "baseten-mapi-models.json"), config["model_catalog_json"])
-	h.Require.Equal("gpt-6", config["model"])
+	h.Require.NotContains(config, "model", "an OpenAI model is cleared for Baseten")
 	out := h.Stdout.String()
 	h.Require.Contains(out, "replaced model_provider")
+	h.Require.Contains(out, "removed model")
 	h.Require.Contains(out, "Baseten Model APIs are the default provider")
 }
 
@@ -339,8 +340,14 @@ func Test_Codex_Use(t *testing.T) {
 	h.Require.NoError(h.Execute("codex", "use", "--provider", "baseten"))
 	h.Require.Contains(h.Stdout.String(), "Codex already uses baseten")
 
+	// Codex saves a model picked in the Baseten session.
+	data, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), append([]byte("model = \"zai-org/GLM-5.3-Flash\"\n"), data...), 0o600))
+
 	h.Require.NoError(h.Execute("codex", "use", "--provider", "openai"))
 	config = readCodexConfig(t, dir)
+	h.Require.NotContains(config, "model", "a Baseten model is cleared for OpenAI")
 	h.Require.NotContains(config, "model_provider")
 	h.Require.NotContains(config, "model_catalog_json")
 	h.Require.Contains(config["model_providers"], "baseten-mapi", "the provider stays defined for the profile")

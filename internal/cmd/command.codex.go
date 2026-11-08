@@ -116,6 +116,12 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	selection := map[string]any{"model_provider": codexMAPIProvider, "model_catalog_json": catalogPath}
 	if flags.Default {
 		maps.Copy(set, selection)
+		current := map[string]any{}
+		_, _ = toml.DecodeFile(configPath, &current)
+		// Clear a model saved for another provider; see commandCodexUse.
+		if model, ok := current["model"].(string); ok && !slices.Contains(result.Included, model) {
+			set["model"] = nil
+		}
 	}
 	change, err := codex.Patch(configPath, map[string]any{
 		"model_providers": map[string]any{codexMAPIProvider: provider},
@@ -192,6 +198,11 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 			set["model_catalog_json"] = nil
 		}
 	}
+	// Codex saves the model picked in a session to config.toml, so a Baseten
+	// model can be left selected for OpenAI, or the reverse.
+	if model, ok := config["model"].(string); ok && slices.Contains(codexCatalogSlugs(catalog), model) != (flags.Provider == codexProfile) {
+		set["model"] = nil
+	}
 	change, err := codex.Patch(configPath, nil, set, true)
 	if err != nil {
 		return fmt.Errorf("updating %s: %w", configPath, err)
@@ -205,8 +216,27 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 		ctx.Outputf("Codex already uses %s.\n", flags.Provider)
 		return nil
 	}
+	if slices.Contains(change.Removed, "model") {
+		ctx.OutputLine("Cleared the saved model, which belongs to the other provider.")
+	}
 	ctx.Outputf("Codex now uses %s. Restart the ChatGPT desktop app and any running Codex sessions to apply it.\n", flags.Provider)
 	return nil
+}
+
+// codexCatalogSlugs lists the models in the catalog at path, if readable.
+func codexCatalogSlugs(path string) []string {
+	var catalog struct {
+		Models []struct {
+			Slug string `json:"slug"`
+		} `json:"models"`
+	}
+	data, _ := os.ReadFile(path)
+	_ = json.Unmarshal(data, &catalog)
+	var slugs []string
+	for _, m := range catalog.Models {
+		slugs = append(slugs, m.Slug)
+	}
+	return slugs
 }
 
 // sameFile reports whether a and b name the same file, including through
@@ -345,6 +375,9 @@ func writeCodexSetup(ctx *CommandContext, r cmd.CodexSetupResult) {
 		}
 		for _, key := range c.change.Replaced {
 			ctx.Outputf("  replaced %s\n", key)
+		}
+		for _, key := range c.change.Removed {
+			ctx.Outputf("  removed %s\n", key)
 		}
 		for _, key := range c.change.Preserved {
 			ctx.Outputf("  preserved %s\n", key)
