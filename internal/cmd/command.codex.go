@@ -68,6 +68,11 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 		return err
 	}
 
+	configPath := filepath.Join(dir, "config.toml")
+	if sameFile(catalogPath, configPath) {
+		return cmd.NewErrUsagef("--catalog-path must not be Codex's config.toml (%s)", configPath)
+	}
+
 	result := cmd.CodexSetupResult{DryRun: flags.DryRun, Found: len(models), Included: []string{}, Excluded: []cmd.CodexExcludedModel{}}
 	var catalog []map[string]any
 	for _, m := range models {
@@ -93,7 +98,6 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	if id := os.Getenv("OPENAI_MARKETPLACE_ID"); id != "" {
 		set["model_providers"] = map[string]any{codexMAPIProvider: map[string]any{"http_headers": map[string]any{codexMarketplaceHeader: id}}}
 	}
-	configPath := filepath.Join(dir, "config.toml")
 	change, err := codex.Patch(configPath, map[string]any{
 		"model_catalog_json": catalogPath,
 		"model_provider":     codexMAPIProvider,
@@ -123,6 +127,19 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	}
 	writeCodexSetup(ctx, result)
 	return nil
+}
+
+// sameFile reports whether a and b name the same file, including through
+// links when both exist.
+func sameFile(a, b string) bool {
+	if absA, err := filepath.Abs(a); err == nil {
+		if absB, err := filepath.Abs(b); err == nil && filepath.Clean(absA) == filepath.Clean(absB) {
+			return true
+		}
+	}
+	infoA, errA := os.Stat(a)
+	infoB, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(infoA, infoB)
 }
 
 func fetchInferenceModels(ctx *CommandContext, url, key string) ([]inferenceModel, error) {

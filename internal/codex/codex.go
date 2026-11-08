@@ -108,6 +108,10 @@ type CatalogDiff struct {
 // a string "slug".
 func WriteCatalog(path string, models []map[string]any, write bool) (CatalogDiff, error) {
 	diff := CatalogDiff{Added: []string{}, Removed: []string{}, Modified: []string{}}
+	if models == nil {
+		// Codex needs a list, not null.
+		models = []map[string]any{}
+	}
 	data, err := json.MarshalIndent(map[string]any{"models": models}, "", "  ")
 	if err != nil {
 		return diff, err

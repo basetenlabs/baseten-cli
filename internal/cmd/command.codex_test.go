@@ -279,3 +279,21 @@ func Test_Codex_Setup_MarketplaceIDFromEnv(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "preserved model_providers.baseten-mapi.http_headers.OpenAI-Marketplace-Id")
 	h.Require.NotContains(h.Stdout.String(), "No OPENAI_MARKETPLACE_ID found")
 }
+
+func Test_Codex_Setup_RejectsCatalogPathAtConfig(t *testing.T) {
+	h, dir, _ := codexHarness(t, codexInferenceModels)
+	h.Require.NoError(os.MkdirAll(dir, 0o700))
+	config := filepath.Join(dir, "config.toml")
+	h.Require.NoError(os.WriteFile(config, []byte("model = \"gpt-5\"\n"), 0o600))
+	link := filepath.Join(t.TempDir(), "link.json")
+	h.Require.NoError(os.Link(config, link))
+
+	for _, path := range []string{config, link} {
+		err := h.Execute("codex", "setup", "--catalog-path", path)
+		h.Require.Error(err)
+		h.Require.Contains(err.Error(), "--catalog-path must not be")
+	}
+	data, err := os.ReadFile(config)
+	h.Require.NoError(err)
+	h.Require.Equal("model = \"gpt-5\"\n", string(data))
+}

@@ -79,3 +79,12 @@ func TestWriteCatalog(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, CatalogDiff{Added: []string{"c"}, Removed: []string{"a"}, Modified: []string{"b"}}, diff)
 }
+
+func TestWriteCatalogEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "catalog.json")
+	_, err := WriteCatalog(path, nil, true)
+	require.NoError(t, err)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"models": []}`, string(data))
+}
