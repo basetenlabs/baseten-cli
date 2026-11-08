@@ -116,7 +116,7 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	}
 	// --default also selects Baseten in config.toml, for the desktop app.
 	if flags.Default {
-		codexSelectBaseten(set, config, catalogPath, result.Included)
+		codexSelectBaseten(set, config, profile, catalogPath, result.Included)
 	}
 	change, err := codex.Patch(configPath, map[string]any{
 		"model_providers": map[string]any{codexMAPIProvider: provider},
@@ -130,10 +130,7 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	// Codex saves a model picked in the session to the profile, so keep it
 	// while it is still in the catalog.
 	selection := map[string]any{}
-	codexSelectBaseten(selection, profile, catalogPath, result.Included)
-	if model, _ := profile["model"].(string); !slices.Contains(result.Included, model) && len(result.Included) > 0 {
-		selection["model"] = result.Included[0]
-	}
+	codexSelectBaseten(selection, profile, profile, catalogPath, result.Included)
 	profileChange, err := codex.Patch(profilePath, nil, selection, !flags.DryRun)
 	if err != nil {
 		return fmt.Errorf("updating %s: %w", profilePath, err)
@@ -195,7 +192,7 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 		case providers[codexMAPIProvider] == nil:
 			return cmd.NewErrUsagef("Baseten Model APIs are not set up for Codex: %s has no [model_providers.%s]; run 'baseten codex setup' first", configPath, codexMAPIProvider)
 		}
-		codexSelectBaseten(set, config, catalog, slugs)
+		codexSelectBaseten(set, config, profile, catalog, slugs)
 	default:
 		// Only undo a Baseten selection; another provider, such as Grid's, is
 		// left for its own tooling.
@@ -227,8 +224,11 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 		ctx.Outputf("Codex already uses %s.\n", flags.Provider)
 		return nil
 	}
-	if slices.Contains(change.Removed, "model") {
+	switch {
+	case slices.Contains(change.Removed, "model"):
 		ctx.OutputLine("Cleared the saved model, which belongs to the other provider.")
+	case slices.Contains(change.Added, "model") || slices.Contains(change.Replaced, "model"):
+		ctx.Outputf("Selected model %v.\n", set["model"])
 	}
 	ctx.Outputf("Codex now uses %s. Restart the ChatGPT desktop app and any running Codex sessions to apply it.\n", flags.Provider)
 	return nil
@@ -304,12 +304,22 @@ func commandCodexTeardown(ctx *CommandContext, flags *cmd.CodexTeardownFlags) er
 	return nil
 }
 
-// codexSelectBaseten adds the settings that select Baseten Model APIs to set,
-// clearing a model in current that is not in the catalog's slugs, such as an
-// OpenAI model Codex saved from an earlier session.
-func codexSelectBaseten(set, current map[string]any, catalogPath string, slugs []string) {
+// codexSelectBaseten adds the settings that select Baseten Model APIs to set.
+// A model in current that is not in the catalog's slugs, such as an OpenAI
+// model Codex saved earlier, is replaced: with the profile's model, the one
+// picked in a profile session, else the first slug. Codex would otherwise
+// start on a model the provider does not serve.
+func codexSelectBaseten(set, current, profile map[string]any, catalogPath string, slugs []string) {
 	set["model_provider"], set["model_catalog_json"] = codexMAPIProvider, catalogPath
-	if model, ok := current["model"].(string); ok && !slices.Contains(slugs, model) {
+	if model, _ := current["model"].(string); slices.Contains(slugs, model) {
+		return
+	}
+	switch model, _ := profile["model"].(string); {
+	case slices.Contains(slugs, model):
+		set["model"] = model
+	case len(slugs) > 0:
+		set["model"] = slugs[0]
+	default:
 		set["model"] = nil
 	}
 }
