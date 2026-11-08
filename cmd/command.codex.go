@@ -52,7 +52,39 @@ var commandCodex = Command{
 				},
 			},
 		},
+		{
+			Name:    "teardown",
+			Summary: "Remove Baseten Model APIs from Codex",
+			Description: "Undo 'baseten codex setup': remove the [model_providers.baseten-mapi] table from config.toml, " +
+				"and model_provider, model_catalog_json, and model there when they select Baseten Model APIs, " +
+				"then delete the baseten profile and the Baseten catalog. Other providers, including Grid's, are left alone. Rewriting config.toml drops its comments.",
+			Flags: CodexTeardownFlags{},
+			Output: &CommandOutput[CodexTeardownResult]{
+				TextDescription: "The config.toml keys and files that were removed.",
+				Examples: []CommandExample{
+					{Description: "Remove Baseten Model APIs from Codex.", Command: "baseten codex teardown"},
+					{Description: "Show what teardown would remove.", Command: "baseten codex teardown --dry-run"},
+				},
+				JQExample: CommandExample{
+					Description: "List the files teardown removed.",
+					Command:     "baseten codex teardown --jq '.removed_files'",
+				},
+			},
+		},
 	},
+}
+
+// CodexTeardownFlags configures `baseten codex teardown`.
+type CodexTeardownFlags struct {
+	CommandFlags
+	DryRun bool `flag:"dry-run" desc:"Print what would be removed without changing files"`
+}
+
+// CodexTeardownResult is the JSON output of `baseten codex teardown`.
+type CodexTeardownResult struct {
+	DryRun       bool              `json:"dry_run"`
+	Config       CodexConfigChange `json:"config"`
+	RemovedFiles []string          `json:"removed_files"`
 }
 
 // CodexUseFlags configures `baseten codex use`.

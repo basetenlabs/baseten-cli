@@ -428,3 +428,25 @@ func Test_Codex_Use_OpenAIAlreadyExplicit(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "Codex already uses openai")
 	h.Require.Equal("openai", readCodexConfig(t, dir)["model_provider"])
 }
+
+func Test_Codex_Teardown(t *testing.T) {
+	h, dir, _ := codexHarness(t, codexInferenceModels)
+	h.Require.NoError(os.MkdirAll(dir, 0o700))
+	config := filepath.Join(dir, "config.toml")
+	h.Require.NoError(os.WriteFile(config, []byte("model_provider = \"openai\"\n[model_providers.baseten]\nname = \"Grid\"\n"), 0o600))
+	h.Require.NoError(h.Execute("codex", "setup", "--default"))
+
+	h.Require.NoError(h.Execute("codex", "teardown", "--dry-run"))
+	h.Require.FileExists(filepath.Join(dir, "baseten.config.toml"))
+
+	h.Require.NoError(h.Execute("codex", "teardown"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "removed model_providers.baseten-mapi")
+	h.Require.Contains(out, "removed model_provider ")
+	h.Require.NoFileExists(filepath.Join(dir, "baseten.config.toml"))
+	h.Require.NoFileExists(filepath.Join(dir, "baseten-mapi-models.json"))
+	h.Require.Equal(map[string]any{"model_providers": map[string]any{"baseten": map[string]any{"name": "Grid"}}}, readCodexConfig(t, dir), "other providers stay")
+
+	h.Require.NoError(h.Execute("codex", "teardown"))
+	h.Require.Contains(h.Stdout.String(), "nothing to remove")
+}

@@ -19,6 +19,7 @@ import (
 func init() {
 	Register("codex setup", commandCodexSetup)
 	Register("codex use", commandCodexUse)
+	Register("codex teardown", commandCodexTeardown)
 }
 
 // codexMAPIProvider is the config.toml provider id for Model APIs. Grid uses
@@ -230,6 +231,74 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 		ctx.OutputLine("Cleared the saved model, which belongs to the other provider.")
 	}
 	ctx.Outputf("Codex now uses %s. Restart the ChatGPT desktop app and any running Codex sessions to apply it.\n", flags.Provider)
+	return nil
+}
+
+// commandCodexTeardown removes everything setup wrote. It leaves other
+// providers' settings alone.
+func commandCodexTeardown(ctx *CommandContext, flags *cmd.CodexTeardownFlags) error {
+	dir, err := codex.Dir()
+	if err != nil {
+		return err
+	}
+	configPath, profilePath := filepath.Join(dir, "config.toml"), codexProfilePath(dir)
+	profile, err := codexReadTOML(profilePath)
+	if err != nil {
+		return err
+	}
+	config, err := codexReadTOML(configPath)
+	if err != nil {
+		return err
+	}
+	catalog, _ := profile["model_catalog_json"].(string)
+	if catalog == "" {
+		catalog = filepath.Join(dir, "baseten-mapi-models.json")
+	}
+	set := map[string]any{}
+	if providers, _ := config["model_providers"].(map[string]any); providers[codexMAPIProvider] != nil {
+		set["model_providers"] = map[string]any{codexMAPIProvider: nil}
+	}
+	if config["model_provider"] == codexMAPIProvider {
+		set["model_provider"] = nil
+	}
+	if config["model_catalog_json"] == catalog {
+		set["model_catalog_json"] = nil
+	}
+	if model, ok := config["model"].(string); ok && slices.Contains(codexCatalogSlugs(catalog), model) {
+		set["model"] = nil
+	}
+	change, err := codex.Patch(configPath, nil, set, !flags.DryRun)
+	if err != nil {
+		return fmt.Errorf("updating %s: %w", configPath, err)
+	}
+	result := cmd.CodexTeardownResult{DryRun: flags.DryRun, Config: codexConfigChange(configPath, change), RemovedFiles: []string{}}
+	for _, path := range []string{profilePath, catalog} {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		if !flags.DryRun {
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+		}
+		result.RemovedFiles = append(result.RemovedFiles, path)
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(result)
+		return nil
+	}
+	if flags.DryRun {
+		ctx.OutputLine("Dry run: no files were changed.")
+	}
+	for _, key := range change.Removed {
+		ctx.Outputf("removed %s from %s\n", key, configPath)
+	}
+	for _, path := range result.RemovedFiles {
+		ctx.Outputf("deleted %s\n", path)
+	}
+	if len(change.Removed)+len(result.RemovedFiles) == 0 {
+		ctx.OutputLine("Baseten Model APIs are not set up for Codex; nothing to remove.")
+	}
 	return nil
 }
 
