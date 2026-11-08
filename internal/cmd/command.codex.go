@@ -26,6 +26,10 @@ func init() {
 // "baseten", so both can be configured side by side.
 const codexMAPIProvider = "baseten-mapi"
 
+// codexDefaultModel is the model selected when none is picked yet, if the
+// catalog has it.
+const codexDefaultModel = "zai-org/GLM-5.3-Flash"
+
 // codexProfile is the user-facing name for Baseten Model APIs: the Codex
 // profile setup writes (`codex --profile baseten`) and the `codex use` choice.
 const codexProfile = "baseten"
@@ -318,7 +322,7 @@ func commandCodexTeardown(ctx *CommandContext, flags *cmd.CodexTeardownFlags) er
 // codexSelectBaseten adds the settings that select Baseten Model APIs to set.
 // A model in current that is not in the catalog's slugs, such as an OpenAI
 // model Codex saved earlier, is replaced: with the profile's model, the one
-// picked in a profile session, else the first slug. Codex would otherwise
+// picked in a profile session, else codexDefaultModel, else the first slug. Codex would otherwise
 // start on a model the provider does not serve.
 func codexSelectBaseten(set, current, profile map[string]any, catalogPath string, slugs []string) {
 	set["model_provider"], set["model_catalog_json"] = codexMAPIProvider, catalogPath
@@ -328,6 +332,8 @@ func codexSelectBaseten(set, current, profile map[string]any, catalogPath string
 	switch model, _ := profile["model"].(string); {
 	case slices.Contains(slugs, model):
 		set["model"] = model
+	case slices.Contains(slugs, codexDefaultModel):
+		set["model"] = codexDefaultModel
 	case len(slugs) > 0:
 		set["model"] = slugs[0]
 	default:
