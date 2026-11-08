@@ -339,12 +339,15 @@ func Test_Codex_Use(t *testing.T) {
 	h.Require.Equal("baseten-mapi", config["model_provider"])
 	h.Require.Equal(filepath.Join(dir, "baseten-mapi-models.json"), config["model_catalog_json"])
 	h.Require.Equal("zai-org/GLM-5.3-Flash", config["model"], "a Baseten model is selected so Codex never starts on an OpenAI default")
+	h.Require.Equal("api", config["forced_login_method"], "a ChatGPT login would apply the workspace default model")
 
 	h.Require.NoError(h.Execute("codex", "use", "--provider", "baseten"))
 	h.Require.Contains(h.Stdout.String(), "Codex already uses baseten")
 
 	h.Require.NoError(h.Execute("codex", "use", "--provider", "openai"))
+	h.Require.Contains(h.Stdout.String(), "codex login")
 	config = readCodexConfig(t, dir)
+	h.Require.NotContains(config, "forced_login_method")
 	h.Require.NotContains(config, "model", "a Baseten model is cleared for OpenAI")
 	h.Require.NotContains(config, "model_provider")
 	h.Require.NotContains(config, "model_catalog_json")

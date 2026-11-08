@@ -121,6 +121,7 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	// --default also selects Baseten in config.toml, for the desktop app.
 	if flags.Default {
 		codexSelectBaseten(set, config, profile, catalogPath, result.Included)
+		set["forced_login_method"] = "api"
 	}
 	change, err := codex.Patch(configPath, map[string]any{
 		"model_providers": map[string]any{codexMAPIProvider: provider},
@@ -141,8 +142,11 @@ func commandCodexSetup(ctx *CommandContext, flags *cmd.CodexSetupFlags) error {
 	}
 	result.Profile = codexConfigChange(profilePath, profileChange)
 	result.Active = flags.Default || config["model_provider"] == codexMAPIProvider
-	if !flags.DryRun && flags.Default && len(change.Added)+len(change.Replaced)+len(change.Removed) > 0 {
-		gridHarnessRestartCodexDaemon(ctx, dir, false)
+	if !flags.DryRun && flags.Default {
+		gridHarnessLogoutCodex(ctx, dir, false)
+		if len(change.Added)+len(change.Replaced)+len(change.Removed) > 0 {
+			gridHarnessRestartCodexDaemon(ctx, dir, false)
+		}
 	}
 	if os.Getenv("OPENAI_MARKETPLACE_ID") == "" {
 		providers, _ := config["model_providers"].(map[string]any)
@@ -200,6 +204,9 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 			return cmd.NewErrUsagef("Baseten Model APIs are not set up for Codex: %s has no [model_providers.%s]; run 'baseten codex setup' first", configPath, codexMAPIProvider)
 		}
 		codexSelectBaseten(set, config, profile, catalog, slugs)
+		// A ChatGPT login applies the workspace default model over config.toml,
+		// as Grid found; see gridHarnessLogoutCodex.
+		set["forced_login_method"] = "api"
 	default:
 		// Only undo a Baseten selection; another provider, such as Grid's, is
 		// left for its own tooling.
@@ -213,6 +220,9 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 		if config["model_catalog_json"] == catalog {
 			set["model_catalog_json"] = nil
 		}
+		if config["forced_login_method"] == "api" {
+			set["forced_login_method"] = nil
+		}
 		// Codex saves a model picked in a session to config.toml.
 		if model, ok := config["model"].(string); ok && slices.Contains(slugs, model) {
 			set["model"] = nil
@@ -223,6 +233,9 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 		return fmt.Errorf("updating %s: %w", configPath, err)
 	}
 	result := cmd.CodexUseResult{Provider: flags.Provider, Config: codexConfigChange(configPath, change)}
+	if flags.Provider == codexProfile {
+		gridHarnessLogoutCodex(ctx, dir, false)
+	}
 	// The background server shared by plain codex and the desktop app loads
 	// the model catalog only at startup.
 	if len(change.Added)+len(change.Replaced)+len(change.Removed) > 0 {
@@ -243,6 +256,9 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 		ctx.Outputf("Selected model %v.\n", set["model"])
 	}
 	ctx.Outputf("Codex now uses %s. Restart the ChatGPT desktop app and any running Codex sessions to apply it.\n", flags.Provider)
+	if slices.Contains(change.Removed, "forced_login_method") {
+		ctx.OutputLine("Run 'codex login' to sign back in to ChatGPT.")
+	}
 	return nil
 }
 
@@ -278,6 +294,9 @@ func commandCodexTeardown(ctx *CommandContext, flags *cmd.CodexTeardownFlags) er
 	}
 	if model, ok := config["model"].(string); ok && slices.Contains(codexCatalogSlugs(catalog), model) {
 		set["model"] = nil
+	}
+	if config["model_provider"] == codexMAPIProvider && config["forced_login_method"] == "api" {
+		set["forced_login_method"] = nil
 	}
 	change, err := codex.Patch(configPath, nil, set, !flags.DryRun)
 	if err != nil {
