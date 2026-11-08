@@ -239,8 +239,9 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 	}
 	// The background server shared by plain codex and the desktop app loads
 	// the model catalog only at startup.
+	restarted := true
 	if len(change.Added)+len(change.Replaced)+len(change.Removed) > 0 {
-		gridHarnessRestartCodexDaemon(ctx, dir, false)
+		restarted = gridHarnessRestartCodexDaemon(ctx, dir, false)
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(result)
@@ -256,9 +257,13 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 	case slices.Contains(change.Added, "model") || slices.Contains(change.Replaced, "model"):
 		ctx.Outputf("Selected model %v.\n", set["model"])
 	}
-	ctx.Outputf("Codex now uses %s. Restart the ChatGPT desktop app and any running Codex sessions to apply it.\n", flags.Provider)
+	if !restarted {
+		ctx.Outputf("Codex switches to %s after 'codex app-server daemon restart'; until then the background server keeps the old provider.\n", flags.Provider)
+	} else {
+		ctx.Outputf("Codex now uses %s. Restart the ChatGPT desktop app and any running Codex sessions to apply it.\n", flags.Provider)
+	}
 	if slices.Contains(change.Removed, "forced_login_method") {
-		ctx.OutputLine("Run 'codex login' to sign back in to ChatGPT.")
+		ctx.OutputLine("Then run 'codex login' to sign back in to ChatGPT.")
 	}
 	return nil
 }
