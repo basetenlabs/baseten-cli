@@ -9,8 +9,8 @@ var commandCodex = Command{
 			Name:    "setup",
 			Summary: "Generate a Codex model catalog and add Baseten Model APIs to config.toml",
 			Description: "Fetch the Model APIs available to BASETEN_API_KEY and write them as a Codex model catalog, " +
-				"add the baseten-mapi provider to Codex's config.toml ($CODEX_HOME, default ~/.codex), and write a baseten-mapi profile that selects them.\n\n" +
-				"Codex shows one provider's models at a time. Run 'codex --profile baseten-mapi' to use Baseten Model APIs from the CLI while plain 'codex' keeps its current provider. " +
+				"add the baseten-mapi provider to Codex's config.toml ($CODEX_HOME, default ~/.codex), and write a baseten profile that selects them.\n\n" +
+				"Codex shows one provider's models at a time. Run 'codex --profile baseten' to use Baseten Model APIs from the CLI while plain 'codex' keeps its current provider. " +
 				"The ChatGPT desktop app cannot select a profile: use --default, or 'baseten codex use', to make Baseten Model APIs the provider in config.toml.\n\n" +
 				"The catalog is regenerated on every run; models under vllmtest/ and models with no supported features are left out. " +
 				"config.toml only gains missing keys: existing values are never overwritten, except model_provider and model_catalog_json with --default, " +
@@ -36,14 +36,14 @@ var commandCodex = Command{
 			Name:    "use",
 			Summary: "Switch Codex's default provider between Baseten Model APIs and OpenAI",
 			Description: "Set model_provider in Codex's config.toml, which the ChatGPT desktop app and plain 'codex' use. " +
-				"baseten-mapi selects Baseten Model APIs and their catalog, as written by 'baseten codex setup'. " +
+				"baseten selects Baseten Model APIs (the baseten-mapi provider) and their catalog, as written by 'baseten codex setup'. " +
 				"openai removes model_provider, so Codex falls back to OpenAI, and removes model_catalog_json when it points at the Baseten catalog. " +
 				"Restart the desktop app afterwards. Threads keep the provider they started with.",
 			Flags: CodexUseFlags{},
 			Output: &CommandOutput[CodexUseResult]{
 				TextDescription: "One line naming the provider Codex now uses.",
 				Examples: []CommandExample{
-					{Description: "Use Baseten Model APIs in the desktop app.", Command: "baseten codex use --provider baseten-mapi"},
+					{Description: "Use Baseten Model APIs in the desktop app.", Command: "baseten codex use --provider baseten"},
 					{Description: "Switch back to OpenAI.", Command: "baseten codex use --provider openai"},
 				},
 				JQExample: CommandExample{
@@ -58,7 +58,7 @@ var commandCodex = Command{
 // CodexUseFlags configures `baseten codex use`.
 type CodexUseFlags struct {
 	CommandFlags
-	Provider string `flag:"provider" desc:"Provider for Codex to use" enum:"baseten-mapi,openai" required:"true"`
+	Provider string `flag:"provider" desc:"Provider for Codex to use" enum:"baseten,openai" required:"true"`
 }
 
 // CodexUseResult is the JSON output of `baseten codex use`.
@@ -84,7 +84,7 @@ type CodexSetupResult struct {
 	Excluded []CodexExcludedModel `json:"excluded"`
 	Catalog  CodexCatalogChange   `json:"catalog"`
 	Config   CodexConfigChange    `json:"config"`
-	// Profile describes the baseten-mapi profile file.
+	// Profile describes the baseten profile file.
 	Profile CodexConfigChange `json:"profile"`
 	// Active is set when config.toml selects Baseten Model APIs.
 	Active bool `json:"active"`

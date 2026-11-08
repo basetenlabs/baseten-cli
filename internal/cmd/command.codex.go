@@ -26,9 +26,9 @@ func init() {
 // "baseten", so both can be configured side by side.
 const codexMAPIProvider = "baseten-mapi"
 
-// codexProfile is the Codex profile setup writes, selected with
-// `codex --profile baseten-mapi`.
-const codexProfile = codexMAPIProvider
+// codexProfile is the user-facing name for Baseten Model APIs: the Codex
+// profile setup writes (`codex --profile baseten`) and the `codex use` choice.
+const codexProfile = "baseten"
 
 const (
 	codexMarketplaceHeader = "OpenAI-Marketplace-Id"
@@ -179,7 +179,7 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 	catalog, _ := profile["model_catalog_json"].(string)
 	set := map[string]any{}
 	switch flags.Provider {
-	case codexMAPIProvider:
+	case codexProfile:
 		providers, _ := config["model_providers"].(map[string]any)
 		if catalog == "" || providers[codexMAPIProvider] == nil {
 			return cmd.NewErrUsagef("Baseten Model APIs are not set up for Codex; run 'baseten codex setup' first")
@@ -358,6 +358,6 @@ func writeCodexSetup(ctx *CommandContext, r cmd.CodexSetupResult) {
 	if r.Active {
 		ctx.OutputLine("ChatGPT desktop app: Baseten Model APIs are the default provider. Restart the app to apply it; run 'baseten codex use --provider openai' to switch back.")
 	} else {
-		ctx.OutputLine("ChatGPT desktop app: run 'baseten codex use --provider " + codexMAPIProvider + "', or rerun setup with --default, then restart the app.")
+		ctx.OutputLine("ChatGPT desktop app: run 'baseten codex use --provider " + codexProfile + "', or rerun setup with --default, then restart the app.")
 	}
 }

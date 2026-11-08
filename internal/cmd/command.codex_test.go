@@ -144,9 +144,9 @@ func Test_Codex_Setup_FreshConfig(t *testing.T) {
 	h.Require.Contains(out, "excluded decision-models/joey (no supported features)")
 	h.Require.Contains(out, "2 added, 0 removed, 0 modified")
 	h.Require.Contains(out, "5 keys added, 0 replaced, 0 preserved")
-	h.Require.Contains(out, "codex --profile baseten-mapi")
-	h.Require.Contains(out, "run 'baseten codex use --provider baseten-mapi'")
-	h.Require.Equal(map[string]any{"model_provider": "baseten-mapi", "model_catalog_json": catalogPath}, readCodexFile(t, filepath.Join(dir, "baseten-mapi.config.toml")))
+	h.Require.Contains(out, "codex --profile baseten")
+	h.Require.Contains(out, "run 'baseten codex use --provider baseten'")
+	h.Require.Equal(map[string]any{"model_provider": "baseten-mapi", "model_catalog_json": catalogPath}, readCodexFile(t, filepath.Join(dir, "baseten.config.toml")))
 	h.Require.Contains(out, "No OPENAI_MARKETPLACE_ID found. If you are in the OpenAI marketplace program, set it and re-run.")
 }
 
@@ -322,7 +322,7 @@ func Test_Codex_Setup_Default(t *testing.T) {
 
 func Test_Codex_Use(t *testing.T) {
 	h, dir, _ := codexHarness(t, codexInferenceModels)
-	err := h.Execute("codex", "use", "--provider", "baseten-mapi")
+	err := h.Execute("codex", "use", "--provider", "baseten")
 	h.Require.Error(err)
 	h.Require.Contains(err.Error(), "run 'baseten codex setup' first")
 
@@ -330,14 +330,14 @@ func Test_Codex_Use(t *testing.T) {
 	h.Require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model_provider = \"openai\"\n"), 0o600))
 	h.Require.NoError(h.Execute("codex", "setup"))
 
-	h.Require.NoError(h.Execute("codex", "use", "--provider", "baseten-mapi"))
-	h.Require.Contains(h.Stdout.String(), "Codex now uses baseten-mapi")
+	h.Require.NoError(h.Execute("codex", "use", "--provider", "baseten"))
+	h.Require.Contains(h.Stdout.String(), "Codex now uses baseten")
 	config := readCodexConfig(t, dir)
 	h.Require.Equal("baseten-mapi", config["model_provider"])
 	h.Require.Equal(filepath.Join(dir, "baseten-mapi-models.json"), config["model_catalog_json"])
 
-	h.Require.NoError(h.Execute("codex", "use", "--provider", "baseten-mapi"))
-	h.Require.Contains(h.Stdout.String(), "Codex already uses baseten-mapi")
+	h.Require.NoError(h.Execute("codex", "use", "--provider", "baseten"))
+	h.Require.Contains(h.Stdout.String(), "Codex already uses baseten")
 
 	h.Require.NoError(h.Execute("codex", "use", "--provider", "openai"))
 	config = readCodexConfig(t, dir)
@@ -354,5 +354,5 @@ func Test_Codex_Setup_InvalidConfigWritesNothing(t *testing.T) {
 	h.Require.Error(err)
 	h.Require.Contains(err.Error(), "repair it before continuing")
 	h.Require.NoFileExists(filepath.Join(dir, "baseten-mapi-models.json"))
-	h.Require.NoFileExists(filepath.Join(dir, "baseten-mapi.config.toml"))
+	h.Require.NoFileExists(filepath.Join(dir, "baseten.config.toml"))
 }
