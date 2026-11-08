@@ -262,7 +262,14 @@ func writeModelAPIChatText(ctx *CommandContext, resp *http.Response) error {
 
 // modelAPICurrencyString renders a cost union (number or string) as a plain
 // decimal string, dropping the JSON quoting when the value arrives as a string.
-func modelAPICurrencyString(m json.Marshaler) string {
+// A nil cost (pricing unavailable) renders as "-".
+func modelAPICurrencyString[T any, P interface {
+	*T
+	json.Marshaler
+}](m P) string {
+	if m == nil {
+		return "-"
+	}
 	b, err := m.MarshalJSON()
 	if err != nil {
 		return ""
