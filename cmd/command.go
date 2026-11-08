@@ -33,6 +33,7 @@ var Root = Command{
 	Children: []Command{
 		commandAPI,
 		commandAuth,
+		commandCodex,
 		commandGrid,
 		commandLoops,
 		commandModel,
