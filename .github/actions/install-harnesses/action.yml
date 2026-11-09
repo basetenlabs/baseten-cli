@@ -1,0 +1,10 @@
+name: Install harnesses
+description: Install the Claude Code, Codex, OpenCode 1 and 2, and Pi CLIs that the harness tests run.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai @earendil-works/pi-coding-agent
+        npm install -g --prefix "$RUNNER_TEMP/opencode2" @opencode/cli
+        echo "BASETEN_TEST_OPENCODE2=$RUNNER_TEMP/opencode2/bin/opencode" >> "$GITHUB_ENV"

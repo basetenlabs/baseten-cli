@@ -38,6 +38,8 @@ BASETEN_E2E_TEST_TEAM=... \
     go test -v -tags=e2e ./internal/e2e-tests/...
 ```
 
+CI runs the harness tests (`TestE2EHarness*`) in their own job. To run only them locally, add `-run '^TestE2EHarness'`.
+
 ## Releasing
 
 Releases are created and published in GitHub, which creates the tag. Never push a release tag directly. Publishing runs the [release workflow](.github/workflows/release.yml) in the background, which fails unless the tag, the pre-release checkbox, and the title agree. It then adds the binaries to the release a few minutes later and updates the [Homebrew tap](https://github.com/basetenlabs/homebrew-baseten).
