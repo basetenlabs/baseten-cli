@@ -392,8 +392,8 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if f.UseSessionCredential || session.IsEphemeral() {
 		credentialSource = harness.CredentialSourceSession
 	}
-	passed := ctx.Command.Flags().Changed("served-model")
-	servedModel := f.ServedModel || !passed
+	passed := ctx.Command.Flags().Changed("hide-served-model-indicator")
+	servedModel := !f.HideServedModel
 	var offered, labels []string
 	for _, h := range []struct{ name, label string }{{harness.Claude, "Claude Code"}, {harness.Pi, "Pi"}, {harness.OpenCode, "OpenCode"}} {
 		if gridOffersServedModel(selected, listed, h.name) {
@@ -608,9 +608,9 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		harness string
 		set     func(*harness.Record)
 	}{
-		{"served-model", harness.Claude, func(r *harness.Record) { r.NoClaudeServedModel = !f.ServedModel }},
-		{"served-model", harness.Pi, func(r *harness.Record) { r.NoPiServedModel = !f.ServedModel }},
-		{"served-model", harness.OpenCode, func(r *harness.Record) { r.NoOpenCodeServedModel = !f.ServedModel }},
+		{"hide-served-model-indicator", harness.Claude, func(r *harness.Record) { r.NoClaudeServedModel = f.HideServedModel }},
+		{"hide-served-model-indicator", harness.Pi, func(r *harness.Record) { r.NoPiServedModel = f.HideServedModel }},
+		{"hide-served-model-indicator", harness.OpenCode, func(r *harness.Record) { r.NoOpenCodeServedModel = f.HideServedModel }},
 		{"git-context", "", func(r *harness.Record) { r.GitContext = f.GitContext }},
 	}
 	if err := gridRequireGit(ctx, f.GitContext); err != nil {
