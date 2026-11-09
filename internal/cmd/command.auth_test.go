@@ -619,20 +619,20 @@ func serveTokenExchange(h *CommandHarness, refuse bool) {
 func Test_Auth_Status_WorkloadIdentity(t *testing.T) {
 	h := newAuthHarness(t)
 	file := setWorkloadIdentityEnv(t)
-	t.Setenv("BASETEN_REMOTE_URL", "https://app.staging.baseten.co")
+	t.Setenv("BASETEN_REMOTE_URL", "https://app.example.com")
 
 	h.Require.NoError(h.Execute("auth", "status"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Using workload identity from BASETEN_IDENTITY_TOKEN_FILE and BASETEN_TRUST_RULE_ID")
 	h.Require.Contains(out, "Trust rule: rule-1")
 	h.Require.Contains(out, file)
-	h.Require.Contains(out, "https://app.staging.baseten.co")
+	h.Require.Contains(out, "https://app.example.com")
 
 	h.Require.NoError(h.Execute("auth", "status", "--output", "json"))
 	var got cmd.AuthStatusResult
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 	h.Require.Equal(cmd.AuthStatusResult{
-		RemoteURL:         "https://app.staging.baseten.co",
+		RemoteURL:         "https://app.example.com",
 		AuthType:          "workload_identity",
 		Source:            "workload_identity",
 		TrustRuleID:       "rule-1",

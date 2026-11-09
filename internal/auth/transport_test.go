@@ -325,7 +325,7 @@ func TestResolveSession_WorkloadIdentityPrecedence(t *testing.T) {
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileB, remoteURL, "key-bob", false, nil))
 	file := setWorkloadIdentityEnv(t, "rule-1")
-	t.Setenv("BASETEN_REMOTE_URL", "https://app.staging.baseten.co")
+	t.Setenv("BASETEN_REMOTE_URL", "https://app.example.com")
 
 	// Workload identity wins over BASETEN_PROFILE and the current profile.
 	t.Setenv("BASETEN_PROFILE", profileB)
@@ -334,7 +334,7 @@ func TestResolveSession_WorkloadIdentityPrecedence(t *testing.T) {
 	require.True(t, session.IsEphemeral())
 	require.False(t, session.UsesAPIKey())
 	require.Empty(t, session.ProfileName())
-	require.Equal(t, "https://app.staging.baseten.co", session.RemoteURL())
+	require.Equal(t, "https://app.example.com", session.RemoteURL())
 
 	// --profile wins over workload identity.
 	session = mustResolve(t, profileA)
