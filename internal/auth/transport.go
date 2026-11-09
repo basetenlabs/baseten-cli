@@ -53,7 +53,8 @@ type Session struct {
 //     BASETEN_REMOTE_URL), ephemeral workload identity
 //  4. BASETEN_PROFILE
 //  5. defaultProfile (a baked-in fallback, e.g. from the SSH config)
-//  6. the current profile in auth.json
+//  6. the current profile in auth.json, or an *ErrExplicitProfileRequired when
+//     explicit profile selection is required
 //
 // defaultProfile is "" for most commands; the SSH sign/proxy commands pass
 // their --default-profile so a pinned profile is used only when nothing more
@@ -111,7 +112,11 @@ func ResolveSession(profileFlag, defaultProfile string) (*Session, error) {
 		return s, nil
 	}
 
-	if name, p, ok := store.CurrentProfile(); ok {
+	name, p, ok, err := store.CurrentProfile()
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		s.profileName = name
 		s.remoteURL = p.RemoteURL
 	}

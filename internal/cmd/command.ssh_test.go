@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/ssh"
 )
 
@@ -62,6 +63,29 @@ func Test_SSH_Setup_PinsProfile(t *testing.T) {
 	h.Require.NoError(err)
 	h.Require.Contains(string(cfg), "baseten ssh sign --default-profile=prod")
 	h.Require.Contains(string(cfg), "baseten ssh proxy --default-profile=prod")
+}
+
+func Test_SSH_Setup_ExplicitProfilePrompts(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	_, configPath := sshEnv(t)
+	h.Context = internalcmd.WithPromptAnswers(h.Context, "1")
+
+	h.Require.NoError(h.Execute("ssh", "setup", "--output", "json"))
+	h.Require.Contains(h.Stdout.String(), `"profile": "alice"`)
+	cfg, err := os.ReadFile(configPath)
+	h.Require.NoError(err)
+	h.Require.Contains(string(cfg), "baseten ssh sign --default-profile=alice")
+}
+
+func Test_SSH_Setup_ExplicitProfileNonInteractiveWarns(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	_, configPath := sshEnv(t)
+
+	h.Require.NoError(h.Execute("ssh", "setup"))
+	h.Require.Contains(h.Stderr.String(), "warning: no profile selected to pin")
+	cfg, err := os.ReadFile(configPath)
+	h.Require.NoError(err)
+	h.Require.NotContains(string(cfg), "--default-profile")
 }
 
 func Test_SSH_Setup_ReusesKeypair(t *testing.T) {
@@ -186,6 +210,20 @@ func Test_SSH_Sign_NoKeypair(t *testing.T) {
 
 	err := h.Execute("ssh", "sign", "model-m1-d1.ssh.baseten.co")
 	h.Require.ErrorContains(err, "no SSH keypair found")
+}
+
+func Test_SSH_Sign_ExplicitProfileNeverPrompts(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	sshEnv(t)
+	_, _, err := ssh.EnsureKeypair()
+	h.Require.NoError(err)
+	// ssh owns the terminal, so even an interactive session must not prompt.
+	h.Context = internalcmd.WithPromptAnswers(h.Context, "1")
+
+	h.Require.Error(h.Execute("ssh", "sign", "model-m1-d1.ssh.baseten.co"))
+	h.Require.NotContains(h.Stderr.String(), "Use which profile?")
+	h.Require.Contains(h.Stderr.String(), "explicit profile selection is required")
+	h.Require.Contains(h.Stderr.String(), "baseten ssh setup --profile <profile>")
 }
 
 func Test_SSH_Proxy_NoCachedCredential(t *testing.T) {

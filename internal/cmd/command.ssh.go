@@ -1,7 +1,12 @@
 package cmd
 
 import (
+	"errors"
+	"fmt"
+
+	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-cli/internal/ssh"
 )
 
@@ -15,11 +20,17 @@ func commandSSHSetup(ctx *CommandContext, flags *cmd.SSHSetupFlags) error {
 	// Pin the profile this invocation resolves to so connections are
 	// deterministic; --profile or BASETEN_PROFILE can still override at connect.
 	var profile string
-	if session, err := ctx.authInfo.Session(); err == nil {
+	session, err := ctx.authInfo.Session()
+	var required *auth.ErrExplicitProfileRequired
+	if err == nil {
 		if session.WorkloadIdentity() != nil {
 			return errSSHWorkloadIdentity()
 		}
 		profile = session.ProfileName()
+	} else if errors.As(err, &required) {
+		ctx.LogLine("warning: no profile selected to pin; pass --profile to pin one. Connections will use BASETEN_PROFILE.")
+	} else if errors.Is(err, huh.ErrUserAborted) {
+		return err
 	}
 	keyPath, reused, err := ssh.EnsureKeypair()
 	if err != nil {
@@ -97,8 +108,13 @@ func commandSSHProxy(ctx *CommandContext, flags *cmd.SSHProxyFlags) error {
 // inheriting the same flags and environment, so both arrive at the same value.
 // Must be called after SetDefaultProfile, which the session resolution reads.
 func (c *CommandContext) sshCacheIdentity() (string, error) {
+	// ssh owns the terminal, so never prompt for a profile.
+	c.authInfo.selectProfile = nil
 	session, err := c.authInfo.Session()
-	if err != nil {
+	var required *auth.ErrExplicitProfileRequired
+	if errors.As(err, &required) {
+		return "", fmt.Errorf("%w\n  Or pin one for SSH with `baseten ssh setup --profile <profile>`", err)
+	} else if err != nil {
 		return "", err
 	}
 	if session.WorkloadIdentity() != nil {
