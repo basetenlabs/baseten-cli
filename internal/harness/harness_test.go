@@ -125,7 +125,9 @@ func TestNewRoutePrefersNativeTargetAPIForExternalProviders(t *testing.T) {
 		want    TargetAPI
 	}{
 		{"baseten prefers chat completions", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, all, TargetAPIChatCompletions},
-		{"router prefers chat completions", `{"type": "INTELLIGENT"}`, all, TargetAPIChatCompletions},
+		{"router prefers messages", `{"type": "INTELLIGENT"}`, all, TargetAPIMessages},
+		{"router prefers responses over chat completions", `{"type": "INTELLIGENT"}`, completionsAndResponses, TargetAPIResponses},
+		{"router falls back to chat completions", `{"type": "INTELLIGENT"}`, completions, TargetAPIChatCompletions},
 		{"unknown connection prefers chat completions", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, all, TargetAPIChatCompletions},
 		{"anthropic prefers messages", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, all, TargetAPIMessages},
 		{"openai prefers responses", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, completionsAndResponses, TargetAPIResponses},

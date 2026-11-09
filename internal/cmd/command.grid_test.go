@@ -1209,7 +1209,7 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 	h.Require.Equal("baseten-harness/acme/auto", opencode["small_model"])
 	models := opencode["provider"].(map[string]any)["baseten-harness"].(map[string]any)["models"].(map[string]any)
 	h.Require.Contains(models, "acme/auto")
-	h.Require.NotContains(models["acme/auto"], "provider")
+	h.Require.Equal(map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/auto"].(map[string]any)["provider"])
 
 	h.Require.Equal("acme/auto", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
 	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
@@ -2160,6 +2160,30 @@ func Test_Grid_Setup_PiServedModelPrompt(t *testing.T) {
 	h.Require.True(harnessRecordFile(t).Harnesses["pi"].NoPiServedModel)
 }
 
+func writeMessagesStream(w http.ResponseWriter, model, text string, readNotes bool) {
+	events := []map[string]any{{"type": "message_start", "message": map[string]any{"id": "msg_served", "type": "message", "role": "assistant", "model": model, "content": []any{}, "usage": map[string]any{"input_tokens": 5, "output_tokens": 0}}}}
+	index := 0
+	block := func(start, delta map[string]any) {
+		events = append(events, map[string]any{"type": "content_block_start", "index": index, "content_block": start},
+			map[string]any{"type": "content_block_delta", "index": index, "delta": delta}, map[string]any{"type": "content_block_stop", "index": index})
+		index++
+	}
+	stop := "end_turn"
+	if text != "" {
+		block(map[string]any{"type": "text", "text": ""}, map[string]any{"type": "text_delta", "text": text})
+	}
+	if readNotes {
+		stop = "tool_use"
+		block(map[string]any{"type": "tool_use", "id": "toolu_read", "name": "read", "input": map[string]any{}}, map[string]any{"type": "input_json_delta", "partial_json": `{"path":"notes.txt"}`})
+	}
+	events = append(events, map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop}, "usage": map[string]any{"output_tokens": 1}}, map[string]any{"type": "message_stop"})
+	w.Header().Set("Content-Type", "text/event-stream")
+	for _, event := range events {
+		raw, _ := json.Marshal(event)
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event["type"], raw)
+	}
+}
+
 func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	skipUnlessSupported(t)
 	binary, err := exec.LookPath("pi")
@@ -2169,14 +2193,15 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	var mu sync.Mutex
 	var requested, bodies []string
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
+		if r.URL.Path != "/v1/chat/completions" && r.URL.Path != "/v1/messages" {
 			http.NotFound(w, r)
 			return
 		}
 		var body struct {
 			Model    string `json:"model"`
 			Messages []struct {
-				Role string `json:"role"`
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
 			} `json:"messages"`
 		}
 		raw, _ := io.ReadAll(r.Body)
@@ -2185,11 +2210,19 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 		requested = append(requested, body.Model)
 		bodies = append(bodies, string(raw))
 		mu.Unlock()
-		final := len(body.Messages) > 0 && body.Messages[len(body.Messages)-1].Role == "tool"
+		final := len(body.Messages) > 0 && (body.Messages[len(body.Messages)-1].Role == "tool" || bytes.Contains(body.Messages[len(body.Messages)-1].Content, []byte(`"tool_result"`)))
 		served := map[bool]map[string]string{
 			false: {"acme/auto": "acme/served-step", "acme/primary": "acme/served-z"},
 			true:  {"acme/auto": "acme/served-final", "acme/primary": "acme/served-z"},
 		}[final][body.Model]
+		if r.URL.Path == "/v1/messages" {
+			text := "Reading notes."
+			if final {
+				text = "Done reading."
+			}
+			writeMessagesStream(w, served, text, !final)
+			return
+		}
 		delta, finish := map[string]any{"role": "assistant", "content": "Reading notes.", "tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
 			"function": map[string]any{"name": "read", "arguments": `{"path":"notes.txt"}`}}}}, "tool_calls"
 		if final {
@@ -2777,12 +2810,12 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
-		if r.URL.Path != "/v1/chat/completions" {
+		if r.URL.Path != "/v1/chat/completions" && r.URL.Path != "/v1/messages" {
 			http.NotFound(w, r)
 			return
 		}
 		last := body.Messages[len(body.Messages)-1]
-		step := len(body.Tools) > 0 && last.Role == "user" && bytes.Contains(last.Content, []byte("notes.txt"))
+		step := len(body.Tools) > 0 && last.Role == "user" && bytes.Contains(last.Content, []byte("notes.txt")) && !bytes.Contains(last.Content, []byte(`"tool_result"`))
 		delta, finish := map[string]any{"content": "Served reply."}, "stop"
 		if step {
 			delta, finish = map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "call_read", "type": "function",
@@ -2799,17 +2832,25 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 		case bytes.Contains(raw, []byte("Start quietly")):
 			served = ""
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		for _, choice := range []map[string]any{
-			{"index": 0, "delta": map[string]any{"role": "assistant", "content": ""}, "finish_reason": nil},
-			{"index": 0, "delta": delta, "finish_reason": nil},
-			{"index": 0, "delta": map[string]any{}, "finish_reason": finish},
-		} {
-			chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": served,
-				"choices": []any{choice}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+		if r.URL.Path == "/v1/messages" {
+			text := "Served reply."
+			if step {
+				text = ""
+			}
+			writeMessagesStream(w, served, text, step)
+		} else {
+			w.Header().Set("Content-Type", "text/event-stream")
+			for _, choice := range []map[string]any{
+				{"index": 0, "delta": map[string]any{"role": "assistant", "content": ""}, "finish_reason": nil},
+				{"index": 0, "delta": delta, "finish_reason": nil},
+				{"index": 0, "delta": map[string]any{}, "finish_reason": finish},
+			} {
+				chunk, _ := json.Marshal(map[string]any{"id": "chatcmpl-served", "object": "chat.completion.chunk", "created": 1, "model": served,
+					"choices": []any{choice}, "usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+			}
+			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		}
-		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		mu.Lock()
 		defer mu.Unlock()
 		requested = append(requested, body.Model)

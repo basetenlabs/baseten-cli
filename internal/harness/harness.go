@@ -233,7 +233,7 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	r.TargetAPI = TargetAPIChatCompletions
 	if f := m.SupportedApiFormats; f != nil {
 		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
-		r.TargetAPI = preferredTargetAPI(f, r.Provider)
+		r.TargetAPI = preferredTargetAPI(f, r.Provider, r.Router)
 	}
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
@@ -244,9 +244,9 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	return r, validateRoute(r)
 }
 
-func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats, provider string) TargetAPI {
+func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats, provider string, router bool) TargetAPI {
 	switch {
-	case deref(f.ChatCompletions) && (provider == ProviderBaseten || provider == ""):
+	case deref(f.ChatCompletions) && !router && (provider == ProviderBaseten || provider == ""):
 		// NB(nikhil): MAPIs specifically advertise all compatibility, but prefer chat completions.
 		return TargetAPIChatCompletions
 	case deref(f.Messages):
