@@ -336,16 +336,16 @@ func listGridConnections(ctx context.Context, api *managementapi.Client, params 
 
 // listGridRoutes returns the routes across all pages.
 func listGridRoutes(ctx context.Context, api *managementapi.Client, params managementapi.GetV1GridRoutesParams) ([]managementapi.GridRoute, error) {
-	var routes []managementapi.GridRoute
-	for {
+	routes, err := listAllPages(func(cursor *string) ([]managementapi.GridRoute, managementapi.PaginationResponse, error) {
+		params.Cursor = cursor
 		resp, err := api.GetGridRoutes(ctx, params)
 		if err != nil {
-			return nil, fmt.Errorf("list routes: %w", err)
+			return nil, managementapi.PaginationResponse{}, err
 		}
-		routes = append(routes, resp.Items...)
-		if !resp.Pagination.HasMore || resp.Pagination.Cursor == nil {
-			return routes, nil
-		}
-		params.Cursor = resp.Pagination.Cursor
+		return resp.Items, resp.Pagination, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list routes: %w", err)
 	}
+	return routes, nil
 }
