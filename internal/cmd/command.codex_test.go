@@ -144,7 +144,7 @@ func Test_Codex_Setup_FreshConfig(t *testing.T) {
 	h.Require.Contains(out, "excluded decision-models/joey (no supported features)")
 	h.Require.Contains(out, "2 added, 0 removed, 0 modified")
 	h.Require.Contains(out, "5 keys added, 0 replaced, 0 preserved")
-	h.Require.Contains(out, "codex --profile baseten")
+	h.Require.Contains(out, "codex --profile baseten --no-daemon")
 	h.Require.Contains(out, "run 'baseten codex use --provider baseten'")
 	h.Require.Equal(map[string]any{"model_provider": "baseten-mapi", "model_catalog_json": catalogPath, "model": "zai-org/GLM-5.3-Flash"}, readCodexFile(t, filepath.Join(dir, "baseten.config.toml")),
 		"the profile sets a Baseten model so it never inherits config.toml's")
@@ -333,8 +333,12 @@ func Test_Codex_Use(t *testing.T) {
 	h.Require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model_provider = \"openai\"\n"), 0o600))
 	h.Require.NoError(h.Execute("codex", "setup"))
 
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "auth.json"), []byte(`{"auth_mode":"chatgpt"}`), 0o600))
+	h.Require.NoError(os.WriteFile(filepath.Join(dir, "cloud-config-bundle-cache.json"), []byte(`{}`), 0o600))
 	h.Require.NoError(h.Execute("codex", "use", "--provider", "baseten"))
 	h.Require.Contains(h.Stdout.String(), "Codex now uses baseten")
+	h.Require.NoFileExists(filepath.Join(dir, "auth.json"), "a ChatGPT login is signed out")
+	h.Require.NoFileExists(filepath.Join(dir, "cloud-config-bundle-cache.json"))
 	config := readCodexConfig(t, dir)
 	h.Require.Equal("baseten-mapi", config["model_provider"])
 	h.Require.Equal(filepath.Join(dir, "baseten-mapi-models.json"), config["model_catalog_json"])

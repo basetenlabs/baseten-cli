@@ -10,7 +10,7 @@ var commandCodex = Command{
 			Summary: "Generate a Codex model catalog and add Baseten Model APIs to config.toml",
 			Description: "Fetch the Model APIs available to BASETEN_API_KEY and write them as a Codex model catalog, " +
 				"add the baseten-mapi provider to Codex's config.toml ($CODEX_HOME, default ~/.codex), and write a baseten profile that selects them.\n\n" +
-				"Codex shows one provider's models at a time. Run 'codex --profile baseten' to use Baseten Model APIs from the CLI while plain 'codex' keeps its current provider. " +
+				"Codex shows one provider's models at a time. Run 'codex --profile baseten --no-daemon' to use Baseten Model APIs from the CLI while plain 'codex' keeps its current provider; the profile needs --no-daemon because Codex's background server does not apply a CLI profile's provider. " +
 				"The ChatGPT desktop app cannot select a profile: use --default, or 'baseten codex use', to make Baseten Model APIs the provider in config.toml.\n\n" +
 				"The catalog is regenerated on every run; models under vllmtest/ and models with no supported features are left out. " +
 				"config.toml only gains missing keys: existing values are never overwritten, except model_provider and model_catalog_json with --default, " +

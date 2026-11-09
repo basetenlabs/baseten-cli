@@ -345,13 +345,28 @@ func commandCodexTeardown(ctx *CommandContext, flags *cmd.CodexTeardownFlags) er
 }
 
 // codexDropWorkspacePolicy deletes the cached ChatGPT workspace policy, whose
-// default model overrides config.toml in Codex's background server. With
-// forced_login_method = "api" set, Codex itself signs a ChatGPT login out on
-// its next start rather than fetching the policy again.
+// default model overrides config.toml in Codex's background server, and signs
+// a ChatGPT login out. Codex would sign it out itself because of
+// forced_login_method = "api", but only by exiting the next session it starts.
 func codexDropWorkspacePolicy(ctx *CommandContext, dir string) {
 	if err := harness.CodexClearCloudConfig(dir); err != nil {
 		ctx.Logf("warning: could not remove %s: %v\n", harness.CodexCloudConfigPath(dir), err)
 	}
+	authPath := filepath.Join(dir, "auth.json")
+	var auth struct {
+		Mode string `json:"auth_mode"`
+	}
+	data, err := os.ReadFile(authPath)
+	if err != nil || json.Unmarshal(data, &auth) != nil || auth.Mode == "apikey" {
+		return
+	}
+	if harness.CodexLogout(ctx, ctx.Execer(), dir) != nil {
+		if err := os.Remove(authPath); err != nil {
+			ctx.Logf("warning: could not sign Codex out of ChatGPT: %v; run 'codex logout'\n", err)
+			return
+		}
+	}
+	ctx.LogLine("Signed Codex out of ChatGPT; its workspace default model would override Baseten Model APIs.")
 }
 
 // codexSelectBaseten adds the settings that select Baseten Model APIs to set.
@@ -549,7 +564,9 @@ func writeCodexSetup(ctx *CommandContext, r cmd.CodexSetupResult) {
 		ctx.OutputLine("No OPENAI_MARKETPLACE_ID found. If you are in the OpenAI marketplace program, set it and re-run.")
 	}
 	ctx.OutputLine("")
-	ctx.OutputLine("Codex CLI: run 'codex --profile " + codexProfile + "' to use Baseten Model APIs.")
+	// The background server ignores a CLI profile's provider and applies a
+	// ChatGPT workspace default model, so the profile runs without it.
+	ctx.OutputLine("Codex CLI: run 'codex --profile " + codexProfile + " --no-daemon' to use Baseten Model APIs.")
 	if r.Active {
 		ctx.OutputLine("ChatGPT desktop app: Baseten Model APIs are the default provider. Restart the app to apply it; run 'baseten codex use --provider openai' to switch back.")
 	} else {
