@@ -2,7 +2,10 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"testing"
+
+	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 )
 
 func Test_Model_List_Empty(t *testing.T) {
@@ -12,6 +15,27 @@ func Test_Model_List_Empty(t *testing.T) {
 	h.Require.NoError(h.Execute("model", "list"))
 	h.Require.Equal("", h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "No models found.")
+}
+
+func Test_Model_List_ExplicitProfile(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	var gotAuth string
+	h.MockManagementAPI().SetRouteFunc("GET", "/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":[]}`))
+	})
+
+	// Not on a terminal, the command fails before calling the API.
+	h.Require.Error(h.Execute("model", "list"))
+	h.Require.Contains(h.Stderr.String(), "explicit profile selection is required")
+	h.Require.Empty(h.MockManagementAPI().Calls())
+
+	// On a terminal, the picked profile's credential is used.
+	h.Context = internalcmd.WithPromptAnswers(h.Context, "2")
+	h.Require.NoError(h.Execute("model", "list"))
+	h.Require.Contains(h.Stderr.String(), "Use which profile?")
+	h.Require.Equal("Bearer key-b", gotAuth)
 }
 
 func Test_Model_List_Rows(t *testing.T) {
