@@ -349,7 +349,10 @@ func Test_Codex_Use(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "Codex already uses baseten")
 
 	h.Require.NoError(h.Execute("codex", "use", "--provider", "openai"))
-	h.Require.Contains(h.Stdout.String(), "codex login")
+	// Signed out: the background server restarts after sign-in, or it keeps
+	// reporting no login.
+	h.Require.Contains(h.Stdout.String(), "Run 'codex login && codex app-server daemon restart'")
+	h.Require.NotContains(h.Stdout.String(), "Codex now uses openai")
 	config = readCodexConfig(t, dir)
 	h.Require.NotContains(config, "forced_login_method")
 	h.Require.NotContains(config, "model", "a Baseten model is cleared for OpenAI")
@@ -447,6 +450,7 @@ func Test_Codex_Teardown(t *testing.T) {
 	out := h.Stdout.String()
 	h.Require.Contains(out, "removed model_providers.baseten-mapi")
 	h.Require.Contains(out, "removed model_provider ")
+	h.Require.Contains(out, "Run 'codex login && codex app-server daemon restart'", "setup --default signed Codex out")
 	h.Require.NoFileExists(filepath.Join(dir, "baseten.config.toml"))
 	h.Require.NoFileExists(filepath.Join(dir, "baseten-mapi-models.json"))
 	h.Require.Equal(map[string]any{"model_providers": map[string]any{"baseten": map[string]any{"name": "Grid"}}}, readCodexConfig(t, dir), "other providers stay")

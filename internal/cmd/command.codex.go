@@ -240,7 +240,8 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 	// The background server shared by plain codex and the desktop app loads
 	// the model catalog only at startup.
 	restarted := true
-	if len(change.Added)+len(change.Replaced)+len(change.Removed) > 0 {
+	signIn := flags.Provider != codexProfile && codexSignedOut(dir)
+	if len(change.Added)+len(change.Replaced)+len(change.Removed) > 0 && !signIn {
 		restarted = gridHarnessRestartCodexDaemon(ctx, dir, false)
 	}
 	if ctx.JSON {
@@ -257,13 +258,13 @@ func commandCodexUse(ctx *CommandContext, flags *cmd.CodexUseFlags) error {
 	case slices.Contains(change.Added, "model") || slices.Contains(change.Replaced, "model"):
 		ctx.Outputf("Selected model %v.\n", set["model"])
 	}
-	if !restarted {
+	switch {
+	case signIn:
+		ctx.Outputf("Run '%s' to sign back in to ChatGPT and switch Codex to %s.\n", codexSignInCommand, flags.Provider)
+	case !restarted:
 		ctx.Outputf("Codex switches to %s after 'codex app-server daemon restart'; until then the background server keeps the old provider.\n", flags.Provider)
-	} else {
+	default:
 		ctx.Outputf("Codex now uses %s. Restart the ChatGPT desktop app and any running Codex sessions to apply it.\n", flags.Provider)
-	}
-	if slices.Contains(change.Removed, "forced_login_method") {
-		ctx.OutputLine("Then run 'codex login' to sign back in to ChatGPT.")
 	}
 	return nil
 }
@@ -309,8 +310,11 @@ func commandCodexTeardown(ctx *CommandContext, flags *cmd.CodexTeardownFlags) er
 		return fmt.Errorf("updating %s: %w", configPath, err)
 	}
 	result := cmd.CodexTeardownResult{DryRun: flags.DryRun, Config: codexConfigChange(configPath, change), RemovedFiles: []string{}}
+	signIn := false
 	if !flags.DryRun && config["model_provider"] == codexMAPIProvider {
-		gridHarnessRestartCodexDaemon(ctx, dir, false)
+		if signIn = codexSignedOut(dir); !signIn {
+			gridHarnessRestartCodexDaemon(ctx, dir, false)
+		}
 	}
 	for _, path := range []string{profilePath, catalog} {
 		if _, err := os.Stat(path); err != nil {
@@ -341,7 +345,22 @@ func commandCodexTeardown(ctx *CommandContext, flags *cmd.CodexTeardownFlags) er
 	if len(change.Removed)+len(result.RemovedFiles) == 0 {
 		ctx.OutputLine("Baseten Model APIs are not set up for Codex; nothing to remove.")
 	}
+	if signIn {
+		ctx.Outputf("Run '%s' to sign back in to ChatGPT.\n", codexSignInCommand)
+	}
 	return nil
+}
+
+// codexSignInCommand signs in to ChatGPT, then restarts the background server,
+// which reads the login only when it starts.
+const codexSignInCommand = "codex login && codex app-server daemon restart"
+
+// codexSignedOut reports whether Codex has no login. A background server
+// started now would keep reporting no login after 'codex login', so callers
+// leave the restart until after sign-in.
+func codexSignedOut(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "auth.json"))
+	return errors.Is(err, os.ErrNotExist)
 }
 
 // codexDropWorkspacePolicy deletes the cached ChatGPT workspace policy, whose
