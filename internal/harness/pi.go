@@ -186,8 +186,15 @@ func piModel(r Route, baseURL string) map[string]any {
 	case TargetAPIMessages:
 		// Pi's Anthropic client appends /v1/messages itself.
 		model["api"], model["baseUrl"] = "anthropic-messages", baseURL
+		compat := map[string]any{}
 		if piAdaptiveThinking(r.UpstreamModel) {
-			model["compat"] = map[string]any{"forceAdaptiveThinking": true}
+			compat["forceAdaptiveThinking"] = true
+		}
+		if r.Router {
+			compat["sendSessionAffinityHeaders"] = true
+		}
+		if len(compat) > 0 {
+			model["compat"] = compat
 		}
 	case TargetAPIResponses:
 		model["api"] = "openai-responses"
