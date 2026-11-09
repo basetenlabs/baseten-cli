@@ -706,6 +706,7 @@ func Test_Auth_Token_WorkloadIdentityInvalidGrant(t *testing.T) {
 	serveTokenExchange(h, true)
 
 	h.Require.Error(h.Execute("auth", "token"))
+	h.Require.Equal(int(cmd.ExitAuth), h.ExitCode)
 	h.Require.Empty(h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "workload identity token exchange refused; check that trust rule rule-1")
 }
@@ -767,7 +768,7 @@ func Test_Auth_List_WorkloadIdentityMarksNoProfile(t *testing.T) {
 
 // Every API command authenticates through the same transport, so one
 // management command stands in for all of them.
-func Test_WorkloadIdentity_AuthenticatesManagementCommands(t *testing.T) {
+func Test_Auth_WorkloadIdentity_AuthenticatesManagementCommands(t *testing.T) {
 	h := newAuthHarness(t)
 	setWorkloadIdentityEnv(t)
 	serveTokenExchange(h, false)
