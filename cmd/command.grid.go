@@ -71,12 +71,11 @@ var commandGrid = Command{
 			Summary: "Refresh configured harnesses with their recorded setup (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
 				"Reapply the setup of every harness configured on this machine, using the team, location, and options recorded by its last 'grid setup'. " +
-				"Setup's --served-model and --git-context flags, when passed, change those recorded options " +
-				"on the synced harnesses they apply to before syncing; =false turns one off, as in --git-context=false, and omitted flags keep the recorded value. " +
 				"Sync takes no harness selection: to change which harnesses are configured or their other options, run 'grid setup' or 'grid teardown'. " +
 				"Stored routes the team has removed fall back to their defaults with a warning. Only harnesses whose record matches the current profile are synced, " +
 				"and a machine with no record needs 'grid setup' first. Harnesses set up with --use-session-credential re-resolve the session's API key; " +
 				"when it is unavailable, sync errors instead of creating a replacement.\n\n" +
+				"Using --served-model and --git-context overrides the flags set in previous harness configurations.\n" +
 				"When nothing changes, sync does nothing and exits 0, so it is safe to run from a schedule; pass --yes to skip the prompt when changes are found. " +
 				"For Codex, sync restarts the app-server daemon like setup does, asking first when sessions are attached unless --yes is passed; an in-progress turn is interrupted, " +
 				"and thread history is preserved. A declined or failed restart is retried on the next sync.",
