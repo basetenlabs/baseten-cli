@@ -186,6 +186,7 @@ type OrgTrustRuleUpdateFlags struct {
 	ServiceAccount string               `flag:"service-account" desc:"Name or ID of the service account the tokens act as from now on. Access tokens already issued keep the old account until they expire."`
 	SubjectGlob    OptionalFlag[string] `flag:"subject-glob" desc:"New glob on the token's sub claim." nullable:"true"`
 	Claims         []string             `flag:"claim" desc:"A top-level string claim the token must carry, as key=value. May be repeated. Replaces every claim."`
+	ClearClaims    bool                 `flag:"clear-claims" desc:"Remove every claim requirement."`
 	Condition      OptionalFlag[string] `flag:"condition" desc:"New CEL expression over the token's claims." nullable:"true"`
 	Audience       OptionalFlag[string] `flag:"audience" desc:"New value the token's aud claim must equal or contain. null restores the default." nullable:"true"`
 }

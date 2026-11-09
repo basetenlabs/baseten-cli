@@ -161,6 +161,25 @@ func Test_Org_TrustRule_Update_ClaimsReplaceAll(t *testing.T) {
 	h.Require.Equal(map[string]any{"repository_id": "9"}, match.(map[string]any)["claims"])
 }
 
+func Test_Org_TrustRule_Update_ClearClaims(t *testing.T) {
+	h := NewCommandHarness(t)
+	trustRuleRoutes(h)
+
+	h.Require.NoError(h.Execute("org", "trust-rule", "update", "--id", "tr1", "--clear-claims"))
+	match := h.MockManagementAPI().FindCall("PATCH", "/v1/access/trust_rules/tr1").BodyJSON(t)["match"]
+	h.Require.Equal(map[string]any{}, match.(map[string]any)["claims"])
+	h.Require.Equal("repo:acme/models:ref:refs/heads/main", match.(map[string]any)["subject_glob"])
+}
+
+func Test_Org_TrustRule_Update_ClearClaimsWithClaim(t *testing.T) {
+	h := NewCommandHarness(t)
+	trustRuleRoutes(h)
+
+	h.Require.Error(h.Execute("org", "trust-rule", "update", "--id", "tr1", "--clear-claims", "--claim", "a=b"))
+	h.Require.Contains(h.Stderr.String(), "--clear-claims and --claim cannot be combined")
+	h.Require.Nil(h.MockManagementAPI().FindCall("PATCH", "/v1/access/trust_rules/tr1"))
+}
+
 func Test_Org_TrustRule_Update_NameOnlySkipsMatch(t *testing.T) {
 	h := NewCommandHarness(t)
 	trustRuleRoutes(h)

@@ -226,9 +226,15 @@ func mergeOptional(current *string, flag cmd.OptionalFlag[string]) *string {
 }
 
 func commandOrgTrustRuleUpdate(ctx *CommandContext, flags *cmd.OrgTrustRuleUpdateFlags) error {
+	if flags.ClearClaims && len(flags.Claims) > 0 {
+		return cmd.NewErrUsagef("--clear-claims and --claim cannot be combined")
+	}
 	claims, err := parseTrustRuleClaims(flags.Claims)
 	if err != nil {
 		return err
+	}
+	if flags.ClearClaims {
+		claims = &map[string]string{}
 	}
 	matchChanged := flags.SubjectGlob.IsSet() || flags.Condition.IsSet() || flags.Audience.IsSet() || claims != nil
 	if flags.NewName == "" && !flags.Description.IsSet() && flags.ServiceAccount == "" && !matchChanged {
