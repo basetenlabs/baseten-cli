@@ -372,10 +372,8 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		return cmd.NewErrUsagef("harness setup needs a stored profile or an API key; workload identity " +
 			"credentials are short-lived and cannot be installed in a harness")
 	}
-	if f.GitContext {
-		if _, err := ctx.Execer().LookPath("git"); err != nil {
-			return cmd.NewErrUsagef("git not found on PATH, required by --git-context")
-		}
+	if err := gridRequireGit(ctx, f.GitContext); err != nil {
+		return err
 	}
 	selected, err := gridSelectHarnesses(ctx, f.GridHarnessFlags, true)
 	if err != nil {
@@ -400,39 +398,30 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if f.UseSessionCredential || session.IsEphemeral() {
 		credentialSource = harness.CredentialSourceSession
 	}
-	noServedModel := f.NoClaudeServedModel
-	if !noServedModel && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.Claude) {
-		show, err := gridAskServedModel(ctx, "Claude Code")
-		if err != nil {
+	passed := ctx.Command.Flags().Changed("hide-served-model-indicator")
+	servedModel := !f.HideServedModel
+	var offered, labels []string
+	for _, h := range []struct{ name, label string }{{harness.Claude, "Claude Code"}, {harness.Pi, "Pi"}, {harness.OpenCode, "OpenCode"}} {
+		if gridOffersServedModel(selected, listed, h.name) {
+			offered = append(offered, h.name)
+			labels = append(labels, h.label)
+		}
+	}
+	if len(labels) > 0 && !passed && !f.Yes && !f.DryRun && ctx.IsInteractive() {
+		if servedModel, err = gridAskServedModel(ctx, labels); err != nil {
 			return err
 		}
-		noServedModel = !show
 	}
-	noPiServedModel := f.NoPiServedModel
-	if !noPiServedModel && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.Pi) {
-		show, err := gridAskServedModel(ctx, "Pi")
-		if err != nil {
-			return err
-		}
-		noPiServedModel = !show
-	}
-	noOpenCodeServedModel := f.NoOpenCodeServedModel
-	if !noOpenCodeServedModel && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.OpenCode) {
-		show, err := gridAskServedModel(ctx, "OpenCode")
-		if err != nil {
-			return err
-		}
-		noOpenCodeServedModel = !show
-	}
+	noServedModel := func(name string) bool { return !servedModel && (passed || slices.Contains(offered, name)) }
 	targets := make([]gridHarnessTarget, len(selected))
 	for i := range selected {
 		record := harness.Record{
 			KeyName:               f.KeyName,
 			Profile:               session.ProfileName(),
 			CredentialSource:      credentialSource,
-			NoClaudeServedModel:   noServedModel,
-			NoPiServedModel:       noPiServedModel,
-			NoOpenCodeServedModel: noOpenCodeServedModel,
+			NoClaudeServedModel:   noServedModel(harness.Claude),
+			NoPiServedModel:       noServedModel(harness.Pi),
+			NoOpenCodeServedModel: noServedModel(harness.OpenCode),
 			GitContext:            f.GitContext,
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
@@ -577,6 +566,16 @@ func gridHarnessClaudeDesktopHint(ctx *CommandContext, targets []gridHarnessTarg
 	}
 }
 
+func gridRequireGit(ctx *CommandContext, gitContext bool) error {
+	if !gitContext {
+		return nil
+	}
+	if _, err := ctx.Execer().LookPath("git"); err != nil {
+		return cmd.NewErrUsagef("git not found on PATH, required by --git-context")
+	}
+	return nil
+}
+
 func gridOffersServedModel(selected []gridSelectedHarness, listed []managementapi.GridRoute, name string) bool {
 	i := slices.IndexFunc(selected, func(s gridSelectedHarness) bool {
 		return s.Name() == name && (name != harness.OpenCode || harness.HasOpenCode2(s.detection))
@@ -593,10 +592,15 @@ func gridOffersServedModel(selected []gridSelectedHarness, listed []managementap
 	return slices.ContainsFunc(selected[i].Routes(routes), func(r harness.Route) bool { return r.Router })
 }
 
-func gridAskServedModel(ctx *CommandContext, harnessLabel string) (bool, error) {
+func gridAskServedModel(ctx *CommandContext, harnessLabels []string) (bool, error) {
+	last := len(harnessLabels) - 1
+	harnessLabel := harnessLabels[last]
+	if last > 0 {
+		harnessLabel = strings.Join(harnessLabels[:last], ", ") + " and " + harnessLabel
+	}
 	show := true
 	err := ctx.RunPrompt(huh.NewSelect[bool]().
-		Title("Show which model served each response on auto routes in "+harnessLabel+"?").
+		Title("Show which model served each response on intelligent routes in "+harnessLabel+"?").
 		Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
 		Value(&show))
 	return show, err
@@ -605,6 +609,19 @@ func gridAskServedModel(ctx *CommandContext, harnessLabel string) (bool, error) 
 // commandGridSync refreshes the harnesses configured on this machine with
 // the team and options recorded by their last setup.
 func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
+	updates := []struct {
+		flag    string
+		harness string
+		set     func(*harness.Record)
+	}{
+		{"hide-served-model-indicator", harness.Claude, func(r *harness.Record) { r.NoClaudeServedModel = f.HideServedModel }},
+		{"hide-served-model-indicator", harness.Pi, func(r *harness.Record) { r.NoPiServedModel = f.HideServedModel }},
+		{"hide-served-model-indicator", harness.OpenCode, func(r *harness.Record) { r.NoOpenCodeServedModel = f.HideServedModel }},
+		{"git-context", "", func(r *harness.Record) { r.GitContext = f.GitContext }},
+	}
+	if err := gridRequireGit(ctx, f.GitContext); err != nil {
+		return err
+	}
 	if !harness.Supported() {
 		return errors.New("Grid harness integrations support only macOS and Linux for now")
 	}
@@ -648,6 +665,11 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		}
 		if status.State == harness.StateNotConfigured {
 			continue
+		}
+		for _, u := range updates {
+			if ctx.Command.Flags().Changed(u.flag) && (u.harness == "" || u.harness == h.Name()) {
+				u.set(&record)
+			}
 		}
 		targets = append(targets, gridHarnessTarget{gridSelectedHarness: gridSelectedHarness{Harness: h, detection: d}, record: record})
 	}
