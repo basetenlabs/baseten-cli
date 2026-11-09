@@ -4,6 +4,7 @@ package e2etests
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"maps"
@@ -24,8 +25,13 @@ const (
 	harnessProcessTimeout    = 150 * time.Second
 	harnessProviderID        = "baseten-harness"
 	harnessOpenCodeSettings  = "opencode.json"
-	harnessRouterRoutePrefix = "auto-"
 	harnessLongContextSuffix = "[1m]"
+
+	harnessRouter    = "router"
+	harnessBaseten   = "baseten"
+	harnessAnthropic = "anthropic"
+	harnessOpenAI    = "openai"
+	harnessOther     = "other"
 
 	harnessThinkingMarker     = "THINKING-MARKER-391"
 	harnessClaudeToolWord     = "CLAUDE-TOOL-CALL-OK"
@@ -44,44 +50,41 @@ const (
 
 var harnessEffortLevels = []string{"max", "xhigh", "high", "medium", "low", "minimal"}
 
-type harnessModelOption struct {
-	id    string
-	label string
+var harnessTargetClasses = map[string]string{
+	"BASETEN_MODEL_API": harnessBaseten,
+	"CLASSIFIER":        harnessRouter,
+	"INTELLIGENT":       harnessRouter,
+	"ANTHROPIC":         harnessAnthropic,
+	"OPENAI":            harnessOpenAI,
 }
 
-type harnessPiModel struct {
-	id        string
-	api       string
-	reasoning bool
-	levels    []string
+type harnessModel struct {
+	id     string
+	route  string
+	class  string
+	levels []string
 }
 
-type harnessOpenCodeModel struct {
-	id        string
-	anthropic bool
-	variants  []string
+type harnessNeed struct {
+	name string
+	ok   func(harnessModel) bool
 }
+
+var (
+	harnessAnyModel   = harnessNeed{"no extra requirement", func(harnessModel) bool { return true }}
+	harnessReasoning  = harnessNeed{"reasoning levels", func(model harnessModel) bool { return len(model.levels) > 0 }}
+	harnessHighEffort = harnessNeed{"effort high", func(model harnessModel) bool { return slices.Contains(model.levels, "high") }}
+)
 
 type harnessTest struct {
 	name      string
 	binary    string
 	prefix    []string
+	opencode2 bool
 	root      string
 	configDir string
 	endpoint  string
-
-	claudeDefault string
-	claudeOptions []harnessModelOption
-	claudeEfforts map[string]string
-
-	piModels []harnessPiModel
-
-	codexDefault string
-	codexSlugs   []string
-	codexEfforts map[string][]string
-
-	openCodeDefault string
-	openCodeModels  []harnessOpenCodeModel
+	models    []harnessModel
 }
 
 type harnessVariant struct {
@@ -98,9 +101,9 @@ type harnessOpenCodeVariant struct {
 }
 
 var harnessOpenCodeVariants = []harnessOpenCodeVariant{
-	{label: "opencode"},
-	{label: "opencode2/v1", opencode2: true},
-	{label: "opencode2/v2", opencode2: true, v2Config: true},
+	{label: "opencode1"},
+	{label: "opencode2/v1-config", opencode2: true},
+	{label: "opencode2/v2-config", opencode2: true, v2Config: true},
 }
 
 func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
@@ -122,7 +125,9 @@ func newOpenCodeHarnessTest(t *testing.T, variant harnessOpenCodeVariant) *harne
 	if variant.v2Config {
 		spec.seed = map[string]string{harnessOpenCodeSettings: `{"providers": {}}`}
 	}
-	return newHarnessVariantTest(t, "opencode", spec)
+	h := newHarnessVariantTest(t, "opencode", spec)
+	h.opencode2 = true
+	return h
 }
 
 func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *harnessTest {
@@ -197,7 +202,43 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 	step(t, "%s harness setup complete (config %s)", name, h.configDir)
 	h.loadConfig(t)
 	require.NotEmpty(t, h.endpoint, "harness setup wrote no endpoint for %s", name)
+	classes := harnessRouteClasses(t, team)
+	for i := range h.models {
+		h.models[i].class = cmp.Or(classes[h.models[i].route], harnessOther)
+	}
 	return h
+}
+
+func harnessRouteClasses(t *testing.T, team string) map[string]string {
+	t.Helper()
+	providers := map[string]string{}
+	for _, connection := range harnessCLIItems(t, "grid", "connection", "list", "--team", team, "--output", "json") {
+		id, _ := connection["id"].(string)
+		config, _ := connection["config"].(map[string]any)
+		providers[id], _ = config["provider"].(string)
+	}
+	classes := map[string]string{}
+	for _, route := range harnessCLIItems(t, "grid", "route", "list", "--team", team, "--output", "json") {
+		name, _ := route["name"].(string)
+		target, _ := route["target"].(map[string]any)
+		kind, _ := target["type"].(string)
+		if connection, ok := target["connection_id"].(string); ok {
+			kind = providers[connection]
+		}
+		classes[name] = harnessTargetClasses[kind]
+	}
+	return classes
+}
+
+func harnessCLIItems(t *testing.T, args ...string) []map[string]any {
+	t.Helper()
+	out, errOut, err := cli(t, args...)
+	require.NoError(t, err, "baseten %s: %s", strings.Join(args, " "), errOut)
+	var list struct {
+		Items []map[string]any `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &list), "parsing the output of baseten %s", strings.Join(args, " "))
+	return list.Items
 }
 
 func harnessEnvironmentalSetupError(msg string) bool {
@@ -234,18 +275,7 @@ func (h *harnessTest) loadConfig(t *testing.T) {
 func (h *harnessTest) loadClaudeConfig(t *testing.T) {
 	t.Helper()
 	data := harnessReadJSON(t, filepath.Join(h.configDir, "settings.json"))
-	h.claudeDefault, _ = data["model"].(string)
-	h.claudeEfforts = map[string]string{}
-	if settings, ok := data["modelSettings"].(map[string]any); ok {
-		for id, value := range settings {
-			row, ok := value.(map[string]any)
-			if !ok {
-				continue
-			}
-			effort, _ := row["maxEffortLevel"].(string)
-			h.claudeEfforts[id] = effort
-		}
-	}
+	settings, _ := data["modelSettings"].(map[string]any)
 	if picker, ok := data["modelPicker"].(map[string]any); ok {
 		options, _ := picker["options"].([]any)
 		for _, entry := range options {
@@ -254,10 +284,12 @@ func (h *harnessTest) loadClaudeConfig(t *testing.T) {
 				continue
 			}
 			id, _ := row["model"].(string)
-			label, _ := row["label"].(string)
-			if id != "" {
-				h.claudeOptions = append(h.claudeOptions, harnessModelOption{id: id, label: label})
+			if id == "" {
+				continue
 			}
+			effort, _ := settings[id].(map[string]any)
+			ceiling, _ := effort["maxEffortLevel"].(string)
+			h.models = append(h.models, harnessModel{id: id, route: strings.TrimSuffix(id, harnessLongContextSuffix), levels: harnessLevels(ceiling)})
 		}
 	}
 	if env, ok := data["env"].(map[string]any); ok {
@@ -283,24 +315,20 @@ func (h *harnessTest) loadPiConfig(t *testing.T) {
 		if id == "" {
 			continue
 		}
-		model := harnessPiModel{id: id}
-		model.api, _ = row["api"].(string)
-		model.reasoning, _ = row["reasoning"].(bool)
-		if levels, ok := row["thinkingLevelMap"].(map[string]any); ok {
-			for _, level := range harnessEffortLevels {
-				if value, ok := levels[level]; ok && value != nil {
-					model.levels = append(model.levels, level)
-				}
+		var levels []string
+		thinking, _ := row["thinkingLevelMap"].(map[string]any)
+		for level, value := range thinking {
+			if value != nil {
+				levels = append(levels, level)
 			}
 		}
-		h.piModels = append(h.piModels, model)
+		h.models = append(h.models, harnessModel{id: id, route: id, levels: harnessLevels(levels...)})
 	}
 }
 
 func (h *harnessTest) loadCodexConfig(t *testing.T) {
 	t.Helper()
 	data := harnessReadTOML(t, filepath.Join(h.configDir, "config.toml"))
-	h.codexDefault, _ = data["model"].(string)
 	providers, _ := data["model_providers"].(map[string]any)
 	provider, _ := providers[harnessProviderID].(map[string]any)
 	require.NotNil(t, provider, "codex config.toml has no %s provider", harnessProviderID)
@@ -310,7 +338,6 @@ func (h *harnessTest) loadCodexConfig(t *testing.T) {
 	require.NotEmpty(t, catalogPath, "codex config.toml has no model_catalog_json")
 	catalog := harnessReadJSON(t, catalogPath)
 	models, _ := catalog["models"].([]any)
-	h.codexEfforts = map[string][]string{}
 	for _, entry := range models {
 		row, ok := entry.(map[string]any)
 		if !ok {
@@ -320,21 +347,20 @@ func (h *harnessTest) loadCodexConfig(t *testing.T) {
 		if slug == "" {
 			continue
 		}
-		h.codexSlugs = append(h.codexSlugs, slug)
+		var efforts []string
 		levels, _ := row["supported_reasoning_levels"].([]any)
 		for _, level := range levels {
 			option, _ := level.(map[string]any)
-			if effort, _ := option["effort"].(string); effort != "" {
-				h.codexEfforts[slug] = append(h.codexEfforts[slug], effort)
-			}
+			effort, _ := option["effort"].(string)
+			efforts = append(efforts, effort)
 		}
+		h.models = append(h.models, harnessModel{id: slug, route: slug, levels: harnessLevels(efforts...)})
 	}
 }
 
 func (h *harnessTest) loadOpenCodeConfig(t *testing.T) {
 	t.Helper()
 	data := harnessReadJSON(t, filepath.Join(h.configDir, harnessOpenCodeSettings))
-	h.openCodeDefault, _ = data["model"].(string)
 	providers, v2 := data["providers"].(map[string]any)
 	if !v2 {
 		providers, _ = data["provider"].(map[string]any)
@@ -351,26 +377,26 @@ func (h *harnessTest) loadOpenCodeConfig(t *testing.T) {
 	models, _ := provider["models"].(map[string]any)
 	for _, key := range slices.Sorted(maps.Keys(models)) {
 		row, _ := models[key].(map[string]any)
-		model := harnessOpenCodeModel{id: harnessProviderID + "/" + key}
+		var variants []string
 		if v2 {
-			pkg, _ := row["package"].(string)
-			model.anthropic = strings.Contains(pkg, "anthropic")
-			variants, _ := row["variants"].([]any)
-			for _, entry := range variants {
+			entries, _ := row["variants"].([]any)
+			for _, entry := range entries {
 				variant, _ := entry.(map[string]any)
-				if id, _ := variant["id"].(string); id != "" {
-					model.variants = append(model.variants, id)
-				}
+				id, _ := variant["id"].(string)
+				variants = append(variants, id)
 			}
 		} else {
-			override, _ := row["provider"].(map[string]any)
-			npm, _ := override["npm"].(string)
-			model.anthropic = npm == "@ai-sdk/anthropic"
-			variants, _ := row["variants"].(map[string]any)
-			model.variants = slices.Sorted(maps.Keys(variants))
+			entries, _ := row["variants"].(map[string]any)
+			variants = slices.Collect(maps.Keys(entries))
 		}
-		h.openCodeModels = append(h.openCodeModels, model)
+		h.models = append(h.models, harnessModel{id: harnessProviderID + "/" + key, route: key, levels: harnessLevels(variants...)})
 	}
+}
+
+func harnessLevels(levels ...string) []string {
+	return slices.DeleteFunc(slices.Clone(harnessEffortLevels), func(level string) bool {
+		return !slices.Contains(levels, level)
+	})
 }
 
 func harnessReadJSON(t *testing.T, path string) map[string]any {
@@ -682,6 +708,17 @@ func codexCompletedTools(objects []map[string]any) []string {
 	})
 }
 
+func codexSearched(objects []map[string]any) bool {
+	searched := false
+	harnessWalkObjects(objects, func(object map[string]any) {
+		kind, _ := object["type"].(string)
+		if strings.Contains(kind, "web_search") {
+			searched = true
+		}
+	})
+	return searched
+}
+
 func codexLastAgentMessage(objects []map[string]any) string {
 	messages := codexCompletedItems(objects, "agent_message")
 	if len(messages) == 0 {
@@ -747,182 +784,165 @@ func openCodeSessionID(objects []map[string]any) string {
 	return ""
 }
 
-func harnessRouterRoute(model string) bool {
-	model = strings.TrimSuffix(model, harnessLongContextSuffix)
-	return strings.HasPrefix(model[strings.LastIndex(model, "/")+1:], harnessRouterRoutePrefix)
-}
-
-func harnessModelPair(t *testing.T, harness string, ids []string) (string, string) {
+func (h *harnessTest) pickModel(t *testing.T, class string, need harnessNeed) harnessModel {
 	t.Helper()
-	ids = slices.DeleteFunc(slices.Clone(ids), harnessRouterRoute)
-	if len(ids) < 2 {
-		t.Skipf("the team has %d non-router route(s) %s can call; model switching needs at least 2", len(ids), harness)
-	}
-	return ids[0], ids[1]
-}
-
-func harnessDefaultModelArgs(t *testing.T, flag, defaultModel string, models []string) []string {
-	t.Helper()
-	if !harnessRouterRoute(defaultModel) {
-		return nil
-	}
-	for _, model := range models {
-		if !harnessRouterRoute(model) {
-			step(t, "default model %s is a router route; using %s", defaultModel, model)
-			return []string{flag, model}
+	for _, model := range h.models {
+		if model.class == class && need.ok(model) {
+			step(t, "%s picked %s model %s (%s)", h.name, class, model.id, need.name)
+			return model
 		}
 	}
-	t.Skipf("the default model %s is a router route and the team has no other route (models: %s)", defaultModel, strings.Join(models, ", "))
-	return nil
-}
-
-func (h *harnessTest) claudeIDs() []string {
-	ids := make([]string, 0, len(h.claudeOptions))
-	for _, option := range h.claudeOptions {
-		ids = append(ids, option.id)
+	names := make([]string, 0, len(h.models))
+	for _, model := range h.models {
+		names = append(names, model.id+"("+model.class+")")
 	}
-	return ids
+	t.Skipf("the team has no %s route %s can call with %s (models: %s)", class, h.name, need.name, strings.Join(names, ", "))
+	return harnessModel{}
 }
 
-func (h *harnessTest) claudePair(t *testing.T) (string, string) {
+func (h *harnessTest) thinkingNeed() harnessNeed {
+	if h.name == "codex" {
+		return harnessHighEffort
+	}
+	return harnessReasoning
+}
+
+func (h *harnessTest) thinkingArgs(model harnessModel) []string {
+	switch {
+	case h.name == "codex":
+		return []string{"-m", model.id, "-c", "model_reasoning_effort=high"}
+	case h.name == "pi":
+		return []string{"--thinking", model.levels[0], "--model", model.id}
+	case h.opencode2:
+		return []string{"--thinking", "-m", model.id + "#" + model.levels[0]}
+	case h.name == "opencode":
+		return []string{"--thinking", "--variant", model.levels[0], "-m", model.id}
+	}
+	return []string{"--model", model.id}
+}
+
+func (h *harnessTest) searches() bool {
+	return h.name == "claude-code" || h.name == "codex"
+}
+
+func claudeAssertThinking(t *testing.T, model harnessModel, events []claudeStreamEvent, stdout string) {
 	t.Helper()
-	return harnessModelPair(t, "Claude Code", h.claudeIDs())
+	blocks := claudeThinkingBlocks(events)
+	step(t, "claude-code %s: thinking blocks %d", model.id, blocks)
+	require.Greater(t, blocks, 0, "stream-json shows no thinking block under %s, so thinking never engaged; stdout:\n%s", model.id, stdout)
 }
 
-func (h *harnessTest) codexPair(t *testing.T) (string, string) {
+func codexAssertThinking(t *testing.T, model harnessModel, objects []map[string]any, stdout string) {
 	t.Helper()
-	return harnessModelPair(t, "Codex", h.codexSlugs)
+	tokens := codexReasoningTokens(objects)
+	step(t, "codex %s: reasoning items %d, reasoning_output_tokens %v", model.id, len(codexCompletedItems(objects, "reasoning")), tokens)
+	require.Greater(t, tokens, 0.0, "codex reports no reasoning_output_tokens under %s at high effort, so thinking never engaged; stdout:\n%s", model.id, stdout)
 }
 
-func (h *harnessTest) piPair(t *testing.T) (string, string) {
+func piAssertThinking(t *testing.T, model harnessModel, objects []map[string]any, stdout string) {
 	t.Helper()
-	ids := make([]string, 0, len(h.piModels))
-	for _, model := range h.piModels {
-		ids = append(ids, model.id)
-	}
-	return harnessModelPair(t, "Pi", ids)
+	seen := piThinkingSeen(objects)
+	step(t, "pi %s: thinking seen %v", model.id, seen)
+	require.True(t, seen, "pi's stream shows no thinking or reasoning event under %s; stdout:\n%s", model.id, stdout)
 }
 
-func (h *harnessTest) claudeThinkingModel(t *testing.T) string {
+func openCodeAssertThinking(t *testing.T, model harnessModel, objects []map[string]any, stdout string) {
 	t.Helper()
-	names := make([]string, 0, len(h.claudeOptions))
-	for _, option := range h.claudeOptions {
-		if _, ok := h.claudeEfforts[option.id]; ok && !harnessRouterRoute(option.id) {
-			return option.id
-		}
-		names = append(names, option.id)
+	events, reasoning, tokens := len(harnessEventsOf(objects, "reasoning")), openCodeEventText(objects, "reasoning"), openCodeReasoningTokens(objects)
+	step(t, "opencode %s: reasoning events %d, reasoning text %d chars, step_finish reasoning tokens %v", model.id, events, len(reasoning), tokens)
+	if model.class == harnessOpenAI {
+		require.Greater(t, tokens, 0.0, "opencode reports no reasoning tokens under %s (reasoning events %d); stdout:\n%s", model.id, events, stdout)
+		return
 	}
-	t.Skipf("the team's routes include no non-router model with an effort ceiling for Claude Code to think with (models: %s)", strings.Join(names, ", "))
-	return ""
+	require.NotEmpty(t, reasoning, "opencode streamed no reasoning text under %s (reasoning events %d, step_finish reasoning tokens %v); stdout:\n%s", model.id, events, tokens, stdout)
 }
 
-func (h *harnessTest) piAnthropicThinkingModel(t *testing.T) (string, string) {
+func (h *harnessTest) switchTurn(t *testing.T, workspace string, model harnessModel, session, prompt string) string {
 	t.Helper()
-	for _, model := range h.piModels {
-		if model.api == "anthropic-messages" && model.reasoning && len(model.levels) > 0 && !harnessRouterRoute(model.id) {
-			return model.id, model.levels[0]
-		}
+	switch h.name {
+	case "claude-code":
+		return h.claudeTurn(t, workspace, model, session, prompt)
+	case "codex":
+		return h.codexTurn(t, workspace, model, session, prompt)
+	case "pi":
+		return h.piTurn(t, workspace, model, session, prompt)
 	}
-	t.Skipf("the team's routes include no non-router Anthropic-format model with reasoning for pi to think with (models: %s)", harnessPiModelNames(h.piModels))
-	return "", ""
+	return h.openCodeTurn(t, workspace, model, session, prompt)
 }
 
-func (h *harnessTest) piNonAnthropicModel(t *testing.T) string {
+func (h *harnessTest) claudeTurn(t *testing.T, workspace string, model harnessModel, session, prompt string) string {
 	t.Helper()
-	for _, model := range h.piModels {
-		if model.api != "anthropic-messages" && !harnessRouterRoute(model.id) {
-			return model.id
-		}
+	args := append([]string{"-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--allowedTools", "WebSearch"}, h.thinkingArgs(model)...)
+	if session != "" {
+		args = append(args, "--resume", session)
 	}
-	t.Skipf("the team's routes include no non-router, non-Anthropic-format model for pi; Anthropic routes intermittently refuse this prompt with a content filter while pi exits 0 (models: %s)", harnessPiModelNames(h.piModels))
-	return ""
+	stdout, stderr := h.run(t, workspace, append(args, prompt)...)
+	events := parseClaudeStream(stdout)
+	harnessAssertNoAPIError(t, stdout+stderr)
+	sessionID, _, ok := claudeResult(events)
+	require.True(t, ok, "stream-json has no result event; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	uses := claudeToolUses(events)
+	require.Contains(t, uses, "WebSearch", "claude-code never invoked WebSearch; tool uses: %v; stdout:\n%s", uses, stdout)
+	require.True(t, slices.ContainsFunc(uses, func(use string) bool { return use != "WebSearch" }), "claude-code ran no tool besides WebSearch; tool uses: %v; stdout:\n%s", uses, stdout)
+	claudeAssertThinking(t, model, events, stdout)
+	require.NotEmpty(t, sessionID, "claude-code's result event has no session_id; stdout:\n%s", stdout)
+	return sessionID
 }
 
-func harnessPiModelNames(models []harnessPiModel) string {
-	names := make([]string, 0, len(models))
-	for _, model := range models {
-		names = append(names, model.id+"("+model.api+")")
-	}
-	return strings.Join(names, ", ")
-}
-
-func (h *harnessTest) codexThinkingModel(t *testing.T) string {
+func (h *harnessTest) codexTurn(t *testing.T, workspace string, model harnessModel, session, prompt string) string {
 	t.Helper()
-	if slices.Contains(h.codexEfforts[h.codexDefault], "high") && !harnessRouterRoute(h.codexDefault) {
-		return h.codexDefault
+	args := []string{"exec"}
+	if session != "" {
+		args = append(args, "resume", session)
 	}
-	for _, slug := range h.codexSlugs {
-		if slices.Contains(h.codexEfforts[slug], "high") && !harnessRouterRoute(slug) {
-			return slug
-		}
+	args = append(append(args, "--json", "--skip-git-repo-check", "-c", "sandbox_mode=danger-full-access", "-c", "web_search=live"), h.thinkingArgs(model)...)
+	stdout, stderr := h.run(t, workspace, append(args, prompt)...)
+	harnessAssertNoAPIError(t, stdout+stderr)
+	objects := harnessJSONObjects(stdout)
+	step(t, "codex completed items: %v", codexCompletedItemTypes(objects))
+	for _, item := range codexCompletedItems(objects, "error") {
+		step(t, "codex error item: %v", item["message"])
 	}
-	t.Skipf("the team's routes include no non-router model Codex can run at high reasoning effort (models: %s)", strings.Join(h.codexSlugs, ", "))
-	return ""
+	require.NotEmpty(t, codexCompletedTools(objects), "codex completed no command_execution or file_change item; stdout:\n%s", stdout)
+	require.True(t, codexSearched(objects), "codex emitted no web_search event; stdout:\n%s", stdout)
+	codexAssertThinking(t, model, objects, stdout)
+	threadID := cmp.Or(session, codexThreadID(objects))
+	require.NotEmpty(t, threadID, "codex emitted no thread.started thread_id; stdout:\n%s", stdout)
+	return threadID
 }
 
-func (h *harnessTest) openCodeThinkingModel(t *testing.T) (string, string) {
+func (h *harnessTest) piTurn(t *testing.T, workspace string, model harnessModel, session, prompt string) string {
 	t.Helper()
-	for _, pick := range []func(harnessOpenCodeModel) bool{
-		func(model harnessOpenCodeModel) bool { return model.id == h.openCodeDefault },
-		func(model harnessOpenCodeModel) bool { return model.anthropic },
-		func(harnessOpenCodeModel) bool { return true },
-	} {
-		for _, model := range h.openCodeModels {
-			if !pick(model) || harnessRouterRoute(model.id) {
-				continue
-			}
-			for _, level := range harnessEffortLevels {
-				if slices.Contains(model.variants, level) {
-					return model.id, level
-				}
-			}
-		}
+	sessionDir := cmp.Or(session, t.TempDir())
+	args := []string{"-p", "--mode", "json", "--offline", "--session-dir", sessionDir}
+	if session != "" {
+		args = append(args, "--continue")
 	}
-	t.Skipf("the team's routes include no non-router model with a reasoning variant for opencode to think with (models: %s)", harnessOpenCodeModelNames(h.openCodeModels))
-	return "", ""
+	stdout, stderr := h.run(t, workspace, append(append(args, h.thinkingArgs(model)...), prompt)...)
+	harnessAssertNoAPIError(t, stdout+stderr)
+	objects := harnessJSONObjects(stdout)
+	require.Zero(t, piErrorTurns(objects), "pi ended a turn with an API error; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	require.NotEmpty(t, harnessEventsOf(objects, "tool_execution_start"), "pi made no tool calls; stdout:\n%s", stdout)
+	require.Zero(t, piToolErrors(objects), "a pi tool call failed; stdout:\n%s", stdout)
+	piAssertThinking(t, model, objects, stdout)
+	return sessionDir
 }
 
-func (h *harnessTest) openCodeFirstModel(anthropic bool) string {
-	for _, model := range h.openCodeModels {
-		if model.anthropic == anthropic && !harnessRouterRoute(model.id) {
-			return model.id
-		}
-	}
-	return ""
-}
-
-func (h *harnessTest) openCodeToolModel(t *testing.T) string {
+func (h *harnessTest) openCodeTurn(t *testing.T, workspace string, model harnessModel, session, prompt string) string {
 	t.Helper()
-	model := h.openCodeFirstModel(false)
-	if model == "" {
-		t.Skipf("the team's routes include no non-router, non-Anthropic model for opencode's tool call (models: %s)", harnessOpenCodeModelNames(h.openCodeModels))
+	args := append([]string{"run", "--format", "json", "--auto"}, h.thinkingArgs(model)...)
+	if session != "" {
+		args = append(args, "-s", session)
 	}
-	return model
-}
-
-func (h *harnessTest) openCodePair(t *testing.T) (string, string) {
-	t.Helper()
-	modelA, modelB := h.openCodeFirstModel(false), h.openCodeFirstModel(true)
-	if modelA != "" && modelB != "" {
-		return modelA, modelB
-	}
-	ids := make([]string, 0, len(h.openCodeModels))
-	for _, model := range h.openCodeModels {
-		ids = append(ids, model.id)
-	}
-	return harnessModelPair(t, "opencode", ids)
-}
-
-func harnessOpenCodeModelNames(models []harnessOpenCodeModel) string {
-	names := make([]string, 0, len(models))
-	for _, model := range models {
-		name := model.id
-		if model.anthropic {
-			name += "(anthropic)"
-		}
-		names = append(names, name)
-	}
-	return strings.Join(names, ", ")
+	stdout, stderr := h.run(t, workspace, append(args, prompt)...)
+	harnessAssertNoAPIError(t, stdout+stderr)
+	objects := harnessJSONObjects(stdout)
+	require.Empty(t, harnessEventsOf(objects, "error"), "opencode emitted error events; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	require.NotEmpty(t, openCodeCompletedTools(objects), "opencode completed no tool calls; stdout:\n%s", stdout)
+	openCodeAssertThinking(t, model, objects, stdout)
+	sessionID := cmp.Or(session, openCodeSessionID(objects))
+	require.NotEmpty(t, sessionID, "opencode emitted no sessionID; stdout:\n%s", stdout)
+	return sessionID
 }
 
 func harnessSeedWorkspace(t *testing.T, entries map[string]string) string {
