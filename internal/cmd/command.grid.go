@@ -392,40 +392,30 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if f.UseSessionCredential || session.IsEphemeral() {
 		credentialSource = harness.CredentialSourceSession
 	}
-	passed := ctx.Command.Flags().Changed
-	noServedModel := passed("claude-served-model") && !f.ClaudeServedModel
-	if !passed("claude-served-model") && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.Claude) {
-		show, err := gridAskServedModel(ctx, "Claude Code")
-		if err != nil {
+	passed := ctx.Command.Flags().Changed("served-model")
+	servedModel := f.ServedModel || !passed
+	var offered, labels []string
+	for _, h := range []struct{ name, label string }{{harness.Claude, "Claude Code"}, {harness.Pi, "Pi"}, {harness.OpenCode, "OpenCode"}} {
+		if gridOffersServedModel(selected, listed, h.name) {
+			offered = append(offered, h.name)
+			labels = append(labels, h.label)
+		}
+	}
+	if len(labels) > 0 && !passed && !f.Yes && !f.DryRun && ctx.IsInteractive() {
+		if servedModel, err = gridAskServedModel(ctx, labels); err != nil {
 			return err
 		}
-		noServedModel = !show
 	}
-	noPiServedModel := passed("pi-served-model") && !f.PiServedModel
-	if !passed("pi-served-model") && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.Pi) {
-		show, err := gridAskServedModel(ctx, "Pi")
-		if err != nil {
-			return err
-		}
-		noPiServedModel = !show
-	}
-	noOpenCodeServedModel := passed("opencode-served-model") && !f.OpenCodeServedModel
-	if !passed("opencode-served-model") && !f.Yes && !f.DryRun && ctx.IsInteractive() && gridOffersServedModel(selected, listed, harness.OpenCode) {
-		show, err := gridAskServedModel(ctx, "OpenCode")
-		if err != nil {
-			return err
-		}
-		noOpenCodeServedModel = !show
-	}
+	noServedModel := func(name string) bool { return !servedModel && (passed || slices.Contains(offered, name)) }
 	targets := make([]gridHarnessTarget, len(selected))
 	for i := range selected {
 		record := harness.Record{
 			KeyName:               f.KeyName,
 			Profile:               session.ProfileName(),
 			CredentialSource:      credentialSource,
-			NoClaudeServedModel:   noServedModel,
-			NoPiServedModel:       noPiServedModel,
-			NoOpenCodeServedModel: noOpenCodeServedModel,
+			NoClaudeServedModel:   noServedModel(harness.Claude),
+			NoPiServedModel:       noServedModel(harness.Pi),
+			NoOpenCodeServedModel: noServedModel(harness.OpenCode),
 			GitContext:            f.GitContext,
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
@@ -596,10 +586,15 @@ func gridOffersServedModel(selected []gridSelectedHarness, listed []managementap
 	return slices.ContainsFunc(selected[i].Routes(routes), func(r harness.Route) bool { return r.Router })
 }
 
-func gridAskServedModel(ctx *CommandContext, harnessLabel string) (bool, error) {
+func gridAskServedModel(ctx *CommandContext, harnessLabels []string) (bool, error) {
+	last := len(harnessLabels) - 1
+	harnessLabel := harnessLabels[last]
+	if last > 0 {
+		harnessLabel = strings.Join(harnessLabels[:last], ", ") + " and " + harnessLabel
+	}
 	show := true
 	err := ctx.RunPrompt(huh.NewSelect[bool]().
-		Title("Show which model served each response on auto routes in "+harnessLabel+"?").
+		Title("Show which model served each response on intelligent routes in "+harnessLabel+"?").
 		Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
 		Value(&show))
 	return show, err
@@ -613,9 +608,9 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		harness string
 		set     func(*harness.Record)
 	}{
-		{"claude-served-model", harness.Claude, func(r *harness.Record) { r.NoClaudeServedModel = !f.ClaudeServedModel }},
-		{"pi-served-model", harness.Pi, func(r *harness.Record) { r.NoPiServedModel = !f.PiServedModel }},
-		{"opencode-served-model", harness.OpenCode, func(r *harness.Record) { r.NoOpenCodeServedModel = !f.OpenCodeServedModel }},
+		{"served-model", harness.Claude, func(r *harness.Record) { r.NoClaudeServedModel = !f.ServedModel }},
+		{"served-model", harness.Pi, func(r *harness.Record) { r.NoPiServedModel = !f.ServedModel }},
+		{"served-model", harness.OpenCode, func(r *harness.Record) { r.NoOpenCodeServedModel = !f.ServedModel }},
 		{"git-context", "", func(r *harness.Record) { r.GitContext = f.GitContext }},
 	}
 	if err := gridRequireGit(ctx, f.GitContext); err != nil {
