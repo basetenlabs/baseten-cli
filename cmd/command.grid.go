@@ -20,7 +20,8 @@ var commandGrid = Command{
 			Description: gridPrereleaseNotice +
 				"Configure installed harnesses with your team's routes and a Grid API key.\n\n" +
 				"Setup offers a picker of installed harnesses when --harness is omitted. Repeat --harness to select several. " +
-				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code lists the routes that serve " +
+				"The claude harness configures Claude Code and, when the app is installed, Claude Desktop. " +
+				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code and Claude Desktop list the routes that serve " +
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the primary route unless --primary-route-id is set. " +
 				"Use 'baseten grid route list' to find route IDs; harness configurations use the corresponding route names.\n\n" +
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
@@ -28,10 +29,10 @@ var commandGrid = Command{
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those. " +
-				"For Claude Code, when the team has router routes, setup shows which model served the latest response of a router route in the status line. " +
-				"Setup never changes a status line you configured; it adds a Stop hook that shows the serving model after each response instead. " +
-				"Interactive setup asks whether to show it, defaulting to yes; --no-claude-served-model leaves it out and removes it without asking, and --yes shows it unless that flag is set. " +
-				"To turn it off without rerunning setup, set BASETEN_CLAUDE_SERVED_MODEL=0 in Claude Code's settings env.",
+				"For Claude Desktop, setup adds a config to the app's third-party config library and switches the app to third-party mode; quit and reopen the app to load it.\n\n" +
+				"Setup also adds a served-model indicator for intelligent routes in Claude Code, Pi, and OpenCode 2. " +
+				"To turn it off, set BASETEN_CLAUDE_SERVED_MODEL, BASETEN_PI_SERVED_MODEL, or BASETEN_OPENCODE_SERVED_MODEL to 0.\n\n" +
+				"With --git-context, setup makes each harness add the git origin URL, branch, and commit to the session context when a session starts inside a git repository. This is used for training an improved custom router.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
@@ -42,12 +43,12 @@ var commandGrid = Command{
 					},
 					{
 						Description: "Install a pre-minted key from the environment instead of creating one.",
-						Command:     "baseten grid setup --harness claude-code --use-session-credential --yes",
+						Command:     "baseten grid setup --harness claude --use-session-credential --yes",
 					},
 					{
 						Description: "Preview configuration for one harness.",
 						CommandLines: []string{
-							"baseten grid setup --harness claude-code",
+							"baseten grid setup --harness claude",
 							"--primary-route-id <route-id> --dry-run",
 						},
 					},
@@ -61,7 +62,7 @@ var commandGrid = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print the configuration file paths.",
-					Command:     "baseten grid setup --harness claude-code --dry-run --jq '.items[].config'",
+					Command:     "baseten grid setup --harness claude --dry-run --jq '.items[].config'",
 				},
 			},
 		},
@@ -125,11 +126,12 @@ var commandGrid = Command{
 			Description: gridPrereleaseNotice +
 				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
 				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path. " +
-				"For Claude Code, teardown removes the served-model status line and Stop hook that setup added, and keeps your own status line and hooks.\n\n" +
+				"It also removes the served-model status line, Stop hook, extension, or plugin and the git context hook, plugin, or extension that setup added, and keeps your own.\n\n" +
 				"Teardown also deletes the Grid API key the removed harnesses use, once no other harness on this machine uses it, " +
 				"except a key installed with --use-session-credential, whose lifecycle this CLI does not own. " +
 				"It forgets the recorded setup so 'grid sync' no longer refreshes the removed harnesses. " +
-				"It works after the harness is uninstalled. For Codex, teardown re-enables ChatGPT login and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. Run 'codex login' to sign back in.",
+				"It works after the harness is uninstalled. For Codex, teardown re-enables ChatGPT login and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. Run 'codex login' to sign back in. " +
+				"For Claude Desktop, teardown switches the app back to its own login and removes Baseten's config from the library.",
 			Flags: GridTeardownFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "The settings removed from each harness. Use --verbose for configuration paths and setting names.",
@@ -482,7 +484,7 @@ type GridTeamSettingsDescribeFlags struct {
 type GridTeamSettingsUpdateFlags struct {
 	CommandFlags
 	GridTeamFlags
-	Harness                  string               `flag:"harness" desc:"Harness whose default route IDs to update." enum:"claude-code,codex,opencode,pi"`
+	Harness                  string               `flag:"harness" desc:"Harness whose default route IDs to update." enum:"claude,codex,opencode,pi"`
 	PrimaryRouteID           OptionalFlag[string] `flag:"primary-route-id" desc:"Primary route ID; null clears the configured default. Requires --harness." nullable:"true"`
 	BackgroundRouteID        OptionalFlag[string] `flag:"background-route-id" desc:"Background route ID for Claude Code or OpenCode; null clears it. Requires --harness." nullable:"true"`
 	ClearHarnessDefaults     bool                 `flag:"clear-harness-defaults" desc:"Clear all configured harness defaults. Cannot be combined with --harness or route flags."`
@@ -609,14 +611,14 @@ type GridStatusList struct {
 
 // GridHarnessFlags selects the harnesses a command applies to.
 type GridHarnessFlags struct {
-	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude-code,codex,opencode,pi"`
+	Harness   []string `flag:"harness" desc:"Harness to apply to. May be repeated." enum:"claude,codex,opencode,pi"`
 	ConfigDir string   `flag:"config-dir" desc:"Harness configuration directory. Requires exactly one --harness. Defaults to the harness's own location."`
 }
 
 // GridTokenFlags are the flags for `baseten grid token`.
 type GridTokenFlags struct {
 	CommandFlags
-	Harness string `flag:"harness" desc:"Harness the token is for, as configured by 'grid setup'." enum:"claude-code,codex,opencode,pi" required:"true"`
+	Harness string `flag:"harness" desc:"Harness the token is for, as configured by 'grid setup'. claude-code is accepted for settings written before the claude harness covered Claude Desktop." enum:"claude,codex,opencode,pi,claude-code" required:"true"`
 	Team    string `flag:"team" desc:"Team name or ID the token is for. Defaults to the team the harness was set up with."`
 }
 
@@ -637,16 +639,19 @@ type GridStatusFlags struct {
 type GridSetupFlags struct {
 	CommandFlags
 	GridHarnessFlags
-	Team                 string `flag:"team" desc:"Team name or ID whose routes to use. Omit to let the API select your only team. Run 'baseten org team list' to see teams."`
-	KeyName              string `flag:"key-name" desc:"Name of the Grid API key, if setup creates one. Defaults to baseten-harness-<hostname>-<random suffix>."`
-	PrimaryRouteID       string `flag:"primary-route-id" desc:"Primary route ID. Defaults to the team's default for the harness, else the first route the harness lists."`
-	BackgroundRouteID    string `flag:"background-route-id" desc:"Route ID for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
-	SubagentRouteID      string `flag:"subagent-route-id" desc:"Route ID for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
-	FallbackRouteID      string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
-	NoClaudeServedModel  bool   `flag:"no-claude-served-model" desc:"For Claude Code, leave out the status line or Stop hook that shows which model served a router route's response, and remove it if setup added it before, without asking."`
-	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
-	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
-	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+	Team                  string `flag:"team" desc:"Team name or ID whose routes to use. Omit to let the API select your only team. Run 'baseten org team list' to see teams."`
+	KeyName               string `flag:"key-name" desc:"Name of the Grid API key, if setup creates one. Defaults to baseten-harness-<hostname>-<random suffix>."`
+	PrimaryRouteID        string `flag:"primary-route-id" desc:"Primary route ID. Defaults to the team's default for the harness, else the first route the harness lists."`
+	BackgroundRouteID     string `flag:"background-route-id" desc:"Route ID for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
+	SubagentRouteID       string `flag:"subagent-route-id" desc:"Route ID for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
+	FallbackRouteID       string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
+	NoClaudeServedModel   bool   `flag:"no-claude-served-model" desc:"For Claude Code, leave out the status line or Stop hook that shows which model served a router route's response, and remove it if setup added it before, without asking."`
+	NoPiServedModel       bool   `flag:"no-pi-served-model" desc:"For Pi, leave out the extension that shows which model served a router route's response, and remove it if setup added it before, without asking."`
+	NoOpenCodeServedModel bool   `flag:"no-opencode-served-model" desc:"For OpenCode 2, leave out the plugin that shows which model served a router route's response, and remove it if setup added it before, without asking."`
+	GitContext            bool   `flag:"git-context" desc:"Add the git origin URL, branch, and commit to each Claude Code, OpenCode, and Pi session's context, through a SessionStart hook, plugin, or extension. Without it, setup removes them if it added them before."`
+	UseSessionCredential  bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
+	DryRun                bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
+	Yes                   bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
 // GridSyncFlags are the flags for `baseten grid sync`.

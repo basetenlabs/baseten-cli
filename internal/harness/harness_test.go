@@ -23,8 +23,9 @@ const testEndpoint = "https://inference.example.com"
 
 func testRoute(name, displayName string) Route {
 	return Route{
-		Name: name, DisplayName: displayName,
+		ID: name, Name: name, DisplayName: displayName,
 		ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, Responses: true,
+		TargetAPI: TargetAPIChatCompletions,
 	}
 }
 
@@ -80,6 +81,93 @@ func TestNewRouteMarksRouters(t *testing.T) {
 	require.False(t, r.Router, "a route without a target type is not a router")
 }
 
+func TestNewRoutePicksTargetAPIFromFormats(t *testing.T) {
+	yes, no, tools, ctx, out := true, false, true, 128000, 4096
+	for _, tc := range []struct {
+		name    string
+		formats *managementapi.ExploreMetadataAPIFormats
+		want    TargetAPI
+	}{
+		{"no formats", nil, TargetAPIChatCompletions},
+		{"chat completions", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}, TargetAPIChatCompletions},
+		{"messages", &managementapi.ExploreMetadataAPIFormats{Messages: &yes}, TargetAPIMessages},
+		{"responses", &managementapi.ExploreMetadataAPIFormats{Responses: &yes}, TargetAPIResponses},
+		{"chat completions before messages", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes}, TargetAPIChatCompletions},
+		{"chat completions before responses", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}, TargetAPIChatCompletions},
+		{"messages before responses", &managementapi.ExploreMetadataAPIFormats{Messages: &yes, Responses: &yes}, TargetAPIMessages},
+		{"none advertised", &managementapi.ExploreMetadataAPIFormats{Messages: &no, Responses: &no, ChatCompletions: &no}, TargetAPIChatCompletions},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := NewRoute(managementapi.GridRoute{
+				Name: "acme/route", DisplayName: "Route",
+				Metadata: &managementapi.ExploreMetadata{
+					ContextWindow: &ctx, MaxOutputTokens: &out,
+					InputModalities: []string{"text"}, Tools: &tools,
+					SupportedApiFormats: tc.formats,
+				},
+			}, nil)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, r.TargetAPI)
+		})
+	}
+}
+
+func TestNewRoutePrefersNativeTargetAPIForExternalProviders(t *testing.T) {
+	yes, tools, ctx, out := true, true, 128000, 4096
+	all := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes, Responses: &yes}
+	completionsAndResponses := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}
+	completions := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}
+	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI, "conn-bedrock": ProviderBedrock, "conn-vertex": ProviderVertex}
+	for _, tc := range []struct {
+		name    string
+		target  string
+		formats *managementapi.ExploreMetadataAPIFormats
+		want    TargetAPI
+	}{
+		{"baseten prefers chat completions", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, all, TargetAPIChatCompletions},
+		{"router prefers chat completions", `{"type": "INTELLIGENT"}`, all, TargetAPIChatCompletions},
+		{"unknown connection prefers chat completions", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, all, TargetAPIChatCompletions},
+		{"anthropic prefers messages", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, all, TargetAPIMessages},
+		{"openai prefers responses", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, completionsAndResponses, TargetAPIResponses},
+		{"bedrock prefers responses", `{"type": "CONNECTION", "connection_id": "conn-bedrock", "model": "openai.gpt"}`, completionsAndResponses, TargetAPIResponses},
+		{"vertex prefers messages", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "claude"}`, all, TargetAPIMessages},
+		{"external falls back to chat completions", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "gemini"}`, completions, TargetAPIChatCompletions},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := managementapi.GridRoute{
+				Name: "acme/route", DisplayName: "Route",
+				Metadata: &managementapi.ExploreMetadata{
+					ContextWindow: &ctx, MaxOutputTokens: &out,
+					InputModalities: []string{"text"}, Tools: &tools,
+					SupportedApiFormats: tc.formats,
+				},
+			}
+			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
+			r, err := NewRoute(api, providers)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, r.TargetAPI)
+		})
+	}
+}
+
+func TestNewRouteKeepsOnlyTextAndImageInputModalities(t *testing.T) {
+	tools, ctx, out := true, 128000, 4096
+	route := func(modalities ...string) (Route, error) {
+		return NewRoute(managementapi.GridRoute{
+			Name: "acme/av", DisplayName: "AV",
+			Metadata: &managementapi.ExploreMetadata{
+				ContextWindow: &ctx, MaxOutputTokens: &out,
+				InputModalities: modalities, Tools: &tools,
+			},
+		}, nil)
+	}
+	r, err := route("text", "image", "video", "audio")
+	require.NoError(t, err)
+	require.Equal(t, []string{"text", "image"}, r.InputModalities)
+	_, err = route("audio", "video")
+	require.ErrorContains(t, err, "has no input modalities")
+}
+
 func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
 	routes := []Route{
 		{Name: "acme/o'brien", Router: true}, {Name: "acme/plain", DisplayName: "Plain"},
@@ -107,6 +195,17 @@ func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
 	}
 }
 
+func TestHasOpenCode2(t *testing.T) {
+	for version, want := range map[string]bool{
+		"opencode v2.2.5": true, "2.0.27": true, "opencode 10.1.0": true,
+		"1.19.5": false, "opencode v1.18.34": false, "": false, "unknown": false,
+	} {
+		require.Equal(t, want, HasOpenCode2(Detection{Installs: []Install{{Version: version}}}), version)
+	}
+	require.True(t, HasOpenCode2(Detection{Installs: []Install{{Version: "1.19.5"}, {Version: "opencode v2.0.27"}}}))
+	require.False(t, HasOpenCode2(Detection{}))
+}
+
 func testRoutes() []Route {
 	return []Route{
 		testRoute("acme/primary", "Primary"),
@@ -118,8 +217,10 @@ func testRoutes() []Route {
 
 type fakeExecer struct{ missing bool }
 
+// LookPath finds every bare name, as on PATH, and no desktop app, which is
+// looked up by its absolute path.
 func (e fakeExecer) LookPath(name string) (string, error) {
-	if e.missing {
+	if e.missing || filepath.IsAbs(name) {
 		return "", exec.ErrNotFound
 	}
 	return filepath.Join(string(filepath.Separator), "fake", name), nil
@@ -305,6 +406,14 @@ func setup(t *testing.T, h Harness, path string, routes []Route, s Selection) []
 	return plans
 }
 
+func setupGitContext(t *testing.T, h Harness, path string) []*Plan {
+	t.Helper()
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, GitContext: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	return plans
+}
+
 func teardown(t *testing.T, h Harness, path string) []*Plan {
 	t.Helper()
 	plans, err := h.Teardown(path)
@@ -357,7 +466,7 @@ func TestSetupRefreshAndTeardownKeepUnrelatedSettings(t *testing.T) {
 			teardown(t, h, path)
 			want := map[string]any{"theme": "light", "user-added": "keep"}
 			if h.Name() == Pi {
-				// Pi's default model is in settings.json, so setup leaves models.json's alone.
+				// Pi's default model is in settings.json, so setup leaves this file's model alone.
 				want["model"] = "original-model"
 			}
 			require.Equal(t, want, load(t, path))
@@ -392,7 +501,7 @@ func TestCredential(t *testing.T) {
 }
 
 func TestHelperCredential(t *testing.T) {
-	for _, h := range []Harness{claudeCodeHarness{}, codexHarness{}, piHarness{}} {
+	for _, h := range []Harness{claudeHarness{}, codexHarness{}, piHarness{}} {
 		t.Run(h.Name(), func(t *testing.T) {
 			path := settingsPath(t, h)
 			setup(t, h, path, testRoutes(), Selection{})
@@ -496,7 +605,7 @@ func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 }
 
 func TestOptionalSubagentCleanup(t *testing.T) {
-	for _, h := range []Harness{claudeCodeHarness{}, openCodeHarness{}} {
+	for _, h := range []Harness{claudeHarness{}, openCodeHarness{}} {
 		for _, explicit := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/explicit=%t", h.Name(), explicit), func(t *testing.T) {
 				path := settingsPath(t, h)
@@ -535,8 +644,8 @@ func TestBackgroundRouteDefaultAndOverride(t *testing.T) {
 			want = defaultBackgroundRoute
 		}
 		t.Run(ClaudeCode+"/"+want, func(t *testing.T) {
-			path := settingsPath(t, claudeCodeHarness{})
-			setup(t, claudeCodeHarness{}, path, testRoutes(), Selection{Background: background})
+			path := settingsPath(t, claudeHarness{})
+			setup(t, claudeHarness{}, path, testRoutes(), Selection{Background: background})
 			d := load(t, path)
 			require.Equal(t, want, get(d, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data)
 			require.Equal(t, want, get(d, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data)
@@ -553,15 +662,219 @@ func TestBackgroundRouteDefaultAndOverride(t *testing.T) {
 }
 
 func TestClaudeAnthropicModelEnvIsManaged(t *testing.T) {
-	path := settingsPath(t, claudeCodeHarness{})
-	setup(t, claudeCodeHarness{}, path, testRoutes(), Selection{Primary: "acme/primary"})
+	path := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, path, testRoutes(), Selection{Primary: "acme/primary"})
 	d := load(t, path)
 	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
-	status, err := claudeCodeHarness{}.Inspect(Detection{Name: ClaudeCode, Path: path})
+	status, err := claudeHarness{}.Inspect(Detection{Name: ClaudeCode, Path: path})
 	require.NoError(t, err)
 	require.Contains(t, status.Managed, "env.ANTHROPIC_MODEL")
-	teardown(t, claudeCodeHarness{}, path)
+	teardown(t, claudeHarness{}, path)
 	require.False(t, get(load(t, path), []string{"env", "ANTHROPIC_MODEL"}).Exists)
+}
+
+func TestClaudeSessionStartHookIsInstalledOnce(t *testing.T) {
+	h := claudeHarness{}
+	path := settingsPath(t, h)
+	save(t, path, map[string]any{"theme": "dark"})
+	ours := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeSessionStartCommand}}}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NotContains(t, load(t, path), "hooks")
+	setupGitContext(t, h, path)
+	require.Equal(t, []any{ours}, get(load(t, path), claudeSessionStartHooksPath).Data)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	for _, p := range setupGitContext(t, h, path) {
+		require.False(t, p.Changed, "repeating setup changes nothing")
+	}
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, string(before), string(after))
+	status, err := h.Inspect(Detection{Name: ClaudeCode, Path: path})
+	require.NoError(t, err)
+	require.Contains(t, status.Managed, pathKey(claudeSessionStartHooksPath))
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NotContains(t, load(t, path), "hooks")
+	setupGitContext(t, h, path)
+	teardown(t, h, path)
+	require.Equal(t, map[string]any{"theme": "dark"}, load(t, path))
+}
+
+func TestClaudeSessionStartHookKeepsUserHooks(t *testing.T) {
+	h := claudeHarness{}
+	path := settingsPath(t, h)
+	user := []any{
+		map[string]any{"matcher": "startup", "hooks": []any{map[string]any{"type": "command", "command": "echo hi"}}},
+		map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "date"}}},
+	}
+	save(t, path, map[string]any{"hooks": map[string]any{"SessionStart": user}})
+	ours := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeSessionStartCommand}}}
+	for range 2 {
+		plans := setupGitContext(t, h, path)
+		require.Empty(t, plans[0].Replaced)
+		require.Equal(t, append(slices.Clone(user), ours), get(load(t, path), claudeSessionStartHooksPath).Data)
+	}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.Equal(t, user, get(load(t, path), claudeSessionStartHooksPath).Data)
+	teardown(t, h, path)
+	require.Equal(t, map[string]any{"hooks": map[string]any{"SessionStart": user}}, load(t, path))
+}
+
+func TestClaudeSessionStartHookPrintsGitContext(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh is not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	run := func(dir string, args ...string) string {
+		t.Helper()
+		command := exec.Command(args[0], args[1:]...)
+		command.Dir = dir
+		out, err := command.Output()
+		require.NoError(t, err)
+		return string(out)
+	}
+	require.Empty(t, run(t.TempDir(), "sh", "-c", claudeSessionStartCommand))
+	repo := t.TempDir()
+	run(repo, "git", "init")
+	require.Empty(t, run(filepath.Join(repo, ".git"), "sh", "-c", claudeSessionStartCommand))
+	branch := strings.TrimSpace(run(repo, "git", "branch", "--show-current"))
+	require.Equal(t, "repo= branch="+branch+" commit=\n", run(repo, "sh", "-c", claudeSessionStartCommand))
+	run(repo, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	run(repo, "git", "remote", "add", "origin", "https://user:secret@example.com/org/repo.git")
+	commit := strings.TrimSpace(run(repo, "git", "rev-parse", "HEAD"))
+	require.Equal(t, "repo=https://example.com/org/repo.git branch="+branch+" commit="+commit+"\n", run(repo, "sh", "-c", claudeSessionStartCommand))
+}
+
+func TestOpenCodeGitContextPluginIsOptIn(t *testing.T) {
+	h := openCodeHarness{}
+	path := settingsPath(t, h)
+	save(t, path, map[string]any{"theme": "dark"})
+	plugin := openCodeGitContextPath(path)
+	mine := filepath.Join(filepath.Dir(plugin), "mine.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(mine), 0o700))
+	require.NoError(t, os.WriteFile(mine, []byte("export default {}\n"), 0o600))
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, plugin)
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, NoOpenCodeServedModel: true, GitContext: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	written, err := os.ReadFile(plugin)
+	require.NoError(t, err)
+	require.True(t, gridSetupSealed(written))
+	require.True(t, strings.HasPrefix(string(written), string(openCodeGitContextSource)))
+	for _, p := range setupGitContext(t, h, path) {
+		require.False(t, p.Changed, "repeating setup changes nothing")
+	}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, plugin)
+	require.FileExists(t, mine)
+	setupGitContext(t, h, path)
+	teardown(t, h, path)
+	require.NoFileExists(t, plugin)
+	require.FileExists(t, mine)
+	require.Equal(t, map[string]any{"theme": "dark"}, load(t, path))
+}
+
+func TestOpenCodeGitContextPluginKeepsUserFile(t *testing.T) {
+	h := openCodeHarness{}
+	path := settingsPath(t, h)
+	plugin := openCodeGitContextPath(path)
+	require.NoError(t, os.MkdirAll(filepath.Dir(plugin), 0o700))
+	require.NoError(t, os.WriteFile(plugin, []byte("export default {}\n"), 0o600))
+	plans := setupGitContext(t, h, path)
+	require.True(t, slices.ContainsFunc(plans, func(p *Plan) bool {
+		return slices.ContainsFunc(p.Notes, func(note string) bool { return strings.Contains(note, plugin+" left unchanged") })
+	}))
+	teardown(t, h, path)
+	written, err := os.ReadFile(plugin)
+	require.NoError(t, err)
+	require.Equal(t, "export default {}\n", string(written))
+}
+
+func TestGitContextSanitizesOriginURL(t *testing.T) {
+	for _, tool := range []string{"sh", "git", "node"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " is not on PATH")
+		}
+	}
+	dir := t.TempDir()
+	plugin := filepath.Join(dir, "plugin.mjs")
+	require.NoError(t, os.WriteFile(plugin, openCodeGitContextSource, 0o600))
+	extension := filepath.Join(dir, "extension.mts")
+	require.NoError(t, os.WriteFile(extension, piGitContextSource, 0o600))
+	openCodeDriver := `const { pathToFileURL } = await import("node:url"); const { default: plugin } = await import(pathToFileURL(process.argv[1]).href); const hooks = await plugin.server({ directory: process.cwd() }); const out = { system: [] }; await hooks["experimental.chat.system.transform"]({ sessionID: "s" }, out); process.stdout.write(out.system.map((line) => line + "\n").join(""))`
+	piDriver := `const { pathToFileURL } = await import("node:url"); const { execFile } = await import("node:child_process"); const { default: extension } = await import(pathToFileURL(process.argv[1]).href); const handlers = {}; extension({ on: (event, fn) => { handlers[event] = fn }, exec: (cmd, args, opts) => new Promise((resolve) => execFile(cmd, args, opts, (error, stdout) => resolve({ code: error ? 1 : 0, stdout: String(stdout) }))) }); await handlers.session_start({}, { cwd: process.cwd() }); const event = { systemPromptOptions: { sections: {} } }; await handlers.before_agent_start(event); const line = event.systemPromptOptions.sections.baseten_git_context; if (line) process.stdout.write(line + "\n")`
+	run := func(t *testing.T, dir string, args ...string) string {
+		t.Helper()
+		command := exec.Command(args[0], args[1:]...)
+		command.Dir = dir
+		out, err := command.Output()
+		require.NoError(t, err)
+		return string(out)
+	}
+	repo := t.TempDir()
+	run(t, repo, "git", "init", "-q")
+	branch := strings.TrimSpace(run(t, repo, "git", "branch", "--show-current"))
+	stripTypes := exec.Command("node", "--experimental-strip-types", "-e", "").Run() == nil
+	vectors := [][2]string{
+		{"https://user:secret@example.com/org/repo.git", "https://example.com/org/repo.git"},
+		{"https://token@github.com/org/repo", "https://github.com/org/repo"},
+		{"https://git@github.com/org/repo.git", "https://github.com/org/repo.git"},
+		{"https://alice%40example.com:secret%3Atoken@github.com/org/repo.git", "https://github.com/org/repo.git"},
+		{"https://a@b@example.com/org/repo.git", "https://example.com/org/repo.git"},
+		{"ssh://git@github.com/org/repo.git", "ssh://git@github.com/org/repo.git"},
+		{"ssh://git:secret@github.com/org/repo.git", "ssh://git@github.com/org/repo.git"},
+		{"ssh://bob@host.example:2222/up.git", "ssh://host.example:2222/up.git"},
+		{"git+ssh://git@github.com/org/repo.git", "git+ssh://git@github.com/org/repo.git"},
+		{"ssh+git://git@github.com/org/repo.git", "ssh+git://git@github.com/org/repo.git"},
+		{"SSH://git@github.com/org/repo.git", "SSH://github.com/org/repo.git"},
+		{"ssh://GIT@github.com/org/repo.git", "ssh://github.com/org/repo.git"},
+		{"git@github.com:org/gh.git", "git@github.com:org/gh.git"},
+		{"alice@host.example:org/scp.git", "host.example:org/scp.git"},
+		{"GIT@github.com:org/repo.git", "github.com:org/repo.git"},
+		{"git:secret@github.com:org/repo.git", "git@github.com:org/repo.git"},
+		{"alice:pw@github.com:org/repo.git", "github.com:org/repo.git"},
+		{"@host:path", "host:path"},
+		{"alice@[2001:db8::1]:org/repo.git", "[2001:db8::1]:org/repo.git"},
+		{"git@[2001:db8::1]:org/repo.git", "git@[2001:db8::1]:org/repo.git"},
+		{"host.example:org/noUser.git", "host.example:org/noUser.git"},
+		{"/srv/git/repo.git", "/srv/git/repo.git"},
+		{"file:///srv/git/repo.git", "file:///srv/git/repo.git"},
+		{"file://alice:secret@localhost/repo.git", "file://localhost/repo.git"},
+		{"https://example.com/org/repo.git?token=abc#frag", "https://example.com/org/repo.git"},
+		{"https://example.com/org/repo.git#frag", "https://example.com/org/repo.git"},
+		{"https://example.com/org/repo.git?token=abc", "https://example.com/org/repo.git"},
+		{"https://alice:pw@example.com/org/repo.git?token=abc#frag", "https://example.com/org/repo.git"},
+		{"https://example.com?ref=a@b", "https://example.com"},
+		{"http://[::1]:8080/org/repo.git", "http://[::1]:8080/org/repo.git"},
+		{"hg::https://alice:secret@example.invalid/org/repo.git", "hg::https://example.invalid/org/repo.git"},
+		{"hg::https://alice:secret@example.invalid/org/repo.git?x=1", "hg::https://example.invalid/org/repo.git"},
+		{"remote-hg::git@github.com:org/repo.git", "remote-hg::git@github.com:org/repo.git"},
+		{"ext::ssh alice:secret-token@example.com git-upload-pack /repo", ""},
+		{"alice@host.example", "alice@host.example"},
+		{"C:\\srv\\repo.git", "C:\\srv\\repo.git"},
+	}
+	for _, column := range []struct {
+		name    string
+		command []string
+	}{
+		{"claude", []string{"sh", "-c", claudeSessionStartCommand}},
+		{"opencode", []string{"node", "--input-type=module", "-e", openCodeDriver, plugin}},
+		{"pi", []string{"node", "--experimental-strip-types", "--input-type=module", "-e", piDriver, extension}},
+	} {
+		t.Run(column.name, func(t *testing.T) {
+			if column.name == "pi" && !stripTypes {
+				t.Skip("node cannot strip TypeScript types")
+			}
+			require.Empty(t, run(t, t.TempDir(), column.command...))
+			for _, v := range vectors {
+				run(t, repo, "git", "config", "remote.origin.url", v[0])
+				require.Equal(t, "repo="+v[1]+" branch="+branch+" commit=\n", run(t, repo, column.command...), v[0])
+			}
+		})
+	}
 }
 
 func TestUnsupportedSelectionsAreRejected(t *testing.T) {
@@ -582,7 +895,7 @@ func TestUnsupportedSelectionsAreRejected(t *testing.T) {
 			require.ErrorContains(t, err, "supported only")
 		})
 	}
-	_, err := claudeCodeHarness{}.Prepare(settingsPath(t, claudeCodeHarness{}), testRoutes(), PrepareOptions{Selection: Selection{Primary: "acme/missing"}, Endpoint: testEndpoint})
+	_, err := claudeHarness{}.Prepare(settingsPath(t, claudeHarness{}), testRoutes(), PrepareOptions{Selection: Selection{Primary: "acme/missing"}, Endpoint: testEndpoint})
 	require.ErrorContains(t, err, "not one of the team's routes")
 }
 
@@ -637,9 +950,9 @@ func TestOpenCodeJSONC(t *testing.T) {
 func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, openCodeHarness{})
 	routes := testRoutes()
-	routes[0].Provider = ProviderAnthropic
-	routes[1].Provider = ProviderOpenAI
-	routes[2].Provider = "XAI"
+	routes[0].TargetAPI = TargetAPIMessages
+	routes[1].TargetAPI = TargetAPIResponses
+	routes[2].TargetAPI = TargetAPIChatCompletions
 	setup(t, openCodeHarness{}, path, routes, Selection{})
 	data := load(t, path)
 	require.Equal(t, "@ai-sdk/openai-compatible", get(data, []string{"provider", providerID, "npm"}).Data)
@@ -700,10 +1013,10 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	save(t, path, openCodeV2File())
 	cacheRead := 0.3
 	routes := testRoutes()
-	routes[0].Provider = ProviderAnthropic
+	routes[0].TargetAPI = TargetAPIMessages
 	routes[0].ReasoningLevels = []string{"low", "max"}
 	routes[0].Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, LongContext: &Cost{Input: 6, Output: 22.5}}
-	routes[1].Provider = ProviderOpenAI
+	routes[1].TargetAPI = TargetAPIResponses
 	plans := setup(t, openCodeHarness{}, path, routes, Selection{Subagent: "acme/subagent"})
 	require.Equal(t, []string{"model"}, plans[0].Replaced)
 	d := load(t, path)
@@ -895,9 +1208,9 @@ func TestOpenCodeDesktopDetection(t *testing.T) {
 func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, piHarness{})
 	routes := testRoutes()
-	routes[0].Provider = ProviderAnthropic
-	routes[1].Provider = ProviderOpenAI
-	routes[2].Provider = "XAI"
+	routes[0].TargetAPI = TargetAPIMessages
+	routes[1].TargetAPI = TargetAPIResponses
+	routes[2].TargetAPI = TargetAPIChatCompletions
 	setup(t, piHarness{}, path, routes, Selection{})
 	provider := get(load(t, path), piProviderPath).Data.(map[string]any)
 	require.Equal(t, "openai-completions", provider["api"])
@@ -949,6 +1262,45 @@ func TestPiTeardownPreservesAnotherProviderSelection(t *testing.T) {
 	require.Equal(t, settings, load(t, piSettingsPath(path)))
 }
 
+func TestPiGitContextExtensionIsOptIn(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	target := piGitContextPath(path)
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, target)
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, NoPiServedModel: true, GitContext: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	raw, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, string(piGitContextSource)+gridSetupSeal(piGitContextSource), string(raw))
+	require.True(t, gridSetupSealed(raw))
+	require.NoFileExists(t, piServedModelPath(path))
+	for _, p := range setupGitContext(t, h, path) {
+		require.False(t, p.Changed && p.Path == target, "repeating setup leaves the extension alone")
+	}
+	setup(t, h, path, testRoutes(), Selection{})
+	require.NoFileExists(t, target)
+	setupGitContext(t, h, path)
+	teardown(t, h, path)
+	require.NoFileExists(t, target)
+}
+
+func TestPiGitContextExtensionKeepsUserFile(t *testing.T) {
+	h := piHarness{}
+	path := settingsPath(t, h)
+	target := piGitContextPath(path)
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
+	user := "export default function () {}\n"
+	require.NoError(t, os.WriteFile(target, []byte(user), 0o600))
+	plans := setupGitContext(t, h, path)
+	require.Contains(t, plans[len(plans)-1].Notes, "warning: existing "+target+" left unchanged; Pi sessions will not include the git repository, branch, and commit")
+	teardown(t, h, path)
+	raw, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, user, string(raw))
+}
+
 func TestPiIncomplete(t *testing.T) {
 	h := piHarness{}
 	path := settingsPath(t, h)
@@ -970,21 +1322,22 @@ func TestPiIncomplete(t *testing.T) {
 
 func TestClientHeaderNamesHarness(t *testing.T) {
 	paths := map[string][]string{
-		ClaudeCode: {"env", "ANTHROPIC_CUSTOM_HEADERS"},
-		Codex:      {"model_providers", providerID, "http_headers", clientHeader},
-		OpenCode:   {"provider", providerID, "options", "headers", clientHeader},
-		Pi:         {"providers", providerID, "headers", clientHeader},
+		Claude:   {"env", "ANTHROPIC_CUSTOM_HEADERS"},
+		Codex:    {"model_providers", providerID, "http_headers", clientHeader},
+		OpenCode: {"provider", providerID, "options", "headers", clientHeader},
+		Pi:       {"providers", providerID, "headers", clientHeader},
 	}
 	for _, h := range All() {
 		t.Run(h.Name(), func(t *testing.T) {
 			path := settingsPath(t, h)
 			setup(t, h, path, testRoutes(), Selection{})
 			want := h.Name()
-			if h.Name() == ClaudeCode {
+			if h.Name() == Claude {
+				// Claude Code and Claude Desktop identify as claude-code on the wire.
 				want = clientHeader + ": " + ClaudeCode
 			}
 			require.Equal(t, want, get(load(t, path), paths[h.Name()]).Data)
-			if h.Name() == ClaudeCode {
+			if h.Name() == Claude {
 				require.Equal(t, "1", get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Data)
 				require.Equal(t, "true", get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Data)
 				teardown(t, h, path)
@@ -1028,7 +1381,7 @@ func TestDetect(t *testing.T) {
 		env                string
 		defaultPath, inEnv string
 	}{
-		{claudeCodeHarness{}, "CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude", "settings.json"), filepath.Join(custom, "settings.json")},
+		{claudeHarness{}, "CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude", "settings.json"), filepath.Join(custom, "settings.json")},
 		{codexHarness{}, "CODEX_HOME", filepath.Join(home, ".codex", "config.toml"), filepath.Join(custom, "config.toml")},
 		{openCodeHarness{}, "XDG_CONFIG_HOME", filepath.Join(home, ".config", "opencode", "opencode.json"), filepath.Join(custom, "opencode", "opencode.json")},
 		{piHarness{}, "PI_CODING_AGENT_DIR", filepath.Join(home, ".pi", "agent", "models.json"), filepath.Join(custom, "models.json")},
@@ -1036,10 +1389,7 @@ func TestDetect(t *testing.T) {
 		t.Run(tc.h.Name(), func(t *testing.T) {
 			d, err := tc.h.Detect(t.Context(), fakeExecer{}, "")
 			require.NoError(t, err)
-			// fakeExecer finds every binary, so desktop installs are listed too.
-			require.NotEmpty(t, d.Installs)
-			d.Installs = d.Installs[:1]
-			binary := map[string]string{ClaudeCode: "claude", Codex: "codex", OpenCode: "opencode", Pi: "pi"}[tc.h.Name()]
+			binary := map[string]string{Claude: "claude", Codex: "codex", OpenCode: "opencode", Pi: "pi"}[tc.h.Name()]
 			want := Detection{Name: tc.h.Name(), Path: tc.defaultPath, Installed: true,
 				Installs: []Install{cli(filepath.Join(string(filepath.Separator), "fake", binary), "1.2.3")}}
 			require.Equal(t, want, d)
@@ -1053,6 +1403,79 @@ func TestDetect(t *testing.T) {
 			require.Equal(t, dir, filepath.Dir(d.Path), "--config-dir wins over the environment")
 		})
 	}
+}
+
+func TestLoadRecordsRenamesClaudeCode(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, SaveRecords(dir, RecordFile{Harnesses: map[string]Record{ClaudeCode: {TeamID: "team-a"}}}))
+	file, err := LoadRecords(dir)
+	require.NoError(t, err)
+	require.Equal(t, map[string]Record{Claude: {TeamID: "team-a"}}, file.Harnesses)
+}
+
+func TestClaudeDesktopConfigFollowsClaudeCodeSettings(t *testing.T) {
+	// The app's files are in its own library when the settings are in Claude
+	// Code's default directory, else under the settings directory, so that
+	// --config-dir keeps both apps' files together.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	native := claudeDesktopConfig(filepath.Join(home, ".claude", "settings.json"))
+	require.Equal(t, claudeDesktopConfigID+".json", filepath.Base(native))
+	require.Contains(t, native, "Claude-3p")
+	require.NotContains(t, native, ".claude")
+	dir := t.TempDir()
+	require.Equal(t, filepath.Join(dir, "Claude-3p", "configLibrary", claudeDesktopConfigID+".json"), claudeDesktopConfig(filepath.Join(dir, "settings.json")))
+	for _, name := range []string{"claude-desktop-b0dgYBn", "claude-desktop-XP9WlBD"} {
+		require.False(t, claudeDesktopDeniedID(name), name)
+	}
+	require.True(t, claudeDesktopDeniedID("claude-desktop-aGLMbcd"))
+}
+
+func TestClaudeDesktopFilesWithClaudeCodeSettings(t *testing.T) {
+	h := claudeHarness{}
+	path := settingsPath(t, h)
+	opts := PrepareOptions{Endpoint: testEndpoint, Installs: []Install{{Kind: InstallDesktop, Binary: "/Applications/Claude.app/Contents/MacOS/Claude"}}}
+	plans, err := h.Prepare(path, testRoutes(), opts)
+	require.NoError(t, err)
+	require.Len(t, plans, 4, "Claude Code's settings, the app config, the library's applied config, and the app's mode")
+	require.NoError(t, ApplyPlans(plans, testToken))
+	config := claudeDesktopConfig(path)
+	data := load(t, config)
+	require.Equal(t, ClaudeCode, get(data, claudeDesktopMarkerPath).Data)
+	require.Equal(t, true, get(data, []string{"autoModeEnabled"}).Data, "Auto mode is offered in Cowork as well as Code")
+	require.Equal(t, true, get(data, []string{"toolSearchEnabled"}).Data)
+	models := data["inferenceModels"].([]any)
+	require.Equal(t, "sonnet", models[0].(map[string]any)["anthropicFamilyTier"], "no listed background route, so the primary serves Auto mode")
+	for _, m := range models[1:] {
+		require.NotContains(t, m.(map[string]any), "anthropicFamilyTier")
+	}
+	require.Equal(t, testToken, data["inferenceGatewayApiKey"])
+	require.Equal(t, claudeDesktopID(config), load(t, claudeDesktopMetaPath(config))["appliedId"])
+	require.Equal(t, "3p", load(t, claudeDesktopAppConfigPath(config))["deploymentMode"])
+	status, err := h.Inspect(Detection{Name: Claude, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateConfigured, status.State)
+	require.Contains(t, status.Managed, "inferenceModels")
+
+	plans, err = h.Prepare(path, testRoutes(), opts)
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	for _, p := range plans {
+		require.False(t, p.Changed, "repeating setup changes nothing: %s", p.Path)
+	}
+
+	// Without the app, setup leaves its files alone and teardown still removes them.
+	plans, err = h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint})
+	require.NoError(t, err)
+	require.Len(t, plans, 1)
+	teardown(t, h, path)
+	require.NoFileExists(t, config)
+	require.NotContains(t, load(t, claudeDesktopMetaPath(config)), "appliedId")
+	require.Equal(t, "1p", load(t, claudeDesktopAppConfigPath(config))["deploymentMode"])
+	status, err = h.Inspect(Detection{Name: Claude, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateNotConfigured, status.State)
 }
 
 func TestMalformedSettingsAreReported(t *testing.T) {
@@ -1076,10 +1499,13 @@ type codexDaemonExecer struct {
 }
 
 func (e *codexDaemonExecer) LookPath(name string) (string, error) {
-	if e.binaries != nil && !e.binaries[name] {
+	if e.binaries == nil {
+		return e.fakeExecer.LookPath(name)
+	}
+	if !e.binaries[name] {
 		return "", exec.ErrNotFound
 	}
-	return e.fakeExecer.LookPath(name)
+	return filepath.Join(string(filepath.Separator), "fake", name), nil
 }
 
 func (e *codexDaemonExecer) Exec(command *exec.Cmd) error {

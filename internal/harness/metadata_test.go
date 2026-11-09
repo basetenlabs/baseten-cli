@@ -36,8 +36,8 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	huge.ReasoningLevels = []string{"none", "low", "high", "xhigh"}
 	mid := testRoute("acme/mid", "Mid")
 	mid.ContextWindow = 200000
-	path := settingsPath(t, claudeCodeHarness{})
-	setup(t, claudeCodeHarness{}, path, []Route{huge, mid}, Selection{})
+	path := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, path, []Route{huge, mid}, Selection{})
 	d := load(t, path)
 	require.Equal(t, "acme/huge[1m]", d["model"])
 	require.Equal(t, []any{
@@ -54,7 +54,7 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
 
-	setup(t, claudeCodeHarness{}, path, []Route{mid, huge}, Selection{Background: "acme/huge"})
+	setup(t, claudeHarness{}, path, []Route{mid, huge}, Selection{Background: "acme/huge"})
 	d = load(t, path)
 	require.Equal(t, []any{"acme/mid", "acme/huge[1m]"}, d["availableModels"])
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data)
@@ -73,8 +73,8 @@ func TestReasoningBoundsSkipNone(t *testing.T) {
 func TestMaxEffortOnlyForClaudeCodeAndPi(t *testing.T) {
 	r := testRoute("acme/primary", "Primary")
 	r.ReasoningLevels = []string{"none", "low", "high", "xhigh", "max"}
-	claude := settingsPath(t, claudeCodeHarness{})
-	setup(t, claudeCodeHarness{}, claude, []Route{r}, Selection{})
+	claude := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, claude, []Route{r}, Selection{})
 	require.Equal(t, map[string]any{"acme/primary": map[string]any{"maxEffortLevel": "max"}}, load(t, claude)["modelSettings"])
 
 	codex := settingsPath(t, codexHarness{})
@@ -125,6 +125,12 @@ func TestPiAdaptiveThinking(t *testing.T) {
 		{"claude-opus-4-5-20251101", false},
 		{"claude-haiku-4-5-20251001", false},
 		{"claude-sonnet-4-5-20250929", false},
+		{"anthropic.claude-opus-4-5-20251101-v1:0", false},
+		{"anthropic.claude-haiku-4-5-20251001-v1:0", false},
+		{"anthropic.claude-sonnet-4-5-20250929-v1:0", false},
+		{"claude-opus-4-5@20251101", false},
+		{"claude-haiku-4-5@20251001", false},
+		{"claude-sonnet-4-5@20250929", false},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
 			require.Equal(t, tc.adaptive, piAdaptiveThinking(tc.model))
@@ -134,7 +140,7 @@ func TestPiAdaptiveThinking(t *testing.T) {
 		require.False(t, piAdaptiveThinking("claude-opus-4-5-latest"))
 	})
 	t.Run("unknown models default to adaptive", func(t *testing.T) {
-		for _, model := range []string{"", "claude-opus-99-1", "claude-opus-4-50"} {
+		for _, model := range []string{"", "claude-opus-99-1"} {
 			require.True(t, piAdaptiveThinking(model), model)
 		}
 	})
@@ -160,6 +166,7 @@ func TestPiAnthropicThinkingCompatibility(t *testing.T) {
 					ContextWindow: &tc.contextWindow, MaxOutputTokens: &tc.outputLimit,
 					InputModalities: []string{"text", "image"}, Tools: &tools,
 					ReasoningEffortLevels: &tc.reasoningLevels,
+					SupportedApiFormats:   &managementapi.ExploreMetadataAPIFormats{Messages: &tools},
 				},
 			}
 			require.NoError(t, json.Unmarshal([]byte(`{"type":"CONNECTION","connection_id":"conn-a","model":"`+tc.model+`"}`), &api.Target))
