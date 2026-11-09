@@ -27,7 +27,9 @@ var Root = Command{
 	Name:    "baseten",
 	Summary: "Baseten CLI",
 	Description: "Command-line interface for managing Baseten resources.\n\n" +
-		"Authentication is via 'baseten auth login' or the BASETEN_API_KEY environment variable.\n\n" +
+		"Authentication is via 'baseten auth login', the BASETEN_API_KEY environment variable, or " +
+		"workload identity (BASETEN_IDENTITY_TOKEN_FILE and BASETEN_TRUST_RULE_ID, exchanged for " +
+		"short-lived access tokens). 'baseten auth status' shows which is in use.\n\n" +
 		"The CLI never prompts interactively when stdin is not a terminal; commands that need " +
 		"input must be supplied via flags or stdin redirection or they fail fast.",
 	Children: []Command{

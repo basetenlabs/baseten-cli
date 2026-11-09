@@ -4825,3 +4825,11 @@ func Test_Grid_Token(t *testing.T) {
 		h.Require.Nil(token, "%s forgets the cached tokens", command[1])
 	}
 }
+
+func Test_Grid_Setup_RejectsWorkloadIdentity(t *testing.T) {
+	h := NewCommandHarness(t)
+	setWorkloadIdentityEnv(t)
+
+	h.Require.Error(h.Execute("grid", "setup", "--harness", "codex", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "workload identity credentials are short-lived and cannot be installed in a harness")
+}
