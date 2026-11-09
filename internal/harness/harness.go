@@ -245,17 +245,22 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 }
 
 func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats, provider string, router bool) TargetAPI {
-	switch {
-	case deref(f.ChatCompletions) && !router && (provider == ProviderBaseten || provider == ""):
-		// NB(nikhil): MAPIs specifically advertise all compatibility, but prefer chat completions.
-		return TargetAPIChatCompletions
-	case deref(f.Messages):
-		return TargetAPIMessages
-	case deref(f.Responses):
-		return TargetAPIResponses
-	default:
-		return TargetAPIChatCompletions
+	advertised := map[TargetAPI]bool{
+		TargetAPIChatCompletions: deref(f.ChatCompletions),
+		TargetAPIMessages:        deref(f.Messages),
+		TargetAPIResponses:       deref(f.Responses),
 	}
+	order := []TargetAPI{TargetAPIMessages, TargetAPIResponses, TargetAPIChatCompletions}
+	if !router && (provider == ProviderBaseten || provider == "") {
+		// NB(nikhil): MAPIs specifically advertise all compatibility, but prefer chat completions.
+		order = []TargetAPI{TargetAPIChatCompletions, TargetAPIMessages, TargetAPIResponses}
+	}
+	for _, api := range order {
+		if advertised[api] {
+			return api
+		}
+	}
+	return TargetAPIChatCompletions
 }
 
 // newCost returns nil unless both input and output prices are known.
