@@ -179,7 +179,7 @@ buckets:
 func gridUsageGroupBy(values []string) []managementapi.GridRouteUsageDimension {
 	dims := make([]managementapi.GridRouteUsageDimension, 0, len(values))
 	for _, v := range values {
-		dim := managementapi.GridRouteUsageDimension(strings.ToUpper(v))
+		dim := managementapi.GridRouteUsageDimension(strings.ToUpper(strings.ReplaceAll(v, "-", "_")))
 		if !slices.Contains(dims, dim) {
 			dims = append(dims, dim)
 		}
@@ -301,8 +301,8 @@ func gridUsageDimensionCell(d managementapi.GridRouteUsageDimension, r managemen
 		v = deref(r.UserId)
 	case managementapi.GridRouteUsageDimension_TEAM:
 		v = cmp.Or(deref(r.TeamName), deref(r.TeamId))
-	case managementapi.GridRouteUsageDimension_ROUTER:
-		v = deref(r.RouterId)
+	case managementapi.GridRouteUsageDimension_INTELLIGENT_ROUTE:
+		v = deref(r.IntelligentRoute)
 	case managementapi.GridRouteUsageDimension_MODEL:
 		v = deref(r.Model)
 	case managementapi.GridRouteUsageDimension_PROVIDER:
