@@ -12,16 +12,18 @@ func init() {
 }
 
 func commandSSHSetup(ctx *CommandContext, flags *cmd.SSHSetupFlags) error {
-	keyPath, reused, err := ssh.EnsureKeypair()
-	if err != nil {
-		return err
-	}
-
 	// Pin the profile this invocation resolves to so connections are
 	// deterministic; --profile or BASETEN_PROFILE can still override at connect.
 	var profile string
 	if session, err := ctx.authInfo.Session(); err == nil {
+		if session.WorkloadIdentity() != nil {
+			return errSSHWorkloadIdentity()
+		}
 		profile = session.ProfileName()
+	}
+	keyPath, reused, err := ssh.EnsureKeypair()
+	if err != nil {
+		return err
 	}
 	// Only pin names safe to embed bare in the config's shell command lines.
 	if profile != "" && !ssh.SafeProfileName(profile) {
@@ -62,11 +64,11 @@ func commandSSHSetup(ctx *CommandContext, flags *cmd.SSHSetupFlags) error {
 
 func commandSSHSign(ctx *CommandContext, flags *cmd.SSHSignFlags) error {
 	ctx.SetDefaultProfile(flags.DefaultProfile)
-	cl, err := ctx.NewManagementClient()
+	cacheIdentity, err := ctx.sshCacheIdentity()
 	if err != nil {
 		return err
 	}
-	cacheIdentity, err := ctx.sshCacheIdentity()
+	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
@@ -99,5 +101,14 @@ func (c *CommandContext) sshCacheIdentity() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if session.WorkloadIdentity() != nil {
+		return "", errSSHWorkloadIdentity()
+	}
 	return session.CacheIdentity(), nil
+}
+
+// The JWT cache outlives the process, and a workload identity session's cache
+// identity names the token file rather than the identity it authenticates as.
+func errSSHWorkloadIdentity() error {
+	return cmd.NewErrUsagef("SSH needs a stored profile or an API key; workload identity credentials are not supported")
 }

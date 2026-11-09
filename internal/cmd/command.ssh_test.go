@@ -259,3 +259,40 @@ func Test_SSH_Proxy_RelaysUsingCachedCredential(t *testing.T) {
 	h.Require.NoError(h.Execute("ssh", "proxy", "model-m1-d1.ssh.baseten.co"))
 	h.Require.Equal("relay-tok", <-gotJWT)
 }
+
+func Test_SSH_Setup_RejectsWorkloadIdentity(t *testing.T) {
+	h := NewCommandHarness(t)
+	dir, configPath := sshEnv(t)
+	setWorkloadIdentityEnv(t)
+
+	h.Require.Error(h.Execute("ssh", "setup"))
+	h.Require.Contains(h.Stderr.String(), "workload identity credentials are not supported")
+	h.Require.NoFileExists(configPath)
+	entries, err := os.ReadDir(dir)
+	h.Require.NoError(err)
+	h.Require.Empty(entries, "no keypair is generated")
+}
+
+func Test_SSH_Sign_RejectsWorkloadIdentity(t *testing.T) {
+	h := NewCommandHarness(t)
+	sshEnv(t)
+	_, _, err := ssh.EnsureKeypair()
+	h.Require.NoError(err)
+	setWorkloadIdentityEnv(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/models/m1/deployments/d1/ssh/sign", 200,
+		signResponse("tok", "127.0.0.1:9"))
+
+	h.Require.Error(h.Execute("ssh", "sign", "model-m1-d1.ssh.baseten.co"))
+	h.Require.Contains(h.Stderr.String(), "workload identity credentials are not supported")
+	h.Require.Nil(m.FindCall("POST", "/v1/models/m1/deployments/d1/ssh/sign"))
+}
+
+func Test_SSH_Proxy_RejectsWorkloadIdentity(t *testing.T) {
+	h := NewCommandHarness(t)
+	sshEnv(t)
+	setWorkloadIdentityEnv(t)
+
+	h.Require.Error(h.Execute("ssh", "proxy", "model-m1-d1.ssh.baseten.co"))
+	h.Require.Contains(h.Stderr.String(), "workload identity credentials are not supported")
+}
