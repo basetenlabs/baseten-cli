@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.21
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
-	github.com/basetenlabs/baseten-go v0.6.1-0.20261105221303-01fa2b65bf15
+	github.com/basetenlabs/baseten-go v0.6.1-0.20261109055617-a8ca33290145
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.7
@@ -89,5 +89,3 @@ require (
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 )
-
-replace github.com/basetenlabs/baseten-go => /Users/mingming.lang/src/baseten-go-wif
