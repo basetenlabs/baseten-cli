@@ -476,8 +476,9 @@ func sandboxInstance(ctx *CommandContext, ref cmd.SandboxRefFlags) (*sandbox.San
 const sandboxTokenExpiryLeeway = 60 * time.Second
 
 // sandboxTokenProvider returns a provider of sandbox tokens minted through
-// managementClient. A token is cached in memory for this process and in the
-// auth store across invocations, so each command does not wait on a mint.
+// managementClient. A token is cached in memory for this process and, unless
+// the session rules it out, in the auth store across invocations, so each
+// command does not wait on a mint.
 // Temporary, until the sandbox APIs accept other credentials.
 func sandboxTokenProvider(ctx *CommandContext, managementClient *client.ManagementClient) (sandbox.TokenProvider, error) {
 	remote, err := ctx.authInfo.Remote()
@@ -493,6 +494,7 @@ func sandboxTokenProvider(ctx *CommandContext, managementClient *client.Manageme
 		return nil, err
 	}
 	scope := auth.SandboxTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()}
+	persist := session.CachesCapabilityTokens()
 	var mu sync.Mutex
 	var current *auth.SandboxToken
 	return func(tokenCtx context.Context, opts sandbox.TokenProviderOptions) (string, error) {
@@ -507,13 +509,15 @@ func sandboxTokenProvider(ctx *CommandContext, managementClient *client.Manageme
 		if usable(current) {
 			return current.Token, nil
 		}
-		stored, err := store.GetSandboxToken(tokenCtx, scope)
-		if err != nil {
-			return "", err
-		}
-		if usable(stored) {
-			current = stored
-			return current.Token, nil
+		if persist {
+			stored, err := store.GetSandboxToken(tokenCtx, scope)
+			if err != nil {
+				return "", err
+			}
+			if usable(stored) {
+				current = stored
+				return current.Token, nil
+			}
 		}
 		minted, err := managementClient.API().PostToken(tokenCtx, managementapi.CreateTokenRequest{
 			Scopes: []managementapi.TokenScope{managementapi.TokenScope_sandboxes},
@@ -522,6 +526,9 @@ func sandboxTokenProvider(ctx *CommandContext, managementClient *client.Manageme
 			return "", err
 		}
 		current = &auth.SandboxToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
+		if !persist {
+			return current.Token, nil
+		}
 		if err := store.SetSandboxToken(tokenCtx, scope, *current); err != nil {
 			return "", err
 		}

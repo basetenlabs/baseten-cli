@@ -1830,23 +1830,28 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 		return err
 	}
 	scope := auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()}
-	token, err := store.GetGridToken(ctx, scope, teamID)
-	if err != nil {
-		return err
-	}
-	if token != nil && time.Until(token.ExpiresAt) > gridTokenMinimumLeft {
-		ctx.Output(token.Token + "\n")
-		return nil
+	persist := session.CachesCapabilityTokens()
+	if persist {
+		token, err := store.GetGridToken(ctx, scope, teamID)
+		if err != nil {
+			return err
+		}
+		if token != nil && time.Until(token.ExpiresAt) > gridTokenMinimumLeft {
+			ctx.Output(token.Token + "\n")
+			return nil
+		}
 	}
 	minted, err := cl.API().PostGridToken(ctx, managementapi.CreateGridTokenRequest{TeamId: &teamID})
 	if err != nil {
 		return fmt.Errorf("creating a Grid token: %w", err)
 	}
-	token = &auth.GridToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
-	if err := store.SetGridToken(ctx, scope, teamID, *token, ctx.Log); err != nil {
-		return err
+	if persist {
+		token := auth.GridToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
+		if err := store.SetGridToken(ctx, scope, teamID, token, ctx.Log); err != nil {
+			return err
+		}
 	}
-	ctx.Output(token.Token + "\n")
+	ctx.Output(minted.Token + "\n")
 	return nil
 }
 

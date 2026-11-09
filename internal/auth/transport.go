@@ -200,6 +200,12 @@ func (s *Session) APIKey(ctx context.Context) (string, error) {
 	return s.store.GetAPIKey(ctx, s.profileName)
 }
 
+// CachesCapabilityTokens reports whether sandbox and Grid tokens minted for
+// the session may be cached across invocations. Not under workload identity:
+// another workload can present a different identity through the same token
+// file path, which no cache key derived from the session tells apart.
+func (s *Session) CachesCapabilityTokens() bool { return s.workloadIdentity == nil }
+
 // CacheIdentity returns a stable, filesystem-safe token for the resolved
 // credential, scoping on-disk caches so an entry written under one credential is
 // never read under another. Hashed to keep the profile name (an email by default)

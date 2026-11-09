@@ -4833,3 +4833,29 @@ func Test_Grid_Setup_RejectsWorkloadIdentity(t *testing.T) {
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "codex", "--yes"))
 	h.Require.Contains(h.Stderr.String(), "workload identity credentials are short-lived and cannot be installed in a harness")
 }
+
+func Test_Grid_Token_WorkloadIdentityNotCached(t *testing.T) {
+	skipUnlessSupported(t)
+	h := newAuthHarness(t)
+	setWorkloadIdentityEnv(t)
+	serveTokenExchange(h, false)
+	api := h.MockManagementAPI()
+	api.SetRoute("POST", "/v1/grid/token", 200, map[string]any{"token": "grid-new", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "team_id": "team-a"})
+	saveHarnessRecordFile(t, harness.RecordFile{Harnesses: map[string]harness.Record{
+		"codex": {Config: "/x/config.toml", ManagementURL: api.URL, TeamID: "team-a", CredentialSource: harness.CredentialSourceHelper},
+	}})
+	session, err := auth.ResolveSession("", "")
+	h.Require.NoError(err)
+	scope := auth.GridTokenScope{ManagementURL: api.URL, Identity: session.CacheIdentity()}
+	store := configDirStore(t)
+	h.Require.NoError(store.SetGridToken(t.Context(), scope, "team-a", auth.GridToken{Token: "grid-seeded", ExpiresAt: time.Now().Add(time.Hour)}, nil))
+
+	for range 2 {
+		h.Require.NoError(h.Execute("grid", "token", "--harness", "codex"))
+		h.Require.Equal("grid-new\n", h.Stdout.String())
+	}
+	h.Require.Equal(2, countCalls(api, "POST", "/v1/grid/token"))
+	token, err := store.GetGridToken(t.Context(), scope, "team-a")
+	h.Require.NoError(err)
+	h.Require.Equal("grid-seeded", token.Token)
+}
