@@ -178,6 +178,7 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 	arn := strings.TrimSpace(flags.AuthAWSAssumeRoleARN)
 	region := strings.TrimSpace(flags.AuthAWSAssumeRoleRegion)
 	secret := strings.TrimSpace(flags.AuthSecretName)
+	hfOIDCResource := strings.TrimSpace(flags.AuthHFOIDCResource)
 	awsOIDCRoleARN := strings.TrimSpace(flags.AuthAWSOIDCRoleARN)
 	awsOIDCRegion := strings.TrimSpace(flags.AuthAWSOIDCRegion)
 	gcpOIDCServiceAccount := strings.TrimSpace(flags.AuthGCPOIDCServiceAccount)
@@ -196,7 +197,7 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 	}
 	authMethodCount := 0
 	for _, configured := range []bool{
-		secret != "", arn != "", awsOIDCRoleARN != "", gcpOIDCServiceAccount != "",
+		secret != "", hfOIDCResource != "", arn != "", awsOIDCRoleARN != "", gcpOIDCServiceAccount != "",
 	} {
 		if configured {
 			authMethodCount++
@@ -209,6 +210,10 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 	if arn != "" && sourceType != "S3" {
 		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
 			"--auth-aws-assume-role-* is supported only for an s3:// source")
+	}
+	if hfOIDCResource != "" && sourceType != "HUGGING_FACE" {
+		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
+			"--auth-hf-oidc-resource is supported only for an hf:// source")
 	}
 	if awsOIDCRoleARN != "" && sourceType != "S3" {
 		return managementapi.CreateVolumeSyncRequest_Source{}, cmd.NewErrUsagef(
@@ -234,8 +239,13 @@ func volumeSyncSourceFromFlags(flags *cmd.VolumeSyncStartFlags) (managementapi.C
 	var err error
 	switch sourceType {
 	case "HUGGING_FACE":
+		var hfOIDC *managementapi.VolumeSyncAuthenticationHuggingFaceOIDC
+		if hfOIDCResource != "" {
+			hfOIDC = &managementapi.VolumeSyncAuthenticationHuggingFaceOIDC{Resource: hfOIDCResource}
+		}
 		err = source.FromVolumeSyncSourceHuggingFace(managementapi.VolumeSyncSourceHuggingFace{
 			Uri: uri, Include: &include, Exclude: &exclude, AuthSecretName: authSecretName,
+			HfOidc: hfOIDC,
 		})
 	case "S3":
 		var assumeRole *managementapi.VolumeSyncAuthenticationAWSAssumeRole

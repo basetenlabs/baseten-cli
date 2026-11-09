@@ -60,12 +60,13 @@ func Test_Grid_Route_Usage_KeepsRowsWithNoTokens(t *testing.T) {
 func Test_Grid_Route_Usage_FiltersPassThrough(t *testing.T) {
 	h, api := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
 
-	h.Require.NoError(h.Execute("grid", "route", "usage", "--user-id", "user-b", "--group-by", "user,provider", "--model", "glm-5.2", "--provider", "xai"))
+	h.Require.NoError(h.Execute("grid", "route", "usage", "--user-id", "user-b", "--group-by", "user,provider", "--model", "glm-5.2", "--provider", "xai", "--harness", "codex"))
 	q := gridUsageLastQuery(h, api)
 	h.Require.Equal([]string{"user-b"}, q["user_ids"])
 	h.Require.Equal([]string{"USER", "PROVIDER"}, q["group_by"])
 	h.Require.Equal([]string{"glm-5.2"}, q["models"])
 	h.Require.Equal([]string{"XAI"}, q["providers"])
+	h.Require.Equal([]string{"CODEX"}, q["harnesses"], "kebab flags map to the API enum")
 }
 
 func Test_Grid_Route_Usage_JSONStreamsBuckets(t *testing.T) {
@@ -135,29 +136,55 @@ func Test_Grid_Route_Usage_ClampsToRetention(t *testing.T) {
 		"older than the 92 days of usage Baseten keeps")
 }
 
-func Test_Grid_Route_Usage_TeamAndRouterDimensions(t *testing.T) {
+func Test_Grid_Route_Usage_TeamAndIntelligentRouteDimensions(t *testing.T) {
 	row := gridUsageModel("test-model-api", "0.25", 100, 50, 20)
 	row["team_id"] = "team-a"
 	row["team_name"] = "Engineering"
-	row["router_id"] = "acme/router"
+	row["intelligent_route"] = "acme/router"
 	body := gridUsageBody(gridUsageBucket("2026-09-24", row))
 	for _, output := range []string{"text", "json", "jsonl"} {
 		t.Run(output, func(t *testing.T) {
 			h, m := newGridUsageHarness(t, gridUsageNow, body)
-			h.Require.NoError(h.Execute("grid", "route", "usage", "--team", "Engineering", "--group-by", "team,router,model", "--output", output))
+			h.Require.NoError(h.Execute("grid", "route", "usage", "--team", "Engineering", "--group-by", "team,intelligent-route,model", "--output", output))
 			query := gridUsageLastQuery(h, m)
-			h.Require.Equal([]string{"TEAM", "ROUTER", "MODEL"}, query["group_by"])
+			h.Require.Equal([]string{"TEAM", "INTELLIGENT_ROUTE", "MODEL"}, query["group_by"])
 			h.Require.Equal([]string{"team-a"}, query["team_id"])
-			h.Require.Contains(h.Stdout.String(), "team-a")
+			h.Require.Contains(h.Stdout.String(), "Engineering")
 			h.Require.Contains(h.Stdout.String(), "acme/router")
 			if output == "text" {
 				h.Require.Contains(h.Stdout.String(), "TEAM")
-				h.Require.Contains(h.Stdout.String(), "ROUTER")
+				h.Require.Contains(h.Stdout.String(), "INTELLIGENT_ROUTE")
+				h.Require.NotContains(h.Stdout.String(), "team-a")
 			} else {
 				h.Require.Contains(h.Stdout.String(), "Engineering")
 			}
 		})
 	}
+}
+
+func Test_Grid_Route_Usage_HarnessDimension(t *testing.T) {
+	untracked := gridUsageModel("claude-sonnet-5", "1.25", 1000, 800, 100)
+	untracked["harness"] = nil
+	codex := gridUsageModel("gpt-5.2", "0.50", 400, 0, 40)
+	codex["harness"] = "CODEX"
+	h, m := newGridUsageHarness(t, gridUsageNow, gridUsageBody(gridUsageBucket("2026-09-24", untracked, codex)))
+
+	h.Require.NoError(h.Execute("grid", "route", "usage", "--group-by", "harness"))
+
+	h.Require.Equal([]string{"HARNESS"}, gridUsageLastQuery(h, m)["group_by"])
+	h.Require.Contains(h.Stdout.String(), "HARNESS")
+	h.Require.Equal([]string{"2026-09-24", "Unknown", "1,000", "800", "100", "$1.25"}, gridUsageRow(h, h.Stdout.String(), "Unknown"))
+	h.Require.Equal([]string{"codex", "400", "0", "40", "$0.50"}, gridUsageRow(h, h.Stdout.String(), "codex"))
+	h.Require.Contains(h.Stderr.String(), `Harness "Unknown" means no harness was recorded, including usage from before harness tracking.`)
+}
+
+func Test_Grid_Route_Usage_HarnessFilterPassesThrough(t *testing.T) {
+	h, m := newGridUsageHarness(t, gridUsageNow, gridUsageMonth())
+
+	h.Require.NoError(h.Execute("grid", "route", "usage",
+		"--harness", "codex", "--harness", "claude-code"))
+
+	h.Require.Equal([]string{"CODEX", "CLAUDE_CODE"}, gridUsageLastQuery(h, m)["harnesses"])
 }
 
 func Test_Grid_Route_Usage_OmittedTeamIsNotResolved(t *testing.T) {

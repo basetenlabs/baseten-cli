@@ -140,7 +140,7 @@ var commandModelEnvironment = Command{
 				"summary and series. In series mode the window is split at each promotion " +
 				"so every point reflects the deployment(s) serving the environment at that time.",
 			Flags: ModelEnvironmentMetricsFlags{},
-			Output: &CommandOutput[managementapi.GetModelMetricsResponse]{
+			Output: &CommandOutput[managementapi.GetMetricsResponse]{
 				TextDescription: "For current/summary, a table with columns METRIC, one column per " +
 					"label dimension (e.g. QUANTILE, STAT), and VALUE; summary COUNTER values show " +
 					"\"total (rate/s)\". For series, a sparkline per metric label set with its " +

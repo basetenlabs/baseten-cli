@@ -1,7 +1,12 @@
 package cmd
 
 import (
+	"errors"
+	"fmt"
+
+	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-cli/internal/ssh"
 )
 
@@ -20,8 +25,14 @@ func commandSSHSetup(ctx *CommandContext, flags *cmd.SSHSetupFlags) error {
 	// Pin the profile this invocation resolves to so connections are
 	// deterministic; --profile or BASETEN_PROFILE can still override at connect.
 	var profile string
-	if session, err := ctx.authInfo.Session(); err == nil {
+	session, err := ctx.authInfo.Session()
+	var required *auth.ErrExplicitProfileRequired
+	if err == nil {
 		profile = session.ProfileName()
+	} else if errors.As(err, &required) {
+		ctx.LogLine("warning: no profile selected to pin; pass --profile to pin one. Connections will use BASETEN_PROFILE.")
+	} else if errors.Is(err, huh.ErrUserAborted) {
+		return err
 	}
 	// Only pin names safe to embed bare in the config's shell command lines.
 	if profile != "" && !ssh.SafeProfileName(profile) {
@@ -62,11 +73,11 @@ func commandSSHSetup(ctx *CommandContext, flags *cmd.SSHSetupFlags) error {
 
 func commandSSHSign(ctx *CommandContext, flags *cmd.SSHSignFlags) error {
 	ctx.SetDefaultProfile(flags.DefaultProfile)
-	cl, err := ctx.NewManagementClient()
+	cacheIdentity, err := ctx.sshCacheIdentity()
 	if err != nil {
 		return err
 	}
-	cacheIdentity, err := ctx.sshCacheIdentity()
+	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
@@ -95,8 +106,13 @@ func commandSSHProxy(ctx *CommandContext, flags *cmd.SSHProxyFlags) error {
 // inheriting the same flags and environment, so both arrive at the same value.
 // Must be called after SetDefaultProfile, which the session resolution reads.
 func (c *CommandContext) sshCacheIdentity() (string, error) {
+	// ssh owns the terminal, so never prompt for a profile.
+	c.authInfo.selectProfile = nil
 	session, err := c.authInfo.Session()
-	if err != nil {
+	var required *auth.ErrExplicitProfileRequired
+	if errors.As(err, &required) {
+		return "", fmt.Errorf("%w\n  Or pin one for SSH with `baseten ssh setup --profile <profile>`", err)
+	} else if err != nil {
 		return "", err
 	}
 	return session.CacheIdentity(), nil

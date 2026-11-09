@@ -108,7 +108,7 @@ func commandModelAPIDescribe(ctx *CommandContext, flags *cmd.ModelAPIDescribeFla
 	if err != nil {
 		return err
 	}
-	m, err := cl.API().GetModelApisModelApiName(ctx, flags.Model)
+	m, err := cl.API().GetModelApisModelApiName(ctx, flags.Model, managementapi.GetV1ModelApisModelApiNameParams{})
 	if err != nil {
 		return fmt.Errorf("describe model API %s: %w", flags.Model, err)
 	}
@@ -262,7 +262,14 @@ func writeModelAPIChatText(ctx *CommandContext, resp *http.Response) error {
 
 // modelAPICurrencyString renders a cost union (number or string) as a plain
 // decimal string, dropping the JSON quoting when the value arrives as a string.
-func modelAPICurrencyString(m json.Marshaler) string {
+// A nil cost (pricing unavailable) renders as "-".
+func modelAPICurrencyString[T any, P interface {
+	*T
+	json.Marshaler
+}](m P) string {
+	if m == nil {
+		return "-"
+	}
 	b, err := m.MarshalJSON()
 	if err != nil {
 		return ""
@@ -270,7 +277,7 @@ func modelAPICurrencyString(m json.Marshaler) string {
 	return strings.Trim(string(b), `"`)
 }
 
-func modelAPIRateLimitsString(limits []managementapi.RateLimit) string {
+func modelAPIRateLimitsString(limits []managementapi.ModelAPIRateLimit) string {
 	parts := make([]string, 0, len(limits))
 	for _, l := range limits {
 		parts = append(parts, fmt.Sprintf("%d per %s (%s)", l.Threshold, l.Unit, l.Type))

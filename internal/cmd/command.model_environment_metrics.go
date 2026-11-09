@@ -18,7 +18,7 @@ func commandModelEnvironmentMetrics(ctx *CommandContext, flags *cmd.ModelEnviron
 	if err != nil {
 		return err
 	}
-	fetch := func(q metricsQuery) (*managementapi.GetModelMetricsResponse, error) {
+	fetch := func(q metricsQuery) (*managementapi.GetMetricsResponse, error) {
 		return api.API().GetModelsEnvironmentsMetrics(ctx, ref.ID, flags.Environment,
 			managementapi.GetV1ModelsModelIdEnvironmentsEnvNameMetricsParams{
 				Mode:             &q.Mode,
