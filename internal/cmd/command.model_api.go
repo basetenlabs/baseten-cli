@@ -108,7 +108,7 @@ func commandModelAPIDescribe(ctx *CommandContext, flags *cmd.ModelAPIDescribeFla
 	if err != nil {
 		return err
 	}
-	m, err := cl.API().GetModelApisModelApiName(ctx, flags.Model)
+	m, err := cl.API().GetModelApisModelApiName(ctx, flags.Model, managementapi.GetV1ModelApisModelApiNameParams{})
 	if err != nil {
 		return fmt.Errorf("describe model API %s: %w", flags.Model, err)
 	}
@@ -270,7 +270,7 @@ func modelAPICurrencyString(m json.Marshaler) string {
 	return strings.Trim(string(b), `"`)
 }
 
-func modelAPIRateLimitsString(limits []managementapi.RateLimit) string {
+func modelAPIRateLimitsString(limits []managementapi.ModelAPIRateLimit) string {
 	parts := make([]string, 0, len(limits))
 	for _, l := range limits {
 		parts = append(parts, fmt.Sprintf("%d per %s (%s)", l.Threshold, l.Unit, l.Type))
