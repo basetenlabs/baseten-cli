@@ -136,24 +136,24 @@ func Test_Grid_Route_Usage_ClampsToRetention(t *testing.T) {
 		"older than the 92 days of usage Baseten keeps")
 }
 
-func Test_Grid_Route_Usage_TeamAndRouterDimensions(t *testing.T) {
+func Test_Grid_Route_Usage_TeamAndIntelligentRouteDimensions(t *testing.T) {
 	row := gridUsageModel("test-model-api", "0.25", 100, 50, 20)
 	row["team_id"] = "team-a"
 	row["team_name"] = "Engineering"
-	row["router_id"] = "acme/router"
+	row["intelligent_route"] = "acme/router"
 	body := gridUsageBody(gridUsageBucket("2026-09-24", row))
 	for _, output := range []string{"text", "json", "jsonl"} {
 		t.Run(output, func(t *testing.T) {
 			h, m := newGridUsageHarness(t, gridUsageNow, body)
-			h.Require.NoError(h.Execute("grid", "route", "usage", "--team", "Engineering", "--group-by", "team,router,model", "--output", output))
+			h.Require.NoError(h.Execute("grid", "route", "usage", "--team", "Engineering", "--group-by", "team,intelligent-route,model", "--output", output))
 			query := gridUsageLastQuery(h, m)
-			h.Require.Equal([]string{"TEAM", "ROUTER", "MODEL"}, query["group_by"])
+			h.Require.Equal([]string{"TEAM", "INTELLIGENT_ROUTE", "MODEL"}, query["group_by"])
 			h.Require.Equal([]string{"team-a"}, query["team_id"])
 			h.Require.Contains(h.Stdout.String(), "Engineering")
 			h.Require.Contains(h.Stdout.String(), "acme/router")
 			if output == "text" {
 				h.Require.Contains(h.Stdout.String(), "TEAM")
-				h.Require.Contains(h.Stdout.String(), "ROUTER")
+				h.Require.Contains(h.Stdout.String(), "INTELLIGENT_ROUTE")
 				h.Require.NotContains(h.Stdout.String(), "team-a")
 			} else {
 				h.Require.Contains(h.Stdout.String(), "Engineering")
