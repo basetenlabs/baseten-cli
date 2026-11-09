@@ -16,8 +16,10 @@ var commandOrgServiceAccount = Command{
 			Summary: "Create a service account",
 			Description: "Create a service account. Omit --team for an organization account. " +
 				"--type takes the same access types as 'baseten org api-key create', plus " +
-				"workspace-invoke-model-apis. --model-id, --environment and --model-api-slug " +
-				"restrict the access; omit them for no restriction.",
+				"workspace-invoke-model-apis. --model-id, --model-api-slug and, with workspace-invoke, " +
+				"--environment restrict the access; omit them for no restriction. With " +
+				"workspace-manage-all, --environment instead adds a restricted environment the " +
+				"account may also manage.",
 			Flags: OrgServiceAccountCreateFlags{},
 			Output: &CommandOutput[managementapi.ServiceAccount]{
 				TextDescription: "Prints the new service account's ID on stdout, and " +

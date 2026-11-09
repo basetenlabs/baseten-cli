@@ -89,9 +89,10 @@ var commandOrgTrustRule = Command{
 			Name:    "update",
 			Summary: "Update a trust rule",
 			Description: "Update a trust rule. Match criteria not passed are kept; pass null to " +
-				"--subject-glob, --condition or --audience to remove that criterion. --claim " +
-				"replaces every claim. The identity provider and maximum token lifetime can't " +
-				"change.",
+				"--subject-glob or --condition to remove that criterion, or to --audience to " +
+				"restore the default audience. --claim replaces every claim. The identity provider " +
+				"and maximum token lifetime can't change. The rule is read, then replaced whole, " +
+				"so a change made by someone else in between is overwritten.",
 			Flags: OrgTrustRuleUpdateFlags{},
 			Output: &CommandOutput[managementapi.TrustRule]{
 				TextDescription: "Prints \"Updated trust rule <name>\" to stderr; no stdout output.",
