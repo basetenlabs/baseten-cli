@@ -873,6 +873,13 @@ func (a *authInfo) resolve() error {
 	return a.err
 }
 
+// Reset forgets the resolved session and remote, so the next use resolves them
+// again. For a command that changes the stored profiles partway through.
+func (a *authInfo) Reset() {
+	a.once = sync.Once{}
+	a.err, a.remote, a.session = nil, nil, nil
+}
+
 // Remote returns the remote for this invocation, derived from the selected
 // profile (or ephemeral env credentials, or the default).
 func (a *authInfo) Remote() (*Remote, error) {

@@ -373,12 +373,22 @@ func openBrowserURL(url string) error {
 }
 
 func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) error {
+	profileName, user, err := loginWebProfile(ctx, store, remote, flags)
+	if err != nil {
+		return err
+	}
+	return writeLoginResult(ctx, profileName, user)
+}
+
+// loginWebProfile signs in with the browser and stores the profile, leaving
+// the caller to report it.
+func loginWebProfile(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) (string, *managementapi.UserInfo, error) {
 	mgmtURL := remote.ManagementURL()
 	cfg := OAuthConfig(mgmtURL)
 	oauthCtx := auth.OAuthContext(ctx.Context, ctx.httpClient().Transport)
 	devResp, err := cfg.DeviceAuth(oauthCtx)
 	if err != nil {
-		return fmt.Errorf("starting device authorization: %w", err)
+		return "", nil, fmt.Errorf("starting device authorization: %w", err)
 	}
 
 	verificationURI := devResp.VerificationURIComplete
@@ -392,7 +402,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 
 	token, err := cfg.DeviceAccessToken(oauthCtx, devResp)
 	if err != nil {
-		return fmt.Errorf("waiting for authorization: %w", err)
+		return "", nil, fmt.Errorf("waiting for authorization: %w", err)
 	}
 
 	if claims, err := decodeJWTClaims(token.AccessToken); err == nil {
@@ -401,18 +411,18 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 
 	cl, err := ctx.NewManagementClientWithAuth(mgmtURL, "Bearer "+token.AccessToken)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	user, err := cl.API().GetUsersMe(ctx.Context)
 	if err != nil {
-		return fmt.Errorf("validating credentials: %w", err)
+		return "", nil, fmt.Errorf("validating credentials: %w", err)
 	}
 
 	email := deref(user.Email)
 	profileName := flags.Profile
 	if profileName == "" {
 		if email == "" {
-			return fmt.Errorf("could not determine a profile name from the account; pass --profile")
+			return "", nil, fmt.Errorf("could not determine a profile name from the account; pass --profile")
 		}
 		profileName = defaultProfileName(email, remote)
 	}
@@ -420,7 +430,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 	warnWriter := func(msg string) { ctx.Log(msg) }
 	// The profile may have been another user's.
 	if err := clearCachedTokens(ctx, store, profileName); err != nil {
-		return err
+		return "", nil, err
 	}
 	cred := auth.OAuthCredential{
 		AccessToken:  token.AccessToken,
@@ -428,10 +438,10 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 		Expiry:       token.Expiry,
 	}
 	if err := store.SetOAuthProfile(ctx, profileName, remote.RemoteURL(), cred, !flags.NoSwitch, warnWriter); err != nil {
-		return err
+		return "", nil, err
 	}
 
-	return writeLoginResult(ctx, profileName, user)
+	return profileName, user, nil
 }
 
 func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) error {

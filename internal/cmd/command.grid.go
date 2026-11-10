@@ -373,16 +373,41 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return err
+	}
+	// With no current profile, sign in here instead of sending the user to
+	// auth login. The new profile becomes the current one, as auth login's
+	// would; there is none to displace. A dry run changes nothing, so it does
+	// not sign in.
+	if session.ProfileName() == "" && !session.IsEphemeral() && !f.DryRun && ctx.IsInteractive() {
+		store, err := NewAuthStore(false)
+		if err != nil {
+			return err
+		}
+		remote, err := ctx.authInfo.Remote()
+		if err != nil {
+			return err
+		}
+		ctx.LogLine("Not logged in; signing in with your browser. To use an API key instead, run `baseten auth login --with-api-key` first.")
+		// Reported on stderr: stdout is for setup's own result.
+		profileName, user, err := loginWebProfile(ctx, store, remote, &cmd.AuthLoginFlags{})
+		if err != nil {
+			return err
+		}
+		ctx.Logf("Logged in as %s (%s) as profile %s\n", deref(user.Email), deref(user.WorkspaceName), profileName)
+		ctx.authInfo.Reset()
+		if session, err = ctx.authInfo.Session(); err != nil {
+			return err
+		}
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
 	api := cl.API()
 	team, listed, err := gridLoadHarnessSetupRoutes(ctx, api, f.Team)
-	if err != nil {
-		return err
-	}
-	session, err := ctx.authInfo.Session()
 	if err != nil {
 		return err
 	}
