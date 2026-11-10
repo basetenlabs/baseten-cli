@@ -1215,7 +1215,7 @@ func initHarnessGitRepo(t *testing.T, dir string) string {
 	return "repo=https://example.com/org/repo.git branch=" + run("branch", "--show-current") + " commit=" + run("rev-parse", "HEAD")
 }
 
-func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
+func Test_Grid_Setup_IntelligentRouteInPickers(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
@@ -1251,13 +1251,13 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 }
 
-func serveServedModelRoutes(api *MockManagementAPI, routers ...string) {
+func serveServedModelRoutes(api *MockManagementAPI, intelligentRoutes ...string) {
 	items := []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 		"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}}}
 	wide := maps.Clone(harnessRouteMetadata)
 	wide["context_window"] = 1000000
-	for _, router := range routers {
-		name, display, labeled := strings.Cut(router, "=")
+	for _, intelligentRoute := range intelligentRoutes {
+		name, display, labeled := strings.Cut(intelligentRoute, "=")
 		if !labeled {
 			display = name
 		}
@@ -1289,7 +1289,7 @@ func Test_Grid_Setup_ServedModelStatusLine(t *testing.T) {
 
 	h.Require.NoError(h.Execute(setup...))
 	settings := readHarnessSettings(t, "claude", path)
-	h.Require.Equal(map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --router 'acme/auto=auto'"}, settings["statusLine"])
+	h.Require.Equal(map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --intelligent-route 'acme/auto=auto'"}, settings["statusLine"])
 	h.Require.Contains(settings["availableModels"], "acme/auto[1m]")
 	h.Require.Equal("dark", settings["theme"])
 	h.Require.NotContains(settings, "hooks")
@@ -1304,7 +1304,7 @@ func Test_Grid_Setup_ServedModelStatusLine(t *testing.T) {
 
 	serveServedModelRoutes(api, "auto", "code")
 	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal("'"+cli+"' grid claude-served-model --router 'acme/auto=auto' --router 'acme/code=code'", readHarnessSettings(t, "claude", path)["statusLine"].(map[string]any)["command"])
+	h.Require.Equal("'"+cli+"' grid claude-served-model --intelligent-route 'acme/auto=auto' --intelligent-route 'acme/code=code'", readHarnessSettings(t, "claude", path)["statusLine"].(map[string]any)["command"])
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
 	h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, "claude", path))
@@ -1336,7 +1336,7 @@ func Test_Grid_Setup_ServedModelStopHook(t *testing.T) {
 		settings := readHarnessSettings(t, "claude", path)
 		h.Require.Equal(original["statusLine"], settings["statusLine"])
 		hooks := settings["hooks"].(map[string]any)
-		h.Require.Equal([]any{userStop, ours("--router 'acme/auto=auto'")}, hooks["Stop"])
+		h.Require.Equal([]any{userStop, ours("--intelligent-route 'acme/auto=auto'")}, hooks["Stop"])
 		h.Require.Equal(original["hooks"].(map[string]any)["PreToolUse"], hooks["PreToolUse"])
 	}
 	managed := claudeManagedSettings(t, h, dir)
@@ -1351,7 +1351,7 @@ func Test_Grid_Setup_ServedModelStopHook(t *testing.T) {
 	h.Require.NoError(os.WriteFile(path, raw, 0o600))
 	serveServedModelRoutes(api, "auto", "code")
 	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal([]any{userStop, ours("--router 'acme/auto=auto' --router 'acme/code=code'"), later}, readHarnessSettings(t, "claude", path)["hooks"].(map[string]any)["Stop"])
+	h.Require.Equal([]any{userStop, ours("--intelligent-route 'acme/auto=auto' --intelligent-route 'acme/code=code'"), later}, readHarnessSettings(t, "claude", path)["hooks"].(map[string]any)["Stop"])
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
 	original["hooks"].(map[string]any)["Stop"] = []any{userStop, later}
@@ -1376,10 +1376,10 @@ func Test_Grid_Setup_ServedModelSharedStopGroup(t *testing.T) {
 
 	h.Require.NoError(h.Execute(setup...))
 	settings := readHarnessSettings(t, "claude", path)
-	h.Require.Equal([]any{map[string]any{"hooks": []any{ours("--router 'acme/auto=auto'")}}}, settings["hooks"].(map[string]any)["Stop"])
+	h.Require.Equal([]any{map[string]any{"hooks": []any{ours("--intelligent-route 'acme/auto=auto'")}}}, settings["hooks"].(map[string]any)["Stop"])
 	settings["hooks"].(map[string]any)["Stop"] = []any{
-		map[string]any{"matcher": "*", "hooks": []any{ours("--router 'acme/auto=auto'"), notify}},
-		map[string]any{"hooks": []any{ours("--router 'acme/old'")}},
+		map[string]any{"matcher": "*", "hooks": []any{ours("--intelligent-route 'acme/auto=auto'"), notify}},
+		map[string]any{"hooks": []any{ours("--intelligent-route 'acme/old'")}},
 	}
 	raw, err := json.Marshal(settings)
 	h.Require.NoError(err)
@@ -1387,7 +1387,7 @@ func Test_Grid_Setup_ServedModelSharedStopGroup(t *testing.T) {
 
 	serveServedModelRoutes(api, "auto", "code")
 	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal([]any{map[string]any{"matcher": "*", "hooks": []any{ours("--router 'acme/auto=auto' --router 'acme/code=code'"), notify}}},
+	h.Require.Equal([]any{map[string]any{"matcher": "*", "hooks": []any{ours("--intelligent-route 'acme/auto=auto' --intelligent-route 'acme/code=code'"), notify}}},
 		readHarnessSettings(t, "claude", path)["hooks"].(map[string]any)["Stop"])
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
@@ -1399,10 +1399,10 @@ func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
 	skipUnlessSupported(t)
 	for name, command := range map[string]func(cli string) string{
 		"composed": func(string) string {
-			return `echo "$(baseten grid claude-served-model --router acme/auto) | custom stats"`
+			return `echo "$(baseten grid claude-served-model --intelligent-route acme/auto) | custom stats"`
 		},
 		"suffixed": func(cli string) string {
-			return "'" + cli + "' grid claude-served-model --router 'acme/auto=auto' ; echo hi"
+			return "'" + cli + "' grid claude-served-model --intelligent-route 'acme/auto=auto' ; echo hi"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1421,7 +1421,7 @@ func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
 			h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
 			settings := readHarnessSettings(t, "claude", path)
 			h.Require.Equal(user["statusLine"], settings["statusLine"])
-			h.Require.Equal([]any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --router 'acme/auto=auto' --hook"}}}},
+			h.Require.Equal([]any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --intelligent-route 'acme/auto=auto' --hook"}}}},
 				settings["hooks"].(map[string]any)["Stop"])
 
 			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
@@ -1430,7 +1430,7 @@ func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
 	}
 }
 
-func Test_Grid_Setup_ServedModelZeroRouters(t *testing.T) {
+func Test_Grid_Setup_ServedModelZeroIntelligentRoutes(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	dir := t.TempDir()
@@ -1478,7 +1478,7 @@ func Test_Grid_Setup_ServedModelSessionCredential(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "but baseten on your PATH is "+filepath.Join(bin, "baseten")+"; harnesses will run the former")
 	settings := readHarnessSettings(t, "claude", harnessSettingsFile("claude", dir))
 	h.Require.NotContains(settings, "apiKeyHelper")
-	h.Require.Equal("'"+exe+"' grid claude-served-model --router 'acme/auto=auto'", settings["statusLine"].(map[string]any)["command"])
+	h.Require.Equal("'"+exe+"' grid claude-served-model --intelligent-route 'acme/auto=auto'", settings["statusLine"].(map[string]any)["command"])
 }
 
 func Test_Grid_Setup_ServedModelOptOut(t *testing.T) {
@@ -1487,7 +1487,7 @@ func Test_Grid_Setup_ServedModelOptOut(t *testing.T) {
 	serveServedModelRoutes(api, "auto")
 	cli, err := exec.LookPath("baseten")
 	h.Require.NoError(err)
-	ours := "'" + cli + "' grid claude-served-model --router 'acme/auto=auto'"
+	ours := "'" + cli + "' grid claude-served-model --intelligent-route 'acme/auto=auto'"
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude", dir)
 	guard := map[string]any{"PreToolUse": []any{map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "guard"}}}}}
@@ -1626,7 +1626,7 @@ func Test_Grid_Setup_ServedModelDisplayNames(t *testing.T) {
 	h.Require.NoError(err)
 	setup := []string{"grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes", "--output", "json"}
 	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal("'"+cli+`' grid claude-served-model --router 'acme/auto=Auto (Baseten Internal Dogfooding)' --router 'acme/eq=x=y'\''s' --router 'acme/bare'`,
+	h.Require.Equal("'"+cli+`' grid claude-served-model --intelligent-route 'acme/auto=Auto (Baseten Internal Dogfooding)' --intelligent-route 'acme/eq=x=y'\''s' --intelligent-route 'acme/bare'`,
 		readHarnessSettings(t, "claude", path)["statusLine"].(map[string]any)["command"])
 	h.Require.NoError(h.Execute(setup...))
 	var rerun public.GridPlanList
@@ -1652,7 +1652,7 @@ func Test_Grid_ClaudeServedModel(t *testing.T) {
 	run := func(stdin string, args ...string) string {
 		h.Stdin.Reset()
 		h.Stdin.WriteString(stdin)
-		routers := []string{"--router", "acme/auto=Auto (Baseten Internal Dogfooding)", "--router", "acme/code=x=y's", "--router", "acme/bare", "--router", "acme/empty="}
+		routers := []string{"--intelligent-route", "acme/auto=Auto (Baseten Internal Dogfooding)", "--intelligent-route", "acme/code=x=y's", "--intelligent-route", "acme/bare", "--intelligent-route", "acme/empty="}
 		h.Require.NoError(h.Execute(append(append([]string{"grid", "claude-served-model"}, routers...), args...)...))
 		h.Require.Empty(h.Stderr.String())
 		return h.Stdout.String()
@@ -1680,6 +1680,12 @@ func Test_Grid_ClaudeServedModel(t *testing.T) {
 	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(turns, "First answer.", ""), "--hook"))
 	h.Require.Equal(`{"systemMessage":"Served by moonshotai/Kimi-K3 via x=y's"}`+"\n", run(stop(turns, "", ""), "--hook"))
 	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", run(stop(turns, "First answer.", "")))
+
+	// Status lines and hooks older builds wrote still pass the pre-rename --router flag.
+	h.Stdin.Reset()
+	h.Stdin.WriteString(stop(turns, "First answer.", ""))
+	h.Require.NoError(h.Execute("grid", "claude-served-model", "--router", "acme/code=x=y's"))
+	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", h.Stdout.String())
 	started := time.Now()
 	h.Require.Empty(run(stop(turns, "Never said.", ""), "--hook", "--wait", "300ms"))
 	h.Require.GreaterOrEqual(time.Since(started), 300*time.Millisecond)
@@ -1857,7 +1863,7 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 	h.Require.NoError(err)
 	payloadPath, hookOutput, hook := filepath.Join(root, "stop-payloads.jsonl"), filepath.Join(root, "stop-hook.out"), filepath.Join(root, "stop-hook.sh")
 	h.Require.NoError(os.WriteFile(hook, []byte("#!/bin/sh\ntee -a '"+payloadPath+"' | BASETEN_TEST_RUN_CLI=1 '"+exe+
-		"' -test.run='^Test_Grid_ClaudeServedModel_HookProcess$' -- grid claude-served-model --router 'acme/auto=Auto' --hook | tee -a '"+hookOutput+"'\n"), 0o700))
+		"' -test.run='^Test_Grid_ClaudeServedModel_HookProcess$' -- grid claude-served-model --intelligent-route 'acme/auto=Auto' --hook | tee -a '"+hookOutput+"'\n"), 0o700))
 	settingsPath := harnessSettingsFile("claude", configDir)
 	settings := readHarnessSettings(t, "claude", settingsPath)
 	settings["hooks"] = map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hook}}}}}
@@ -1925,7 +1931,7 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 	h.Require.NoError(err)
 	h.Stdin.Reset()
 	h.Stdin.Write(statusLine)
-	h.Require.NoError(h.Execute("grid", "claude-served-model", "--router", "acme/auto=Auto"))
+	h.Require.NoError(h.Execute("grid", "claude-served-model", "--intelligent-route", "acme/auto=Auto"))
 	h.Require.Equal("Auto → acme/served-y\n", h.Stdout.String())
 }
 
@@ -1937,7 +1943,7 @@ func piGitContextFile(dir string) string {
 	return filepath.Join(dir, "extensions", "baseten-git-context.ts")
 }
 
-func piServedModelRouters(t *testing.T, path string) map[string]string {
+func piServedModelIntelligentRoutes(t *testing.T, path string) map[string]string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -1979,7 +1985,7 @@ func Test_Grid_Setup_PiServedModel(t *testing.T) {
 	h.Require.Equal(extension, plans.Items[2].Config)
 	h.Require.True(plans.Items[2].Changed)
 	h.Require.Empty(plans.Items[2].ReplacedSettings)
-	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)"}, piServedModelRouters(t, extension))
+	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)"}, piServedModelIntelligentRoutes(t, extension))
 	h.Require.NotContains(h.Stderr.String(), "left unchanged")
 	settings := readHarnessSettings(t, "pi", settingsPath)
 	h.Require.Equal("dark", settings["theme"])
@@ -1998,7 +2004,7 @@ func Test_Grid_Setup_PiServedModel(t *testing.T) {
 	h.Require.Equal(extension, plans.Items[2].Config)
 	h.Require.True(plans.Items[2].Changed)
 	h.Require.Empty(plans.Items[2].ReplacedSettings, "setup refreshes its own extension without reporting a replacement")
-	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/eq": `x="y's" \ </script>`, "acme/bare": "acme/bare"}, piServedModelRouters(t, extension))
+	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/eq": `x="y's" \ </script>`, "acme/bare": "acme/bare"}, piServedModelIntelligentRoutes(t, extension))
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "pi", "--config-dir", dir, "--yes"))
 	h.Require.NoFileExists(extension)
@@ -2054,7 +2060,7 @@ func Test_Grid_Setup_PiServedModelUserFile(t *testing.T) {
 	}
 }
 
-func Test_Grid_Setup_PiServedModelZeroRouters(t *testing.T) {
+func Test_Grid_Setup_PiServedModelZeroIntelligentRoutes(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	dir := t.TempDir()
@@ -2459,8 +2465,9 @@ func openCodePluginRoutes(t *testing.T, dir string) map[string]any {
 	return routes
 }
 
-func openCodePluginRouters(routers map[string]any) map[string]any {
-	return map[string]any{"managedBy": "baseten grid setup", "provider": "baseten-harness", "routers": routers}
+func openCodePluginIntelligentRoutes(routers map[string]any) map[string]any {
+	// routers mirrors intelligentRoutes for older server.js builds.
+	return map[string]any{"managedBy": "baseten grid setup", "provider": "baseten-harness", "intelligentRoutes": routers, "routers": routers}
 }
 
 var openCodePluginSources = []string{"routes.json", "server.js", "shared.js", "tui.tsx"}
@@ -2482,7 +2489,7 @@ func Test_Grid_Setup_OpenCodeServedModel(t *testing.T) {
 
 			h.Require.NoError(h.Execute(setup...))
 			h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir))
-			h.Require.Equal(openCodePluginRouters(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)"}), openCodePluginRoutes(t, dir))
+			h.Require.Equal(openCodePluginIntelligentRoutes(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)"}), openCodePluginRoutes(t, dir))
 			settings := readHarnessSettings(t, "opencode", path)
 			h.Require.NotContains(settings, "plugins")
 			h.Require.NotContains(settings, "plugin")
@@ -2507,7 +2514,7 @@ func Test_Grid_Setup_OpenCodeServedModel(t *testing.T) {
 			h.Require.NoError(os.WriteFile(server, []byte("stale"), 0o600))
 			serveServedModelRoutes(api, "auto=Auto (Baseten Internal Dogfooding)", "code")
 			h.Require.NoError(h.Execute(setup...))
-			h.Require.Equal(openCodePluginRouters(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/code": "code"}), openCodePluginRoutes(t, dir))
+			h.Require.Equal(openCodePluginIntelligentRoutes(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/code": "code"}), openCodePluginRoutes(t, dir))
 			refreshed, err := os.ReadFile(server)
 			h.Require.NoError(err)
 			h.Require.Equal(written, refreshed, "setup refreshes the plugin source")
@@ -2527,7 +2534,7 @@ func Test_Grid_Setup_OpenCodeServedModelForeignPlugin(t *testing.T) {
 	skipUnlessSupported(t)
 	for name, files := range map[string]map[string]string{
 		"unmarked":    {"server.js": "export default {}\n"},
-		"other owner": {"routes.json": `{"managedBy":"someone else","routers":{}}`, "server.js": "export default {}\n"},
+		"other owner": {"routes.json": `{"managedBy":"someone else","intelligentRoutes":{}}`, "server.js": "export default {}\n"},
 		"file":        {"": "not a directory\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -2568,7 +2575,7 @@ func Test_Grid_Setup_OpenCodeServedModelForeignPlugin(t *testing.T) {
 	}
 }
 
-func Test_Grid_Setup_OpenCodeServedModelZeroRoutersAndOpenCode1(t *testing.T) {
+func Test_Grid_Setup_OpenCodeServedModelZeroIntelligentRoutesAndOpenCode1(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	base := h.Context
