@@ -228,7 +228,8 @@ func (codexHarness) Routes(routes []Route) []Route {
 	return slices.DeleteFunc(slices.Clone(routes), func(r Route) bool { return !r.Responses })
 }
 
-func (codexHarness) Prepare(path string, routes []Route, s Selection, endpoint string, helper *Helper) ([]*Plan, error) {
+func (codexHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([]*Plan, error) {
+	s, endpoint, helper := opts.Selection, opts.Endpoint, opts.Helper
 	switch {
 	case s.Background != "":
 		return nil, errors.New("--background-route-id is supported only for Claude Code and OpenCode")

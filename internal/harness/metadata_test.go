@@ -36,8 +36,8 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	huge.ReasoningLevels = []string{"none", "low", "high", "xhigh"}
 	mid := testRoute("acme/mid", "Mid")
 	mid.ContextWindow = 200000
-	path := settingsPath(t, claudeCodeHarness{})
-	setup(t, claudeCodeHarness{}, path, []Route{huge, mid}, Selection{})
+	path := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, path, []Route{huge, mid}, Selection{})
 	d := load(t, path)
 	require.Equal(t, "acme/huge[1m]", d["model"])
 	require.Equal(t, []any{
@@ -54,7 +54,7 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
 
-	setup(t, claudeCodeHarness{}, path, []Route{mid, huge}, Selection{Background: "acme/huge"})
+	setup(t, claudeHarness{}, path, []Route{mid, huge}, Selection{Background: "acme/huge"})
 	d = load(t, path)
 	require.Equal(t, []any{"acme/mid", "acme/huge[1m]"}, d["availableModels"])
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data)
@@ -73,8 +73,8 @@ func TestReasoningBoundsSkipNone(t *testing.T) {
 func TestMaxEffortOnlyForClaudeCodeAndPi(t *testing.T) {
 	r := testRoute("acme/primary", "Primary")
 	r.ReasoningLevels = []string{"none", "low", "high", "xhigh", "max"}
-	claude := settingsPath(t, claudeCodeHarness{})
-	setup(t, claudeCodeHarness{}, claude, []Route{r}, Selection{})
+	claude := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, claude, []Route{r}, Selection{})
 	require.Equal(t, map[string]any{"acme/primary": map[string]any{"maxEffortLevel": "max"}}, load(t, claude)["modelSettings"])
 
 	codex := settingsPath(t, codexHarness{})
@@ -98,6 +98,95 @@ func TestMaxEffortOnlyForClaudeCodeAndPi(t *testing.T) {
 	require.Equal(t, map[string]any{
 		"off": "none", "minimal": nil, "low": "low", "medium": nil, "high": "high", "xhigh": "xhigh", "max": "max",
 	}, model["thinkingLevelMap"])
+}
+
+func TestPiAdaptiveThinking(t *testing.T) {
+	for _, tc := range []struct {
+		model    string
+		adaptive bool
+	}{
+		{"claude-fable-5-1", true},
+		{"claude-mythos-5-1", true},
+		{"claude-fable-5", true},
+		{"claude-mythos-5", true},
+		{"claude-mythos-preview", true},
+		{"claude-opus-5-5", true},
+		{"claude-opus-5", true},
+		{"claude-opus-4-8", true},
+		{"claude-opus-4-7", true},
+		{"claude-sonnet-5-5", true},
+		{"claude-sonnet-5", true},
+		{"claude-haiku-5-5", true},
+		{"claude-opus-4-6", true},
+		{"claude-sonnet-4-6", true},
+		{"claude-opus-4-5", false},
+		{"claude-haiku-4-5", false},
+		{"claude-sonnet-4-5", false},
+		{"claude-opus-4-5-20251101", false},
+		{"claude-haiku-4-5-20251001", false},
+		{"claude-sonnet-4-5-20250929", false},
+		{"anthropic.claude-opus-4-5-20251101-v1:0", false},
+		{"anthropic.claude-haiku-4-5-20251001-v1:0", false},
+		{"anthropic.claude-sonnet-4-5-20250929-v1:0", false},
+		{"claude-opus-4-5@20251101", false},
+		{"claude-haiku-4-5@20251001", false},
+		{"claude-sonnet-4-5@20250929", false},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			require.Equal(t, tc.adaptive, piAdaptiveThinking(tc.model))
+		})
+	}
+	t.Run("latest suffix normalization", func(t *testing.T) {
+		require.False(t, piAdaptiveThinking("claude-opus-4-5-latest"))
+	})
+	t.Run("unknown models default to adaptive", func(t *testing.T) {
+		for _, model := range []string{"", "claude-opus-99-1"} {
+			require.True(t, piAdaptiveThinking(model), model)
+		}
+	})
+}
+
+func TestPiAnthropicThinkingCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		model           string
+		contextWindow   int
+		outputLimit     int
+		reasoningLevels []string
+		adaptive        bool
+	}{
+		{"claude-opus-4-5", 200000, 64000, []string{"low", "medium", "high"}, false},
+		{"claude-opus-4-5-20251101", 200000, 64000, []string{"low", "medium", "high"}, false},
+		{"claude-opus-5-5", 1000000, 128000, []string{"low", "medium", "high", "xhigh", "max"}, true},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			tools := true
+			api := managementapi.GridRoute{
+				Name: "acme/custom", DisplayName: "Custom",
+				Metadata: &managementapi.ExploreMetadata{
+					ContextWindow: &tc.contextWindow, MaxOutputTokens: &tc.outputLimit,
+					InputModalities: []string{"text", "image"}, Tools: &tools,
+					ReasoningEffortLevels: &tc.reasoningLevels,
+					SupportedApiFormats:   &managementapi.ExploreMetadataAPIFormats{Messages: &tools},
+				},
+			}
+			require.NoError(t, json.Unmarshal([]byte(`{"type":"CONNECTION","connection_id":"conn-a","model":"`+tc.model+`"}`), &api.Target))
+			route, err := NewRoute(api, Providers{"conn-a": ProviderAnthropic})
+			require.NoError(t, err)
+			path := settingsPath(t, piHarness{})
+			setup(t, piHarness{}, path, []Route{route}, Selection{})
+			models := get(load(t, path), piProviderPath).Data.(map[string]any)["models"].([]any)
+			model := models[0].(map[string]any)
+			require.Equal(t, "acme/custom", model["id"])
+			require.Equal(t, "anthropic-messages", model["api"])
+			require.Equal(t, true, model["reasoning"])
+			require.Equal(t, "high", get(model, []string{"thinkingLevelMap", "high"}).Data)
+			if tc.adaptive {
+				require.Equal(t, true, get(model, []string{"compat", "forceAdaptiveThinking"}).Data)
+			} else {
+				require.NotContains(t, model, "compat", "legacy models must retain Pi's budget-based thinking")
+			}
+		})
+	}
 }
 
 func TestPiThinkingLevels(t *testing.T) {
@@ -218,7 +307,7 @@ func TestNewRoute(t *testing.T) {
 	require.Equal(t, &Cost{Input: 0.3, Output: 1.2}, r.Cost, "a long-context price without output is dropped")
 }
 
-func TestRouteProviderComesFromConnections(t *testing.T) {
+func TestRouteTargetComesFromConnections(t *testing.T) {
 	connection := func(id, provider string) managementapi.GridConnection {
 		c := managementapi.GridConnection{Id: id}
 		require.NoError(t, json.Unmarshal([]byte(`{"provider": "`+provider+`", "secret_id": "s", "secret_name": "key"}`), &c.Config))
@@ -230,23 +319,25 @@ func TestRouteProviderComesFromConnections(t *testing.T) {
 	tools, ctx, out := true, 128000, 4096
 	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools}
 	for _, tc := range []struct {
-		name   string
-		target string
-		want   string
+		name         string
+		target       string
+		wantProvider string
+		wantModel    string
 	}{
-		{"anthropic connection", `{"type": "CONNECTION", "connection_id": "conn-a", "model": "claude"}`, ProviderAnthropic},
-		{"openai connection", `{"type": "CONNECTION", "connection_id": "conn-o", "model": "gpt"}`, ProviderOpenAI},
-		{"xai connection", `{"type": "CONNECTION", "connection_id": "conn-x", "model": "grok"}`, "XAI"},
-		{"unknown connection", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, ""},
-		{"baseten model api", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, ProviderBaseten},
-		{"classifier", `{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, ""},
+		{"anthropic connection", `{"type": "CONNECTION", "connection_id": "conn-a", "model": "claude"}`, ProviderAnthropic, "claude"},
+		{"openai connection", `{"type": "CONNECTION", "connection_id": "conn-o", "model": "gpt"}`, ProviderOpenAI, "gpt"},
+		{"xai connection", `{"type": "CONNECTION", "connection_id": "conn-x", "model": "grok"}`, "XAI", "grok"},
+		{"unknown connection", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, "", "gpt"},
+		{"baseten model api", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, ProviderBaseten, ""},
+		{"classifier", `{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := managementapi.GridRoute{Name: "acme/route", DisplayName: "Route", Metadata: metadata}
 			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 			r, err := NewRoute(api, providers)
 			require.NoError(t, err)
-			require.Equal(t, tc.want, r.Provider)
+			require.Equal(t, tc.wantProvider, r.Provider)
+			require.Equal(t, tc.wantModel, r.UpstreamModel)
 		})
 	}
 }

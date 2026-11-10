@@ -27,6 +27,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/basetenlabs/baseten-go/sandbox"
 	"github.com/coder/websocket"
 	"golang.org/x/term"
 )
@@ -90,9 +91,10 @@ type DialOptions struct {
 	// SandboxURL is the sandbox's URL.
 	SandboxURL string
 
-	// NewToken returns a sandbox token. A reconnection after a long
-	// hibernation may outlive the first token.
-	NewToken func(context.Context) (string, error)
+	// NewToken returns a sandbox token, told the token the sandbox API just
+	// rejected, if any. A reconnection after a long hibernation may outlive
+	// the first token.
+	NewToken sandbox.TokenProvider
 
 	// Input is read and sent to the sandbox's shell.
 	Input io.Reader
@@ -157,18 +159,26 @@ func Dial(ctx context.Context, opts DialOptions) (*Terminal, error) {
 		sessionID:          hex.EncodeToString(session),
 		reconnectKeystroke: make(chan []byte, 1),
 	}
-	token, err := terminal.mintToken(ctx)
+	token, err := terminal.mintToken(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	if err := terminal.connect(ctx, token); err != nil {
+	err = terminal.connect(ctx, token)
+	// The first token may be a cached one since revoked.
+	if errors.Is(err, errSandboxTokenRejected) {
+		if token, err = terminal.mintToken(ctx, token); err != nil {
+			return nil, err
+		}
+		err = terminal.connect(ctx, token)
+	}
+	if err != nil {
 		return nil, err
 	}
 	return terminal, nil
 }
 
-func (t *Terminal) mintToken(ctx context.Context) (string, error) {
-	token, err := t.opts.NewToken(ctx)
+func (t *Terminal) mintToken(ctx context.Context, revokedToken string) (string, error) {
+	token, err := t.opts.NewToken(ctx, sandbox.TokenProviderOptions{RevokedToken: revokedToken})
 	if err != nil {
 		return "", fmt.Errorf("getting a sandbox token: %w", err)
 	}
@@ -320,7 +330,7 @@ func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 	io.WriteString(t.opts.Errors, "Waking the sandbox...\r\n")
 	// No mint per dial attempt: that trips Baseten's API rate limit. A token
 	// the sandbox API rejected is the only case that mints another.
-	token, err := t.mintToken(ctx)
+	token, err := t.mintToken(ctx, "")
 	if err != nil {
 		return err
 	}
@@ -342,7 +352,7 @@ func (t *Terminal) wakeAndConnect(ctx context.Context) error {
 		lastDialErr = err
 		if errors.Is(err, errSandboxTokenRejected) && !reMinted {
 			reMinted = true
-			token, err = t.mintToken(ctx)
+			token, err = t.mintToken(ctx, token)
 			if err != nil {
 				return err
 			}

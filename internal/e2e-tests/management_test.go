@@ -60,8 +60,9 @@ func (m *management) APIKey(t *testing.T) {
 		}
 	})
 
+	expiresAt := time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339)
 	createOut := mustCLI(t, "org", "api-key", "create",
-		"--type", "personal", "--name", keyName, "--output", "json")
+		"--type", "personal", "--name", keyName, "--expires-at", expiresAt, "--output", "json")
 	var created struct {
 		ApiKey string `json:"api_key"`
 	}

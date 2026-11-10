@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,8 +57,11 @@ type AuthFile struct {
 	Version int `json:"version"`
 	// Current is the name of the profile used when no profile is selected via
 	// flag or environment.
-	Current  string             `json:"current,omitempty"`
-	Profiles map[string]Profile `json:"profiles"`
+	Current string `json:"current,omitempty"`
+	// RequireExplicitProfile disables the current profile: every command must
+	// select a profile via flag or environment.
+	RequireExplicitProfile bool               `json:"require_explicit_profile,omitempty"`
+	Profiles               map[string]Profile `json:"profiles"`
 	// InsecureRoutesKeys holds routes API keys by scope hash. Only populated
 	// when the keyring is unavailable.
 	InsecureRoutesKeys map[string]string `json:"routes_keys,omitempty"`
@@ -164,7 +168,8 @@ func keyringDo(ctx context.Context, fn func() error) error {
 }
 
 // SetOAuthProfile stores an OAuth credential under name. When switchCurrent is
-// true, the profile also becomes the current profile. Tries the keyring first;
+// true and explicit profile selection is not required, the profile also becomes
+// the current profile. Tries the keyring first;
 // falls back to plaintext in auth.json with a warning written to warnWriter
 // (if non-nil).
 func (s *Store) SetOAuthProfile(ctx context.Context, profileName, remoteURL string, cred OAuthCredential, switchCurrent bool, warnWriter func(string)) error {
@@ -197,14 +202,15 @@ func (s *Store) SetOAuthProfile(ctx context.Context, profileName, remoteURL stri
 	}
 
 	af.Profiles[profileName] = profile
-	if switchCurrent {
+	if switchCurrent && !af.RequireExplicitProfile {
 		af.Current = profileName
 	}
 	return s.saveLocked(af)
 }
 
 // SetAPIKeyProfile stores an API key credential under name. When switchCurrent
-// is true, the profile also becomes the current profile.
+// is true and explicit profile selection is not required, the profile also
+// becomes the current profile.
 func (s *Store) SetAPIKeyProfile(ctx context.Context, profileName, remoteURL, apiKey string, switchCurrent bool, warnWriter func(string)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -231,7 +237,7 @@ func (s *Store) SetAPIKeyProfile(ctx context.Context, profileName, remoteURL, ap
 	}
 
 	af.Profiles[profileName] = profile
-	if switchCurrent {
+	if switchCurrent && !af.RequireExplicitProfile {
 		af.Current = profileName
 	}
 	return s.saveLocked(af)
@@ -332,7 +338,7 @@ func (s *Store) SwitchProfile(profileName string) error {
 		return err
 	}
 	if _, ok := af.Profiles[profileName]; !ok {
-		return fmt.Errorf("profile %q not found", profileName)
+		return NewErrProfileNotFound(profileNames(af), profileName)
 	}
 	af.Current = profileName
 	return s.saveLocked(af)
@@ -348,17 +354,78 @@ func (s *Store) GetProfile(profileName string) (Profile, bool) {
 	return profile, ok
 }
 
-// CurrentProfile returns the current profile name and entry.
-func (s *Store) CurrentProfile() (name string, profile Profile, ok bool) {
+// CurrentProfile returns the current profile name and entry. When explicit
+// profile selection is required, it returns an *ErrExplicitProfileRequired
+// instead.
+func (s *Store) CurrentProfile() (name string, profile Profile, ok bool, err error) {
 	af, err := s.Load()
-	if err != nil || af.Current == "" {
-		return "", Profile{}, false
+	if err != nil {
+		return "", Profile{}, false, err
+	}
+	if af.RequireExplicitProfile {
+		return "", Profile{}, false, &ErrExplicitProfileRequired{Profiles: profileNames(af)}
+	}
+	if af.Current == "" {
+		return "", Profile{}, false, nil
 	}
 	profile, ok = af.Profiles[af.Current]
 	if !ok {
-		return "", Profile{}, false
+		return "", Profile{}, false, nil
 	}
-	return af.Current, profile, true
+	return af.Current, profile, true, nil
+}
+
+// SetRequireExplicitProfile enables or disables explicit profile selection.
+// Enabling clears the current profile so disabling later does not revive a
+// stale one.
+func (s *Store) SetRequireExplicitProfile(required bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	af, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	af.RequireExplicitProfile = required
+	if required {
+		af.Current = ""
+	}
+	return s.saveLocked(af)
+}
+
+// ErrExplicitProfileRequired is returned when explicit profile selection is
+// required and nothing selected a profile.
+type ErrExplicitProfileRequired struct {
+	// Profiles are the stored profile names in sorted order.
+	Profiles []string
+}
+
+// maxListedProfiles caps how many profiles ErrExplicitProfileRequired lists.
+const maxListedProfiles = 5
+
+func (e *ErrExplicitProfileRequired) Error() string {
+	if len(e.Profiles) == 0 {
+		return "no profile selected and explicit profile selection is required, but no profiles are stored\n" +
+			"  Create one with `baseten auth login --profile <profile>`, or disable with " +
+			"`baseten auth config update --require-explicit-profile=false`"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "no profile selected and explicit profile selection is required (%d ", len(e.Profiles))
+	if len(e.Profiles) == 1 {
+		b.WriteString("profile exists)\n")
+	} else {
+		b.WriteString("profiles exist)\n")
+	}
+	b.WriteString("  Pass one of:\n")
+	for _, name := range e.Profiles[:min(len(e.Profiles), maxListedProfiles)] {
+		fmt.Fprintf(&b, "    --profile %s\n", shellQuote(name))
+	}
+	if len(e.Profiles) > maxListedProfiles {
+		fmt.Fprintf(&b, "    ...and %d more (see `baseten auth list`)\n", len(e.Profiles)-maxListedProfiles)
+	}
+	b.WriteString("  Or set BASETEN_PROFILE, or disable with `baseten auth config update --require-explicit-profile=false` " +
+		"and then select a current profile with `baseten auth switch --profile <profile>`")
+	return b.String()
 }
 
 // ProfileNames returns the stored profile names in sorted order.
@@ -367,10 +434,33 @@ func (s *Store) ProfileNames() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return profileNames(af), nil
+}
+
+func profileNames(af *AuthFile) []string {
 	names := make([]string, 0, len(af.Profiles))
 	for name := range af.Profiles {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return names, nil
+	return names
+}
+
+// NewErrProfileNotFound returns the error for a named profile that is not in the store, suggesting how to add it.
+func NewErrProfileNotFound(names []string, profileName string) error {
+	if len(names) == 0 {
+		return fmt.Errorf("no profiles stored; create one with `baseten auth login --profile %s --no-switch`", shellQuote(profileName))
+	}
+	return fmt.Errorf("profile %q not found; add it with `baseten auth login --profile %s --no-switch` (existing profiles: %s)", profileName, shellQuote(profileName), strings.Join(names, ", "))
+}
+
+const shellSafeChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./_-"
+
+func shellQuote(s string) string {
+	if s != "" && s[0] != '-' && strings.IndexFunc(s, func(r rune) bool {
+		return !strings.ContainsRune(shellSafeChars, r)
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

@@ -1,7 +1,10 @@
 package harness
 
 import (
+	"cmp"
 	"context"
+	_ "embed"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"slices"
@@ -9,6 +12,14 @@ import (
 )
 
 type piHarness struct{}
+
+//go:embed pi_served_model.ts
+var piServedModelTemplate string
+
+//go:embed pi_git_context.ts
+var piGitContextSource []byte
+
+const piServedModelRoutersSlot = "Object.entries({})"
 
 // piSettingsPath is Pi's settings file, next to the models.json that holds
 // Baseten's provider. Both files are shared with the user's own settings.
@@ -45,14 +56,15 @@ func (h piHarness) Detect(ctx context.Context, execer Execer, dir string) (Detec
 
 func (piHarness) BackgroundRoute(Selection) string { return "" }
 
-// Routes returns every route, since Pi picks each route's API by its target.
+// Routes returns every route, since Pi picks each route's API per model.
 func (piHarness) Routes(routes []Route) []Route { return routes }
 
 func (piHarness) SupportsSubagent() bool { return false }
 
 func (piHarness) SupportsHelper() bool { return true }
 
-func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint string, helper *Helper) ([]*Plan, error) {
+func (piHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([]*Plan, error) {
+	s, endpoint, helper := opts.Selection, opts.Endpoint, opts.Helper
 	switch {
 	case s.Background != "":
 		return nil, errors.New("--background-route-id is supported only for Claude Code and OpenCode")
@@ -100,13 +112,60 @@ func (piHarness) Prepare(path string, routes []Route, s Selection, endpoint stri
 	if err != nil {
 		return nil, err
 	}
+	served := routes
+	if opts.NoPiServedModel {
+		served = nil
+	}
+	extension, err := piServedModelPlans(path, served)
+	if err != nil {
+		return nil, err
+	}
+	var gitContext []*Plan
+	if opts.GitContext {
+		gitContext, err = prepareSealedFile(piGitContextPath(path), piGitContextSource, "Pi sessions will not include the git repository, branch, and commit")
+	} else {
+		gitContext, err = prepareSealedFileRemoval(piGitContextPath(path))
+	}
+	if err != nil {
+		return nil, err
+	}
 	// The models precede the settings that select one.
-	return []*Plan{p, settings}, nil
+	return slices.Concat([]*Plan{p, settings}, extension, gitContext), nil
+}
+
+func piGitContextPath(path string) string {
+	return filepath.Join(filepath.Dir(path), "extensions", "baseten-git-context.ts")
+}
+
+func piServedModelPath(path string) string {
+	return filepath.Join(filepath.Dir(path), "extensions", "baseten-served-model.ts")
+}
+
+func piServedModelPlans(path string, routes []Route) ([]*Plan, error) {
+	routers := piServedModelRouters(routes)
+	if len(routers) == 0 {
+		return prepareSealedFileRemoval(piServedModelPath(path))
+	}
+	return prepareSealedFile(piServedModelPath(path), piServedModelSource(routers), "Pi will not show which model served auto-route responses")
+}
+
+func piServedModelRouters(routes []Route) map[string]string {
+	routers := map[string]string{}
+	for _, r := range routes {
+		if r.Router {
+			routers[r.Name] = cmp.Or(r.DisplayName, r.Name)
+		}
+	}
+	return routers
+}
+
+func piServedModelSource(routers map[string]string) []byte {
+	encoded, _ := json.Marshal(routers)
+	return []byte(strings.Replace(piServedModelTemplate, piServedModelRoutersSlot, "Object.entries("+string(encoded)+")", 1))
 }
 
 // piModel describes a route to Pi. A model's api overrides the provider's, so
-// first-party routes use their native API: Messages for Anthropic, Responses
-// for OpenAI.
+// a route is called with the API its supported formats advertise.
 func piModel(r Route, baseURL string) map[string]any {
 	levels := piThinkingLevels(r.ReasoningLevels)
 	model := map[string]any{
@@ -123,13 +182,14 @@ func piModel(r Route, baseURL string) map[string]any {
 	if cost := piCost(r.Cost); cost != nil {
 		model["cost"] = cost
 	}
-	switch r.Provider {
-	case ProviderAnthropic:
+	switch r.TargetAPI {
+	case TargetAPIMessages:
 		// Pi's Anthropic client appends /v1/messages itself.
 		model["api"], model["baseUrl"] = "anthropic-messages", baseURL
-		// Anthropic Messages models use adaptive thinking, not a token budget.
-		model["compat"] = map[string]any{"forceAdaptiveThinking": true}
-	case ProviderOpenAI:
+		if piAdaptiveThinking(r.UpstreamModel) {
+			model["compat"] = map[string]any{"forceAdaptiveThinking": true}
+		}
+	case TargetAPIResponses:
 		model["api"] = "openai-responses"
 	default:
 		// The provider's compat would apply to every API, so only Chat
@@ -146,6 +206,18 @@ func piModel(r Route, baseURL string) map[string]any {
 		}
 	}
 	return model
+}
+
+func piAdaptiveThinking(upstreamModel string) bool {
+	// NB(nikhil): We simplify with substring check for now, given fully correct coverage today, and
+	// seemingly low risk of a new model ID with these identifiers that supports extended thinking.
+	for _, legacy := range []string{"claude-opus-4-5", "claude-haiku-4-5", "claude-sonnet-4-5"} {
+		if strings.Contains(upstreamModel, legacy) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // piThinkingLevels maps each of Pi's thinking levels to the route's effort
@@ -200,8 +272,16 @@ func (piHarness) Teardown(path string) ([]*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	extension, err := prepareSealedFileRemoval(piServedModelPath(path))
+	if err != nil {
+		return nil, err
+	}
+	gitContext, err := prepareSealedFileRemoval(piGitContextPath(path))
+	if err != nil {
+		return nil, err
+	}
 	// The settings that select a model precede the models.
-	return []*Plan{settings, models}, nil
+	return slices.Concat([]*Plan{settings, models}, extension, gitContext), nil
 }
 
 func (piHarness) Inspect(d Detection) (Status, error) {

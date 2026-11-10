@@ -8,7 +8,10 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -65,6 +68,8 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 			return cmd.NewErrUsagef("--file cannot be combined with --dir")
 		case flags.Watch:
 			return cmd.NewErrUsagef("--file cannot be combined with --watch")
+		case flags.File == "-" && flags.IncludeGitInfo:
+			return cmd.NewErrUsagef("--file - cannot be combined with --include-git-info")
 		}
 	} else if flags.Dir == "" {
 		flags.Dir = "."
@@ -240,6 +245,11 @@ func buildModelPushOptions(ctx *CommandContext, flags *cmd.ModelPushFlags) (clie
 	if err := applyModelPushLabels(&opts, flags.Labels); err != nil {
 		return opts, err
 	}
+	if flags.IncludeGitInfo {
+		if err := applyModelPushGitInfo(ctx, &opts, flags); err != nil {
+			return opts, err
+		}
+	}
 	if err := applyModelPushSettings(&opts, flags); err != nil {
 		return opts, err
 	}
@@ -382,6 +392,54 @@ func applyModelPushLabels(opts *client.PushModelOptions, raw string) error {
 	}
 	opts.Labels = asMap
 	return nil
+}
+
+// applyModelPushGitInfo attaches the git state of the pushed directory, or of
+// the --file directory. Pushes outside a git repository carry none.
+func applyModelPushGitInfo(ctx *CommandContext, opts *client.PushModelOptions, flags *cmd.ModelPushFlags) error {
+	if _, err := ctx.Execer().LookPath("git"); err != nil {
+		return cmd.NewErrUsagef("git not found on PATH, required by --include-git-info")
+	}
+	dir := flags.Dir
+	if flags.File != "" {
+		dir = filepath.Dir(flags.File)
+	}
+	if info := collectModelPushGitInfo(ctx, dir); info != nil {
+		opts.UserEnv = map[string]any{"git_info": info}
+	}
+	return nil
+}
+
+// collectModelPushGitInfo returns the git info for dir, or nil when dir is not
+// inside a git repository.
+func collectModelPushGitInfo(ctx context.Context, dir string) *managementapi.GitInfo {
+	sha, ok := runModelPushGit(ctx, dir, "rev-parse", "HEAD")
+	if !ok || sha == "" {
+		return nil
+	}
+	info := &managementapi.GitInfo{LatestCommitSha: sha}
+	if tag, ok := runModelPushGit(ctx, dir, "describe", "--tags", "--abbrev=0"); ok && tag != "" {
+		info.LatestTag = &tag
+		if count, ok := runModelPushGit(ctx, dir, "rev-list", tag+"..HEAD", "--count"); ok {
+			if n, err := strconv.Atoi(count); err == nil {
+				info.CommitsSinceTag = &n
+			}
+		}
+	}
+	status, _ := runModelPushGit(ctx, dir, "status", "--porcelain")
+	info.HasUncommittedChanges = status != ""
+	return info
+}
+
+// runModelPushGit returns git's trimmed stdout and whether it exited successfully.
+func runModelPushGit(ctx context.Context, dir string, args ...string) (string, bool) {
+	c := exec.CommandContext(ctx, "git", args...)
+	c.Dir = dir
+	out, err := c.Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(out)), true
 }
 
 // applyModelPushSettings maps the deployment and promotion settings flags onto

@@ -243,6 +243,7 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 				strictOutput: options.StrictOutputChecks,
 				authInfo:     authInfo{profileFlag: cmdFlags.Profile},
 			}
+			ctx.authInfo.selectProfile = ctx.selectExplicitProfile
 
 			// Resolve --jq and --output, populating ctx.
 			var runErr error

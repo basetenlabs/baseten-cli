@@ -29,7 +29,8 @@ type Session struct {
 //  2. BASETEN_API_KEY (+ optional BASETEN_REMOTE_URL), ephemeral
 //  3. BASETEN_PROFILE
 //  4. defaultProfile (a baked-in fallback, e.g. from the SSH config)
-//  5. the current profile in auth.json
+//  5. the current profile in auth.json, or an *ErrExplicitProfileRequired when
+//     explicit profile selection is required
 //
 // defaultProfile is "" for most commands; the SSH sign/proxy commands pass
 // their --default-profile so a pinned profile is used only when nothing more
@@ -76,7 +77,11 @@ func ResolveSession(profileFlag, defaultProfile string) (*Session, error) {
 		return s, nil
 	}
 
-	if name, p, ok := store.CurrentProfile(); ok {
+	name, p, ok, err := store.CurrentProfile()
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		s.profileName = name
 		s.remoteURL = p.RemoteURL
 	}
@@ -216,7 +221,11 @@ func (t *Transport) Credential(ctx context.Context) (string, error) {
 	profileName := t.Session.profileName
 	profile, ok := t.Session.store.GetProfile(profileName)
 	if !ok {
-		return "", fmt.Errorf("profile %q not found; run `baseten auth login`", profileName)
+		names, err := t.Session.store.ProfileNames()
+		if err != nil {
+			return "", err
+		}
+		return "", NewErrProfileNotFound(names, profileName)
 	}
 
 	switch profile.AuthType {

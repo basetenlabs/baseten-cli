@@ -2,9 +2,11 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,7 +34,7 @@ func newSandboxTestAPI(h *CommandHarness) *MockManagementAPI {
 func sandboxTestRecord(m *MockManagementAPI, name, status string) map[string]any {
 	return map[string]any{
 		"name": name, "status": status, "url": m.URL,
-		"image": "baseten/base-image:latest", "memory": 4096, "region": "us-was-1",
+		"image": "baseten/base-image:latest", "memory": 4096, "cpu": 2, "region": "us-was-1",
 		"labels":     map[string]string{"b": "2", "a": "1"},
 		"envs":       []any{map[string]any{"name": "TOKEN", "value": "****", "secret": true}},
 		"created_at": sandboxTestTime,
@@ -66,6 +68,73 @@ func sandboxTestPage(cursor string, items ...any) map[string]any {
 		pagination["cursor"] = cursor
 	}
 	return map[string]any{"items": items, "pagination": pagination}
+}
+
+// sandboxTestTokenAPI returns the mock management API minting tok-1, tok-2,
+// and so on, each expiring after expiresIn, and serving an empty sandbox list
+// whose requests' tokens go to listTokens. revokedToken, if set, is rejected
+// as revoked.
+func sandboxTestTokenAPI(h *CommandHarness, expiresIn time.Duration, revokedToken string, listTokens *[]string) *MockManagementAPI {
+	m := h.MockManagementAPI()
+	var mu sync.Mutex
+	mints := 0
+	m.SetRouteFunc("POST", "/v1/token", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		mints++
+		token := fmt.Sprintf("tok-%d", mints)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": token, "expires_at": time.Now().Add(expiresIn).Format(time.RFC3339)})
+	})
+	m.SetRouteFunc("GET", "/v1/sandboxes/instances", func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		mu.Lock()
+		*listTokens = append(*listTokens, token)
+		mu.Unlock()
+		if token == revokedToken {
+			w.Header().Set("x-blaxel-error-code", "TOKEN_REVOKED")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sandboxTestPage(""))
+	})
+	return m
+}
+
+func Test_Sandbox_TokenCachedAcrossInvocations(t *testing.T) {
+	h := NewCommandHarness(t)
+	var listTokens []string
+	m := sandboxTestTokenAPI(h, time.Hour, "", &listTokens)
+
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.Len(sandboxTestCalls(m, "POST", "/v1/token"), 1)
+	h.Require.Equal([]string{"tok-1", "tok-1"}, listTokens)
+}
+
+func Test_Sandbox_TokenNearExpiryRemints(t *testing.T) {
+	h := NewCommandHarness(t)
+	var listTokens []string
+	// Inside the expiry leeway, so never reused.
+	m := sandboxTestTokenAPI(h, 30*time.Second, "", &listTokens)
+
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.Len(sandboxTestCalls(m, "POST", "/v1/token"), 2)
+	h.Require.Equal([]string{"tok-1", "tok-2"}, listTokens)
+}
+
+func Test_Sandbox_TokenRevokedRemintsAndReplacesCache(t *testing.T) {
+	h := NewCommandHarness(t)
+	var listTokens []string
+	m := sandboxTestTokenAPI(h, time.Hour, "tok-1", &listTokens)
+
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	// The cached replacement serves the next invocation.
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.Len(sandboxTestCalls(m, "POST", "/v1/token"), 2)
+	h.Require.Equal([]string{"tok-1", "tok-2", "tok-2"}, listTokens)
 }
 
 func Test_Sandbox_List_FollowsPages(t *testing.T) {
@@ -143,14 +212,14 @@ func Test_Sandbox_Create_SendsOnlySetFields(t *testing.T) {
 	h.Require.Equal(map[string]any{}, sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[0].BodyJSON(t))
 
 	h.Require.NoError(h.Execute("sandbox", "create", "--name", "sbx-1", "--if-not-exists",
-		"--region", "us-was-1", "--memory", "8192", "--image", "img:latest",
+		"--region", "us-was-1", "--memory", "8192", "--cpu", "4", "--image", "img:latest",
 		"--env", "TOKEN=s3cret", "--plain-env", "WORKERS=4", "--label", "team=cli",
 		"--idle-ttl", "30m", "--max-age", "2d", "--expires-at", "2026-11-01T12:00:00Z",
 		"--terminated-retention", "1h"))
 	body := sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[1].BodyJSON(t)
 	h.Require.Equal(map[string]any{
 		"name": "sbx-1", "create_if_not_exists": true, "region": "us-was-1", "memory": float64(8192),
-		"image": "img:latest", "labels": map[string]any{"team": "cli"},
+		"cpu": float64(4), "image": "img:latest", "labels": map[string]any{"team": "cli"},
 		// --env leaves secret to the server's default.
 		"envs": []any{
 			map[string]any{"name": "TOKEN", "value": "s3cret"},
@@ -169,8 +238,8 @@ func Test_Sandbox_Create_SendsOnlySetFields(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "Labels:       a=1, b=2")
 
 	// A passed 0 is sent for the server to reject, not dropped as unset.
-	h.Require.NoError(h.Execute("sandbox", "create", "--memory", "0"))
-	h.Require.Equal(map[string]any{"memory": float64(0)},
+	h.Require.NoError(h.Execute("sandbox", "create", "--memory", "0", "--cpu", "0"))
+	h.Require.Equal(map[string]any{"memory": float64(0), "cpu": float64(0)},
 		sandboxTestCalls(m, "POST", "/v1/sandboxes/instances")[2].BodyJSON(t))
 }
 
@@ -241,7 +310,7 @@ func Test_Sandbox_Describe_ShowSecretsAndText(t *testing.T) {
 	h.Require.Empty(sandboxTestCalls(m, "GET", "/v1/sandboxes/instances/sbx-1")[0].Query().Get("show_secrets"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Status:       DEPLOYED")
-	h.Require.Contains(out, "Memory:       4096 MB")
+	h.Require.Contains(out, "Memory:       4096 MB\nCPU:          2 vCPU\n")
 	h.Require.Contains(out, "Envs:         TOKEN=****")
 	h.Require.Contains(out, "Idle TTL:     30m\nMax age:      2d\nExpires at:   2026-11-01T12:00:00Z\n"+
 		"Expiry:       SOMETHING_NEW\n")

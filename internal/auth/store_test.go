@@ -38,7 +38,8 @@ func newInsecureStore(t *testing.T) *auth.Store {
 
 func TestStore_EmptyNoCurrentProfile(t *testing.T) {
 	s := newKeyringStore(t)
-	name, _, ok := s.CurrentProfile()
+	name, _, ok, err := s.CurrentProfile()
+	require.NoError(t, err)
 	require.False(t, ok)
 	require.Empty(t, name)
 }
@@ -47,7 +48,8 @@ func TestStore_SetAPIKeyProfile_Keyring(t *testing.T) {
 	s := newKeyringStore(t)
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 
-	name, profile, ok := s.CurrentProfile()
+	name, profile, ok, err := s.CurrentProfile()
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, profileA, name)
 	require.Equal(t, remoteURL, profile.RemoteURL)
@@ -63,7 +65,8 @@ func TestStore_SetAPIKeyProfile_Insecure(t *testing.T) {
 	s := newInsecureStore(t)
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 
-	_, profile, ok := s.CurrentProfile()
+	_, profile, ok, err := s.CurrentProfile()
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, apiKeyA, profile.InsecureAPIKey)
 
@@ -77,7 +80,8 @@ func TestStore_SetOAuthProfile_Keyring(t *testing.T) {
 	cred := auth.OAuthCredential{AccessToken: accessToken, RefreshToken: refreshToken}
 	require.NoError(t, s.SetOAuthProfile(t.Context(), profileA, remoteURL, cred, true, nil))
 
-	_, profile, ok := s.CurrentProfile()
+	_, profile, ok, err := s.CurrentProfile()
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, auth.AuthTypeOAuth, profile.AuthType)
 	require.Nil(t, profile.InsecureOAuthCredential)
@@ -92,7 +96,8 @@ func TestStore_SetOAuthProfile_Insecure(t *testing.T) {
 	cred := auth.OAuthCredential{AccessToken: accessToken, RefreshToken: refreshToken}
 	require.NoError(t, s.SetOAuthProfile(t.Context(), profileA, remoteURL, cred, true, nil))
 
-	_, profile, ok := s.CurrentProfile()
+	_, profile, ok, err := s.CurrentProfile()
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.NotNil(t, profile.InsecureOAuthCredential)
 	require.Equal(t, cred, *profile.InsecureOAuthCredential)
@@ -103,7 +108,8 @@ func TestStore_SetProfile_NoSwitchKeepsCurrent(t *testing.T) {
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileB, remoteURL, "key-bob", false, nil))
 
-	name, _, ok := s.CurrentProfile()
+	name, _, ok, err := s.CurrentProfile()
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, profileA, name, "switchCurrent=false must not move the current pointer")
 }
@@ -113,11 +119,13 @@ func TestStore_SwitchProfile(t *testing.T) {
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileB, remoteURL, "key-bob", true, nil))
 
-	name, _, _ := s.CurrentProfile()
+	name, _, _, err := s.CurrentProfile()
+	require.NoError(t, err)
 	require.Equal(t, profileB, name)
 
 	require.NoError(t, s.SwitchProfile(profileA))
-	name, _, _ = s.CurrentProfile()
+	name, _, _, err = s.CurrentProfile()
+	require.NoError(t, err)
 	require.Equal(t, profileA, name)
 }
 
@@ -133,10 +141,11 @@ func TestStore_RemoveProfile_ClearsCurrent(t *testing.T) {
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 	require.NoError(t, s.RemoveProfile(t.Context(), profileA))
 
-	_, _, ok := s.CurrentProfile()
+	_, _, ok, err := s.CurrentProfile()
+	require.NoError(t, err)
 	require.False(t, ok)
 
-	_, err := s.GetAPIKey(t.Context(), profileA)
+	_, err = s.GetAPIKey(t.Context(), profileA)
 	require.Error(t, err, "keyring and file entry must both be gone")
 }
 
@@ -147,7 +156,8 @@ func TestStore_RemoveProfile_OnlyCurrentIsCleared(t *testing.T) {
 
 	require.NoError(t, s.RemoveProfile(t.Context(), profileA))
 
-	name, _, ok := s.CurrentProfile()
+	name, _, ok, err := s.CurrentProfile()
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, profileB, name)
 }
@@ -210,6 +220,44 @@ func TestStore_ProfileNames(t *testing.T) {
 	require.Equal(t, []string{profileA, profileB}, names)
 }
 
+func TestNewErrProfileNotFound_ListsExistingProfiles(t *testing.T) {
+	err := auth.NewErrProfileNotFound([]string{"a", "b"}, "the-name")
+	require.ErrorContains(t, err, "profile \"the-name\" not found; add it with")
+	require.ErrorContains(t, err, "baseten auth login --profile the-name --no-switch")
+	require.ErrorContains(t, err, "(existing profiles: a, b)")
+}
+
+func TestNewErrProfileNotFound_NoExistingProfilesOmitsList(t *testing.T) {
+	err := auth.NewErrProfileNotFound(nil, "the-name")
+	require.ErrorContains(t, err, "no profiles stored")
+	require.ErrorContains(t, err, "baseten auth login --profile the-name --no-switch")
+	require.NotContains(t, err.Error(), "existing profiles")
+	require.NotContains(t, err.Error(), "not found")
+}
+
+func TestNewErrProfileNotFound_ShellQuotesCommand(t *testing.T) {
+	for name, want := range map[string]string{
+		"prod-internal-coding": "`baseten auth login --profile prod-internal-coding --no-switch`",
+		"team-$HOME":           "`baseten auth login --profile 'team-$HOME' --no-switch`",
+		"a`id`":                "`baseten auth login --profile 'a`id`' --no-switch`",
+		"bob's team":           "`baseten auth login --profile 'bob'\\''s team' --no-switch`",
+		"-dash":                "`baseten auth login --profile '-dash' --no-switch`",
+		"has space":            "`baseten auth login --profile 'has space' --no-switch`",
+	} {
+		require.ErrorContains(t, auth.NewErrProfileNotFound(nil, name), want)
+	}
+}
+
+func TestStore_SwitchProfile_UnknownSuggestsAddingProfile(t *testing.T) {
+	s := newKeyringStore(t)
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileB, remoteURL, "key-bob", true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
+
+	err := s.SwitchProfile("ghost@example.com")
+	require.ErrorContains(t, err, "baseten auth login --profile ghost@example.com --no-switch")
+	require.ErrorContains(t, err, "(existing profiles: alice@example.com, bob@example.com)")
+}
+
 func TestStore_SaveLoadRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 	keyring.MockInit()
@@ -217,7 +265,8 @@ func TestStore_SaveLoadRoundtrip(t *testing.T) {
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 
 	s2 := auth.NewStore(auth.StoreOptions{Dir: dir, InsecureStorage: true})
-	name, _, ok := s2.CurrentProfile()
+	name, _, ok, err := s2.CurrentProfile()
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, profileA, name)
 }
@@ -247,11 +296,61 @@ func TestStore_IgnoresUnknownKeys(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "auth.json"), []byte(legacy), 0o600))
 
 	s := auth.NewStore(auth.StoreOptions{Dir: dir, InsecureStorage: true})
-	_, _, ok := s.CurrentProfile()
+	_, _, ok, err := s.CurrentProfile()
+	require.NoError(t, err)
 	require.False(t, ok)
 
 	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
 	data, err := os.ReadFile(filepath.Join(dir, "auth.json"))
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "hosts")
+}
+
+func TestStore_RequireExplicitProfile(t *testing.T) {
+	s := newKeyringStore(t)
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
+
+	// Enabling clears the current profile and reports the stored profiles.
+	require.NoError(t, s.SetRequireExplicitProfile(true))
+	_, _, ok, err := s.CurrentProfile()
+	require.False(t, ok)
+	var required *auth.ErrExplicitProfileRequired
+	require.ErrorAs(t, err, &required)
+	require.Equal(t, []string{profileA}, required.Profiles)
+
+	// Storing a profile never makes it current.
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileB, remoteURL, "key-bob", true, nil))
+	_, _, _, err = s.CurrentProfile()
+	require.ErrorAs(t, err, &required)
+	require.Equal(t, []string{profileA, profileB}, required.Profiles)
+
+	// Disabling does not revive the old current profile.
+	require.NoError(t, s.SetRequireExplicitProfile(false))
+	_, _, ok, err = s.CurrentProfile()
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+func TestErrExplicitProfileRequired_Error(t *testing.T) {
+	err := &auth.ErrExplicitProfileRequired{Profiles: []string{"a", "b", "c", "d", "e", "f", "g"}}
+	require.Equal(t, "no profile selected and explicit profile selection is required (7 profiles exist)\n"+
+		"  Pass one of:\n"+
+		"    --profile a\n"+
+		"    --profile b\n"+
+		"    --profile c\n"+
+		"    --profile d\n"+
+		"    --profile e\n"+
+		"    ...and 2 more (see `baseten auth list`)\n"+
+		"  Or set BASETEN_PROFILE, or disable with `baseten auth config update --require-explicit-profile=false` "+
+		"and then select a current profile with `baseten auth switch --profile <profile>`",
+		err.Error())
+
+	err = &auth.ErrExplicitProfileRequired{Profiles: []string{"bob's"}}
+	require.Contains(t, err.Error(), "(1 profile exists)")
+	require.Contains(t, err.Error(), `--profile 'bob'\''s'`)
+	require.NotContains(t, err.Error(), "more")
+
+	err = &auth.ErrExplicitProfileRequired{}
+	require.Contains(t, err.Error(), "no profiles are stored")
+	require.Contains(t, err.Error(), "baseten auth login --profile <profile>")
 }

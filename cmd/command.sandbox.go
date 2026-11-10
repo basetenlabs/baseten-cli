@@ -50,7 +50,7 @@ var commandSandbox = Command{
 			Name:    "describe",
 			Summary: "Describe a sandbox (PRE-RELEASE)",
 			Description: sandboxPreRelease +
-				"Retrieves one sandbox's record: status, URL, image, memory, region, labels, and " +
+				"Retrieves one sandbox's record: status, URL, image, memory, CPU, region, labels, and " +
 				"environment variables. Secret environment variable values are masked unless " +
 				"--show-secrets is passed.",
 			Flags: SandboxDescribeFlags{},
@@ -89,10 +89,10 @@ var commandSandbox = Command{
 						Command:     "baseten sandbox create --name my-sandbox --if-not-exists",
 					},
 					{
-						Description: "Create one in a specific region with more memory.",
+						Description: "Create one in a specific region with more CPU and memory.",
 						CommandLines: []string{
 							"baseten sandbox create --name my-sandbox",
-							"--region us-was-1 --memory 8192",
+							"--region us-was-1 --cpu 4 --memory 8192",
 						},
 					},
 					{
@@ -300,7 +300,8 @@ type SandboxCreateFlags struct {
 	Team                     string   `flag:"team" desc:"Team name or ID to create the sandbox in. Defaults to your only team; required if you belong to more than one. Run 'baseten org team list' to see teams."`
 	IfNotExists              bool     `flag:"if-not-exists" desc:"Return the existing sandbox with this name instead of failing, or recreate it if it is failed, terminated, or being deleted."`
 	Region                   string   `flag:"region" desc:"Region to create the sandbox in."`
-	Memory                   int      `flag:"memory" desc:"Memory in MB, which also sets the CPU allocation."`
+	Memory                   int      `flag:"memory" desc:"Memory in MB. When --cpu is not set, also determines the CPU allocation."`
+	CPU                      int      `flag:"cpu" desc:"Number of vCPUs, from 1 to 32. Defaults to an allocation derived from memory."`
 	FileSystemMaxMemoryUsage string   `flag:"filesystem-max-memory-usage" desc:"Maximum memory the filesystem can use, as a percentage of memory (80%), a size (2Gi), or Mi (2048). Defaults to 50%."`
 	Image                    string   `flag:"image" desc:"Image to create the sandbox from, including its tag, such as my-image:latest."`
 	Label                    []string `flag:"label" desc:"Label as KEY=VALUE. Repeatable."`

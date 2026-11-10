@@ -39,7 +39,11 @@ type Record struct {
 	// CodexRestartPending records that the codex app-server daemon still needs
 	// a restart, because the last one was declined or failed. Retried on the
 	// next sync.
-	CodexRestartPending bool `json:"codex_restart_pending,omitempty"`
+	CodexRestartPending   bool `json:"codex_restart_pending,omitempty"`
+	NoClaudeServedModel   bool `json:"no_claude_served_model,omitempty"`
+	NoPiServedModel       bool `json:"no_pi_served_model,omitempty"`
+	NoOpenCodeServedModel bool `json:"no_opencode_served_model,omitempty"`
+	GitContext            bool `json:"git_context,omitempty"`
 }
 
 // RecordFile is the on-disk harness.json structure. Unrecognized keys are
@@ -65,6 +69,13 @@ func LoadRecords(dir string) (RecordFile, error) {
 	}
 	if file.Harnesses == nil {
 		file.Harnesses = map[string]Record{}
+	}
+	// The claude harness was recorded as claude-code before Claude Desktop joined it.
+	if record, ok := file.Harnesses[ClaudeCode]; ok {
+		if _, ok := file.Harnesses[Claude]; !ok {
+			file.Harnesses[Claude] = record
+		}
+		delete(file.Harnesses, ClaudeCode)
 	}
 	return file, nil
 }
