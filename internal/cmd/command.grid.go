@@ -377,7 +377,9 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if err != nil {
 		return err
 	}
-	// A first-time user signs in here instead of being sent to auth login.
+	// With no current profile, sign in here instead of sending the user to
+	// auth login. The new profile becomes the current one, as auth login's
+	// would; there is none to displace.
 	if session.ProfileName() == "" && !session.IsEphemeral() && ctx.IsInteractive() {
 		store, err := NewAuthStore(false)
 		if err != nil {
@@ -387,11 +389,14 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		if err != nil {
 			return err
 		}
-		ctx.LogLine("Not logged in; signing in with your browser.")
-		if err := loginWeb(ctx, store, remote, &cmd.AuthLoginFlags{}); err != nil {
+		ctx.LogLine("Not logged in; signing in with your browser. To use an API key instead, run `baseten auth login --with-api-key` first.")
+		// Reported on stderr: stdout is for setup's own result.
+		profileName, user, err := loginWebProfile(ctx, store, remote, &cmd.AuthLoginFlags{})
+		if err != nil {
 			return err
 		}
-		ctx.authInfo = authInfo{profileFlag: ctx.authInfo.profileFlag, defaultProfile: ctx.authInfo.defaultProfile}
+		ctx.Logf("Logged in as %s (%s) as profile %s\n", deref(user.Email), deref(user.WorkspaceName), profileName)
+		ctx.authInfo.Reset()
 		if session, err = ctx.authInfo.Session(); err != nil {
 			return err
 		}

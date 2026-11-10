@@ -420,6 +420,38 @@ func Test_Grid_Setup_TextSummary(t *testing.T) {
 	h.Require.NotContains(h.Stderr.String(), "Created Grid API key")
 }
 
+func Test_Grid_Setup_SignsInWithoutCurrentProfile(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	t.Setenv("BASETEN_PROFILE", "")
+	h.Require.NoError(configDirStore(t).RemoveProfile(t.Context(), "alice"))
+	api.SetRoute("POST", "/v1/users/auth/device/authorize", 200, map[string]any{
+		"device_code": "dev-code", "user_code": "ABCD-EFGH", "verification_uri": "https://auth.example.com/device", "expires_in": 300, "interval": 1,
+	})
+	api.SetRoute("POST", "/v1/users/auth/device/token", 200, map[string]any{"access_token": "access-xyz", "refresh_token": "refresh-xyz", "token_type": "Bearer", "expires_in": 3600})
+	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a", "email": "user@example.com", "workspace_name": "my-workspace"})
+	dir := t.TempDir()
+	args := []string{"grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes", "--output", "json"}
+
+	// Not interactive: no sign-in is attempted.
+	h.Require.Error(h.Execute(args...))
+	h.Require.Empty(h.OpenedURLs)
+
+	h.Context = internalcmd.WithPromptAnswers(h.Context)
+	h.Require.NoError(h.Execute(args...))
+	h.Require.Equal([]string{"https://auth.example.com/device"}, h.OpenedURLs)
+	name, _, ok, err := configDirStore(t).CurrentProfile()
+	h.Require.NoError(err)
+	h.Require.True(ok)
+	h.Require.Contains(name, "user@example.com")
+	h.Require.Contains(h.Stderr.String(), "Logged in as user@example.com (my-workspace) as profile "+name+"\n")
+	// Setup's result is the only document on stdout.
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	h.Require.Contains(result, "items")
+	h.Require.Equal(name, harnessRecordFile(t).Harnesses["claude"].Profile)
+}
+
 func Test_Grid_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
 	skipUnlessSupported(t)
 	h := NewCommandHarness(t)
