@@ -640,7 +640,7 @@ type GridStatusFlags struct {
 type GridSetupFlags struct {
 	CommandFlags
 	GridHarnessFlags
-	Team                 string `flag:"team" desc:"Team name or ID whose routes to use. Omit to let the API select your only team. Run 'baseten org team list' to see teams."`
+	Team                 string `flag:"team" desc:"Team name or ID whose routes to use. Omit to let the API select your only team; when you belong to several, setup asks which one on a terminal. Run 'baseten org team list' to see teams."`
 	KeyName              string `flag:"key-name" desc:"Name of the Grid API key, if setup creates one. Defaults to baseten-harness-<hostname>-<random suffix>."`
 	PrimaryRouteID       string `flag:"primary-route-id" desc:"Primary route ID. Defaults to the team's default for the harness, else the first route the harness lists."`
 	BackgroundRouteID    string `flag:"background-route-id" desc:"Route ID for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
