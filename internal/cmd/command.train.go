@@ -73,7 +73,7 @@ func resolveTrainJob(ctx *CommandContext, api *managementapi.Client, jobID strin
 		return nil, fmt.Errorf("search training job %s: %w", jobID, err)
 	}
 	if len(resp.TrainingJobs) == 0 {
-		return nil, fmt.Errorf("no training job found with ID %s", jobID)
+		return nil, cmd.NewErrNotFound(fmt.Errorf("no training job found with ID %s", jobID))
 	}
 	job := resp.TrainingJobs[0]
 	return &trainJobRef{
@@ -103,7 +103,7 @@ func resolveTrainProject(ctx *CommandContext, api *managementapi.Client, input s
 		}
 	}
 	if found == "" {
-		return "", fmt.Errorf("no training project found named %q", input)
+		return "", cmd.NewErrNotFound(fmt.Errorf("no training project found named %q", input))
 	}
 	return found, nil
 }

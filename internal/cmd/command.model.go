@@ -49,9 +49,9 @@ func ResolveModelRef(
 	}
 	if id == "" {
 		if teamID != "" {
-			return ModelRef{}, fmt.Errorf("no model named %q in team %q", flags.ModelName, flags.Team)
+			return ModelRef{}, cmd.NewErrNotFound(fmt.Errorf("no model named %q in team %q", flags.ModelName, flags.Team))
 		}
-		return ModelRef{}, fmt.Errorf("no model named %q", flags.ModelName)
+		return ModelRef{}, cmd.NewErrNotFound(fmt.Errorf("no model named %q", flags.ModelName))
 	}
 	return ModelRef{ID: id, Team: teamID}, nil
 }

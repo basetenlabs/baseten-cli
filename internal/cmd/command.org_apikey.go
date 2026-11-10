@@ -179,7 +179,7 @@ func apiKeyPrefixByName(keys []managementapi.APIKeyInfo, name string) (string, e
 		}
 	}
 	if prefix == "" {
-		return "", fmt.Errorf("no API key named %q", name)
+		return "", cmd.NewErrNotFound(fmt.Errorf("no API key named %q", name))
 	}
 	return prefix, nil
 }
