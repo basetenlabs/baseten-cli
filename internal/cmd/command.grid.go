@@ -34,8 +34,8 @@ func init() {
 	Register("grid teardown", commandGridTeardown)
 	Register("grid token", commandGridToken)
 	Register("grid claude-served-model", commandGridClaudeServedModel)
-	Register("grid classifier list", commandGridClassifierList)
-	Register("grid classifier describe", commandGridClassifierDescribe)
+	Register("grid route-classifier list", commandGridRouteClassifierList)
+	Register("grid route-classifier describe", commandGridRouteClassifierDescribe)
 	Register("grid team-settings describe", commandGridTeamSettingsDescribe)
 	Register("grid team-settings update", commandGridTeamSettingsUpdate)
 	Register("grid user-settings list", commandGridUserSettingsList)
@@ -1521,17 +1521,17 @@ func gridEnsureHarnessToken(ctx *CommandContext, api *managementapi.Client, team
 	return created.ApiKey, nil
 }
 
-func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFlags) error {
+func commandGridRouteClassifierList(ctx *CommandContext, f *cmd.GridRouteClassifierListFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	params := managementapi.GetV1GridClassifiersParams{}
-	var items []managementapi.GridClassifier
+	params := managementapi.GetV1GridRouteClassifiersParams{}
+	var items []managementapi.GridRouteClassifier
 	for {
-		page, err := cl.API().GetGridClassifiers(ctx, params)
+		page, err := cl.API().GetGridRouteClassifiers(ctx, params)
 		if err != nil {
-			return fmt.Errorf("listing classifiers: %w", err)
+			return fmt.Errorf("listing route classifiers: %w", err)
 		}
 		items = append(items, page.Items...)
 		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
@@ -1540,22 +1540,27 @@ func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFla
 		params.Cursor = page.Pagination.Cursor
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.GridClassifierList{Items: normalizeJSONSlice(items)})
+		ctx.OutputJSON(cmd.GridRouteClassifierList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {
-		ctx.LogLine("No classifiers found.")
+		ctx.LogLine("No route classifiers found.")
 		return nil
 	}
 	var rows [][]string
-	for _, classifier := range items {
-		rows = append(rows, []string{classifier.Id, classifier.Name})
+	for _, routeClassifier := range items {
+		rows = append(rows, []string{
+			routeClassifier.Id,
+			routeClassifier.Name,
+			gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs),
+			strings.Join(routeClassifier.DecidableModels, ", "),
+		})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME", "TRADEOFFS", "DECIDABLE MODELS"}, Rows: rows})
 	return nil
 }
 
-func commandGridClassifierDescribe(ctx *CommandContext, f *cmd.GridClassifierDescribeFlags) error {
+func commandGridRouteClassifierDescribe(ctx *CommandContext, f *cmd.GridRouteClassifierDescribeFlags) error {
 	if f.ID == "" {
 		return cmd.NewErrUsagef("--id must not be empty")
 	}
@@ -1563,17 +1568,31 @@ func commandGridClassifierDescribe(ctx *CommandContext, f *cmd.GridClassifierDes
 	if err != nil {
 		return err
 	}
-	classifier, err := cl.API().GetGridClassifiersClassifierId(ctx, f.ID)
+	routeClassifier, err := cl.API().GetGridRouteClassifiersRouteClassifierId(ctx, f.ID)
 	if err != nil {
-		return fmt.Errorf("getting classifier: %w", err)
+		return fmt.Errorf("getting route classifier: %w", err)
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(classifier)
+		ctx.OutputJSON(routeClassifier)
 		return nil
 	}
-	ctx.Outputf("ID:   %s\n", classifier.Id)
-	ctx.Outputf("Name: %s\n", classifier.Name)
+	ctx.Outputf("ID:               %s\n", routeClassifier.Id)
+	ctx.Outputf("Name:             %s\n", routeClassifier.Name)
+	ctx.Outputf("Tradeoffs:        %s\n", gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs))
+	ctx.Outputf("Decidable Models: %s\n", strings.Join(routeClassifier.DecidableModels, ", "))
 	return nil
+}
+
+// The API returns no tradeoffs when the route classifier supports all of them.
+func gridRouteClassifierTradeoffsText(tradeoffs []managementapi.GridRouteClassifierSupportedTradeoffs) string {
+	if len(tradeoffs) == 0 {
+		return "all"
+	}
+	names := make([]string, 0, len(tradeoffs))
+	for _, tradeoff := range tradeoffs {
+		names = append(names, string(tradeoff))
+	}
+	return strings.Join(names, ", ")
 }
 
 func gridTeamID(ctx *CommandContext, api *managementapi.Client, team string) (*string, error) {

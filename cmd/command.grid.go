@@ -413,40 +413,42 @@ var commandGrid = Command{
 			},
 		},
 		{
-			Name:    "classifier",
-			Summary: "Discover managed classifiers (PRE-RELEASE)",
+			Name:    "route-classifier",
+			Summary: "Discover managed route classifiers (PRE-RELEASE)",
 			Children: []Command{
 				{
 					Name:        "list",
-					Summary:     "List classifiers available to your organization (PRE-RELEASE)",
-					Description: gridPrereleaseNotice + "Classifiers are managed by Baseten. Use their IDs when creating or updating classifier-backed routes.",
-					Flags:       GridClassifierListFlags{},
-					Output: &CommandOutput[GridClassifierList]{
-						TextDescription: "Table with ID and NAME columns. Lists all pages; an empty catalog prints a message to stderr.",
+					Summary:     "List route classifiers available to your organization (PRE-RELEASE)",
+					Description: gridPrereleaseNotice + "Route classifiers are managed by Baseten. An intelligent route uses one to pick the model for each request.",
+					Flags:       GridRouteClassifierListFlags{},
+					Output: &CommandOutput[GridRouteClassifierList]{
+						TextDescription: "Table with ID, NAME, TRADEOFFS, and DECIDABLE MODELS columns. TRADEOFFS is \"all\" when the route classifier supports every tradeoff. " +
+							"Lists all pages; an empty catalog prints a message to stderr.",
 						Examples: []CommandExample{{
-							Description: "List available classifiers.",
-							Command:     "baseten grid classifier list",
+							Description: "List available route classifiers.",
+							Command:     "baseten grid route-classifier list",
 						}},
 						JQExample: CommandExample{
-							Description: "Print classifier IDs.",
-							Command:     "baseten grid classifier list --jq '.items[].id'",
+							Description: "Print route classifier IDs.",
+							Command:     "baseten grid route-classifier list --jq '.items[].id'",
 						},
 					},
 				},
 				{
 					Name:        "describe",
-					Summary:     "Show a classifier (PRE-RELEASE)",
-					Description: gridPrereleaseNotice + "Show a classifier by ID. Classifiers are managed by Baseten.",
-					Flags:       GridClassifierDescribeFlags{},
-					Output: &CommandOutput[managementapi.GridClassifier]{
-						TextDescription: "Field-per-line summary with the classifier's ID and name.",
+					Summary:     "Show a route classifier (PRE-RELEASE)",
+					Description: gridPrereleaseNotice + "Show a route classifier by ID. Route classifiers are managed by Baseten.",
+					Flags:       GridRouteClassifierDescribeFlags{},
+					Output: &CommandOutput[managementapi.GridRouteClassifier]{
+						TextDescription: "Field-per-line summary with the route classifier's ID, name, supported tradeoffs, and decidable models. " +
+							"Tradeoffs is \"all\" when the route classifier supports every tradeoff.",
 						Examples: []CommandExample{{
-							Description: "Describe a classifier.",
-							Command:     "baseten grid classifier describe --id <id>",
+							Description: "Describe a route classifier.",
+							Command:     "baseten grid route-classifier describe --id <id>",
 						}},
 						JQExample: CommandExample{
-							Description: "Print the classifier name.",
-							Command:     "baseten grid classifier describe --id <id> --jq '.name'",
+							Description: "Print the models the route classifier picks from.",
+							Command:     "baseten grid route-classifier describe --id <id> --jq '.decidable_models[]'",
 						},
 					},
 				},
@@ -456,15 +458,15 @@ var commandGrid = Command{
 	},
 }
 
-type GridClassifierList struct {
-	Items []managementapi.GridClassifier `json:"items"`
+type GridRouteClassifierList struct {
+	Items []managementapi.GridRouteClassifier `json:"items"`
 }
 
-type GridClassifierListFlags struct{ CommandFlags }
+type GridRouteClassifierListFlags struct{ CommandFlags }
 
-type GridClassifierDescribeFlags struct {
+type GridRouteClassifierDescribeFlags struct {
 	CommandFlags
-	ID string `flag:"id" desc:"Classifier ID." required:"true"`
+	ID string `flag:"id" desc:"Route classifier ID." required:"true"`
 }
 
 const gridTeamDescription = "Omit --team to let the API select your only team; specify a team when you belong to several."
