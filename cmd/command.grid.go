@@ -413,24 +413,24 @@ var commandGrid = Command{
 			},
 		},
 		{
-			Name:    "classifier",
+			Name:    "route-classifier",
 			Summary: "Discover managed route classifiers (PRE-RELEASE)",
 			Children: []Command{
 				{
 					Name:        "list",
 					Summary:     "List route classifiers available to your organization (PRE-RELEASE)",
 					Description: gridPrereleaseNotice + "Route classifiers are managed by Baseten. An intelligent route uses one to pick the model for each request.",
-					Flags:       GridClassifierListFlags{},
-					Output: &CommandOutput[GridClassifierList]{
+					Flags:       GridRouteClassifierListFlags{},
+					Output: &CommandOutput[GridRouteClassifierList]{
 						TextDescription: "Table with ID, NAME, TRADEOFFS, and DECIDABLE MODELS columns. TRADEOFFS is \"all\" when the route classifier supports every tradeoff. " +
 							"Lists all pages; an empty catalog prints a message to stderr.",
 						Examples: []CommandExample{{
 							Description: "List available route classifiers.",
-							Command:     "baseten grid classifier list",
+							Command:     "baseten grid route-classifier list",
 						}},
 						JQExample: CommandExample{
 							Description: "Print route classifier IDs.",
-							Command:     "baseten grid classifier list --jq '.items[].id'",
+							Command:     "baseten grid route-classifier list --jq '.items[].id'",
 						},
 					},
 				},
@@ -438,17 +438,17 @@ var commandGrid = Command{
 					Name:        "describe",
 					Summary:     "Show a route classifier (PRE-RELEASE)",
 					Description: gridPrereleaseNotice + "Show a route classifier by ID. Route classifiers are managed by Baseten.",
-					Flags:       GridClassifierDescribeFlags{},
+					Flags:       GridRouteClassifierDescribeFlags{},
 					Output: &CommandOutput[managementapi.GridRouteClassifier]{
 						TextDescription: "Field-per-line summary with the route classifier's ID, name, supported tradeoffs, and decidable models. " +
 							"Tradeoffs is \"all\" when the route classifier supports every tradeoff.",
 						Examples: []CommandExample{{
 							Description: "Describe a route classifier.",
-							Command:     "baseten grid classifier describe --id <id>",
+							Command:     "baseten grid route-classifier describe --id <id>",
 						}},
 						JQExample: CommandExample{
 							Description: "Print the models the route classifier picks from.",
-							Command:     "baseten grid classifier describe --id <id> --jq '.decidable_models[]'",
+							Command:     "baseten grid route-classifier describe --id <id> --jq '.decidable_models[]'",
 						},
 					},
 				},
@@ -458,13 +458,13 @@ var commandGrid = Command{
 	},
 }
 
-type GridClassifierList struct {
+type GridRouteClassifierList struct {
 	Items []managementapi.GridRouteClassifier `json:"items"`
 }
 
-type GridClassifierListFlags struct{ CommandFlags }
+type GridRouteClassifierListFlags struct{ CommandFlags }
 
-type GridClassifierDescribeFlags struct {
+type GridRouteClassifierDescribeFlags struct {
 	CommandFlags
 	ID string `flag:"id" desc:"Route classifier ID." required:"true"`
 }

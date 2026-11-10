@@ -64,7 +64,6 @@ func TestNewRouteMarksRouters(t *testing.T) {
 		target string
 		want   bool
 	}{
-		{`{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, true},
 		{`{"type": "INTELLIGENT"}`, true},
 		{`{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, false},
 		{`{"type": "CONNECTION", "connection_id": "conn-a", "model": "claude"}`, false},

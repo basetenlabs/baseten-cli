@@ -24,6 +24,8 @@ func gridRouteCases() []gridRouteCase {
 		name   string
 		flags  []string
 		target map[string]any
+		// responseTarget is the target as GET returns it; defaults to target.
+		responseTarget map[string]any
 	}{
 		{
 			name:   "model-api",
@@ -35,15 +37,29 @@ func gridRouteCases() []gridRouteCase {
 			flags:  []string{"--target-type", "connection", "--target-model", "test-model", "--target-connection-id", "c123456"},
 			target: map[string]any{"type": "CONNECTION", "model": "test-model", "connection_id": "c123456"},
 		},
+		{
+			name:   "intelligent",
+			flags:  []string{"--target-type", "intelligent", "--route-classifier-id", "general-v1", "--tradeoff", "balanced"},
+			target: map[string]any{"type": "INTELLIGENT", "route_classifier_id": "general-v1", "tradeoff": "balanced"},
+			responseTarget: map[string]any{
+				"type":             "INTELLIGENT",
+				"route_classifier": map[string]any{"id": "general-v1", "name": "General"},
+				"tradeoff":         "balanced",
+			},
+		},
 	}
 	cases := make([]gridRouteCase, 0, len(targets))
 	for _, tc := range targets {
+		responseTarget := tc.target
+		if tc.responseTarget != nil {
+			responseTarget = tc.responseTarget
+		}
 		cases = append(cases, gridRouteCase{
 			Name:     tc.name,
 			Flags:    tc.flags,
 			Create:   map[string]any{"team_id": "t123456", "display_name": "Assistant", "target": tc.target},
 			Target:   tc.target,
-			Response: gridRouteFixture(tc.target),
+			Response: gridRouteFixture(responseTarget),
 		})
 	}
 	return cases
@@ -288,6 +304,13 @@ func Test_Grid_Route_Create_InvalidTargets(t *testing.T) {
 		{"--target-type", "connection", "--target-model", "model"},
 		{"--target-type", "connection", "--target-connection-id", "c123456"},
 		{"--target-type", "invalid", "--target-model", "model", "--target-connection-id", "c123456"},
+		{"--target-type", "intelligent"},
+		{"--target-type", "intelligent", "--route-classifier-id", "general-v1"},
+		{"--target-type", "intelligent", "--tradeoff", "balanced"},
+		{"--target-type", "intelligent", "--route-classifier-id", "general-v1", "--tradeoff", "invalid"},
+		{"--target-type", "intelligent", "--route-classifier-id", "general-v1", "--tradeoff", "balanced", "--target-model", "model"},
+		{"--target-type", "baseten-model-api", "--target-model", "model", "--route-classifier-id", "general-v1"},
+		{"--target-type", "connection", "--target-model", "model", "--target-connection-id", "c123456", "--tradeoff", "balanced"},
 		// Targets and flags the routes API no longer accepts.
 		{"--target-type", "openai", "--target-model", "model", "--target-secret", "key"},
 		{"--target-type", "anthropic", "--target-model", "model", "--target-secret", "key"},
@@ -334,16 +357,22 @@ func Test_Grid_Route_Describe_AllTargetFields(t *testing.T) {
 			m := h.MockManagementAPI()
 			m.SetRoute("GET", "/v1/grid/routes/r123456", 200, tc.Response)
 			h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
-			for _, field := range []string{"ID:", "Name:", "Display Name:", "Team Name:", "Target Type:", "Target Model:", "Invoke URL:", "Created:"} {
+			for _, field := range []string{"ID:", "Name:", "Display Name:", "Team Name:", "Target Type:", "Invoke URL:", "Created:"} {
 				h.Require.Contains(h.Stdout.String(), field)
 			}
 			h.Require.Contains(h.Stdout.String(), "Target Type:      "+tc.Flags[1])
-			h.Require.Contains(h.Stdout.String(), "Target Model:     "+tc.Flags[3])
 			h.Require.NotContains(h.Stdout.String(), "Provider:")
 			h.Require.NotContains(h.Stdout.String(), "Secret")
-			if tc.Name == "connection" {
+			switch tc.Name {
+			case "intelligent":
+				h.Require.NotContains(h.Stdout.String(), "Target Model:")
+				h.Require.Contains(h.Stdout.String(), "Route Classifier: General (general-v1)")
+				h.Require.Contains(h.Stdout.String(), "Tradeoff:         balanced")
+			case "connection":
+				h.Require.Contains(h.Stdout.String(), "Target Model:     "+tc.Flags[3])
 				h.Require.Contains(h.Stdout.String(), "Target Connection: c123456")
-			} else {
+			default:
+				h.Require.Contains(h.Stdout.String(), "Target Model:     "+tc.Flags[3])
 				h.Require.NotContains(h.Stdout.String(), "Connection")
 			}
 		})

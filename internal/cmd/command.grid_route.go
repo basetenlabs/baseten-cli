@@ -126,12 +126,15 @@ func commandGridRouteDescribe(ctx *CommandContext, flags *cmd.GridRouteDescribeF
 }
 
 func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateGridRouteRequest_Target, error) {
-	if flags.TargetType == "" || flags.TargetModel == "" {
-		return nil, cmd.NewErrUsagef("--target-type and --target-model are required")
+	if flags.TargetType != "intelligent" && (flags.RouteClassifierID != "" || flags.Tradeoff != "") {
+		return nil, cmd.NewErrUsagef("--route-classifier-id and --tradeoff require --target-type intelligent")
 	}
 	target := &managementapi.CreateGridRouteRequest_Target{}
 	switch flags.TargetType {
 	case "baseten-model-api":
+		if flags.TargetModel == "" {
+			return nil, cmd.NewErrUsagef("--target-model is required with --target-type baseten-model-api")
+		}
 		if flags.TargetConnection != "" {
 			return nil, cmd.NewErrUsagef("--target-connection-id is not valid with --target-type baseten-model-api")
 		}
@@ -141,6 +144,9 @@ func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateGridR
 		})
 		return target, err
 	case "connection":
+		if flags.TargetModel == "" {
+			return nil, cmd.NewErrUsagef("--target-model is required with --target-type connection")
+		}
 		if flags.TargetConnection == "" {
 			return nil, cmd.NewErrUsagef("--target-connection-id is required with --target-type connection")
 		}
@@ -148,6 +154,19 @@ func gridRouteTarget(flags cmd.GridRouteTargetFlags) (*managementapi.CreateGridR
 			Type:         "CONNECTION",
 			Model:        flags.TargetModel,
 			ConnectionId: flags.TargetConnection,
+		})
+		return target, err
+	case "intelligent":
+		if flags.TargetModel != "" || flags.TargetConnection != "" {
+			return nil, cmd.NewErrUsagef("intelligent targets do not accept --target-model or --target-connection-id")
+		}
+		if flags.RouteClassifierID == "" || flags.Tradeoff == "" {
+			return nil, cmd.NewErrUsagef("intelligent targets require --route-classifier-id and --tradeoff")
+		}
+		err := target.FromUpsertGridRouteTargetIntelligent(managementapi.UpsertGridRouteTargetIntelligent{
+			Type:              "INTELLIGENT",
+			RouteClassifierId: flags.RouteClassifierID,
+			Tradeoff:          managementapi.UpsertGridRouteTargetIntelligentTradeoff(flags.Tradeoff),
 		})
 		return target, err
 	default:

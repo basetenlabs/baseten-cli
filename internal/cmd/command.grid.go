@@ -34,8 +34,8 @@ func init() {
 	Register("grid teardown", commandGridTeardown)
 	Register("grid token", commandGridToken)
 	Register("grid claude-served-model", commandGridClaudeServedModel)
-	Register("grid classifier list", commandGridClassifierList)
-	Register("grid classifier describe", commandGridClassifierDescribe)
+	Register("grid route-classifier list", commandGridRouteClassifierList)
+	Register("grid route-classifier describe", commandGridRouteClassifierDescribe)
 	Register("grid team-settings describe", commandGridTeamSettingsDescribe)
 	Register("grid team-settings update", commandGridTeamSettingsUpdate)
 	Register("grid user-settings list", commandGridUserSettingsList)
@@ -1521,7 +1521,7 @@ func gridEnsureHarnessToken(ctx *CommandContext, api *managementapi.Client, team
 	return created.ApiKey, nil
 }
 
-func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFlags) error {
+func commandGridRouteClassifierList(ctx *CommandContext, f *cmd.GridRouteClassifierListFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -1540,7 +1540,7 @@ func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFla
 		params.Cursor = page.Pagination.Cursor
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.GridClassifierList{Items: normalizeJSONSlice(items)})
+		ctx.OutputJSON(cmd.GridRouteClassifierList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {
@@ -1560,7 +1560,7 @@ func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFla
 	return nil
 }
 
-func commandGridClassifierDescribe(ctx *CommandContext, f *cmd.GridClassifierDescribeFlags) error {
+func commandGridRouteClassifierDescribe(ctx *CommandContext, f *cmd.GridRouteClassifierDescribeFlags) error {
 	if f.ID == "" {
 		return cmd.NewErrUsagef("--id must not be empty")
 	}

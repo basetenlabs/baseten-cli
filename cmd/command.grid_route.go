@@ -78,6 +78,9 @@ var commandGridRoute = Command{
 				"Omit --team to use your only team; specify it when you belong to several. External providers are reached through " +
 				"a connection owned by the route's team, which holds the provider's API key; pass its ID with " +
 				"--target-connection-id. Pass the same --team value if the route uses a specific team.\n\n" +
+				"An intelligent route lets Baseten pick the model per request: pass --target-type intelligent with " +
+				"--route-classifier-id and --tradeoff instead of a model. List route classifiers with " +
+				"'baseten grid route-classifier list'.\n\n" +
 				"Set optional metadata with --display-name and --description.",
 			Output: &CommandOutput[managementapi.GridRoute]{
 				JSONDescription: gridRouteTargetJSONDescription,
@@ -96,6 +99,14 @@ var commandGridRoute = Command{
 							"baseten grid route create",
 							"--target-type connection --target-model <model>",
 							"--target-connection-id <connection-id>",
+						},
+					},
+					{
+						Description: "Create an intelligent route.",
+						CommandLines: []string{
+							"baseten grid route create",
+							"--target-type intelligent --route-classifier-id <classifier-id>",
+							"--tradeoff balanced",
 						},
 					},
 				},
@@ -223,9 +234,11 @@ type GridRouteRefFlags struct {
 }
 
 type GridRouteTargetFlags struct {
-	TargetType       string `flag:"target-type" desc:"Target type." enum:"baseten-model-api,connection" required:"true"`
-	TargetModel      string `flag:"target-model" desc:"Model API name or external provider model name." required:"true"`
-	TargetConnection string `flag:"target-connection-id" desc:"ID of a connection in the route's team, whose provider serves the route. Required with --target-type connection."`
+	TargetType        string `flag:"target-type" desc:"Target type." enum:"baseten-model-api,connection,intelligent" required:"true"`
+	TargetModel       string `flag:"target-model" desc:"Model API name or external provider model name. Required with --target-type baseten-model-api or connection."`
+	TargetConnection  string `flag:"target-connection-id" desc:"ID of a connection in the route's team, whose provider serves the route. Required with --target-type connection."`
+	RouteClassifierID string `flag:"route-classifier-id" desc:"ID of the route classifier that picks the model per request. Required with --target-type intelligent. List them with 'baseten grid route-classifier list'."`
+	Tradeoff          string `flag:"tradeoff" desc:"How the route classifier weighs cost against quality. Required with --target-type intelligent." enum:"cost,balanced,intelligence"`
 }
 
 // GridRouteList contains the routes aggregated across all pages.
