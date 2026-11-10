@@ -295,15 +295,16 @@ func TestPiCarriesCompleteRouteCost(t *testing.T) {
 func TestNewRoute(t *testing.T) {
 	_, err := NewRoute(managementapi.GridRoute{Name: "acme/bare"}, nil)
 	require.ErrorContains(t, err, `route "acme/bare" has no model metadata`)
+	_, err = NewRoute(managementapi.GridRoute{Name: "acme/unformatted", PreferredApiFormat: &chatCompletionsFormat, Metadata: &managementapi.ExploreMetadata{}}, nil)
+	require.ErrorContains(t, err, `route "acme/unformatted" has no supported API formats`)
 
 	ptr := func(v float32) *float32 { return &v }
 	tools, ctx, out := true, 128000, 4096
-	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.ExploreMetadata{
-		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools,
+	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", PreferredApiFormat: &chatCompletionsFormat, Metadata: &managementapi.ExploreMetadata{
+		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, SupportedApiFormats: &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &tools},
 		Cost: &managementapi.ExploreCost{Input: ptr(0.3), Output: ptr(1.2), LongContext: &managementapi.ExploreCostValues{Input: ptr(0.6)}},
 	}}, nil)
 	require.NoError(t, err)
-	require.True(t, r.Messages && r.Responses, "a route without API formats is listed in every harness")
 	require.Equal(t, &Cost{Input: 0.3, Output: 1.2}, r.Cost, "a long-context price without output is dropped")
 }
 
@@ -317,7 +318,7 @@ func TestRouteTargetComesFromConnections(t *testing.T) {
 	require.Equal(t, Providers{"conn-a": ProviderAnthropic, "conn-o": ProviderOpenAI, "conn-x": "XAI"}, providers)
 
 	tools, ctx, out := true, 128000, 4096
-	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools}
+	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, SupportedApiFormats: &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &tools}}
 	for _, tc := range []struct {
 		name         string
 		target       string
@@ -332,7 +333,7 @@ func TestRouteTargetComesFromConnections(t *testing.T) {
 		{"classifier", `{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			api := managementapi.GridRoute{Name: "acme/route", DisplayName: "Route", Metadata: metadata}
+			api := managementapi.GridRoute{Name: "acme/route", DisplayName: "Route", Metadata: metadata, PreferredApiFormat: &chatCompletionsFormat}
 			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 			r, err := NewRoute(api, providers)
 			require.NoError(t, err)

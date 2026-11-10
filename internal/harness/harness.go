@@ -228,18 +228,20 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	if m == nil {
 		return r, fmt.Errorf("route %q has no model metadata", r.Name)
 	}
+	if m.SupportedApiFormats == nil {
+		return r, fmt.Errorf("route %q has no supported API formats", r.Name)
+	}
+	var known bool
+	if r.TargetAPI, known = targetAPIsByFormat[deref(api.PreferredApiFormat)]; !known {
+		return r, fmt.Errorf("route %q has no known preferred API format", r.Name)
+	}
 	r.ContextWindow, r.OutputLimit = deref(m.ContextWindow), deref(m.MaxOutputTokens)
 	r.InputModalities = slices.DeleteFunc(slices.Clone(m.InputModalities), func(modality string) bool {
 		return modality != "text" && modality != "image"
 	})
 	r.Tools = deref(m.Tools)
 	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
-	// Without formats the route's APIs are unknown, so every harness lists it.
-	r.Messages, r.Responses = true, true
-	r.TargetAPI = cmp.Or(targetAPIsByFormat[deref(api.PreferredApiFormat)], TargetAPIChatCompletions)
-	if f := m.SupportedApiFormats; f != nil {
-		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
-	}
+	r.Messages, r.Responses = deref(m.SupportedApiFormats.Messages), deref(m.SupportedApiFormats.Responses)
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
 		if r.Cost != nil && c.LongContext != nil {

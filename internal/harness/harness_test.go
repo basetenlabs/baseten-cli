@@ -21,6 +21,8 @@ const testToken = "baseten-harness-test-token"
 
 const testEndpoint = "https://inference.example.com"
 
+var chatCompletionsFormat = managementapi.GridRoutePreferredApiFormat_chat_completions
+
 func testRoute(name, displayName string) Route {
 	return Route{
 		ID: name, Name: name, DisplayName: displayName,
@@ -32,12 +34,13 @@ func testRoute(name, displayName string) Route {
 func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 	contextWindow, mirroredOutput, tools := 500000, 500000, true
 	route, err := NewRoute(managementapi.GridRoute{
-		Name: "acme/possible",
+		Name: "acme/possible", PreferredApiFormat: &chatCompletionsFormat,
 		Metadata: &managementapi.ExploreMetadata{
-			ContextWindow:   &contextWindow,
-			MaxOutputTokens: &mirroredOutput,
-			InputModalities: []string{"text", "image"},
-			Tools:           &tools,
+			ContextWindow:       &contextWindow,
+			MaxOutputTokens:     &mirroredOutput,
+			InputModalities:     []string{"text", "image"},
+			Tools:               &tools,
+			SupportedApiFormats: &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &tools},
 		},
 	}, nil)
 	require.NoError(t, err)
@@ -46,12 +49,13 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 
 	impossibleOutput := 500001
 	_, err = NewRoute(managementapi.GridRoute{
-		Name: "acme/impossible",
+		Name: "acme/impossible", PreferredApiFormat: &chatCompletionsFormat,
 		Metadata: &managementapi.ExploreMetadata{
-			ContextWindow:   &contextWindow,
-			MaxOutputTokens: &impossibleOutput,
-			InputModalities: []string{"text"},
-			Tools:           &tools,
+			ContextWindow:       &contextWindow,
+			MaxOutputTokens:     &impossibleOutput,
+			InputModalities:     []string{"text"},
+			Tools:               &tools,
+			SupportedApiFormats: &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &tools},
 		},
 	}, nil)
 	require.ErrorContains(t, err, "no usable context and output limits")
@@ -59,7 +63,7 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 
 func TestNewRouteMarksRouters(t *testing.T) {
 	tools, ctx, out := true, 128000, 4096
-	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools}
+	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, SupportedApiFormats: &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &tools}}
 	for _, tc := range []struct {
 		target string
 		want   bool
@@ -70,13 +74,13 @@ func TestNewRouteMarksRouters(t *testing.T) {
 		{`{"type": "CONNECTION", "connection_id": "conn-a", "model": "claude"}`, false},
 		{`{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, false},
 	} {
-		api := managementapi.GridRoute{Name: "acme/route", Metadata: metadata}
+		api := managementapi.GridRoute{Name: "acme/route", Metadata: metadata, PreferredApiFormat: &chatCompletionsFormat}
 		require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 		r, err := NewRoute(api, Providers{"conn-a": ProviderAnthropic})
 		require.NoError(t, err)
 		require.Equal(t, tc.want, r.Router, tc.target)
 	}
-	r, err := NewRoute(managementapi.GridRoute{Name: "acme/untyped", Metadata: metadata}, nil)
+	r, err := NewRoute(managementapi.GridRoute{Name: "acme/untyped", Metadata: metadata, PreferredApiFormat: &chatCompletionsFormat}, nil)
 	require.NoError(t, err)
 	require.False(t, r.Router, "a route without a target type is not a router")
 }
@@ -96,8 +100,8 @@ func TestNewRouteTakesTargetAPIFromPreferredAPIFormat(t *testing.T) {
 		{"messages", `{"type": "INTELLIGENT"}`, &messages, TargetAPIMessages},
 		{"responses", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, &responses, TargetAPIResponses},
 		{"chat completions", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, &completions, TargetAPIChatCompletions},
-		{"null defaults to chat completions", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, nil, TargetAPIChatCompletions},
-		{"unknown defaults to chat completions", `{"type": "INTELLIGENT"}`, &unknown, TargetAPIChatCompletions},
+		{"null is rejected", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, nil, ""},
+		{"unknown is rejected", `{"type": "INTELLIGENT"}`, &unknown, ""},
 		{"server overrides the model api order", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, &messages, TargetAPIMessages},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -111,6 +115,10 @@ func TestNewRouteTakesTargetAPIFromPreferredAPIFormat(t *testing.T) {
 			}
 			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 			r, err := NewRoute(api, providers)
+			if tc.want == "" {
+				require.ErrorContains(t, err, `route "acme/route" has no known preferred API format`)
+				return
+			}
 			require.NoError(t, err)
 			require.Equal(t, tc.want, r.TargetAPI)
 		})
@@ -121,10 +129,11 @@ func TestNewRouteKeepsOnlyTextAndImageInputModalities(t *testing.T) {
 	tools, ctx, out := true, 128000, 4096
 	route := func(modalities ...string) (Route, error) {
 		return NewRoute(managementapi.GridRoute{
-			Name: "acme/av", DisplayName: "AV",
+			Name: "acme/av", DisplayName: "AV", PreferredApiFormat: &chatCompletionsFormat,
 			Metadata: &managementapi.ExploreMetadata{
 				ContextWindow: &ctx, MaxOutputTokens: &out,
 				InputModalities: modalities, Tools: &tools,
+				SupportedApiFormats: &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &tools},
 			},
 		}, nil)
 	}
