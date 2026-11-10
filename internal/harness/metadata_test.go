@@ -159,9 +159,9 @@ func TestPiAnthropicThinkingCompatibility(t *testing.T) {
 		{"claude-opus-5-5", 1000000, 128000, []string{"low", "medium", "high", "xhigh", "max"}, true},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
-			tools := true
+			tools, messages := true, managementapi.GridRoutePreferredApiFormat_messages
 			api := managementapi.GridRoute{
-				Name: "acme/custom", DisplayName: "Custom",
+				Name: "acme/custom", DisplayName: "Custom", PreferredApiFormat: &messages,
 				Metadata: &managementapi.ExploreMetadata{
 					ContextWindow: &tc.contextWindow, MaxOutputTokens: &tc.outputLimit,
 					InputModalities: []string{"text", "image"}, Tools: &tools,

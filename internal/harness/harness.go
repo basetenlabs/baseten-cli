@@ -162,6 +162,12 @@ const (
 	TargetAPIChatCompletions TargetAPI = "chat-completions"
 )
 
+var targetAPIsByFormat = map[managementapi.GridRoutePreferredApiFormat]TargetAPI{
+	managementapi.GridRoutePreferredApiFormat_messages:         TargetAPIMessages,
+	managementapi.GridRoutePreferredApiFormat_responses:        TargetAPIResponses,
+	managementapi.GridRoutePreferredApiFormat_chat_completions: TargetAPIChatCompletions,
+}
+
 // Route is a Baseten route as shown in a harness's model picker, with the model
 // capabilities supplied by the route's own metadata.
 type Route struct {
@@ -230,10 +236,9 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
 	// Without formats the route's APIs are unknown, so every harness lists it.
 	r.Messages, r.Responses = true, true
-	r.TargetAPI = TargetAPIChatCompletions
+	r.TargetAPI = cmp.Or(targetAPIsByFormat[deref(api.PreferredApiFormat)], TargetAPIChatCompletions)
 	if f := m.SupportedApiFormats; f != nil {
 		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
-		r.TargetAPI = preferredTargetAPI(f, r.Provider, r.Router)
 	}
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
@@ -242,25 +247,6 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 		}
 	}
 	return r, validateRoute(r)
-}
-
-func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats, provider string, router bool) TargetAPI {
-	advertised := map[TargetAPI]bool{
-		TargetAPIChatCompletions: deref(f.ChatCompletions),
-		TargetAPIMessages:        deref(f.Messages),
-		TargetAPIResponses:       deref(f.Responses),
-	}
-	order := []TargetAPI{TargetAPIMessages, TargetAPIResponses, TargetAPIChatCompletions}
-	if !router && (provider == ProviderBaseten || provider == "") {
-		// NB(nikhil): MAPIs specifically advertise all compatibility, but prefer chat completions.
-		order = []TargetAPI{TargetAPIChatCompletions, TargetAPIMessages, TargetAPIResponses}
-	}
-	for _, api := range order {
-		if advertised[api] {
-			return api
-		}
-	}
-	return TargetAPIChatCompletions
 }
 
 // newCost returns nil unless both input and output prices are known.

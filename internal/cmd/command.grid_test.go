@@ -1187,7 +1187,7 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-auto", "name": "acme/auto", "display_name": "Auto", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "ROUTER"}},
+				"target": map[string]any{"type": "ROUTER"}, "preferred_api_format": "messages"},
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -2242,15 +2242,15 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	}))
 	t.Cleanup(gateway.Close)
 	h, api := gridAPI(t, gateway.URL)
-	route := func(id, name, display string, target map[string]any) map[string]any {
-		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": target}
+	route := func(id, name, display, format string, target map[string]any) map[string]any {
+		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": target, "preferred_api_format": format}
 	}
 	router := map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			route("route-primary", "acme/primary", "Primary", map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
-			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", router),
-			route("route-code", "acme/code", `Code "beta" \ 'x' </script>`, router),
+			route("route-primary", "acme/primary", "Primary", "chat_completions", map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
+			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", "messages", router),
+			route("route-code", "acme/code", `Code "beta" \ 'x' </script>`, "messages", router),
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -2861,13 +2861,13 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	t.Cleanup(gateway.Close)
 	h, api := gridAPI(t, gateway.URL)
 	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	route := func(id, name, display string, target map[string]any) map[string]any {
-		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": target}
+	route := func(id, name, display, format string, target map[string]any) map[string]any {
+		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": target, "preferred_api_format": format}
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}),
-			route("route-primary", "acme/primary", "Primary", map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
+			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", "messages", map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}),
+			route("route-primary", "acme/primary", "Primary", "chat_completions", map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -3021,9 +3021,9 @@ func serveFirstPartyRoutes(api *MockManagementAPI) {
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": messages,
-				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}},
+				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}, "preferred_api_format": "messages"},
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": responses,
-				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-openai"}},
+				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-openai"}, "preferred_api_format": "responses"},
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-d", "name": "acme/orphan", "display_name": "Orphan", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
@@ -3062,8 +3062,7 @@ func Test_Grid_Setup_OpenCodeFirstPartyRoutes(t *testing.T) {
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/claude"].(map[string]any)["provider"])
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/openai"}, models["acme/gpt"].(map[string]any)["provider"])
 	h.Require.NotContains(models["acme/open"], "provider")
-	h.Require.NotContains(models["acme/orphan"], "provider", "a route whose connection is unknown is called with Chat Completions")
-	h.Require.Contains(h.Stderr.String(), "warning: routes whose connection is not in the team's connections are called with the Chat Completions API: acme/orphan")
+	h.Require.NotContains(models["acme/orphan"], "provider", "a route without a preferred API format is called with Chat Completions")
 	connections := api.FindCall("GET", "/v1/grid/connections")
 	h.Require.NotNil(connections)
 	h.Require.Contains(connections.RawQuery, "team_id=team-a")

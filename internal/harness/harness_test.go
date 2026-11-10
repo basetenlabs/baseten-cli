@@ -81,67 +81,32 @@ func TestNewRouteMarksRouters(t *testing.T) {
 	require.False(t, r.Router, "a route without a target type is not a router")
 }
 
-func TestNewRoutePicksTargetAPIFromFormats(t *testing.T) {
-	yes, no, tools, ctx, out := true, false, true, 128000, 4096
-	for _, tc := range []struct {
-		name    string
-		formats *managementapi.ExploreMetadataAPIFormats
-		want    TargetAPI
-	}{
-		{"no formats", nil, TargetAPIChatCompletions},
-		{"chat completions", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}, TargetAPIChatCompletions},
-		{"messages", &managementapi.ExploreMetadataAPIFormats{Messages: &yes}, TargetAPIMessages},
-		{"responses", &managementapi.ExploreMetadataAPIFormats{Responses: &yes}, TargetAPIResponses},
-		{"chat completions before messages", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes}, TargetAPIChatCompletions},
-		{"chat completions before responses", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}, TargetAPIChatCompletions},
-		{"messages before responses", &managementapi.ExploreMetadataAPIFormats{Messages: &yes, Responses: &yes}, TargetAPIMessages},
-		{"none advertised", &managementapi.ExploreMetadataAPIFormats{Messages: &no, Responses: &no, ChatCompletions: &no}, TargetAPIChatCompletions},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r, err := NewRoute(managementapi.GridRoute{
-				Name: "acme/route", DisplayName: "Route",
-				Metadata: &managementapi.ExploreMetadata{
-					ContextWindow: &ctx, MaxOutputTokens: &out,
-					InputModalities: []string{"text"}, Tools: &tools,
-					SupportedApiFormats: tc.formats,
-				},
-			}, nil)
-			require.NoError(t, err)
-			require.Equal(t, tc.want, r.TargetAPI)
-		})
-	}
-}
-
-func TestNewRoutePrefersNativeTargetAPIForExternalProviders(t *testing.T) {
+func TestNewRouteTakesTargetAPIFromPreferredAPIFormat(t *testing.T) {
 	yes, tools, ctx, out := true, true, 128000, 4096
+	messages, responses, completions := managementapi.GridRoutePreferredApiFormat_messages, managementapi.GridRoutePreferredApiFormat_responses, managementapi.GridRoutePreferredApiFormat_chat_completions
+	unknown := managementapi.GridRoutePreferredApiFormat("future_format")
 	all := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes, Responses: &yes}
-	completionsAndResponses := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}
-	completions := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}
-	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI, "conn-bedrock": ProviderBedrock, "conn-vertex": ProviderVertex}
+	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI}
 	for _, tc := range []struct {
-		name    string
-		target  string
-		formats *managementapi.ExploreMetadataAPIFormats
-		want    TargetAPI
+		name      string
+		target    string
+		preferred *managementapi.GridRoutePreferredApiFormat
+		want      TargetAPI
 	}{
-		{"baseten prefers chat completions", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, all, TargetAPIChatCompletions},
-		{"router prefers messages", `{"type": "INTELLIGENT"}`, all, TargetAPIMessages},
-		{"router prefers responses over chat completions", `{"type": "INTELLIGENT"}`, completionsAndResponses, TargetAPIResponses},
-		{"router falls back to chat completions", `{"type": "INTELLIGENT"}`, completions, TargetAPIChatCompletions},
-		{"unknown connection prefers chat completions", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, all, TargetAPIChatCompletions},
-		{"anthropic prefers messages", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, all, TargetAPIMessages},
-		{"openai prefers responses", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, completionsAndResponses, TargetAPIResponses},
-		{"bedrock prefers responses", `{"type": "CONNECTION", "connection_id": "conn-bedrock", "model": "openai.gpt"}`, completionsAndResponses, TargetAPIResponses},
-		{"vertex prefers messages", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "claude"}`, all, TargetAPIMessages},
-		{"external falls back to chat completions", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "gemini"}`, completions, TargetAPIChatCompletions},
+		{"messages", `{"type": "INTELLIGENT"}`, &messages, TargetAPIMessages},
+		{"responses", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, &responses, TargetAPIResponses},
+		{"chat completions", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, &completions, TargetAPIChatCompletions},
+		{"null defaults to chat completions", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, nil, TargetAPIChatCompletions},
+		{"unknown defaults to chat completions", `{"type": "INTELLIGENT"}`, &unknown, TargetAPIChatCompletions},
+		{"server overrides the model api order", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, &messages, TargetAPIMessages},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := managementapi.GridRoute{
-				Name: "acme/route", DisplayName: "Route",
+				Name: "acme/route", DisplayName: "Route", PreferredApiFormat: tc.preferred,
 				Metadata: &managementapi.ExploreMetadata{
 					ContextWindow: &ctx, MaxOutputTokens: &out,
 					InputModalities: []string{"text"}, Tools: &tools,
-					SupportedApiFormats: tc.formats,
+					SupportedApiFormats: all,
 				},
 			}
 			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))

@@ -7,7 +7,10 @@ function chunkModel(line) {
   if (!line.startsWith("data:")) return ""
   try {
     const chunk = JSON.parse(line.slice(5))
-    const model = chunk.model ?? chunk.message?.model ?? chunk.response?.model
+    const chatCompletionsModel = chunk.model
+    const messagesModel = chunk.message?.model
+    const responsesModel = chunk.response?.model
+    const model = chatCompletionsModel ?? messagesModel ?? responsesModel
     return typeof model === "string" ? model : ""
   } catch {
     return ""

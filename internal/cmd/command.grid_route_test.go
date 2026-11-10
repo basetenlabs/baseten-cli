@@ -51,16 +51,17 @@ func gridRouteCases() []gridRouteCase {
 
 func gridRouteFixture(target map[string]any) map[string]any {
 	return map[string]any{
-		"id":           "r123456",
-		"name":         "acme/assistant",
-		"team_id":      "t123456",
-		"team_name":    "Engineering",
-		"display_name": "Assistant",
-		"description":  "",
-		"target":       target,
-		"invoke_url":   "https://coding.baseten.co",
-		"created_at":   "2026-09-17T10:00:00Z",
-		"metadata":     nil,
+		"id":                   "r123456",
+		"name":                 "acme/assistant",
+		"team_id":              "t123456",
+		"team_name":            "Engineering",
+		"display_name":         "Assistant",
+		"description":          "",
+		"target":               target,
+		"invoke_url":           "https://coding.baseten.co",
+		"created_at":           "2026-09-17T10:00:00Z",
+		"metadata":             nil,
+		"preferred_api_format": nil,
 	}
 }
 
