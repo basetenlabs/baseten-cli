@@ -166,9 +166,9 @@ var commandGridRoute = Command{
 		},
 		{
 			Name:    "usage",
-			Summary: "Show daily routes usage and estimated costs (PRE-RELEASE)",
+			Summary: "Show routes usage and estimated costs (PRE-RELEASE)",
 			Description: gridRoutePrereleaseNotice +
-				"Show routes usage and estimated costs as daily UTC buckets, oldest first, broken down by the " +
+				"Show routes usage and estimated costs over a window of UTC days, broken down by the " +
 				"dimensions passed to --group-by. Defaults match the API: the previous UTC day through today, grouped " +
 				"by model. Organization admins see organization usage, team admins see teams they manage, and other members see usage from their own keys. --team narrows the scope. " +
 				"Grouping by intelligent route includes only usage sent through an intelligent route; do not add these totals to totals from other groupings. Grouping by harness includes an Unknown group for usage with no recorded harness.\n\n" +
@@ -177,17 +177,18 @@ var commandGridRoute = Command{
 				"Usage can lag by up to 15 minutes and is retained for 92 days. Model API costs use your prices and " +
 				"include tool calls. OpenAI, Anthropic, and xAI costs estimate what those providers charge and are not " +
 				"Baseten charges. Vertex and OpenAI-compatible usage isn't included.\n\n" +
-				"For your spend this month against your limit, see 'baseten grid user-settings describe'. For " +
-				"machine-readable streaming, prefer " +
-				"--output jsonl over --output json.",
+				"Text output ends with your spend this month in the team against your limit there, which needs " +
+				"--team when you belong to several; 'baseten grid user-settings describe' has the details. For " +
+				"machine-readable streaming, prefer --output jsonl over --output json.",
 			Flags: GridRouteUsageFlags{},
 			Output: &CommandOutput[managementapi.GridRouteUsageBucket]{
 				JSONArrayStreamed: true,
-				TextDescription: "Table with a DATE column, one column per --group-by dimension, then INPUT, CACHED, and " +
-					"OUTPUT token counts and COST, followed by an ALL totals row. A day with no usage renders as a single " +
-					"\"(no usage)\" row. A cost of \"-\" means some of that usage couldn't be priced. The window goes to " +
-					"stderr. When no day in the window has any usage, prints \"No usage in the selected window.\" to " +
-					"stderr instead of a table.",
+				TextDescription: "The total cost, a chart of cost per day per --group-by value (terminal only, windows " +
+					"longer than a day), then one line per value with its cost and share, most expensive first; values " +
+					"past the top five are summed into \"other\", then your spend this month in the team against your " +
+					"limit there. A cost of \"-\" means some of that usage couldn't be priced. The window goes to stderr, " +
+					"as does \"No usage in the selected window.\" when there is none. Use --output json for token counts " +
+					"and per-day detail.",
 				JSONDescription: "One record per UTC day, as returned by the API: its date and the per-dimension usage in " +
 					"results, including days with no usage. cost_usd values are exact decimal strings.",
 				Examples: []CommandExample{
