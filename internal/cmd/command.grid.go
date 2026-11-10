@@ -379,8 +379,9 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	}
 	// With no current profile, sign in here instead of sending the user to
 	// auth login. The new profile becomes the current one, as auth login's
-	// would; there is none to displace.
-	if session.ProfileName() == "" && !session.IsEphemeral() && ctx.IsInteractive() {
+	// would; there is none to displace. A dry run changes nothing, so it does
+	// not sign in.
+	if session.ProfileName() == "" && !session.IsEphemeral() && !f.DryRun && ctx.IsInteractive() {
 		store, err := NewAuthStore(false)
 		if err != nil {
 			return err

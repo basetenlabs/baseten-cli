@@ -438,6 +438,10 @@ func Test_Grid_Setup_SignsInWithoutCurrentProfile(t *testing.T) {
 	h.Require.Empty(h.OpenedURLs)
 
 	h.Context = internalcmd.WithPromptAnswers(h.Context)
+	// A dry run does not sign in either.
+	h.Require.Error(h.Execute(append(slices.Clone(args), "--dry-run")...))
+	h.Require.Empty(h.OpenedURLs)
+
 	h.Require.NoError(h.Execute(args...))
 	h.Require.Equal([]string{"https://auth.example.com/device"}, h.OpenedURLs)
 	name, _, ok, err := configDirStore(t).CurrentProfile()
