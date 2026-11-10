@@ -6,7 +6,8 @@ const routers = new Map(Object.entries(routes.routers))
 function chunkModel(line) {
   if (!line.startsWith("data:")) return ""
   try {
-    const model = JSON.parse(line.slice(5)).model
+    const chunk = JSON.parse(line.slice(5))
+    const model = chunk.model ?? chunk.message?.model ?? chunk.response?.model
     return typeof model === "string" ? model : ""
   } catch {
     return ""
