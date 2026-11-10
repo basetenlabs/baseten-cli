@@ -21,7 +21,7 @@ const testToken = "baseten-harness-test-token"
 
 const testEndpoint = "https://inference.example.com"
 
-var chatCompletionsFormat = managementapi.GridRoutePreferredApiFormat_chat_completions
+var chatCompletionsFormats = []managementapi.GridRouteMetadataSupportedApiFormats{managementapi.GridRouteMetadataSupportedApiFormats_chat_completions}
 
 func testRoute(name, displayName string) Route {
 	return Route{
@@ -34,13 +34,13 @@ func testRoute(name, displayName string) Route {
 func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 	contextWindow, mirroredOutput, tools := 500000, 500000, true
 	route, err := NewRoute(managementapi.GridRoute{
-		Name: "acme/possible", PreferredApiFormat: &chatCompletionsFormat,
-		Metadata: &managementapi.ExploreMetadata{
+		Name: "acme/possible",
+		Metadata: managementapi.GridRouteMetadata{
 			ContextWindow:       &contextWindow,
 			MaxOutputTokens:     &mirroredOutput,
 			InputModalities:     []string{"text", "image"},
 			Tools:               &tools,
-			SupportedApiFormats: &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &tools},
+			SupportedApiFormats: chatCompletionsFormats,
 		},
 	}, nil)
 	require.NoError(t, err)
@@ -49,13 +49,13 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 
 	impossibleOutput := 500001
 	_, err = NewRoute(managementapi.GridRoute{
-		Name: "acme/impossible", PreferredApiFormat: &chatCompletionsFormat,
-		Metadata: &managementapi.ExploreMetadata{
+		Name: "acme/impossible",
+		Metadata: managementapi.GridRouteMetadata{
 			ContextWindow:       &contextWindow,
 			MaxOutputTokens:     &impossibleOutput,
 			InputModalities:     []string{"text"},
 			Tools:               &tools,
-			SupportedApiFormats: &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &tools},
+			SupportedApiFormats: chatCompletionsFormats,
 		},
 	}, nil)
 	require.ErrorContains(t, err, "no usable context and output limits")
@@ -63,7 +63,7 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 
 func TestNewRouteMarksRouters(t *testing.T) {
 	tools, ctx, out := true, 128000, 4096
-	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, SupportedApiFormats: &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &tools}}
+	metadata := managementapi.GridRouteMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, SupportedApiFormats: chatCompletionsFormats}
 	for _, tc := range []struct {
 		target string
 		want   bool
@@ -74,53 +74,54 @@ func TestNewRouteMarksRouters(t *testing.T) {
 		{`{"type": "CONNECTION", "connection_id": "conn-a", "model": "claude"}`, false},
 		{`{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, false},
 	} {
-		api := managementapi.GridRoute{Name: "acme/route", Metadata: metadata, PreferredApiFormat: &chatCompletionsFormat}
+		api := managementapi.GridRoute{Name: "acme/route", Metadata: metadata}
 		require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 		r, err := NewRoute(api, Providers{"conn-a": ProviderAnthropic})
 		require.NoError(t, err)
 		require.Equal(t, tc.want, r.Router, tc.target)
 	}
-	r, err := NewRoute(managementapi.GridRoute{Name: "acme/untyped", Metadata: metadata, PreferredApiFormat: &chatCompletionsFormat}, nil)
+	r, err := NewRoute(managementapi.GridRoute{Name: "acme/untyped", Metadata: metadata}, nil)
 	require.NoError(t, err)
 	require.False(t, r.Router, "a route without a target type is not a router")
 }
 
-func TestNewRouteTakesTargetAPIFromPreferredAPIFormat(t *testing.T) {
-	yes, tools, ctx, out := true, true, 128000, 4096
-	messages, responses, completions := managementapi.GridRoutePreferredApiFormat_messages, managementapi.GridRoutePreferredApiFormat_responses, managementapi.GridRoutePreferredApiFormat_chat_completions
-	unknown := managementapi.GridRoutePreferredApiFormat("future_format")
-	all := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes, Responses: &yes}
+func TestNewRouteTakesTargetAPIFromFirstSupportedAPIFormat(t *testing.T) {
+	tools, ctx, out := true, 128000, 4096
 	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI}
 	for _, tc := range []struct {
-		name      string
-		target    string
-		preferred *managementapi.GridRoutePreferredApiFormat
-		want      TargetAPI
+		name                string
+		target              string
+		formats             []managementapi.GridRouteMetadataSupportedApiFormats
+		want                TargetAPI
+		messages, responses bool
+		err                 string
 	}{
-		{"messages", `{"type": "INTELLIGENT"}`, &messages, TargetAPIMessages},
-		{"responses", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, &responses, TargetAPIResponses},
-		{"chat completions", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, &completions, TargetAPIChatCompletions},
-		{"null is rejected", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, nil, ""},
-		{"unknown is rejected", `{"type": "INTELLIGENT"}`, &unknown, ""},
-		{"server overrides the model api order", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, &messages, TargetAPIMessages},
+		{"intelligent route", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataSupportedApiFormats{"messages", "responses", "chat_completions"}, TargetAPIMessages, true, true, ""},
+		{"model api", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, []managementapi.GridRouteMetadataSupportedApiFormats{"chat_completions", "messages", "responses"}, TargetAPIChatCompletions, true, true, ""},
+		{"responses only", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, []managementapi.GridRouteMetadataSupportedApiFormats{"responses"}, TargetAPIResponses, false, true, ""},
+		{"messages only", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, []managementapi.GridRouteMetadataSupportedApiFormats{"messages"}, TargetAPIMessages, true, false, ""},
+		{"empty", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataSupportedApiFormats{}, "", false, false, `route "acme/route" has no supported API formats`},
+		{"unknown first", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataSupportedApiFormats{"future_format", "messages"}, "", false, false, `route "acme/route" prefers unknown API format "future_format"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := managementapi.GridRoute{
-				Name: "acme/route", DisplayName: "Route", PreferredApiFormat: tc.preferred,
-				Metadata: &managementapi.ExploreMetadata{
+				Name: "acme/route", DisplayName: "Route",
+				Metadata: managementapi.GridRouteMetadata{
 					ContextWindow: &ctx, MaxOutputTokens: &out,
 					InputModalities: []string{"text"}, Tools: &tools,
-					SupportedApiFormats: all,
+					SupportedApiFormats: tc.formats,
 				},
 			}
 			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 			r, err := NewRoute(api, providers)
-			if tc.want == "" {
-				require.ErrorContains(t, err, `route "acme/route" has no known preferred API format`)
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
 				return
 			}
 			require.NoError(t, err)
 			require.Equal(t, tc.want, r.TargetAPI)
+			require.Equal(t, tc.messages, r.Messages, "Claude Code lists routes whose formats include messages")
+			require.Equal(t, tc.responses, r.Responses, "Codex lists routes whose formats include responses")
 		})
 	}
 }
@@ -129,11 +130,11 @@ func TestNewRouteKeepsOnlyTextAndImageInputModalities(t *testing.T) {
 	tools, ctx, out := true, 128000, 4096
 	route := func(modalities ...string) (Route, error) {
 		return NewRoute(managementapi.GridRoute{
-			Name: "acme/av", DisplayName: "AV", PreferredApiFormat: &chatCompletionsFormat,
-			Metadata: &managementapi.ExploreMetadata{
+			Name: "acme/av", DisplayName: "AV",
+			Metadata: managementapi.GridRouteMetadata{
 				ContextWindow: &ctx, MaxOutputTokens: &out,
 				InputModalities: modalities, Tools: &tools,
-				SupportedApiFormats: &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &tools},
+				SupportedApiFormats: chatCompletionsFormats,
 			},
 		}, nil)
 	}

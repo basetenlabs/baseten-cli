@@ -162,10 +162,10 @@ const (
 	TargetAPIChatCompletions TargetAPI = "chat-completions"
 )
 
-var targetAPIsByFormat = map[managementapi.GridRoutePreferredApiFormat]TargetAPI{
-	managementapi.GridRoutePreferredApiFormat_messages:         TargetAPIMessages,
-	managementapi.GridRoutePreferredApiFormat_responses:        TargetAPIResponses,
-	managementapi.GridRoutePreferredApiFormat_chat_completions: TargetAPIChatCompletions,
+var targetAPIsByFormat = map[managementapi.GridRouteMetadataSupportedApiFormats]TargetAPI{
+	managementapi.GridRouteMetadataSupportedApiFormats_messages:         TargetAPIMessages,
+	managementapi.GridRouteMetadataSupportedApiFormats_responses:        TargetAPIResponses,
+	managementapi.GridRouteMetadataSupportedApiFormats_chat_completions: TargetAPIChatCompletions,
 }
 
 // Route is a Baseten route as shown in a harness's model picker, with the model
@@ -225,15 +225,13 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	r := Route{ID: api.Id, Name: api.Name, DisplayName: api.DisplayName, Router: routeIsRouter(api)}
 	r.Provider, r.UpstreamModel = routeTarget(api, providers)
 	m := api.Metadata
-	if m == nil {
-		return r, fmt.Errorf("route %q has no model metadata", r.Name)
-	}
-	if m.SupportedApiFormats == nil {
+	formats := m.SupportedApiFormats
+	if len(formats) == 0 {
 		return r, fmt.Errorf("route %q has no supported API formats", r.Name)
 	}
 	var known bool
-	if r.TargetAPI, known = targetAPIsByFormat[deref(api.PreferredApiFormat)]; !known {
-		return r, fmt.Errorf("route %q has no known preferred API format", r.Name)
+	if r.TargetAPI, known = targetAPIsByFormat[formats[0]]; !known {
+		return r, fmt.Errorf("route %q prefers unknown API format %q", r.Name, formats[0])
 	}
 	r.ContextWindow, r.OutputLimit = deref(m.ContextWindow), deref(m.MaxOutputTokens)
 	r.InputModalities = slices.DeleteFunc(slices.Clone(m.InputModalities), func(modality string) bool {
@@ -241,7 +239,7 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	})
 	r.Tools = deref(m.Tools)
 	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
-	r.Messages, r.Responses = deref(m.SupportedApiFormats.Messages), deref(m.SupportedApiFormats.Responses)
+	r.Messages, r.Responses = slices.Contains(formats, managementapi.GridRouteMetadataSupportedApiFormats_messages), slices.Contains(formats, managementapi.GridRouteMetadataSupportedApiFormats_responses)
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
 		if r.Cost != nil && c.LongContext != nil {

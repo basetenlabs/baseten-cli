@@ -40,7 +40,12 @@ import (
 // harnessRouteMetadata is usable model metadata for route fixtures.
 var harnessRouteMetadata = map[string]any{
 	"context_window": 128000, "max_output_tokens": 4096, "input_modalities": []string{"text"}, "tools": true,
-	"supported_api_formats": map[string]any{"messages": true, "responses": true, "chat_completions": true},
+	"supported_api_formats": []any{"chat_completions", "messages", "responses"},
+}
+
+var messagesFirstRouteMetadata = map[string]any{
+	"context_window": 128000, "max_output_tokens": 4096, "input_modalities": []string{"text"}, "tools": true,
+	"supported_api_formats": []any{"messages", "responses", "chat_completions"},
 }
 
 // fakeHarnessExecer finds the one binary it names, or every bare name as on
@@ -130,7 +135,7 @@ func gridAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAP
 		teamID, teamName := gridRouteTeam(r)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"items":      []any{map[string]any{"id": "route-primary", "name": "acme/primary", "team_id": teamID, "team_name": teamName, "display_name": "Primary", "invoke_url": invokeURL, "metadata": harnessRouteMetadata, "preferred_api_format": "chat_completions"}},
+			"items":      []any{map[string]any{"id": "route-primary", "name": "acme/primary", "team_id": teamID, "team_name": teamName, "display_name": "Primary", "invoke_url": invokeURL, "metadata": harnessRouteMetadata}},
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
@@ -845,7 +850,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 				for _, route := range []struct{ name, display string }{
 					{"acme/first", "First"}, {"acme/server", "Server"}, {"acme/background", "Background"},
 				} {
-					items = append(items, map[string]any{"id": "route-" + strings.TrimPrefix(route.name, "acme/"), "name": route.name, "display_name": route.display, "invoke_url": api.URL, "team_id": teamID, "team_name": teamName, "metadata": harnessRouteMetadata, "preferred_api_format": "chat_completions"})
+					items = append(items, map[string]any{"id": "route-" + strings.TrimPrefix(route.name, "acme/"), "name": route.name, "display_name": route.display, "invoke_url": api.URL, "team_id": teamID, "team_name": teamName, "metadata": harnessRouteMetadata})
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
 			})
@@ -1185,9 +1190,9 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}, "preferred_api_format": "chat_completions"},
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-auto", "name": "acme/auto", "display_name": "Auto", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "ROUTER"}, "preferred_api_format": "messages"},
+				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-auto", "name": "acme/auto", "display_name": "Auto", "invoke_url": api.URL, "metadata": messagesFirstRouteMetadata,
+				"target": map[string]any{"type": "INTELLIGENT"}},
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -1195,8 +1200,9 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--harness", "opencode", "--primary-route-id", "route-auto", "--background-route-id", "route-auto", "--yes"))
-	h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--primary-route-id", "route-auto", "--yes"))
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--harness", "pi", "--primary-route-id", "route-auto", "--yes"))
 	h.Require.NotContains(h.Stderr.String(), "skipping routes")
 
 	claude := readHarnessSettings(t, "claude", filepath.Join(root, "claude", "settings.json"))
@@ -1210,6 +1216,13 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 	models := opencode["provider"].(map[string]any)["baseten-harness"].(map[string]any)["models"].(map[string]any)
 	h.Require.Contains(models, "acme/auto")
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/auto"].(map[string]any)["provider"])
+	h.Require.NotContains(models["acme/primary"], "provider")
+
+	pi := map[string]any{}
+	for _, m := range readHarnessSettings(t, "pi", harnessSettingsFile("pi", filepath.Join(root, "pi")))["providers"].(map[string]any)["baseten-harness"].(map[string]any)["models"].([]any) {
+		pi[m.(map[string]any)["id"].(string)] = m.(map[string]any)["api"]
+	}
+	h.Require.Equal(map[string]any{"acme/primary": nil, "acme/auto": "anthropic-messages"}, pi)
 
 	h.Require.Equal("acme/auto", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
 	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
@@ -1217,8 +1230,8 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 
 func serveServedModelRoutes(api *MockManagementAPI, routers ...string) {
 	items := []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-		"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}, "preferred_api_format": "chat_completions"}}
-	wide := maps.Clone(harnessRouteMetadata)
+		"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}}}
+	wide := maps.Clone(messagesFirstRouteMetadata)
 	wide["context_window"] = 1000000
 	for _, router := range routers {
 		name, display, labeled := strings.Cut(router, "=")
@@ -1226,7 +1239,7 @@ func serveServedModelRoutes(api *MockManagementAPI, routers ...string) {
 			display = name
 		}
 		items = append(items, map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-" + name, "name": "acme/" + name, "display_name": display, "invoke_url": api.URL, "metadata": wide,
-			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}, "preferred_api_format": "messages"})
+			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}})
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
 }
@@ -1810,7 +1823,7 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 	wide["context_window"] = 1000000
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-auto", "name": "acme/auto", "display_name": "Auto", "invoke_url": gateway.URL, "metadata": wide,
-			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-auto", "slug": "acme/auto"}, "allowed_routes": []any{}}, "preferred_api_format": "messages"}},
+			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-auto", "slug": "acme/auto"}, "allowed_routes": []any{}}}},
 		"pagination": map[string]any{"has_more": false},
 	})
 	root := t.TempDir()
@@ -2242,15 +2255,15 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	}))
 	t.Cleanup(gateway.Close)
 	h, api := gridAPI(t, gateway.URL)
-	route := func(id, name, display, format string, target map[string]any) map[string]any {
-		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": target, "preferred_api_format": format}
+	route := func(id, name, display string, metadata, target map[string]any) map[string]any {
+		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": metadata, "target": target}
 	}
 	router := map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			route("route-primary", "acme/primary", "Primary", "chat_completions", map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
-			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", "messages", router),
-			route("route-code", "acme/code", `Code "beta" \ 'x' </script>`, "messages", router),
+			route("route-primary", "acme/primary", "Primary", harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
+			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", messagesFirstRouteMetadata, router),
+			route("route-code", "acme/code", `Code "beta" \ 'x' </script>`, messagesFirstRouteMetadata, router),
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -2861,13 +2874,13 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	t.Cleanup(gateway.Close)
 	h, api := gridAPI(t, gateway.URL)
 	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	route := func(id, name, display, format string, target map[string]any) map[string]any {
-		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": target, "preferred_api_format": format}
+	route := func(id, name, display string, metadata, target map[string]any) map[string]any {
+		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": metadata, "target": target}
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", "messages", map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}),
-			route("route-primary", "acme/primary", "Primary", "chat_completions", map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
+			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", messagesFirstRouteMetadata, map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}),
+			route("route-primary", "acme/primary", "Primary", harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -3015,19 +3028,19 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 // connection no longer exists.
 func serveFirstPartyRoutes(api *MockManagementAPI) {
 	messages := maps.Clone(harnessRouteMetadata)
-	messages["supported_api_formats"] = map[string]any{"messages": true}
+	messages["supported_api_formats"] = []any{"messages"}
 	responses := maps.Clone(harnessRouteMetadata)
-	responses["supported_api_formats"] = map[string]any{"responses": true}
+	responses["supported_api_formats"] = []any{"responses"}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": messages,
-				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}, "preferred_api_format": "messages"},
+				"target": map[string]any{"type": "CONNECTION", "model": "claude-opus-5-5", "connection_id": "conn-anthropic"}},
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-b", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": responses,
-				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-openai"}, "preferred_api_format": "responses"},
+				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-openai"}},
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-c", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}, "preferred_api_format": "chat_completions"},
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-d", "name": "acme/orphan", "display_name": "Orphan", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
-				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-deleted"}, "preferred_api_format": "messages"},
+				"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-d", "name": "acme/orphan", "display_name": "Orphan", "invoke_url": api.URL, "metadata": messagesFirstRouteMetadata,
+				"target": map[string]any{"type": "CONNECTION", "model": "gpt-5.5", "connection_id": "conn-deleted"}},
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -3153,7 +3166,7 @@ func Test_Grid_PiGitContext_RealPi(t *testing.T) {
 	t.Cleanup(gateway.Close)
 	h, api := gridAPI(t, gateway.URL)
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
-		"items":      []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}, "preferred_api_format": "chat_completions"}},
+		"items":      []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": gateway.URL, "metadata": harnessRouteMetadata, "target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}}},
 		"pagination": map[string]any{"has_more": false},
 	})
 	root := t.TempDir()
@@ -3227,7 +3240,7 @@ func Test_Grid_Setup_RouteMetadata(t *testing.T) {
 		// The second page holds a route without metadata.
 		if r.URL.Query().Get("cursor") == "" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items":      []any{map[string]any{"team_id": teamID, "team_name": teamName, "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata, "preferred_api_format": "chat_completions"}},
+				"items":      []any{map[string]any{"team_id": teamID, "team_name": teamName, "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata}},
 				"pagination": map[string]any{"has_more": true, "cursor": "page-two"},
 			})
 			return
@@ -3245,14 +3258,14 @@ func Test_Grid_Setup_RouteMetadata(t *testing.T) {
 
 	h.Stderr.Reset()
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude", "--primary-route-id", "route-bare", "--config-dir", t.TempDir(), "--yes"))
-	h.Require.Contains(h.Stderr.String(), `route "acme/bare" has no model metadata`)
+	h.Require.Contains(h.Stderr.String(), `route "acme/bare" has no supported API formats`)
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "a failed setup creates no key")
 
 	// A route's cost reaches OpenCode, and needs both input and output prices.
 	priced := maps.Clone(harnessRouteMetadata)
 	priced["cost"] = map[string]any{"input": 0.3, "output": 1.2, "cache_read": nil, "long_context": map[string]any{"input": 0.6}}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
-		"items":      []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": priced, "preferred_api_format": "chat_completions"}},
+		"items":      []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": priced}},
 		"pagination": map[string]any{"has_more": false},
 	})
 	opencode := t.TempDir()
@@ -3265,19 +3278,18 @@ func Test_Grid_Setup_RouteMetadata(t *testing.T) {
 func Test_Grid_Setup_RoutesByAPIFormat(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
-	formats := func(messages, responses bool) map[string]any {
+	formats := func(apiFormats ...any) map[string]any {
 		m := maps.Clone(harnessRouteMetadata)
-		m["supported_api_formats"] = map[string]any{"messages": messages, "responses": responses}
+		m["supported_api_formats"] = apiFormats
 		return m
 	}
-	unknown := maps.Clone(harnessRouteMetadata)
-	delete(unknown, "supported_api_formats")
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-claude", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": formats(true, false), "preferred_api_format": "messages"},
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-gpt", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": formats(false, true), "preferred_api_format": "responses"},
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-open", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": formats(true, true), "preferred_api_format": "messages"},
-			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-new", "name": "acme/new", "display_name": "New", "invoke_url": api.URL, "metadata": unknown},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-claude", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": formats("messages")},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-gpt", "name": "acme/gpt", "display_name": "GPT", "invoke_url": api.URL, "metadata": formats("responses")},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-open", "name": "acme/open", "display_name": "Open", "invoke_url": api.URL, "metadata": formats("chat_completions", "responses", "messages")},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-new", "name": "acme/new", "display_name": "New", "invoke_url": api.URL, "metadata": formats()},
+			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-future", "name": "acme/future", "display_name": "Future", "invoke_url": api.URL, "metadata": formats("future_format", "messages")},
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -3291,7 +3303,7 @@ func Test_Grid_Setup_RoutesByAPIFormat(t *testing.T) {
 	h.Require.Equal([]any{"acme/claude", "acme/open", "deepseek-ai/DeepSeek-V4.1-Flash"}, claude["availableModels"])
 	h.Require.Equal("acme/gpt", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
 	h.Require.Equal([]string{"acme/gpt", "acme/open"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
-	h.Require.Contains(h.Stderr.String(), "warning: skipping routes without usable model metadata: acme/new")
+	h.Require.Contains(h.Stderr.String(), "warning: skipping routes without usable model metadata: acme/new, acme/future")
 
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude", "--primary-route-id", "route-gpt", "--yes"))
 	h.Require.Contains(h.Stderr.String(), `route "acme/gpt" is not one of the team's routes this harness can call`)
@@ -3496,14 +3508,14 @@ func Test_Grid_Teardown_RestartsCodexDaemon(t *testing.T) {
 // harnessRoute is a team-a route in the fake API, whose invoke URL is the API's
 // own. acme/gpt serves only the Responses API, so Claude Code can't call it.
 func harnessRoute(api *MockManagementAPI, name string) map[string]any {
-	metadata, format := harnessRouteMetadata, "chat_completions"
+	metadata := harnessRouteMetadata
 	if name == "gpt" {
-		metadata, format = maps.Clone(harnessRouteMetadata), "responses"
-		metadata["supported_api_formats"] = map[string]any{"messages": false, "responses": true}
+		metadata = maps.Clone(harnessRouteMetadata)
+		metadata["supported_api_formats"] = []any{"responses"}
 	}
 	return map[string]any{
 		"id": "route-" + name, "name": "acme/" + name, "display_name": "acme/" + name,
-		"team_id": "team-a", "team_name": "Engineering", "invoke_url": api.URL, "metadata": metadata, "preferred_api_format": format,
+		"team_id": "team-a", "team_name": "Engineering", "invoke_url": api.URL, "metadata": metadata,
 	}
 }
 
@@ -3780,7 +3792,7 @@ func setHarnessRoutes(api *MockManagementAPI, names ...string) {
 		w.Header().Set("Content-Type", "application/json")
 		items := []any{}
 		for _, name := range names {
-			items = append(items, map[string]any{"id": "route-" + strings.TrimPrefix(name, "acme/"), "name": name, "team_id": teamID, "team_name": teamName, "display_name": name, "invoke_url": api.URL, "metadata": harnessRouteMetadata, "preferred_api_format": "chat_completions"})
+			items = append(items, map[string]any{"id": "route-" + strings.TrimPrefix(name, "acme/"), "name": name, "team_id": teamID, "team_name": teamName, "display_name": name, "invoke_url": api.URL, "metadata": harnessRouteMetadata})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
 	})
