@@ -202,6 +202,13 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 		}
 		t.Fatalf("harness setup failed: %v\nstderr: %s", err, errOut)
 	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, errOut, err := cliCtx(t, ctx, "grid", "teardown", "--harness", name, "--config-dir", h.configDir, "--yes"); err != nil {
+			t.Logf("grid teardown failed, so the setup's Grid API key may remain: %v\nstderr: %s", err, errOut)
+		}
+	})
 	step(t, "%s harness setup complete (config %s)", name, h.configDir)
 	h.loadConfig(t)
 	require.NotEmpty(t, h.endpoint, "harness setup wrote no endpoint for %s", name)

@@ -3358,37 +3358,30 @@ func Test_Grid_Setup_UseSessionCredentialRequiresAPIKey(t *testing.T) {
 	h.Require.NoFileExists(path)
 }
 
-func Test_Grid_Sync_UseSessionCredential(t *testing.T) {
+func Test_Grid_Sync_EphemeralGridKey(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := gridAPI(t, "")
 	setHarnessRoutes(api, "acme/primary")
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude", dir)
-	// An ephemeral session installs its own key without the flag.
 	t.Setenv("BASETEN_API_KEY", "test-key")
 	h.Require.NoError(configDirStore(t).RemoveProfile(t.Context(), "alice"))
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
-	h.Require.Equal(harness.CredentialSourceSession, harnessRecordFile(t).Harnesses["claude"].CredentialSource)
-	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	h.Require.Equal(harness.CredentialSourceGridKey, harnessRecordFile(t).Harnesses["claude"].CredentialSource)
+	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	h.Require.Equal("secret-team-a", readHarnessSettings(t, "claude", path)["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
 
 	// Nothing changed: up to date, without creating a key.
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
-	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 
-	// A rotated key is rewritten even though no route changed.
 	t.Setenv("BASETEN_API_KEY", "rotated-key")
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
-	h.Require.Equal("rotated-key", readHarnessSettings(t, "claude", path)["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
-	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "sync never creates a replacement key")
-
-	// The key is gone: sync errors instead of minting one.
-	t.Setenv("BASETEN_API_KEY", "")
-	h.Require.Error(h.Execute("grid", "sync", "--yes"))
-	h.Require.Contains(h.Stderr.String(), "set BASETEN_API_KEY or use an API-key profile")
-	h.Require.Contains(h.Stderr.String(), "--use-session-credential")
-	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal("secret-team-a", readHarnessSettings(t, "claude", path)["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
+	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "sync never creates a replacement key")
 }
 
 func Test_Grid_Sync_MixedCredentialSources(t *testing.T) {
