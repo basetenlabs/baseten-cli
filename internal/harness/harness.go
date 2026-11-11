@@ -170,16 +170,16 @@ type Route struct {
 	Name        string
 	DisplayName string
 	// Provider is the route's upstream provider, such as ProviderAnthropic.
-	// It is "" when unknown, as for a router that picks a route per request.
-	Provider        string
-	UpstreamModel   string
-	Router          bool
-	ContextWindow   int
-	OutputLimit     int
-	InputModalities []string
-	Tools           bool
-	ReasoningLevels []string
-	ParallelTools   bool
+	// It is "" when unknown, as for an intelligent route that picks a model per request.
+	Provider         string
+	UpstreamModel    string
+	IntelligentRoute bool
+	ContextWindow    int
+	OutputLimit      int
+	InputModalities  []string
+	Tools            bool
+	ReasoningLevels  []string
+	ParallelTools    bool
 	// Messages and Responses report whether the route serves the Anthropic
 	// Messages API and the OpenAI Responses API.
 	Messages  bool
@@ -216,7 +216,7 @@ func NewProviders(connections []managementapi.GridConnection) Providers {
 // route that reaches one through a team connection. It fails if the route's
 // model metadata is missing or is not enough to configure a harness.
 func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
-	r := Route{ID: api.Id, Name: api.Name, DisplayName: api.DisplayName, Router: routeIsRouter(api)}
+	r := Route{ID: api.Id, Name: api.Name, DisplayName: api.DisplayName, IntelligentRoute: routeIsIntelligentRoute(api)}
 	r.Provider, r.UpstreamModel = routeTarget(api, providers)
 	m := api.Metadata
 	if m == nil {
@@ -363,7 +363,7 @@ func routeTarget(api managementapi.GridRoute, providers Providers) (string, stri
 	return "", ""
 }
 
-func routeIsRouter(api managementapi.GridRoute) bool {
+func routeIsIntelligentRoute(api managementapi.GridRoute) bool {
 	kind, _ := api.Target.Discriminator()
 	return kind != "" && kind != ProviderBaseten && kind != "CONNECTION"
 }

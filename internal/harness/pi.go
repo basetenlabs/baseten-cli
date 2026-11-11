@@ -19,7 +19,7 @@ var piServedModelTemplate string
 //go:embed pi_git_context.ts
 var piGitContextSource []byte
 
-const piServedModelRoutersSlot = "Object.entries({})"
+const piServedModelIntelligentRoutesSlot = "Object.entries({})"
 
 // piSettingsPath is Pi's settings file, next to the models.json that holds
 // Baseten's provider. Both files are shared with the user's own settings.
@@ -142,26 +142,26 @@ func piServedModelPath(path string) string {
 }
 
 func piServedModelPlans(path string, routes []Route) ([]*Plan, error) {
-	routers := piServedModelRouters(routes)
-	if len(routers) == 0 {
+	intelligentRoutes := piServedModelIntelligentRoutes(routes)
+	if len(intelligentRoutes) == 0 {
 		return prepareSealedFileRemoval(piServedModelPath(path))
 	}
-	return prepareSealedFile(piServedModelPath(path), piServedModelSource(routers), "Pi will not show which model served auto-route responses")
+	return prepareSealedFile(piServedModelPath(path), piServedModelSource(intelligentRoutes), "Pi will not show which model served auto-route responses")
 }
 
-func piServedModelRouters(routes []Route) map[string]string {
-	routers := map[string]string{}
+func piServedModelIntelligentRoutes(routes []Route) map[string]string {
+	intelligentRoutes := map[string]string{}
 	for _, r := range routes {
-		if r.Router {
-			routers[r.Name] = cmp.Or(r.DisplayName, r.Name)
+		if r.IntelligentRoute {
+			intelligentRoutes[r.Name] = cmp.Or(r.DisplayName, r.Name)
 		}
 	}
-	return routers
+	return intelligentRoutes
 }
 
-func piServedModelSource(routers map[string]string) []byte {
-	encoded, _ := json.Marshal(routers)
-	return []byte(strings.Replace(piServedModelTemplate, piServedModelRoutersSlot, "Object.entries("+string(encoded)+")", 1))
+func piServedModelSource(intelligentRoutes map[string]string) []byte {
+	encoded, _ := json.Marshal(intelligentRoutes)
+	return []byte(strings.Replace(piServedModelTemplate, piServedModelIntelligentRoutesSlot, "Object.entries("+string(encoded)+")", 1))
 }
 
 // piModel describes a route to Pi. A model's api overrides the provider's, so

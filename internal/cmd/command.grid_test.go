@@ -411,6 +411,42 @@ func Test_Grid_Setup_TextSummary(t *testing.T) {
 	h.Require.NotContains(h.Stderr.String(), "Created Grid API key")
 }
 
+func Test_Grid_Setup_SignsInWithoutCurrentProfile(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	t.Setenv("BASETEN_PROFILE", "")
+	h.Require.NoError(configDirStore(t).RemoveProfile(t.Context(), "alice"))
+	api.SetRoute("POST", "/v1/users/auth/device/authorize", 200, map[string]any{
+		"device_code": "dev-code", "user_code": "ABCD-EFGH", "verification_uri": "https://auth.example.com/device", "expires_in": 300, "interval": 1,
+	})
+	api.SetRoute("POST", "/v1/users/auth/device/token", 200, map[string]any{"access_token": "access-xyz", "refresh_token": "refresh-xyz", "token_type": "Bearer", "expires_in": 3600})
+	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a", "email": "user@example.com", "workspace_name": "my-workspace"})
+	dir := t.TempDir()
+	args := []string{"grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes", "--output", "json"}
+
+	// Not interactive: no sign-in is attempted.
+	h.Require.Error(h.Execute(args...))
+	h.Require.Empty(h.OpenedURLs)
+
+	h.Context = internalcmd.WithPromptAnswers(h.Context)
+	// A dry run does not sign in either.
+	h.Require.Error(h.Execute(append(slices.Clone(args), "--dry-run")...))
+	h.Require.Empty(h.OpenedURLs)
+
+	h.Require.NoError(h.Execute(args...))
+	h.Require.Equal([]string{"https://auth.example.com/device"}, h.OpenedURLs)
+	name, _, ok, err := configDirStore(t).CurrentProfile()
+	h.Require.NoError(err)
+	h.Require.True(ok)
+	h.Require.Contains(name, "user@example.com")
+	h.Require.Contains(h.Stderr.String(), "Logged in as user@example.com (my-workspace) as profile "+name+"\n")
+	// Setup's result is the only document on stdout.
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	h.Require.Contains(result, "items")
+	h.Require.Equal(name, harnessRecordFile(t).Harnesses["claude"].Profile)
+}
+
 func Test_Grid_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
 	skipUnlessSupported(t)
 	h := NewCommandHarness(t)
@@ -964,7 +1000,7 @@ func Test_Grid_Teardown_DeletesKeyWithLastHarness(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), `"state": "configured"`)
 }
 
-func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
+func Test_Grid_Setup_IntelligentRouteInPickers(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
@@ -1000,18 +1036,18 @@ func Test_Grid_Setup_RouterRouteInPickers(t *testing.T) {
 	h.Require.Equal([]string{"acme/primary", "acme/auto"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
 }
 
-func serveServedModelRoutes(api *MockManagementAPI, routers ...string) {
+func serveServedModelRoutes(api *MockManagementAPI, intelligentRoutes ...string) {
 	items := []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": api.URL, "metadata": harnessRouteMetadata,
 		"target": map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}}}
 	wide := maps.Clone(harnessRouteMetadata)
 	wide["context_window"] = 1000000
-	for _, router := range routers {
-		name, display, labeled := strings.Cut(router, "=")
+	for _, intelligentRoute := range intelligentRoutes {
+		name, display, labeled := strings.Cut(intelligentRoute, "=")
 		if !labeled {
 			display = name
 		}
 		items = append(items, map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-" + name, "name": "acme/" + name, "display_name": display, "invoke_url": api.URL, "metadata": wide,
-			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}})
+			"target": map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "name": "General"}, "tradeoff": "balanced"}})
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
 }
@@ -1038,7 +1074,7 @@ func Test_Grid_Setup_ServedModelStatusLine(t *testing.T) {
 
 	h.Require.NoError(h.Execute(setup...))
 	settings := readHarnessSettings(t, "claude", path)
-	h.Require.Equal(map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --router 'acme/auto=auto'"}, settings["statusLine"])
+	h.Require.Equal(map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --intelligent-route 'acme/auto=auto'"}, settings["statusLine"])
 	h.Require.Contains(settings["availableModels"], "acme/auto[1m]")
 	h.Require.Equal("dark", settings["theme"])
 	h.Require.NotContains(settings, "hooks")
@@ -1053,7 +1089,7 @@ func Test_Grid_Setup_ServedModelStatusLine(t *testing.T) {
 
 	serveServedModelRoutes(api, "auto", "code")
 	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal("'"+cli+"' grid claude-served-model --router 'acme/auto=auto' --router 'acme/code=code'", readHarnessSettings(t, "claude", path)["statusLine"].(map[string]any)["command"])
+	h.Require.Equal("'"+cli+"' grid claude-served-model --intelligent-route 'acme/auto=auto' --intelligent-route 'acme/code=code'", readHarnessSettings(t, "claude", path)["statusLine"].(map[string]any)["command"])
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
 	h.Require.Equal(map[string]any{"theme": "dark"}, readHarnessSettings(t, "claude", path))
@@ -1085,7 +1121,7 @@ func Test_Grid_Setup_ServedModelStopHook(t *testing.T) {
 		settings := readHarnessSettings(t, "claude", path)
 		h.Require.Equal(original["statusLine"], settings["statusLine"])
 		hooks := settings["hooks"].(map[string]any)
-		h.Require.Equal([]any{userStop, ours("--router 'acme/auto=auto'")}, hooks["Stop"])
+		h.Require.Equal([]any{userStop, ours("--intelligent-route 'acme/auto=auto'")}, hooks["Stop"])
 		h.Require.Equal(original["hooks"].(map[string]any)["PreToolUse"], hooks["PreToolUse"])
 	}
 	managed := claudeManagedSettings(t, h, dir)
@@ -1100,7 +1136,7 @@ func Test_Grid_Setup_ServedModelStopHook(t *testing.T) {
 	h.Require.NoError(os.WriteFile(path, raw, 0o600))
 	serveServedModelRoutes(api, "auto", "code")
 	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal([]any{userStop, ours("--router 'acme/auto=auto' --router 'acme/code=code'"), later}, readHarnessSettings(t, "claude", path)["hooks"].(map[string]any)["Stop"])
+	h.Require.Equal([]any{userStop, ours("--intelligent-route 'acme/auto=auto' --intelligent-route 'acme/code=code'"), later}, readHarnessSettings(t, "claude", path)["hooks"].(map[string]any)["Stop"])
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
 	original["hooks"].(map[string]any)["Stop"] = []any{userStop, later}
@@ -1125,10 +1161,10 @@ func Test_Grid_Setup_ServedModelSharedStopGroup(t *testing.T) {
 
 	h.Require.NoError(h.Execute(setup...))
 	settings := readHarnessSettings(t, "claude", path)
-	h.Require.Equal([]any{map[string]any{"hooks": []any{ours("--router 'acme/auto=auto'")}}}, settings["hooks"].(map[string]any)["Stop"])
+	h.Require.Equal([]any{map[string]any{"hooks": []any{ours("--intelligent-route 'acme/auto=auto'")}}}, settings["hooks"].(map[string]any)["Stop"])
 	settings["hooks"].(map[string]any)["Stop"] = []any{
-		map[string]any{"matcher": "*", "hooks": []any{ours("--router 'acme/auto=auto'"), notify}},
-		map[string]any{"hooks": []any{ours("--router 'acme/old'")}},
+		map[string]any{"matcher": "*", "hooks": []any{ours("--intelligent-route 'acme/auto=auto'"), notify}},
+		map[string]any{"hooks": []any{ours("--intelligent-route 'acme/old'")}},
 	}
 	raw, err := json.Marshal(settings)
 	h.Require.NoError(err)
@@ -1136,7 +1172,7 @@ func Test_Grid_Setup_ServedModelSharedStopGroup(t *testing.T) {
 
 	serveServedModelRoutes(api, "auto", "code")
 	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal([]any{map[string]any{"matcher": "*", "hooks": []any{ours("--router 'acme/auto=auto' --router 'acme/code=code'"), notify}}},
+	h.Require.Equal([]any{map[string]any{"matcher": "*", "hooks": []any{ours("--intelligent-route 'acme/auto=auto' --intelligent-route 'acme/code=code'"), notify}}},
 		readHarnessSettings(t, "claude", path)["hooks"].(map[string]any)["Stop"])
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
@@ -1148,10 +1184,10 @@ func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
 	skipUnlessSupported(t)
 	for name, command := range map[string]func(cli string) string{
 		"composed": func(string) string {
-			return `echo "$(baseten grid claude-served-model --router acme/auto) | custom stats"`
+			return `echo "$(baseten grid claude-served-model --intelligent-route acme/auto) | custom stats"`
 		},
 		"suffixed": func(cli string) string {
-			return "'" + cli + "' grid claude-served-model --router 'acme/auto=auto' ; echo hi"
+			return "'" + cli + "' grid claude-served-model --intelligent-route 'acme/auto=auto' ; echo hi"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1170,7 +1206,7 @@ func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
 			h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
 			settings := readHarnessSettings(t, "claude", path)
 			h.Require.Equal(user["statusLine"], settings["statusLine"])
-			h.Require.Equal([]any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --router 'acme/auto=auto' --hook"}}}},
+			h.Require.Equal([]any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --intelligent-route 'acme/auto=auto' --hook"}}}},
 				settings["hooks"].(map[string]any)["Stop"])
 
 			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
@@ -1179,7 +1215,7 @@ func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
 	}
 }
 
-func Test_Grid_Setup_ServedModelZeroRouters(t *testing.T) {
+func Test_Grid_Setup_ServedModelZeroIntelligentRoutes(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	dir := t.TempDir()
@@ -1227,7 +1263,7 @@ func Test_Grid_Setup_ServedModelSessionCredential(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "but baseten on your PATH is "+filepath.Join(bin, "baseten")+"; harnesses will run the former")
 	settings := readHarnessSettings(t, "claude", harnessSettingsFile("claude", dir))
 	h.Require.NotContains(settings, "apiKeyHelper")
-	h.Require.Equal("'"+exe+"' grid claude-served-model --router 'acme/auto=auto'", settings["statusLine"].(map[string]any)["command"])
+	h.Require.Equal("'"+exe+"' grid claude-served-model --intelligent-route 'acme/auto=auto'", settings["statusLine"].(map[string]any)["command"])
 }
 
 func Test_Grid_Setup_ServedModelOptOut(t *testing.T) {
@@ -1236,7 +1272,7 @@ func Test_Grid_Setup_ServedModelOptOut(t *testing.T) {
 	serveServedModelRoutes(api, "auto")
 	cli, err := exec.LookPath("baseten")
 	h.Require.NoError(err)
-	ours := "'" + cli + "' grid claude-served-model --router 'acme/auto=auto'"
+	ours := "'" + cli + "' grid claude-served-model --intelligent-route 'acme/auto=auto'"
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude", dir)
 	guard := map[string]any{"PreToolUse": []any{map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "guard"}}}}}
@@ -1375,7 +1411,7 @@ func Test_Grid_Setup_ServedModelDisplayNames(t *testing.T) {
 	h.Require.NoError(err)
 	setup := []string{"grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes", "--output", "json"}
 	h.Require.NoError(h.Execute(setup...))
-	h.Require.Equal("'"+cli+`' grid claude-served-model --router 'acme/auto=Auto (Baseten Internal Dogfooding)' --router 'acme/eq=x=y'\''s' --router 'acme/bare'`,
+	h.Require.Equal("'"+cli+`' grid claude-served-model --intelligent-route 'acme/auto=Auto (Baseten Internal Dogfooding)' --intelligent-route 'acme/eq=x=y'\''s' --intelligent-route 'acme/bare'`,
 		readHarnessSettings(t, "claude", path)["statusLine"].(map[string]any)["command"])
 	h.Require.NoError(h.Execute(setup...))
 	var rerun public.GridPlanList
@@ -1401,7 +1437,7 @@ func Test_Grid_ClaudeServedModel(t *testing.T) {
 	run := func(stdin string, args ...string) string {
 		h.Stdin.Reset()
 		h.Stdin.WriteString(stdin)
-		routers := []string{"--router", "acme/auto=Auto (Baseten Internal Dogfooding)", "--router", "acme/code=x=y's", "--router", "acme/bare", "--router", "acme/empty="}
+		routers := []string{"--intelligent-route", "acme/auto=Auto (Baseten Internal Dogfooding)", "--intelligent-route", "acme/code=x=y's", "--intelligent-route", "acme/bare", "--intelligent-route", "acme/empty="}
 		h.Require.NoError(h.Execute(append(append([]string{"grid", "claude-served-model"}, routers...), args...)...))
 		h.Require.Empty(h.Stderr.String())
 		return h.Stdout.String()
@@ -1429,6 +1465,12 @@ func Test_Grid_ClaudeServedModel(t *testing.T) {
 	h.Require.Equal(`{"systemMessage":"Served by zai-org/GLM-5.3-Flash via Auto (Baseten Internal Dogfooding)"}`+"\n", run(stop(turns, "First answer.", ""), "--hook"))
 	h.Require.Equal(`{"systemMessage":"Served by moonshotai/Kimi-K3 via x=y's"}`+"\n", run(stop(turns, "", ""), "--hook"))
 	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", run(stop(turns, "First answer.", "")))
+
+	// Status lines and hooks older builds wrote still pass the pre-rename --router flag.
+	h.Stdin.Reset()
+	h.Stdin.WriteString(stop(turns, "First answer.", ""))
+	h.Require.NoError(h.Execute("grid", "claude-served-model", "--router", "acme/code=x=y's"))
+	h.Require.Equal("x=y's → moonshotai/Kimi-K3\n", h.Stdout.String())
 	started := time.Now()
 	h.Require.Empty(run(stop(turns, "Never said.", ""), "--hook", "--wait", "300ms"))
 	h.Require.GreaterOrEqual(time.Since(started), 300*time.Millisecond)
@@ -1532,7 +1574,7 @@ func piGitContextFile(dir string) string {
 	return filepath.Join(dir, "extensions", "baseten-git-context.ts")
 }
 
-func piServedModelRouters(t *testing.T, path string) map[string]string {
+func piServedModelIntelligentRoutes(t *testing.T, path string) map[string]string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -1574,7 +1616,7 @@ func Test_Grid_Setup_PiServedModel(t *testing.T) {
 	h.Require.Equal(extension, plans.Items[2].Config)
 	h.Require.True(plans.Items[2].Changed)
 	h.Require.Empty(plans.Items[2].ReplacedSettings)
-	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)"}, piServedModelRouters(t, extension))
+	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)"}, piServedModelIntelligentRoutes(t, extension))
 	h.Require.NotContains(h.Stderr.String(), "left unchanged")
 	settings := readHarnessSettings(t, "pi", settingsPath)
 	h.Require.Equal("dark", settings["theme"])
@@ -1593,7 +1635,7 @@ func Test_Grid_Setup_PiServedModel(t *testing.T) {
 	h.Require.Equal(extension, plans.Items[2].Config)
 	h.Require.True(plans.Items[2].Changed)
 	h.Require.Empty(plans.Items[2].ReplacedSettings, "setup refreshes its own extension without reporting a replacement")
-	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/eq": `x="y's" \ </script>`, "acme/bare": "acme/bare"}, piServedModelRouters(t, extension))
+	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/eq": `x="y's" \ </script>`, "acme/bare": "acme/bare"}, piServedModelIntelligentRoutes(t, extension))
 
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "pi", "--config-dir", dir, "--yes"))
 	h.Require.NoFileExists(extension)
@@ -1649,7 +1691,7 @@ func Test_Grid_Setup_PiServedModelUserFile(t *testing.T) {
 	}
 }
 
-func Test_Grid_Setup_PiServedModelZeroRouters(t *testing.T) {
+func Test_Grid_Setup_PiServedModelZeroIntelligentRoutes(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	dir := t.TempDir()
@@ -1820,8 +1862,9 @@ func openCodePluginRoutes(t *testing.T, dir string) map[string]any {
 	return routes
 }
 
-func openCodePluginRouters(routers map[string]any) map[string]any {
-	return map[string]any{"managedBy": "baseten grid setup", "provider": "baseten-harness", "routers": routers}
+func openCodePluginIntelligentRoutes(routers map[string]any) map[string]any {
+	// routers mirrors intelligentRoutes for older server.js builds.
+	return map[string]any{"managedBy": "baseten grid setup", "provider": "baseten-harness", "intelligentRoutes": routers, "routers": routers}
 }
 
 var openCodePluginSources = []string{"routes.json", "server.js", "shared.js", "tui.tsx"}
@@ -1843,7 +1886,7 @@ func Test_Grid_Setup_OpenCodeServedModel(t *testing.T) {
 
 			h.Require.NoError(h.Execute(setup...))
 			h.Require.Equal(openCodePluginSources, openCodePluginFiles(t, dir))
-			h.Require.Equal(openCodePluginRouters(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)"}), openCodePluginRoutes(t, dir))
+			h.Require.Equal(openCodePluginIntelligentRoutes(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)"}), openCodePluginRoutes(t, dir))
 			settings := readHarnessSettings(t, "opencode", path)
 			h.Require.NotContains(settings, "plugins")
 			h.Require.NotContains(settings, "plugin")
@@ -1868,7 +1911,7 @@ func Test_Grid_Setup_OpenCodeServedModel(t *testing.T) {
 			h.Require.NoError(os.WriteFile(server, []byte("stale"), 0o600))
 			serveServedModelRoutes(api, "auto=Auto (Baseten Internal Dogfooding)", "code")
 			h.Require.NoError(h.Execute(setup...))
-			h.Require.Equal(openCodePluginRouters(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/code": "code"}), openCodePluginRoutes(t, dir))
+			h.Require.Equal(openCodePluginIntelligentRoutes(map[string]any{"acme/auto": "Auto (Baseten Internal Dogfooding)", "acme/code": "code"}), openCodePluginRoutes(t, dir))
 			refreshed, err := os.ReadFile(server)
 			h.Require.NoError(err)
 			h.Require.Equal(written, refreshed, "setup refreshes the plugin source")
@@ -1888,7 +1931,7 @@ func Test_Grid_Setup_OpenCodeServedModelForeignPlugin(t *testing.T) {
 	skipUnlessSupported(t)
 	for name, files := range map[string]map[string]string{
 		"unmarked":    {"server.js": "export default {}\n"},
-		"other owner": {"routes.json": `{"managedBy":"someone else","routers":{}}`, "server.js": "export default {}\n"},
+		"other owner": {"routes.json": `{"managedBy":"someone else","intelligentRoutes":{}}`, "server.js": "export default {}\n"},
 		"file":        {"": "not a directory\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1929,7 +1972,7 @@ func Test_Grid_Setup_OpenCodeServedModelForeignPlugin(t *testing.T) {
 	}
 }
 
-func Test_Grid_Setup_OpenCodeServedModelZeroRoutersAndOpenCode1(t *testing.T) {
+func Test_Grid_Setup_OpenCodeServedModelZeroIntelligentRoutesAndOpenCode1(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
 	base := h.Context
@@ -3436,7 +3479,7 @@ func Test_Grid_Help(t *testing.T) {
 		{"grid", "connection", "create"},
 		{"grid", "connection", "update"},
 		{"grid", "connection", "delete"},
-		{"grid", "classifier", "list"},
+		{"grid", "route-classifier", "list"},
 	} {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -3552,7 +3595,14 @@ func Test_Grid_Setup_RejectsEmptyOrInvalidTeamScope(t *testing.T) {
 	}
 }
 
-func Test_Grid_Classifier_List(t *testing.T) {
+func routeClassifierFixture(id, name string) map[string]any {
+	return map[string]any{
+		"id": id, "name": name, "supported_tradeoffs": []any{},
+		"decidable_models": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
+	}
+}
+
+func Test_Grid_RouteClassifier_List(t *testing.T) {
 	for _, empty := range []bool{false, true} {
 		for _, output := range []string{"text", "json", "jsonl"} {
 			t.Run(fmt.Sprintf("%t/%s", empty, output), func(t *testing.T) {
@@ -3560,23 +3610,24 @@ func Test_Grid_Classifier_List(t *testing.T) {
 				m := h.MockManagementAPI()
 				items := []any{}
 				if !empty {
-					items = append(items, map[string]any{"id": "general-v1", "name": "General"})
+					items = append(items, routeClassifierFixture("general-v1", "General"))
 				}
 				body := gridRoutePage(items, nil)
-				m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+				m.SetRouteFunc("GET", "/v1/grid/route_classifiers", func(w http.ResponseWriter, r *http.Request) {
 					h.Require.Equal("Bearer test-key", r.Header.Get("Authorization"))
 					h.Require.Empty(r.URL.RawQuery)
 					w.Header().Set("Content-Type", "application/json")
 					_ = json.NewEncoder(w).Encode(body)
 				})
-				h.Require.NoError(h.Execute("grid", "classifier", "list", "--output", output))
+				h.Require.NoError(h.Execute("grid", "route-classifier", "list", "--output", output))
 				h.Require.Len(m.Calls(), 1)
 				if output == "text" {
 					if empty {
-						h.Require.Contains(h.Stderr.String(), "No classifiers found")
+						h.Require.Contains(h.Stderr.String(), "No route classifiers found")
 					} else {
-						h.Require.Contains(h.Stdout.String(), "general-v1")
-						h.Require.Contains(h.Stdout.String(), "General")
+						for _, text := range []string{"TRADEOFFS", "DECIDABLE MODELS", "general-v1", "General", "all", "zai-org/GLM-5.3, anthropic/claude-opus-5-5"} {
+							h.Require.Contains(h.Stdout.String(), text)
+						}
 					}
 				} else {
 					var got any
@@ -3588,34 +3639,44 @@ func Test_Grid_Classifier_List(t *testing.T) {
 	}
 }
 
-func Test_Grid_Classifier_Describe(t *testing.T) {
+func Test_Grid_RouteClassifier_Describe(t *testing.T) {
+	routeClassifier := routeClassifierFixture("general-v1", "General")
+	routeClassifier["supported_tradeoffs"] = []any{"cost", "balanced"}
 	for _, output := range []string{"text", "json", "jsonl"} {
 		t.Run(output, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			m.SetRouteFunc("GET", "/v1/grid/classifiers/general-v1", func(w http.ResponseWriter, r *http.Request) {
+			m.SetRouteFunc("GET", "/v1/grid/route_classifiers/general-v1", func(w http.ResponseWriter, r *http.Request) {
 				h.Require.Equal("Bearer test-key", r.Header.Get("Authorization"))
 				h.Require.Empty(r.URL.RawQuery)
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": "general-v1", "name": "General"})
+				_ = json.NewEncoder(w).Encode(routeClassifier)
 			})
-			h.Require.NoError(h.Execute("grid", "classifier", "describe", "--id", "general-v1", "--output", output))
+			h.Require.NoError(h.Execute("grid", "route-classifier", "describe", "--id", "general-v1", "--output", output))
 			h.Require.Len(m.Calls(), 1)
 			if output == "text" {
-				h.Require.Contains(h.Stdout.String(), "general-v1")
-				h.Require.Contains(h.Stdout.String(), "General")
+				for _, text := range []string{
+					"ID:               general-v1",
+					"Name:             General",
+					"Tradeoffs:        cost, balanced",
+					"Decidable Models: zai-org/GLM-5.3, anthropic/claude-opus-5-5",
+				} {
+					h.Require.Contains(h.Stdout.String(), text)
+				}
 			} else {
-				h.Require.JSONEq(`{"id":"general-v1","name":"General"}`, h.Stdout.String())
+				want, err := json.Marshal(routeClassifier)
+				h.Require.NoError(err)
+				h.Require.JSONEq(string(want), h.Stdout.String())
 			}
 		})
 	}
 }
 
-func Test_Grid_Classifier_Describe_Errors(t *testing.T) {
+func Test_Grid_RouteClassifier_Describe_Errors(t *testing.T) {
 	t.Run("empty id", func(t *testing.T) {
 		h := NewCommandHarness(t)
 		m := h.MockManagementAPI()
-		h.Require.Error(h.Execute("grid", "classifier", "describe", "--id", ""))
+		h.Require.Error(h.Execute("grid", "route-classifier", "describe", "--id", ""))
 		h.Require.Equal(2, h.ExitCode)
 		h.Require.Empty(m.Calls())
 	})
@@ -3623,31 +3684,31 @@ func Test_Grid_Classifier_Describe_Errors(t *testing.T) {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			m.SetRoute("GET", "/v1/grid/classifiers/general-v1", status, map[string]string{"error": "unavailable"})
-			h.Require.Error(h.Execute("grid", "classifier", "describe", "--id", "general-v1", "--output", "json"))
+			m.SetRoute("GET", "/v1/grid/route_classifiers/general-v1", status, map[string]string{"error": "unavailable"})
+			h.Require.Error(h.Execute("grid", "route-classifier", "describe", "--id", "general-v1", "--output", "json"))
 			h.Require.Equal(status, decodeJSONErrorEnvelope(h).APIStatusCode)
 		})
 	}
 }
 
-func Test_Grid_Classifier_List_Errors(t *testing.T) {
+func Test_Grid_RouteClassifier_List_Errors(t *testing.T) {
 	for _, status := range []int{401, 403, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			m.SetRoute("GET", "/v1/grid/classifiers", status, map[string]string{"error": "unavailable"})
-			h.Require.Error(h.Execute("grid", "classifier", "list", "--output", "json"))
+			m.SetRoute("GET", "/v1/grid/route_classifiers", status, map[string]string{"error": "unavailable"})
+			h.Require.Error(h.Execute("grid", "route-classifier", "list", "--output", "json"))
 			h.Require.Equal(status, decodeJSONErrorEnvelope(h).APIStatusCode)
 		})
 	}
 	t.Run("malformed", func(t *testing.T) {
 		h := NewCommandHarness(t)
 		m := h.MockManagementAPI()
-		m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+		m.SetRouteFunc("GET", "/v1/grid/route_classifiers", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"items":`))
 		})
-		h.Require.ErrorContains(h.Execute("grid", "classifier", "list"), "unexpected end of JSON input")
+		h.Require.ErrorContains(h.Execute("grid", "route-classifier", "list"), "unexpected end of JSON input")
 	})
 }
 
@@ -3678,14 +3739,14 @@ func Test_Grid_Setup_ReplacesDeletedKey(t *testing.T) {
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
-func Test_Grid_Classifier_List_Pagination(t *testing.T) {
+func Test_Grid_RouteClassifier_List_Pagination(t *testing.T) {
 	for _, output := range []string{"text", "json", "jsonl"} {
 		t.Run(output, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			first := map[string]any{"id": "general-v1", "name": "General"}
-			second := map[string]any{"id": "coding-v1", "name": "Coding"}
-			m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+			first := routeClassifierFixture("general-v1", "General")
+			second := routeClassifierFixture("coding-v1", "Coding")
+			m.SetRouteFunc("GET", "/v1/grid/route_classifiers", func(w http.ResponseWriter, r *http.Request) {
 				h.Require.NotContains(r.URL.Query(), "team_id")
 				body := gridRoutePage([]any{first}, "next")
 				if r.URL.Query().Get("cursor") == "next" {
@@ -3694,8 +3755,8 @@ func Test_Grid_Classifier_List_Pagination(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(body)
 			})
-			h.Require.NoError(h.Execute("grid", "classifier", "list", "--output", output))
-			h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/classifiers"))
+			h.Require.NoError(h.Execute("grid", "route-classifier", "list", "--output", output))
+			h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/route_classifiers"))
 			if output == "text" {
 				h.Require.Contains(h.Stdout.String(), "General")
 				h.Require.Contains(h.Stdout.String(), "Coding")
@@ -3708,22 +3769,22 @@ func Test_Grid_Classifier_List_Pagination(t *testing.T) {
 	}
 }
 
-func Test_Grid_Classifier_List_PageError(t *testing.T) {
+func Test_Grid_RouteClassifier_List_PageError(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+	m.SetRouteFunc("GET", "/v1/grid/route_classifiers", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("cursor") != "" {
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"message": "unavailable"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(gridRoutePage([]any{map[string]any{"id": "general-v1", "name": "General"}}, "next"))
+		_ = json.NewEncoder(w).Encode(gridRoutePage([]any{routeClassifierFixture("general-v1", "General")}, "next"))
 	})
-	h.Require.Error(h.Execute("grid", "classifier", "list", "--output", "json"))
+	h.Require.Error(h.Execute("grid", "route-classifier", "list", "--output", "json"))
 	h.Require.Equal(500, decodeJSONErrorEnvelope(h).APIStatusCode)
 	h.Require.NotContains(h.Stdout.String(), "general-v1")
-	h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/classifiers"))
+	h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/route_classifiers"))
 }
 
 func gridSettingsFixture() map[string]any {

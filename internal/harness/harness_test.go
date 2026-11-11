@@ -57,14 +57,13 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 	require.ErrorContains(t, err, "no usable context and output limits")
 }
 
-func TestNewRouteMarksRouters(t *testing.T) {
+func TestNewRouteMarksIntelligentRoutes(t *testing.T) {
 	tools, ctx, out := true, 128000, 4096
 	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools}
 	for _, tc := range []struct {
 		target string
 		want   bool
 	}{
-		{`{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, true},
 		{`{"type": "INTELLIGENT"}`, true},
 		{`{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, false},
 		{`{"type": "CONNECTION", "connection_id": "conn-a", "model": "claude"}`, false},
@@ -74,11 +73,11 @@ func TestNewRouteMarksRouters(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 		r, err := NewRoute(api, Providers{"conn-a": ProviderAnthropic})
 		require.NoError(t, err)
-		require.Equal(t, tc.want, r.Router, tc.target)
+		require.Equal(t, tc.want, r.IntelligentRoute, tc.target)
 	}
 	r, err := NewRoute(managementapi.GridRoute{Name: "acme/untyped", Metadata: metadata}, nil)
 	require.NoError(t, err)
-	require.False(t, r.Router, "a route without a target type is not a router")
+	require.False(t, r.IntelligentRoute, "a route without a target type is not a router")
 }
 
 func TestNewRoutePicksTargetAPIFromFormats(t *testing.T) {
@@ -125,7 +124,7 @@ func TestNewRoutePrefersNativeTargetAPIForExternalProviders(t *testing.T) {
 		want    TargetAPI
 	}{
 		{"baseten prefers chat completions", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, all, TargetAPIChatCompletions},
-		{"router prefers chat completions", `{"type": "INTELLIGENT"}`, all, TargetAPIChatCompletions},
+		{"intelligent route prefers chat completions", `{"type": "INTELLIGENT"}`, all, TargetAPIChatCompletions},
 		{"unknown connection prefers chat completions", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, all, TargetAPIChatCompletions},
 		{"anthropic prefers messages", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, all, TargetAPIMessages},
 		{"openai prefers responses", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, completionsAndResponses, TargetAPIResponses},
@@ -170,14 +169,14 @@ func TestNewRouteKeepsOnlyTextAndImageInputModalities(t *testing.T) {
 
 func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
 	routes := []Route{
-		{Name: "acme/o'brien", Router: true}, {Name: "acme/plain", DisplayName: "Plain"},
-		{Name: "b10-internal/auto-XP9WlBD", DisplayName: "Auto (Baseten Internal Dogfooding)", Router: true},
-		{Name: "acme/it's", DisplayName: "x=y's", Router: true},
+		{Name: "acme/o'brien", IntelligentRoute: true}, {Name: "acme/plain", DisplayName: "Plain"},
+		{Name: "b10-internal/auto-XP9WlBD", DisplayName: "Auto (Baseten Internal Dogfooding)", IntelligentRoute: true},
+		{Name: "acme/it's", DisplayName: "x=y's", IntelligentRoute: true},
 	}
 	values := claudeServedModelSettings(routes, map[string]any{}, "/opt/it's/baseten")
 	require.Len(t, values, 1)
 	command := values[0].Installed.Data.(map[string]any)["command"].(string)
-	require.Equal(t, `'/opt/it'\''s/baseten' grid claude-served-model --router 'acme/o'\''brien' --router 'b10-internal/auto-XP9WlBD=Auto (Baseten Internal Dogfooding)' --router 'acme/it'\''s=x=y'\''s'`, command)
+	require.Equal(t, `'/opt/it'\''s/baseten' grid claude-served-model --intelligent-route 'acme/o'\''brien' --intelligent-route 'b10-internal/auto-XP9WlBD=Auto (Baseten Internal Dogfooding)' --intelligent-route 'acme/it'\''s=x=y'\''s'`, command)
 	for _, tc := range []struct {
 		command string
 		want    bool
@@ -188,8 +187,10 @@ func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
 		{"echo " + command, false},
 		{command + " --hook --hook", false},
 		{`'/opt/it'\''s/baseten' grid claude-served-model`, false},
-		{`'/opt/it's/baseten' grid claude-served-model --router 'acme/auto'`, false},
-		{`echo "$(baseten grid claude-served-model --router acme/auto) | custom stats"`, false},
+		// Pre-rename --router spelling from older builds is still owned, so sync replaces it.
+		{strings.Replace(command, "--intelligent-route", "--router", -1), true},
+		{`'/opt/it's/baseten' grid claude-served-model --intelligent-route 'acme/auto'`, false},
+		{`echo "$(baseten grid claude-served-model --intelligent-route acme/auto) | custom stats"`, false},
 	} {
 		require.Equal(t, tc.want, claudeServedModelOwned(map[string]any{"command": tc.command}), tc.command)
 	}
