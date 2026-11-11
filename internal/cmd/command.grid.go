@@ -307,9 +307,9 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		return nil, err
 	}
 	helper := ""
-	routers := slices.ContainsFunc(routes, func(r harness.Route) bool { return r.Router })
+	hasIntelligentRoute := slices.ContainsFunc(routes, func(r harness.Route) bool { return r.IntelligentRoute })
 	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool {
-		return t.record.CredentialSource == harness.CredentialSourceHelper || (routers && t.Name() == harness.Claude && !t.record.NoClaudeServedModel)
+		return t.record.CredentialSource == harness.CredentialSourceHelper || (hasIntelligentRoute && t.Name() == harness.Claude && !t.record.NoClaudeServedModel)
 	}) {
 		var warning string
 		if helper, warning, err = gridHelperPath(); err != nil {
@@ -608,7 +608,7 @@ func gridOffersServedModel(selected []gridSelectedHarness, listed []managementap
 			routes = append(routes, r)
 		}
 	}
-	return slices.ContainsFunc(selected[i].Routes(routes), func(r harness.Route) bool { return r.Router })
+	return slices.ContainsFunc(selected[i].Routes(routes), func(r harness.Route) bool { return r.IntelligentRoute })
 }
 
 func gridAskServedModel(ctx *CommandContext, harnessLabels []string) (bool, error) {
@@ -1932,7 +1932,7 @@ func commandGridClaudeServedModel(ctx *CommandContext, flags *cmd.GridClaudeServ
 		message, prompt = payload.LastAssistantMessage, payload.PromptID
 	}
 	requested, served := gridAwaitClaudeServedModel(ctx, payload.TranscriptPath, message, prompt, cmp.Or(flags.Wait, gridClaudeServedModelWait))
-	label, ok := gridClaudeServedModelRouterLabel(flags.Router, requested)
+	label, ok := gridClaudeServedModelIntelligentRouteLabel(append(flags.IntelligentRoute, flags.Router...), requested)
 	switch {
 	case served == "" || !ok:
 	case flags.Hook:
@@ -1960,9 +1960,9 @@ func gridAwaitClaudeServedModel(ctx context.Context, transcript, message, prompt
 	}
 }
 
-func gridClaudeServedModelRouterLabel(routers []string, model string) (string, bool) {
-	for _, router := range routers {
-		if id, label, _ := strings.Cut(router, "="); id == model {
+func gridClaudeServedModelIntelligentRouteLabel(intelligentRoutes []string, model string) (string, bool) {
+	for _, intelligentRoute := range intelligentRoutes {
+		if id, label, _ := strings.Cut(intelligentRoute, "="); id == model {
 			return cmp.Or(label, id), true
 		}
 	}

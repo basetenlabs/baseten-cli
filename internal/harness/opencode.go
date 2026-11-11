@@ -30,9 +30,11 @@ const (
 )
 
 type openCodeServedModelConfig struct {
-	ManagedBy string            `json:"managedBy"`
-	Provider  string            `json:"provider"`
-	Routers   map[string]string `json:"routers"`
+	ManagedBy         string            `json:"managedBy"`
+	Provider          string            `json:"provider"`
+	IntelligentRoutes map[string]string `json:"intelligentRoutes"`
+	// Routers mirrors IntelligentRoutes for older server.js; drop once released builds read intelligentRoutes.
+	Routers map[string]string `json:"routers"`
 }
 
 var openCodeVersionPattern = regexp.MustCompile(`(\d+)\.\d+`)
@@ -298,13 +300,13 @@ func openCodeGitContextPath(path string) string {
 
 func withOpenCodeServedModel(p *Plan, routes []Route, off bool) ([]*Plan, error) {
 	dir := openCodeServedModelDir(p.Path)
-	routers := openCodeRouterLabels(routes)
-	files, err := openCodeServedModelFiles(routers)
+	intelligentRoutes := openCodeIntelligentRouteLabels(routes)
+	files, err := openCodeServedModelFiles(intelligentRoutes)
 	if err != nil {
 		return nil, err
 	}
 	free, owned := openCodeServedModelOwnership(dir)
-	switch show := !off && len(routers) > 0; {
+	switch show := !off && len(intelligentRoutes) > 0; {
 	case show && (free || owned):
 		return []*Plan{p, prepareFiles(dir, files)}, nil
 	case show:
@@ -325,18 +327,18 @@ func openCodeServedModelOwnership(dir string) (free, owned bool) {
 	return false, err == nil && json.Unmarshal(raw, &config) == nil && config.ManagedBy == openCodeServedModelOwner
 }
 
-func openCodeRouterLabels(routes []Route) map[string]string {
+func openCodeIntelligentRouteLabels(routes []Route) map[string]string {
 	labels := map[string]string{}
 	for _, r := range routes {
-		if r.Router {
+		if r.IntelligentRoute {
 			labels[r.Name] = cmp.Or(r.DisplayName, r.Name)
 		}
 	}
 	return labels
 }
 
-func openCodeServedModelFiles(routers map[string]string) ([]ownedFile, error) {
-	config, err := encode(openCodeServedModelConfig{ManagedBy: openCodeServedModelOwner, Provider: providerID, Routers: routers})
+func openCodeServedModelFiles(intelligentRoutes map[string]string) ([]ownedFile, error) {
+	config, err := encode(openCodeServedModelConfig{ManagedBy: openCodeServedModelOwner, Provider: providerID, IntelligentRoutes: intelligentRoutes, Routers: intelligentRoutes})
 	if err != nil {
 		return nil, err
 	}

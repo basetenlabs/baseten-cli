@@ -2,12 +2,12 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
-const routers = new Map<string, string>(Object.entries({}));
+const intelligentRoutes = new Map<string, string>(Object.entries({}));
 const entryType = "baseten-served-model";
 const offValues = ["0", "f", "F", "false", "FALSE", "False"];
 
 function servedModelStatus(message: AssistantMessage | undefined): string | undefined {
-	const route = message?.provider === "baseten-harness" ? routers.get(message.model) : undefined;
+	const route = message?.provider === "baseten-harness" ? intelligentRoutes.get(message.model) : undefined;
 	return route && message?.responseModel ? `${route} → ${message.responseModel}` : undefined;
 }
 
