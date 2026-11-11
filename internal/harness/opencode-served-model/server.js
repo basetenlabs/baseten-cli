@@ -1,7 +1,8 @@
 import routes from "./routes.json" with { type: "json" }
 import { ServedModel, enabled } from "./shared.js"
 
-const routers = new Map(Object.entries(routes.routers))
+// routers is the pre-rename key, read so a new server tolerates an older routes.json.
+const intelligentRoutes = new Map(Object.entries(routes.intelligentRoutes ?? routes.routers))
 
 function chunkModel(line) {
   if (!line.startsWith("data:")) return ""
@@ -52,7 +53,7 @@ export default {
       "http.response",
       (event) => {
         if (event.kind !== "primary") return
-        const display = routers.get(event.model.id)
+        const display = intelligentRoutes.get(event.model.id)
         if (!display || !event.response.ok || !event.response.body) return
         event.response = watchServedModel(event.response, (model) => latest.set(event.sessionID, { route: event.model.id, label: `${display} → ${model}` }))
       },

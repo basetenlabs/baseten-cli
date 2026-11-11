@@ -84,7 +84,8 @@ fi`
 
 const claudeServedModelCommand = " grid claude-served-model"
 
-var claudeServedModelPattern = regexp.MustCompile(`^'(?:[^']|'\\'')*'` + claudeServedModelCommand + `(?: --router '(?:[^']|'\\'')*')+(?: --hook)?$`)
+// Also match the pre-rename --router spelling so sync replaces settings older builds wrote.
+var claudeServedModelPattern = regexp.MustCompile(`^'(?:[^']|'\\'')*'` + claudeServedModelCommand + `(?: --(?:intelligent-route|router) '(?:[^']|'\\'')*')+(?: --hook)?$`)
 
 const claudeTranscriptWindow = 64 << 10
 
@@ -263,41 +264,41 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 	return append(values, claudeServedModelSettings(served, current, cli)...), nil
 }
 
-// claudeServedModelSettings plans how Claude Code shows which model served a
-// router route. With no router routes, it removes whatever setup added before.
+// claudeServedModelSettings plans how Claude Code shows which model served an
+// intelligent route. With no intelligent routes, it removes whatever setup added before.
 // Otherwise, if the status line is unset or already setup's, it writes setup's
 // status line there and drops any Stop hook setup added. If the user configured
 // their own status line, it leaves that line untouched and keeps exactly one
 // Stop hook of setup's instead.
 func claudeServedModelSettings(routes []Route, current map[string]any, cli string) []setting {
-	routers := claudeRouterFlagValues(routes)
-	if len(routers) == 0 {
+	intelligentRoutes := claudeIntelligentRouteFlagValues(routes)
+	if len(intelligentRoutes) == 0 {
 		return claudeServedModelRemoval(current)
 	}
-	command := claudeServedModelCommandLine(cli, routers)
+	command := claudeServedModelCommandLine(cli, intelligentRoutes)
 	if claudeStatusLineAvailable(current) {
 		return append([]setting{desired(claudeStatusLinePath, claudeCommandEntry(command))}, claudeStopHookRemoval(current)...)
 	}
 	return claudeStopHookInstall(current, command+" --hook")
 }
 
-func claudeRouterFlagValues(routes []Route) []string {
+func claudeIntelligentRouteFlagValues(routes []Route) []string {
 	var values []string
 	for _, r := range routes {
 		switch {
-		case r.Router && r.DisplayName != "":
+		case r.IntelligentRoute && r.DisplayName != "":
 			values = append(values, r.Name+"="+r.DisplayName)
-		case r.Router:
+		case r.IntelligentRoute:
 			values = append(values, r.Name)
 		}
 	}
 	return values
 }
 
-func claudeServedModelCommandLine(cli string, routers []string) string {
+func claudeServedModelCommandLine(cli string, intelligentRoutes []string) string {
 	command := shellQuote(cli) + claudeServedModelCommand
-	for _, router := range routers {
-		command += " --router " + shellQuote(router)
+	for _, intelligentRoute := range intelligentRoutes {
+		command += " --intelligent-route " + shellQuote(intelligentRoute)
 	}
 	return command
 }

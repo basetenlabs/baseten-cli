@@ -594,6 +594,18 @@ func Test_Model_Deployment_Describe_ShowsSettings(t *testing.T) {
 	h.Require.Contains(out, "Min Replicas:            1")
 	h.Require.Contains(out, "Autoscaling Window:      600s")
 	h.Require.Contains(out, "Max Scale Down Rate:     -")
+	h.Require.NotContains(out, "Failure:")
+}
+
+func Test_Model_Deployment_Describe_ShowsFailureReason(t *testing.T) {
+	h := NewCommandHarness(t)
+	dep := depFixture("d-1", "first", "production", "DEPLOY_FAILED")
+	dep["failure_reason"] = "hf://org/repo@main: No files found to mirror"
+	h.MockManagementAPI().SetRoute("GET", "/v1/models/m-1/deployments/d-1", 200, dep)
+
+	h.Require.NoError(h.Execute("model", "deployment", "describe",
+		"--model-id", "m-1", "--deployment-id", "d-1"))
+	h.Require.Contains(h.Stdout.String(), "Failure:      hf://org/repo@main: No files found to mirror\n")
 }
 
 func Test_Model_Deployment_Rename(t *testing.T) {
