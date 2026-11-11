@@ -138,8 +138,6 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 	}
 	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
 	require.NotEmpty(t, remoteURL, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
-	team := os.Getenv("BASETEN_E2E_TEST_TEAM")
-	require.NotEmpty(t, team, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_TEAM is missing")
 	t.Setenv("BASETEN_API_KEY", apiKey)
 	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
 	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
@@ -188,7 +186,7 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 		require.NoError(t, os.MkdirAll(h.configDir, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(h.configDir, file), []byte(content), 0o600))
 	}
-	out, errOut, err := cli(t, "grid", "setup", "--harness", name, "--config-dir", h.configDir, "--use-session-credential", "--yes", "--team", team)
+	out, errOut, err := cli(t, "grid", "setup", "--harness", name, "--config-dir", h.configDir, "--use-session-credential", "--yes")
 	if err != nil {
 		msg := strings.TrimSpace(errOut + out)
 		switch {
@@ -202,23 +200,23 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 	step(t, "%s harness setup complete (config %s)", name, h.configDir)
 	h.loadConfig(t)
 	require.NotEmpty(t, h.endpoint, "harness setup wrote no endpoint for %s", name)
-	classes := harnessRouteClasses(t, team)
+	classes := harnessRouteClasses(t)
 	for i := range h.models {
 		h.models[i].class = cmp.Or(classes[h.models[i].route], harnessOther)
 	}
 	return h
 }
 
-func harnessRouteClasses(t *testing.T, team string) map[string]string {
+func harnessRouteClasses(t *testing.T) map[string]string {
 	t.Helper()
 	providers := map[string]string{}
-	for _, connection := range harnessCLIItems(t, "grid", "connection", "list", "--team", team, "--output", "json") {
+	for _, connection := range harnessCLIItems(t, "grid", "connection", "list", "--output", "json") {
 		id, _ := connection["id"].(string)
 		config, _ := connection["config"].(map[string]any)
 		providers[id], _ = config["provider"].(string)
 	}
 	classes := map[string]string{}
-	for _, route := range harnessCLIItems(t, "grid", "route", "list", "--team", team, "--output", "json") {
+	for _, route := range harnessCLIItems(t, "grid", "route", "list", "--output", "json") {
 		name, _ := route["name"].(string)
 		target, _ := route["target"].(map[string]any)
 		kind, _ := target["type"].(string)
