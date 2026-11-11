@@ -397,6 +397,24 @@ func (c *CommandContext) IsInteractive() bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
+// TerminalWidth returns the width of the terminal stdout is attached to,
+// honoring any override installed via WithTerminalWidth, or false when
+// stdout isn't a terminal.
+func (c *CommandContext) TerminalWidth() (int, bool) {
+	if w, ok := c.Value(terminalWidthKey{}).(int); ok {
+		return w, true
+	}
+	f, ok := c.Stdout.(*os.File)
+	if !ok || !term.IsTerminal(int(f.Fd())) {
+		return 0, false
+	}
+	w, _, _ := term.GetSize(int(f.Fd()))
+	if w <= 0 {
+		w = 80
+	}
+	return w, true
+}
+
 // ConfirmYesNo prompts the user with a yes/no question. Returns an ErrUsage
 // when stdin is not a terminal so callers can instruct the user to pass --yes
 // or similar. Returns a non-nil error if the user declines.
@@ -420,23 +438,26 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 // RunPrompt runs a single interactive prompt field, aborting it when the
 // command context is cancelled.
 func (c *CommandContext) RunPrompt(field huh.Field) error {
+	// Equivalent to the field's own Run, which ignores the context and so
+	// leaves the prompt running when the command is cancelled by a SIGTERM or
+	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
+	// signal, which huh handles itself by returning huh.ErrUserAborted. I/O is
+	// set explicitly because huh's accessible mode (e.g. TERM=dumb) defaults
+	// output to stdout, which would corrupt command output.
+	//
 	// huh's base theme leaves titles and options in the terminal's default
 	// foreground. Its default Charm theme colors them for one background,
 	// drawing options near-white on a light terminal.
-	form := huh.NewForm(huh.NewGroup(field)).WithTheme(huh.ThemeFunc(huh.ThemeBase))
+	form := huh.NewForm(huh.NewGroup(field)).WithTheme(huh.ThemeFunc(huh.ThemeBase)).WithShowHelp(false).WithInput(c.Stdin).WithOutput(c.Stderr)
 	if answers, ok := c.promptAnswers(); ok {
 		if len(*answers) == 0 {
 			return errors.New("no answer for the prompt")
 		}
 		answer := (*answers)[0]
 		*answers = (*answers)[1:]
-		return form.WithAccessible(true).WithInput(strings.NewReader(answer + "\n")).WithOutput(c.Stderr).RunWithContext(c)
+		form = form.WithAccessible(true).WithInput(strings.NewReader(answer + "\n"))
 	}
-	// Equivalent to the field's own Run, which ignores the context and so
-	// leaves the prompt running when the command is cancelled by a SIGTERM or
-	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
-	// signal, which huh handles itself by returning huh.ErrUserAborted.
-	return form.WithShowHelp(false).RunWithContext(c)
+	return form.RunWithContext(c)
 }
 
 // OAuthConfig returns the OAuth2 configuration for the given host.
@@ -460,6 +481,25 @@ func NewAuthStore(insecureStorage bool) (*auth.Store, error) {
 		Dir:             dir,
 		InsecureStorage: insecureStorage,
 	}), nil
+}
+
+// selectExplicitProfile handles an [auth.ErrExplicitProfileRequired] by
+// prompting for a profile on a terminal. Other errors, and that error when not
+// on a terminal, are returned as is.
+func (c *CommandContext) selectExplicitProfile(err error) (string, error) {
+	var required *auth.ErrExplicitProfileRequired
+	if !errors.As(err, &required) || len(required.Profiles) == 0 || !c.IsInteractive() {
+		return "", err
+	}
+	var name string
+	if err := c.RunPrompt(huh.NewSelect[string]().
+		Title("Use which profile?").
+		Options(huh.NewOptions(required.Profiles...)...).
+		Filtering(true).
+		Value(&name)); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 // SetDefaultProfile sets a fallback profile, used only when no profile is
@@ -659,6 +699,14 @@ func WithTicker(ctx context.Context, fn func(time.Duration) (<-chan time.Time, f
 
 type nowKey struct{}
 type sleepKey struct{}
+type terminalWidthKey struct{}
+
+// WithTerminalWidth returns a context that makes CommandContext.TerminalWidth
+// report stdout as a terminal of the given width. Intended for tests of
+// output that only a terminal gets, such as charts.
+func WithTerminalWidth(ctx context.Context, width int) context.Context {
+	return context.WithValue(ctx, terminalWidthKey{}, width)
+}
 
 // WithNow returns a context that pins CommandContext.Now to fn. Intended for
 // tests; production code uses time.Now via the default path.
@@ -801,6 +849,10 @@ func (c *hostHeaderClient) Do(req *http.Request) (*http.Response, error) {
 type authInfo struct {
 	profileFlag    string
 	defaultProfile string
+	// selectProfile, when set, picks a profile when explicit profile selection
+	// is required and nothing selected one. See
+	// [CommandContext.selectExplicitProfile].
+	selectProfile func(error) (string, error)
 
 	once    sync.Once
 	err     error
@@ -810,12 +862,26 @@ type authInfo struct {
 
 func (a *authInfo) resolve() error {
 	a.once.Do(func() {
-		if a.session, a.err = auth.ResolveSession(a.profileFlag, a.defaultProfile); a.err != nil {
+		a.session, a.err = auth.ResolveSession(a.profileFlag, a.defaultProfile)
+		if a.err != nil && a.selectProfile != nil {
+			var name string
+			if name, a.err = a.selectProfile(a.err); a.err == nil {
+				a.session, a.err = auth.ResolveSession(name, "")
+			}
+		}
+		if a.err != nil {
 			return
 		}
 		a.remote, a.err = NewRemote(a.session.RemoteURL())
 	})
 	return a.err
+}
+
+// Reset forgets the resolved session and remote, so the next use resolves them
+// again. For a command that changes the stored profiles partway through.
+func (a *authInfo) Reset() {
+	a.once = sync.Once{}
+	a.err, a.remote, a.session = nil, nil, nil
 }
 
 // Remote returns the remote for this invocation, derived from the selected

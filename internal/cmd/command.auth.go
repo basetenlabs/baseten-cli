@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 
@@ -24,6 +26,8 @@ func init() {
 	Register("auth switch", commandAuthSwitch)
 	Register("auth status", commandAuthStatus)
 	Register("auth list", commandAuthList)
+	Register("auth config describe", commandAuthConfigDescribe)
+	Register("auth config update", commandAuthConfigUpdate)
 }
 
 func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
@@ -38,6 +42,15 @@ func commandAuthLogin(ctx *CommandContext, flags *cmd.AuthLoginFlags) error {
 	store, err := NewAuthStore(flags.InsecureStorage)
 	if err != nil {
 		return err
+	}
+	// The store never sets a current profile in this mode, so --no-switch is
+	// implied; reject an explicit request to switch.
+	if ctx.Command.Flags().Changed("no-switch") && !flags.NoSwitch {
+		if af, err := store.Load(); err != nil {
+			return err
+		} else if af.RequireExplicitProfile {
+			return cmd.NewErrUsagef("--no-switch=false cannot be used when explicit profile selection is required")
+		}
 	}
 
 	method := ""
@@ -80,8 +93,15 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 
 	profileName := flags.Profile
 	if profileName == "" {
-		current, _, ok := store.CurrentProfile()
-		if !ok {
+		profileName = os.Getenv("BASETEN_PROFILE")
+	}
+	if profileName == "" {
+		current, _, ok, err := store.CurrentProfile()
+		if err != nil {
+			if current, err = ctx.selectExplicitProfile(err); err != nil {
+				return err
+			}
+		} else if !ok {
 			return fmt.Errorf("no current profile; pass --profile to choose one to remove")
 		}
 		profileName = current
@@ -168,6 +188,13 @@ func commandAuthSwitch(ctx *CommandContext, flags *cmd.AuthSwitchFlags) error {
 	if err != nil {
 		return err
 	}
+	if af, err := store.Load(); err != nil {
+		return err
+	} else if af.RequireExplicitProfile {
+		return fmt.Errorf("there is no current profile when explicit profile selection is required; " +
+			"pass --profile or set BASETEN_PROFILE per command, or disable with " +
+			"`baseten auth config update --require-explicit-profile=false` and then rerun this command")
+	}
 
 	profileName := flags.Profile
 	if profileName == "" {
@@ -214,7 +241,11 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 		return err
 	}
 
-	session, err := auth.ResolveSession(flags.Profile, "")
+	af, err := store.Load()
+	if err != nil {
+		return err
+	}
+	session, err := ctx.authInfo.Session()
 	if err != nil {
 		return err
 	}
@@ -225,7 +256,11 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 			remoteURL = "https://app.baseten.co"
 		}
 		if ctx.JSON {
-			ctx.OutputJSON(cmd.AuthStatusResult{RemoteURL: remoteURL, AuthType: string(auth.AuthTypeAPIKey)})
+			ctx.OutputJSON(cmd.AuthStatusResult{
+				RemoteURL:              remoteURL,
+				AuthType:               string(auth.AuthTypeAPIKey),
+				RequireExplicitProfile: af.RequireExplicitProfile,
+			})
 		} else {
 			ctx.Outputf("Using API key from BASETEN_API_KEY\n  Remote: %s\n", hyperlink(ctx.Stdout, remoteURL))
 		}
@@ -247,12 +282,16 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 
 	if ctx.JSON {
 		ctx.OutputJSON(cmd.AuthStatusResult{
-			Profile:   profileName,
-			RemoteURL: profile.RemoteURL,
-			AuthType:  string(profile.AuthType),
+			Profile:                profileName,
+			RemoteURL:              profile.RemoteURL,
+			AuthType:               string(profile.AuthType),
+			RequireExplicitProfile: af.RequireExplicitProfile,
 		})
 	} else {
 		ctx.Outputf("%s\n  Remote: %s\n  Auth type: %s\n", profileName, hyperlink(ctx.Stdout, profile.RemoteURL), profile.AuthType)
+		if af.RequireExplicitProfile {
+			ctx.OutputLine("  Explicit profile selection: required")
+		}
 	}
 	return nil
 }
@@ -268,9 +307,16 @@ func commandAuthList(ctx *CommandContext, flags *cmd.AuthListFlags) error {
 	}
 
 	// Resolve the same way every other command does so the marked profile is
-	// the one that would actually be used.
+	// the one that would actually be used. Nothing is marked when explicit
+	// profile selection is required and nothing selected one.
+	inUse := ""
 	session, err := auth.ResolveSession(flags.Profile, "")
-	if err != nil {
+	var required *auth.ErrExplicitProfileRequired
+	if err == nil {
+		if !session.IsEphemeral() {
+			inUse = session.ProfileName()
+		}
+	} else if !errors.As(err, &required) {
 		return err
 	}
 
@@ -284,7 +330,7 @@ func commandAuthList(ctx *CommandContext, flags *cmd.AuthListFlags) error {
 			Profile:   name,
 			RemoteURL: profile.RemoteURL,
 			AuthType:  string(profile.AuthType),
-			Current:   !session.IsEphemeral() && session.ProfileName() == name,
+			Current:   inUse == name,
 		})
 		if profile.RemoteURL != "https://app.baseten.co" {
 			allDefaultRemote = false
@@ -327,12 +373,22 @@ func openBrowserURL(url string) error {
 }
 
 func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) error {
+	profileName, user, err := loginWebProfile(ctx, store, remote, flags)
+	if err != nil {
+		return err
+	}
+	return writeLoginResult(ctx, profileName, user)
+}
+
+// loginWebProfile signs in with the browser and stores the profile, leaving
+// the caller to report it.
+func loginWebProfile(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) (string, *managementapi.UserInfo, error) {
 	mgmtURL := remote.ManagementURL()
 	cfg := OAuthConfig(mgmtURL)
 	oauthCtx := auth.OAuthContext(ctx.Context, ctx.httpClient().Transport)
 	devResp, err := cfg.DeviceAuth(oauthCtx)
 	if err != nil {
-		return fmt.Errorf("starting device authorization: %w", err)
+		return "", nil, fmt.Errorf("starting device authorization: %w", err)
 	}
 
 	verificationURI := devResp.VerificationURIComplete
@@ -346,7 +402,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 
 	token, err := cfg.DeviceAccessToken(oauthCtx, devResp)
 	if err != nil {
-		return fmt.Errorf("waiting for authorization: %w", err)
+		return "", nil, fmt.Errorf("waiting for authorization: %w", err)
 	}
 
 	if claims, err := decodeJWTClaims(token.AccessToken); err == nil {
@@ -355,18 +411,18 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 
 	cl, err := ctx.NewManagementClientWithAuth(mgmtURL, "Bearer "+token.AccessToken)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	user, err := cl.API().GetUsersMe(ctx.Context)
 	if err != nil {
-		return fmt.Errorf("validating credentials: %w", err)
+		return "", nil, fmt.Errorf("validating credentials: %w", err)
 	}
 
 	email := deref(user.Email)
 	profileName := flags.Profile
 	if profileName == "" {
 		if email == "" {
-			return fmt.Errorf("could not determine a profile name from the account; pass --profile")
+			return "", nil, fmt.Errorf("could not determine a profile name from the account; pass --profile")
 		}
 		profileName = defaultProfileName(email, remote)
 	}
@@ -374,7 +430,7 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 	warnWriter := func(msg string) { ctx.Log(msg) }
 	// The profile may have been another user's.
 	if err := clearCachedTokens(ctx, store, profileName); err != nil {
-		return err
+		return "", nil, err
 	}
 	cred := auth.OAuthCredential{
 		AccessToken:  token.AccessToken,
@@ -382,10 +438,10 @@ func loginWeb(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd
 		Expiry:       token.Expiry,
 	}
 	if err := store.SetOAuthProfile(ctx, profileName, remote.RemoteURL(), cred, !flags.NoSwitch, warnWriter); err != nil {
-		return err
+		return "", nil, err
 	}
 
-	return writeLoginResult(ctx, profileName, user)
+	return profileName, user, nil
 }
 
 func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *cmd.AuthLoginFlags) error {
@@ -499,4 +555,47 @@ func decodeJWTClaims(token string) (string, error) {
 		return "", err
 	}
 	return string(pretty), nil
+}
+
+func commandAuthConfigDescribe(ctx *CommandContext, flags *cmd.AuthConfigDescribeFlags) error {
+	store, err := NewAuthStore(false)
+	if err != nil {
+		return err
+	}
+	af, err := store.Load()
+	if err != nil {
+		return err
+	}
+	outputAuthConfig(ctx, cmd.AuthConfigResult{RequireExplicitProfile: af.RequireExplicitProfile})
+	return nil
+}
+
+func commandAuthConfigUpdate(ctx *CommandContext, flags *cmd.AuthConfigUpdateFlags) error {
+	if !ctx.Command.Flags().Changed("require-explicit-profile") {
+		return cmd.NewErrUsagef("no settings to update; pass --require-explicit-profile[=false]")
+	}
+	store, err := NewAuthStore(false)
+	if err != nil {
+		return err
+	}
+	if err := store.SetRequireExplicitProfile(flags.RequireExplicitProfile); err != nil {
+		return err
+	}
+	outputAuthConfig(ctx, cmd.AuthConfigResult{RequireExplicitProfile: flags.RequireExplicitProfile})
+	if !flags.RequireExplicitProfile {
+		if _, _, ok, err := store.CurrentProfile(); err != nil {
+			return err
+		} else if !ok {
+			ctx.LogLine("No current profile; select one with `baseten auth switch --profile <profile>`")
+		}
+	}
+	return nil
+}
+
+func outputAuthConfig(ctx *CommandContext, result cmd.AuthConfigResult) {
+	if ctx.JSON {
+		ctx.OutputJSON(result)
+	} else {
+		ctx.Outputf("Require explicit profile: %t\n", result.RequireExplicitProfile)
+	}
 }

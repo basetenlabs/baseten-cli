@@ -36,8 +36,8 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	huge.ReasoningLevels = []string{"none", "low", "high", "xhigh"}
 	mid := testRoute("acme/mid", "Mid")
 	mid.ContextWindow = 200000
-	path := settingsPath(t, claudeCodeHarness{})
-	setup(t, claudeCodeHarness{}, path, []Route{huge, mid}, Selection{})
+	path := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, path, []Route{huge, mid}, Selection{})
 	d := load(t, path)
 	require.Equal(t, "acme/huge[1m]", d["model"])
 	require.Equal(t, []any{
@@ -54,7 +54,7 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
 
-	setup(t, claudeCodeHarness{}, path, []Route{mid, huge}, Selection{Background: "acme/huge"})
+	setup(t, claudeHarness{}, path, []Route{mid, huge}, Selection{Background: "acme/huge"})
 	d = load(t, path)
 	require.Equal(t, []any{"acme/mid", "acme/huge[1m]"}, d["availableModels"])
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data)
@@ -73,8 +73,8 @@ func TestReasoningBoundsSkipNone(t *testing.T) {
 func TestMaxEffortOnlyForClaudeCodeAndPi(t *testing.T) {
 	r := testRoute("acme/primary", "Primary")
 	r.ReasoningLevels = []string{"none", "low", "high", "xhigh", "max"}
-	claude := settingsPath(t, claudeCodeHarness{})
-	setup(t, claudeCodeHarness{}, claude, []Route{r}, Selection{})
+	claude := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, claude, []Route{r}, Selection{})
 	require.Equal(t, map[string]any{"acme/primary": map[string]any{"maxEffortLevel": "max"}}, load(t, claude)["modelSettings"])
 
 	codex := settingsPath(t, codexHarness{})
@@ -162,11 +162,11 @@ func TestPiAnthropicThinkingCompatibility(t *testing.T) {
 			tools := true
 			api := managementapi.GridRoute{
 				Name: "acme/custom", DisplayName: "Custom",
-				Metadata: &managementapi.ExploreMetadata{
+				Metadata: &managementapi.GridRouteMetadata{
 					ContextWindow: &tc.contextWindow, MaxOutputTokens: &tc.outputLimit,
 					InputModalities: []string{"text", "image"}, Tools: &tools,
 					ReasoningEffortLevels: &tc.reasoningLevels,
-					SupportedApiFormats:   &managementapi.ExploreMetadataAPIFormats{Messages: &tools},
+					ApiFormats:            []managementapi.GridRouteMetadataApiFormats{managementapi.GridRouteMetadataApiFormats_messages},
 				},
 			}
 			require.NoError(t, json.Unmarshal([]byte(`{"type":"CONNECTION","connection_id":"conn-a","model":"`+tc.model+`"}`), &api.Target))
@@ -298,12 +298,11 @@ func TestNewRoute(t *testing.T) {
 
 	ptr := func(v float32) *float32 { return &v }
 	tools, ctx, out := true, 128000, 4096
-	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.ExploreMetadata{
-		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools,
+	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.GridRouteMetadata{
+		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, ApiFormats: chatCompletionsFormats,
 		Cost: &managementapi.ExploreCost{Input: ptr(0.3), Output: ptr(1.2), LongContext: &managementapi.ExploreCostValues{Input: ptr(0.6)}},
 	}}, nil)
 	require.NoError(t, err)
-	require.True(t, r.Messages && r.Responses, "a route without API formats is listed in every harness")
 	require.Equal(t, &Cost{Input: 0.3, Output: 1.2}, r.Cost, "a long-context price without output is dropped")
 }
 
@@ -317,7 +316,7 @@ func TestRouteTargetComesFromConnections(t *testing.T) {
 	require.Equal(t, Providers{"conn-a": ProviderAnthropic, "conn-o": ProviderOpenAI, "conn-x": "XAI"}, providers)
 
 	tools, ctx, out := true, 128000, 4096
-	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools}
+	metadata := &managementapi.GridRouteMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, ApiFormats: chatCompletionsFormats}
 	for _, tc := range []struct {
 		name         string
 		target       string
@@ -329,7 +328,7 @@ func TestRouteTargetComesFromConnections(t *testing.T) {
 		{"xai connection", `{"type": "CONNECTION", "connection_id": "conn-x", "model": "grok"}`, "XAI", "grok"},
 		{"unknown connection", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, "", "gpt"},
 		{"baseten model api", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, ProviderBaseten, ""},
-		{"classifier", `{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, "", ""},
+		{"intelligent", `{"type": "INTELLIGENT"}`, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := managementapi.GridRoute{Name: "acme/route", DisplayName: "Route", Metadata: metadata}

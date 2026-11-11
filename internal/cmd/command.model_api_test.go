@@ -282,3 +282,42 @@ func Test_ModelApi_Predict_InputExclusive(t *testing.T) {
 	err := h.Execute("model-api", "predict", "--model", "llama-3", "--content", "hi", "--data", "{}")
 	h.Require.Error(err)
 }
+
+func unpricedModelAPIFixture(name string) map[string]any {
+	fixture := modelAPIFixture(name, name, "glm")
+	fixture["cost_per_million_input_tokens"] = nil
+	fixture["cost_per_million_output_tokens"] = nil
+	return fixture
+}
+
+func Test_ModelApi_List_NilPricing(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis", 200, map[string]any{
+		"items":      []any{unpricedModelAPIFixture("glm-flash")},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	h.Require.NoError(h.Execute("model-api", "list"))
+	h.Require.Regexp(`glm-flash\s+8192\s+-\s+-\s+2025-01-01`, h.Stdout.String())
+}
+
+func Test_ModelApi_Describe_NilPricing(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis/glm-flash", 200, unpricedModelAPIFixture("glm-flash"))
+
+	h.Require.NoError(h.Execute("model-api", "describe", "--model", "glm-flash"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Input Cost:      $- / 1M tokens")
+	h.Require.Contains(out, "Output Cost:     $- / 1M tokens")
+}
+
+func Test_ModelApi_Describe_NilPricingJSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/model_apis/glm-flash", 200, unpricedModelAPIFixture("glm-flash"))
+
+	h.Require.NoError(h.Execute("model-api", "describe", "--model", "glm-flash", "--output", "json"))
+	var got map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Contains(got, "cost_per_million_input_tokens")
+	h.Require.Nil(got["cost_per_million_input_tokens"])
+}

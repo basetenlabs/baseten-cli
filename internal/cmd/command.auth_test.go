@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
+	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
+	"github.com/creack/pty"
 )
 
 // newAuthHarness returns a CommandHarness with the env credential vars cleared
@@ -97,11 +100,13 @@ func Test_Auth_Status_JSON(t *testing.T) {
 	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-xyz", true, nil))
 
 	h.Require.NoError(h.Execute("auth", "status", "--output", "json"))
-	var got map[string]string
+	var got cmd.AuthStatusResult
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
-	h.Require.Equal("alice", got["profile"])
-	h.Require.Equal("api_key", got["auth_type"])
-	h.Require.Equal("https://app.example.com", got["remote_url"])
+	h.Require.Equal(cmd.AuthStatusResult{
+		Profile:   "alice",
+		RemoteURL: "https://app.example.com",
+		AuthType:  "api_key",
+	}, got)
 }
 
 func Test_Auth_Status_EphemeralEnvAPIKey(t *testing.T) {
@@ -120,9 +125,9 @@ func Test_Auth_Status_ProfileFlagSelects(t *testing.T) {
 	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "bob", "https://app.other.example.com", "key-b", false, nil))
 
 	h.Require.NoError(h.Execute("auth", "status", "--profile", "bob", "--output", "json"))
-	var got map[string]string
+	var got cmd.AuthStatusResult
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
-	h.Require.Equal("bob", got["profile"])
+	h.Require.Equal("bob", got.Profile)
 }
 
 func Test_Auth_Status_MissingProfileSuggestsAdding(t *testing.T) {
@@ -262,7 +267,8 @@ func Test_Auth_Logout_RemovesCurrentProfile(t *testing.T) {
 	h.Require.NoError(h.Execute("auth", "logout"))
 	h.Require.Contains(h.Stdout.String(), "alice")
 
-	_, _, ok := configDirStore(t).CurrentProfile()
+	_, _, ok, err := configDirStore(t).CurrentProfile()
+	h.Require.NoError(err)
 	h.Require.False(ok, "profile should be removed")
 }
 
@@ -277,7 +283,8 @@ func Test_Auth_Logout_ProfileFlagSelects(t *testing.T) {
 
 	_, ok := configDirStore(t).GetProfile("bob")
 	h.Require.False(ok, "named profile should be removed")
-	name, _, ok := configDirStore(t).CurrentProfile()
+	name, _, ok, err := configDirStore(t).CurrentProfile()
+	h.Require.NoError(err)
 	h.Require.True(ok, "current profile must be untouched")
 	h.Require.Equal("alice", name)
 }
@@ -318,7 +325,8 @@ func Test_Auth_Logout_OAuth_CallsRevokeEndpoint(t *testing.T) {
 	h.Require.Equal("/v1/users/auth/logout", gotPath)
 	h.Require.Equal("Bearer at_abc", gotAuth)
 
-	_, _, ok := configDirStore(t).CurrentProfile()
+	_, _, ok, err := configDirStore(t).CurrentProfile()
+	h.Require.NoError(err)
 	h.Require.False(ok, "profile should be removed")
 }
 
@@ -337,7 +345,8 @@ func Test_Auth_Logout_OAuth_WarnsOnServerFailureButStillRemoves(t *testing.T) {
 	h.Require.NoError(h.Execute("auth", "logout"))
 	h.Require.Contains(h.Stderr.String(), "warning")
 
-	_, _, ok := configDirStore(t).CurrentProfile()
+	_, _, ok, err := configDirStore(t).CurrentProfile()
+	h.Require.NoError(err)
 	h.Require.False(ok, "profile should still be removed after server failure")
 }
 
@@ -356,7 +365,8 @@ func Test_Auth_Switch_UpdatesCurrentProfile(t *testing.T) {
 
 	h.Require.NoError(h.Execute("auth", "switch", "--profile", "alice"))
 
-	name, _, _ := configDirStore(t).CurrentProfile()
+	name, _, _, err := configDirStore(t).CurrentProfile()
+	h.Require.NoError(err)
 	h.Require.Equal("alice", name)
 }
 
@@ -384,7 +394,8 @@ func Test_Auth_Login_APIKey_Stdin(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "my-laptop")
 
 	store := configDirStore(t)
-	name, profile, ok := store.CurrentProfile()
+	name, profile, ok, err := store.CurrentProfile()
+	h.Require.NoError(err)
 	h.Require.True(ok)
 	h.Require.Equal("my-laptop", name)
 	h.Require.Equal(auth.AuthTypeAPIKey, profile.AuthType)
@@ -405,7 +416,8 @@ func Test_Auth_Login_APIKey_NoSwitchKeepsCurrent(t *testing.T) {
 	h.Stdin.WriteString("secret-api-key\n")
 	h.Require.NoError(h.Execute("auth", "login", "--with-api-key", "--profile", "my-laptop", "--no-switch"))
 
-	name, _, ok := configDirStore(t).CurrentProfile()
+	name, _, ok, err := configDirStore(t).CurrentProfile()
+	h.Require.NoError(err)
 	h.Require.True(ok)
 	h.Require.Equal("existing", name, "--no-switch must not move the current pointer")
 }
@@ -539,7 +551,8 @@ func Test_Auth_Login_Web_DeviceFlow(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "user@example.com")
 
 	store := configDirStore(t)
-	name, profile, ok := store.CurrentProfile()
+	name, profile, ok, err := store.CurrentProfile()
+	h.Require.NoError(err)
 	h.Require.True(ok)
 	h.Require.Contains(name, "user@example.com", "profile is named after the email")
 	h.Require.Equal(auth.AuthTypeOAuth, profile.AuthType)
@@ -581,7 +594,164 @@ func Test_Auth_Login_Web_ProfileFlagOverridesName(t *testing.T) {
 	h.Require.NoError(h.Execute("auth", "login", "--web", "--profile", "work"))
 	h.Require.Equal([]string{"https://auth.example.com/device?user_code=ABCD-EFGH"}, h.OpenedURLs)
 
-	name, _, ok := configDirStore(t).CurrentProfile()
+	name, _, ok, err := configDirStore(t).CurrentProfile()
+	h.Require.NoError(err)
 	h.Require.True(ok)
 	h.Require.Equal("work", name)
+}
+
+// newExplicitProfileHarness returns an auth harness with profiles alice
+// (current) and bob stored, then explicit profile selection enabled.
+func newExplicitProfileHarness(t *testing.T) *CommandHarness {
+	h := newAuthHarness(t)
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-a", true, nil))
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "bob", "https://app.example.com", "key-b", false, nil))
+	h.Require.NoError(store.SetRequireExplicitProfile(true))
+	return h
+}
+
+func Test_Auth_Config_Update_RequireExplicitProfile(t *testing.T) {
+	h := newAuthHarness(t)
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-a", true, nil))
+
+	h.Require.NoError(h.Execute("auth", "config", "update", "--require-explicit-profile"))
+	h.Require.Equal("Require explicit profile: true\n", h.Stdout.String())
+	h.Require.NoError(h.Execute("auth", "config", "describe", "--output", "json"))
+	var got cmd.AuthConfigResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.True(got.RequireExplicitProfile)
+	_, _, _, err := configDirStore(t).CurrentProfile()
+	var required *auth.ErrExplicitProfileRequired
+	h.Require.ErrorAs(err, &required)
+
+	h.Require.NoError(h.Execute("auth", "config", "update", "--require-explicit-profile=false"))
+	h.Require.Contains(h.Stderr.String(), "select one with `baseten auth switch --profile <profile>`")
+	h.Require.NoError(h.Execute("auth", "config", "describe"))
+	h.Require.Equal("Require explicit profile: false\n", h.Stdout.String())
+}
+
+func Test_Auth_Config_Update_DisableWithCurrentProfileNoHint(t *testing.T) {
+	h := newAuthHarness(t)
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-a", true, nil))
+
+	h.Require.NoError(h.Execute("auth", "config", "update", "--require-explicit-profile=false"))
+	h.Require.NotContains(h.Stderr.String(), "auth switch")
+}
+
+func Test_Auth_Config_Update_RequiresSetting(t *testing.T) {
+	h := newAuthHarness(t)
+	h.Require.ErrorContains(h.Execute("auth", "config", "update"), "no settings to update")
+}
+
+func Test_Auth_Status_ExplicitProfileNonInteractiveErrors(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	h.Require.Error(h.Execute("auth", "status"))
+	h.Require.Contains(h.Stderr.String(), "explicit profile selection is required (2 profiles exist)")
+	h.Require.Contains(h.Stderr.String(), "--profile alice")
+	h.Require.Contains(h.Stderr.String(), "--profile bob")
+}
+
+func Test_Auth_Status_ExplicitProfilePrompts(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	h.Context = internalcmd.WithPromptAnswers(h.Context, "2")
+	h.Require.NoError(h.Execute("auth", "status"))
+	h.Require.Contains(h.Stderr.String(), "Use which profile?")
+	h.Require.Contains(h.Stdout.String(), "bob\n")
+	h.Require.Contains(h.Stdout.String(), "Explicit profile selection: required")
+}
+
+func Test_Auth_Status_ExplicitProfileAccessiblePromptKeepsJSONClean(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("accessible prompt is tested through a Unix pseudo-terminal")
+	}
+	h := newExplicitProfileHarness(t)
+	// TERM=dumb puts huh in accessible mode, whose output defaults to stdout.
+	t.Setenv("TERM", "dumb")
+	control, terminal, err := pty.Open()
+	h.Require.NoError(err)
+	t.Cleanup(func() {
+		_ = control.Close()
+		_ = terminal.Close()
+	})
+	_, err = control.WriteString("2\n")
+	h.Require.NoError(err)
+	h.StdinReader = terminal
+	h.Require.NoError(h.Execute("auth", "status", "--output", "json"))
+	h.Require.Contains(h.Stderr.String(), "Use which profile?")
+	var got cmd.AuthStatusResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal("bob", got.Profile)
+}
+
+func Test_Auth_Status_ExplicitProfileFromEnv(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	t.Setenv("BASETEN_PROFILE", "bob")
+	h.Require.NoError(h.Execute("auth", "status", "--output", "json"))
+	var got cmd.AuthStatusResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal("bob", got.Profile)
+	h.Require.True(got.RequireExplicitProfile)
+}
+
+func Test_Auth_List_ExplicitProfileMarksSelected(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	h.Context = internalcmd.WithPromptAnswers(h.Context, "1")
+	h.Require.Empty(authListCurrent(h), "nothing is marked or prompted for without a selection")
+	h.Require.Equal([]string{"bob"}, authListCurrent(h, "--profile", "bob"))
+}
+
+func Test_Auth_Logout_ExplicitProfileNonInteractiveErrors(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	h.Require.Error(h.Execute("auth", "logout"))
+	h.Require.Contains(h.Stderr.String(), "explicit profile selection is required")
+	names, err := configDirStore(t).ProfileNames()
+	h.Require.NoError(err)
+	h.Require.Equal([]string{"alice", "bob"}, names)
+}
+
+func Test_Auth_Logout_ExplicitProfilePrompts(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	h.Context = internalcmd.WithPromptAnswers(h.Context, "2")
+	h.Require.NoError(h.Execute("auth", "logout"))
+	h.Require.Equal("Logged out bob\n", h.Stdout.String())
+	names, err := configDirStore(t).ProfileNames()
+	h.Require.NoError(err)
+	h.Require.Equal([]string{"alice"}, names)
+}
+
+func Test_Auth_Logout_ExplicitProfileFromEnv(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	t.Setenv("BASETEN_PROFILE", "bob")
+	h.Require.NoError(h.Execute("auth", "logout"))
+	h.Require.Equal("Logged out bob\n", h.Stdout.String())
+	names, err := configDirStore(t).ProfileNames()
+	h.Require.NoError(err)
+	h.Require.Equal([]string{"alice"}, names)
+}
+
+func Test_Auth_Switch_ExplicitProfileErrors(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	err := h.Execute("auth", "switch", "--profile", "bob")
+	h.Require.ErrorContains(err, "there is no current profile")
+	h.Require.ErrorContains(err, "and then rerun this command")
+}
+
+func Test_Auth_Login_ExplicitProfileNeverSwitches(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	srv := newUserInfoServer(t)
+	pointManagementAt(t, srv.URL)
+
+	h.Stdin.WriteString("secret-api-key\n")
+	h.Require.NoError(h.Execute("auth", "login", "--with-api-key", "--profile", "my-laptop"))
+	_, _, ok, err := configDirStore(t).CurrentProfile()
+	h.Require.False(ok)
+	var required *auth.ErrExplicitProfileRequired
+	h.Require.ErrorAs(err, &required)
+
+	h.Stdin.WriteString("secret-api-key\n")
+	err = h.Execute("auth", "login", "--with-api-key", "--profile", "my-laptop", "--no-switch=false")
+	h.Require.ErrorContains(err, "--no-switch=false cannot be used when explicit profile selection is required")
 }

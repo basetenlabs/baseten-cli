@@ -21,9 +21,11 @@ const testToken = "baseten-harness-test-token"
 
 const testEndpoint = "https://inference.example.com"
 
+var chatCompletionsFormats = []managementapi.GridRouteMetadataApiFormats{managementapi.GridRouteMetadataApiFormats_chat_completions}
+
 func testRoute(name, displayName string) Route {
 	return Route{
-		Name: name, DisplayName: displayName,
+		ID: name, Name: name, DisplayName: displayName,
 		ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, Responses: true,
 		TargetAPI: TargetAPIChatCompletions,
 	}
@@ -33,11 +35,12 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 	contextWindow, mirroredOutput, tools := 500000, 500000, true
 	route, err := NewRoute(managementapi.GridRoute{
 		Name: "acme/possible",
-		Metadata: &managementapi.ExploreMetadata{
+		Metadata: &managementapi.GridRouteMetadata{
 			ContextWindow:   &contextWindow,
 			MaxOutputTokens: &mirroredOutput,
 			InputModalities: []string{"text", "image"},
 			Tools:           &tools,
+			ApiFormats:      chatCompletionsFormats,
 		},
 	}, nil)
 	require.NoError(t, err)
@@ -47,24 +50,24 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 	impossibleOutput := 500001
 	_, err = NewRoute(managementapi.GridRoute{
 		Name: "acme/impossible",
-		Metadata: &managementapi.ExploreMetadata{
+		Metadata: &managementapi.GridRouteMetadata{
 			ContextWindow:   &contextWindow,
 			MaxOutputTokens: &impossibleOutput,
 			InputModalities: []string{"text"},
 			Tools:           &tools,
+			ApiFormats:      chatCompletionsFormats,
 		},
 	}, nil)
 	require.ErrorContains(t, err, "no usable context and output limits")
 }
 
-func TestNewRouteMarksRouters(t *testing.T) {
+func TestNewRouteMarksIntelligentRoutes(t *testing.T) {
 	tools, ctx, out := true, 128000, 4096
-	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools}
+	metadata := &managementapi.GridRouteMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, ApiFormats: chatCompletionsFormats}
 	for _, tc := range []struct {
 		target string
 		want   bool
 	}{
-		{`{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, true},
 		{`{"type": "INTELLIGENT"}`, true},
 		{`{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, false},
 		{`{"type": "CONNECTION", "connection_id": "conn-a", "model": "claude"}`, false},
@@ -74,80 +77,55 @@ func TestNewRouteMarksRouters(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 		r, err := NewRoute(api, Providers{"conn-a": ProviderAnthropic})
 		require.NoError(t, err)
-		require.Equal(t, tc.want, r.Router, tc.target)
+		require.Equal(t, tc.want, r.IntelligentRoute, tc.target)
 	}
 	r, err := NewRoute(managementapi.GridRoute{Name: "acme/untyped", Metadata: metadata}, nil)
 	require.NoError(t, err)
-	require.False(t, r.Router, "a route without a target type is not a router")
+	require.False(t, r.IntelligentRoute, "a route without a target type is not a router")
 }
 
-func TestNewRoutePicksTargetAPIFromFormats(t *testing.T) {
-	yes, no, tools, ctx, out := true, false, true, 128000, 4096
+func TestNewRouteTakesTargetAPIFromFirstSupportedAPIFormat(t *testing.T) {
+	tools, ctx, out := true, 128000, 4096
+	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI}
 	for _, tc := range []struct {
-		name    string
-		formats *managementapi.ExploreMetadataAPIFormats
-		want    TargetAPI
+		name                string
+		target              string
+		formats             []managementapi.GridRouteMetadataApiFormats
+		want                TargetAPI
+		messages, responses bool
+		err                 string
 	}{
-		{"no formats", nil, TargetAPIChatCompletions},
-		{"chat completions", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}, TargetAPIChatCompletions},
-		{"messages", &managementapi.ExploreMetadataAPIFormats{Messages: &yes}, TargetAPIMessages},
-		{"responses", &managementapi.ExploreMetadataAPIFormats{Responses: &yes}, TargetAPIResponses},
-		{"chat completions before messages", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes}, TargetAPIChatCompletions},
-		{"chat completions before responses", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}, TargetAPIChatCompletions},
-		{"messages before responses", &managementapi.ExploreMetadataAPIFormats{Messages: &yes, Responses: &yes}, TargetAPIMessages},
-		{"none advertised", &managementapi.ExploreMetadataAPIFormats{Messages: &no, Responses: &no, ChatCompletions: &no}, TargetAPIChatCompletions},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r, err := NewRoute(managementapi.GridRoute{
-				Name: "acme/route", DisplayName: "Route",
-				Metadata: &managementapi.ExploreMetadata{
-					ContextWindow: &ctx, MaxOutputTokens: &out,
-					InputModalities: []string{"text"}, Tools: &tools,
-					SupportedApiFormats: tc.formats,
-				},
-			}, nil)
-			require.NoError(t, err)
-			require.Equal(t, tc.want, r.TargetAPI)
-		})
-	}
-}
-
-func TestNewRoutePrefersNativeTargetAPIForExternalProviders(t *testing.T) {
-	yes, tools, ctx, out := true, true, 128000, 4096
-	all := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes, Responses: &yes}
-	completionsAndResponses := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}
-	completions := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}
-	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI, "conn-bedrock": ProviderBedrock, "conn-vertex": ProviderVertex}
-	for _, tc := range []struct {
-		name    string
-		target  string
-		formats *managementapi.ExploreMetadataAPIFormats
-		want    TargetAPI
-	}{
-		{"baseten prefers chat completions", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, all, TargetAPIChatCompletions},
-		{"router prefers chat completions", `{"type": "INTELLIGENT"}`, all, TargetAPIChatCompletions},
-		{"unknown connection prefers chat completions", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, all, TargetAPIChatCompletions},
-		{"anthropic prefers messages", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, all, TargetAPIMessages},
-		{"openai prefers responses", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, completionsAndResponses, TargetAPIResponses},
-		{"bedrock prefers responses", `{"type": "CONNECTION", "connection_id": "conn-bedrock", "model": "openai.gpt"}`, completionsAndResponses, TargetAPIResponses},
-		{"vertex prefers messages", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "claude"}`, all, TargetAPIMessages},
-		{"external falls back to chat completions", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "gemini"}`, completions, TargetAPIChatCompletions},
+		{"intelligent route", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{"messages", "responses", "chat_completions"}, TargetAPIMessages, true, true, ""},
+		{"model api", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, []managementapi.GridRouteMetadataApiFormats{"chat_completions", "messages", "responses"}, TargetAPIChatCompletions, true, true, ""},
+		{"model api in the server's order", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, []managementapi.GridRouteMetadataApiFormats{"messages", "chat_completions"}, TargetAPIMessages, true, false, ""},
+		{"responses only", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, []managementapi.GridRouteMetadataApiFormats{"responses"}, TargetAPIResponses, false, true, ""},
+		{"messages only", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, []managementapi.GridRouteMetadataApiFormats{"messages"}, TargetAPIMessages, true, false, ""},
+		{"empty", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{}, "", false, false, `route "acme/route" has no supported API formats`},
+		{"unknown first", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{"future_format", "messages"}, "", false, false, `route "acme/route" prefers unknown API format "future_format"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := managementapi.GridRoute{
 				Name: "acme/route", DisplayName: "Route",
-				Metadata: &managementapi.ExploreMetadata{
+				Metadata: &managementapi.GridRouteMetadata{
 					ContextWindow: &ctx, MaxOutputTokens: &out,
 					InputModalities: []string{"text"}, Tools: &tools,
-					SupportedApiFormats: tc.formats,
+					ApiFormats: tc.formats,
 				},
 			}
 			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 			r, err := NewRoute(api, providers)
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				return
+			}
 			require.NoError(t, err)
 			require.Equal(t, tc.want, r.TargetAPI)
+			require.Equal(t, tc.messages, r.Messages, "Claude Code lists routes whose formats include messages")
+			require.Equal(t, tc.responses, r.Responses, "Codex lists routes whose formats include responses")
 		})
 	}
+	_, err := NewRoute(managementapi.GridRoute{Name: "acme/route"}, providers)
+	require.ErrorContains(t, err, `route "acme/route" has no model metadata`)
 }
 
 func TestNewRouteKeepsOnlyTextAndImageInputModalities(t *testing.T) {
@@ -155,9 +133,10 @@ func TestNewRouteKeepsOnlyTextAndImageInputModalities(t *testing.T) {
 	route := func(modalities ...string) (Route, error) {
 		return NewRoute(managementapi.GridRoute{
 			Name: "acme/av", DisplayName: "AV",
-			Metadata: &managementapi.ExploreMetadata{
+			Metadata: &managementapi.GridRouteMetadata{
 				ContextWindow: &ctx, MaxOutputTokens: &out,
 				InputModalities: modalities, Tools: &tools,
+				ApiFormats: chatCompletionsFormats,
 			},
 		}, nil)
 	}
@@ -170,14 +149,14 @@ func TestNewRouteKeepsOnlyTextAndImageInputModalities(t *testing.T) {
 
 func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
 	routes := []Route{
-		{Name: "acme/o'brien", Router: true}, {Name: "acme/plain", DisplayName: "Plain"},
-		{Name: "b10-internal/auto-XP9WlBD", DisplayName: "Auto (Baseten Internal Dogfooding)", Router: true},
-		{Name: "acme/it's", DisplayName: "x=y's", Router: true},
+		{Name: "acme/o'brien", IntelligentRoute: true}, {Name: "acme/plain", DisplayName: "Plain"},
+		{Name: "b10-internal/auto-XP9WlBD", DisplayName: "Auto (Baseten Internal Dogfooding)", IntelligentRoute: true},
+		{Name: "acme/it's", DisplayName: "x=y's", IntelligentRoute: true},
 	}
 	values := claudeServedModelSettings(routes, map[string]any{}, "/opt/it's/baseten")
 	require.Len(t, values, 1)
 	command := values[0].Installed.Data.(map[string]any)["command"].(string)
-	require.Equal(t, `'/opt/it'\''s/baseten' grid claude-served-model --router 'acme/o'\''brien' --router 'b10-internal/auto-XP9WlBD=Auto (Baseten Internal Dogfooding)' --router 'acme/it'\''s=x=y'\''s'`, command)
+	require.Equal(t, `'/opt/it'\''s/baseten' grid claude-served-model --intelligent-route 'acme/o'\''brien' --intelligent-route 'b10-internal/auto-XP9WlBD=Auto (Baseten Internal Dogfooding)' --intelligent-route 'acme/it'\''s=x=y'\''s'`, command)
 	for _, tc := range []struct {
 		command string
 		want    bool
@@ -188,8 +167,10 @@ func TestClaudeServedModelOwnsOnlyGeneratedCommands(t *testing.T) {
 		{"echo " + command, false},
 		{command + " --hook --hook", false},
 		{`'/opt/it'\''s/baseten' grid claude-served-model`, false},
-		{`'/opt/it's/baseten' grid claude-served-model --router 'acme/auto'`, false},
-		{`echo "$(baseten grid claude-served-model --router acme/auto) | custom stats"`, false},
+		// Pre-rename --router spelling from older builds is still owned, so sync replaces it.
+		{strings.Replace(command, "--intelligent-route", "--router", -1), true},
+		{`'/opt/it's/baseten' grid claude-served-model --intelligent-route 'acme/auto'`, false},
+		{`echo "$(baseten grid claude-served-model --intelligent-route acme/auto) | custom stats"`, false},
 	} {
 		require.Equal(t, tc.want, claudeServedModelOwned(map[string]any{"command": tc.command}), tc.command)
 	}
@@ -217,8 +198,10 @@ func testRoutes() []Route {
 
 type fakeExecer struct{ missing bool }
 
+// LookPath finds every bare name, as on PATH, and no desktop app, which is
+// looked up by its absolute path.
 func (e fakeExecer) LookPath(name string) (string, error) {
-	if e.missing {
+	if e.missing || filepath.IsAbs(name) {
 		return "", exec.ErrNotFound
 	}
 	return filepath.Join(string(filepath.Separator), "fake", name), nil
@@ -464,7 +447,7 @@ func TestSetupRefreshAndTeardownKeepUnrelatedSettings(t *testing.T) {
 			teardown(t, h, path)
 			want := map[string]any{"theme": "light", "user-added": "keep"}
 			if h.Name() == Pi {
-				// Pi's default model is in settings.json, so setup leaves models.json's alone.
+				// Pi's default model is in settings.json, so setup leaves this file's model alone.
 				want["model"] = "original-model"
 			}
 			require.Equal(t, want, load(t, path))
@@ -499,7 +482,7 @@ func TestCredential(t *testing.T) {
 }
 
 func TestHelperCredential(t *testing.T) {
-	for _, h := range []Harness{claudeCodeHarness{}, codexHarness{}, piHarness{}} {
+	for _, h := range []Harness{claudeHarness{}, codexHarness{}, piHarness{}} {
 		t.Run(h.Name(), func(t *testing.T) {
 			path := settingsPath(t, h)
 			setup(t, h, path, testRoutes(), Selection{})
@@ -603,7 +586,7 @@ func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 }
 
 func TestOptionalSubagentCleanup(t *testing.T) {
-	for _, h := range []Harness{claudeCodeHarness{}, openCodeHarness{}} {
+	for _, h := range []Harness{claudeHarness{}, openCodeHarness{}} {
 		for _, explicit := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/explicit=%t", h.Name(), explicit), func(t *testing.T) {
 				path := settingsPath(t, h)
@@ -642,8 +625,8 @@ func TestBackgroundRouteDefaultAndOverride(t *testing.T) {
 			want = defaultBackgroundRoute
 		}
 		t.Run(ClaudeCode+"/"+want, func(t *testing.T) {
-			path := settingsPath(t, claudeCodeHarness{})
-			setup(t, claudeCodeHarness{}, path, testRoutes(), Selection{Background: background})
+			path := settingsPath(t, claudeHarness{})
+			setup(t, claudeHarness{}, path, testRoutes(), Selection{Background: background})
 			d := load(t, path)
 			require.Equal(t, want, get(d, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data)
 			require.Equal(t, want, get(d, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data)
@@ -660,19 +643,19 @@ func TestBackgroundRouteDefaultAndOverride(t *testing.T) {
 }
 
 func TestClaudeAnthropicModelEnvIsManaged(t *testing.T) {
-	path := settingsPath(t, claudeCodeHarness{})
-	setup(t, claudeCodeHarness{}, path, testRoutes(), Selection{Primary: "acme/primary"})
+	path := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, path, testRoutes(), Selection{Primary: "acme/primary"})
 	d := load(t, path)
 	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
-	status, err := claudeCodeHarness{}.Inspect(Detection{Name: ClaudeCode, Path: path})
+	status, err := claudeHarness{}.Inspect(Detection{Name: ClaudeCode, Path: path})
 	require.NoError(t, err)
 	require.Contains(t, status.Managed, "env.ANTHROPIC_MODEL")
-	teardown(t, claudeCodeHarness{}, path)
+	teardown(t, claudeHarness{}, path)
 	require.False(t, get(load(t, path), []string{"env", "ANTHROPIC_MODEL"}).Exists)
 }
 
 func TestClaudeSessionStartHookIsInstalledOnce(t *testing.T) {
-	h := claudeCodeHarness{}
+	h := claudeHarness{}
 	path := settingsPath(t, h)
 	save(t, path, map[string]any{"theme": "dark"})
 	ours := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeSessionStartCommand}}}
@@ -699,7 +682,7 @@ func TestClaudeSessionStartHookIsInstalledOnce(t *testing.T) {
 }
 
 func TestClaudeSessionStartHookKeepsUserHooks(t *testing.T) {
-	h := claudeCodeHarness{}
+	h := claudeHarness{}
 	path := settingsPath(t, h)
 	user := []any{
 		map[string]any{"matcher": "startup", "hooks": []any{map[string]any{"type": "command", "command": "echo hi"}}},
@@ -858,7 +841,7 @@ func TestGitContextSanitizesOriginURL(t *testing.T) {
 		name    string
 		command []string
 	}{
-		{"claude-code", []string{"sh", "-c", claudeSessionStartCommand}},
+		{"claude", []string{"sh", "-c", claudeSessionStartCommand}},
 		{"opencode", []string{"node", "--input-type=module", "-e", openCodeDriver, plugin}},
 		{"pi", []string{"node", "--experimental-strip-types", "--input-type=module", "-e", piDriver, extension}},
 	} {
@@ -893,7 +876,7 @@ func TestUnsupportedSelectionsAreRejected(t *testing.T) {
 			require.ErrorContains(t, err, "supported only")
 		})
 	}
-	_, err := claudeCodeHarness{}.Prepare(settingsPath(t, claudeCodeHarness{}), testRoutes(), PrepareOptions{Selection: Selection{Primary: "acme/missing"}, Endpoint: testEndpoint})
+	_, err := claudeHarness{}.Prepare(settingsPath(t, claudeHarness{}), testRoutes(), PrepareOptions{Selection: Selection{Primary: "acme/missing"}, Endpoint: testEndpoint})
 	require.ErrorContains(t, err, "not one of the team's routes")
 }
 
@@ -951,6 +934,10 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	routes[0].TargetAPI = TargetAPIMessages
 	routes[1].TargetAPI = TargetAPIResponses
 	routes[2].TargetAPI = TargetAPIChatCompletions
+	routes[3].TargetAPI, routes[3].UpstreamModel = TargetAPIMessages, "claude-opus-4-5"
+	for i := range routes {
+		routes[i].ReasoningLevels = []string{"none", "high"}
+	}
 	setup(t, openCodeHarness{}, path, routes, Selection{})
 	data := load(t, path)
 	require.Equal(t, "@ai-sdk/openai-compatible", get(data, []string{"provider", providerID, "npm"}).Data)
@@ -959,6 +946,10 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/primary"].(map[string]any)["provider"])
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/openai"}, models["acme/background"].(map[string]any)["provider"])
 	require.NotContains(t, models["acme/subagent"], "provider")
+	require.Equal(t, map[string]any{"high": map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}, "effort": "high"}}, models["acme/primary"].(map[string]any)["variants"])
+	for _, name := range []string{"acme/background", "acme/subagent", "acme/fallback"} {
+		require.Equal(t, map[string]any{"none": map[string]any{"reasoningEffort": "none"}, "high": map[string]any{"reasoningEffort": "high"}}, models[name].(map[string]any)["variants"], name)
+	}
 }
 
 // openCodeV2File is a settings file the user has migrated to OpenCode 2's
@@ -1012,9 +1003,10 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	cacheRead := 0.3
 	routes := testRoutes()
 	routes[0].TargetAPI = TargetAPIMessages
-	routes[0].ReasoningLevels = []string{"low", "max"}
+	routes[0].ReasoningLevels = []string{"none", "low", "max"}
 	routes[0].Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, LongContext: &Cost{Input: 6, Output: 22.5}}
 	routes[1].TargetAPI = TargetAPIResponses
+	routes[3].ReasoningLevels = []string{"none"}
 	plans := setup(t, openCodeHarness{}, path, routes, Selection{Subagent: "acme/subagent"})
 	require.Equal(t, []string{"model"}, plans[0].Replaced)
 	d := load(t, path)
@@ -1046,8 +1038,8 @@ func TestOpenCodeV2Settings(t *testing.T) {
 		"limit":        map[string]any{"context": json.Number("128000"), "output": json.Number("4096")},
 		"capabilities": map[string]any{"tools": true, "input": []any{"text"}, "output": []any{"text"}},
 		"variants": []any{
-			map[string]any{"id": "low", "settings": map[string]any{"reasoningEffort": "low"}},
-			map[string]any{"id": "xhigh", "settings": map[string]any{"reasoningEffort": "xhigh"}},
+			map[string]any{"id": "low", "settings": map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}, "effort": "low"}},
+			map[string]any{"id": "xhigh", "settings": map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}, "effort": "xhigh"}},
 		},
 		"cost": []any{
 			map[string]any{"input": json.Number("3"), "output": json.Number("15"), "cache": map[string]any{"read": json.Number("0.3")}},
@@ -1059,6 +1051,7 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	require.NotContains(t, subagent, "package")
 	require.NotContains(t, subagent, "cost")
 	require.Equal(t, []any{}, subagent["variants"])
+	require.Equal(t, []any{map[string]any{"id": "none", "settings": map[string]any{"reasoningEffort": "none"}}}, models["acme/fallback"].(map[string]any)["variants"])
 	for _, key := range []string{"tool_call", "modalities", "reasoning", "provider"} {
 		require.NotContains(t, primary, key, "no V1 model fields in a V2 file")
 	}
@@ -1209,6 +1202,7 @@ func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	routes[0].TargetAPI = TargetAPIMessages
 	routes[1].TargetAPI = TargetAPIResponses
 	routes[2].TargetAPI = TargetAPIChatCompletions
+	routes[3].TargetAPI, routes[3].IntelligentRoute = TargetAPIMessages, true
 	setup(t, piHarness{}, path, routes, Selection{})
 	provider := get(load(t, path), piProviderPath).Data.(map[string]any)
 	require.Equal(t, "openai-completions", provider["api"])
@@ -1222,6 +1216,8 @@ func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.Equal(t, "anthropic-messages", models["acme/primary"]["api"])
 	require.Equal(t, testEndpoint, models["acme/primary"]["baseUrl"], "Pi's Anthropic client appends /v1")
 	require.Equal(t, true, get(models["acme/primary"], []string{"compat", "forceAdaptiveThinking"}).Data)
+	require.NotContains(t, models["acme/primary"]["compat"], "sendSessionAffinityHeaders")
+	require.Equal(t, map[string]any{"forceAdaptiveThinking": true, "sendSessionAffinityHeaders": true}, models["acme/fallback"]["compat"])
 	require.Equal(t, "openai-responses", models["acme/background"]["api"])
 	require.NotContains(t, models["acme/background"], "baseUrl")
 	require.NotContains(t, models["acme/background"], "compat")
@@ -1320,21 +1316,22 @@ func TestPiIncomplete(t *testing.T) {
 
 func TestClientHeaderNamesHarness(t *testing.T) {
 	paths := map[string][]string{
-		ClaudeCode: {"env", "ANTHROPIC_CUSTOM_HEADERS"},
-		Codex:      {"model_providers", providerID, "http_headers", clientHeader},
-		OpenCode:   {"provider", providerID, "options", "headers", clientHeader},
-		Pi:         {"providers", providerID, "headers", clientHeader},
+		Claude:   {"env", "ANTHROPIC_CUSTOM_HEADERS"},
+		Codex:    {"model_providers", providerID, "http_headers", clientHeader},
+		OpenCode: {"provider", providerID, "options", "headers", clientHeader},
+		Pi:       {"providers", providerID, "headers", clientHeader},
 	}
 	for _, h := range All() {
 		t.Run(h.Name(), func(t *testing.T) {
 			path := settingsPath(t, h)
 			setup(t, h, path, testRoutes(), Selection{})
 			want := h.Name()
-			if h.Name() == ClaudeCode {
+			if h.Name() == Claude {
+				// Claude Code and Claude Desktop identify as claude-code on the wire.
 				want = clientHeader + ": " + ClaudeCode
 			}
 			require.Equal(t, want, get(load(t, path), paths[h.Name()]).Data)
-			if h.Name() == ClaudeCode {
+			if h.Name() == Claude {
 				require.Equal(t, "1", get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Data)
 				require.Equal(t, "true", get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Data)
 				teardown(t, h, path)
@@ -1378,7 +1375,7 @@ func TestDetect(t *testing.T) {
 		env                string
 		defaultPath, inEnv string
 	}{
-		{claudeCodeHarness{}, "CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude", "settings.json"), filepath.Join(custom, "settings.json")},
+		{claudeHarness{}, "CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude", "settings.json"), filepath.Join(custom, "settings.json")},
 		{codexHarness{}, "CODEX_HOME", filepath.Join(home, ".codex", "config.toml"), filepath.Join(custom, "config.toml")},
 		{openCodeHarness{}, "XDG_CONFIG_HOME", filepath.Join(home, ".config", "opencode", "opencode.json"), filepath.Join(custom, "opencode", "opencode.json")},
 		{piHarness{}, "PI_CODING_AGENT_DIR", filepath.Join(home, ".pi", "agent", "models.json"), filepath.Join(custom, "models.json")},
@@ -1386,10 +1383,7 @@ func TestDetect(t *testing.T) {
 		t.Run(tc.h.Name(), func(t *testing.T) {
 			d, err := tc.h.Detect(t.Context(), fakeExecer{}, "")
 			require.NoError(t, err)
-			// fakeExecer finds every binary, so desktop installs are listed too.
-			require.NotEmpty(t, d.Installs)
-			d.Installs = d.Installs[:1]
-			binary := map[string]string{ClaudeCode: "claude", Codex: "codex", OpenCode: "opencode", Pi: "pi"}[tc.h.Name()]
+			binary := map[string]string{Claude: "claude", Codex: "codex", OpenCode: "opencode", Pi: "pi"}[tc.h.Name()]
 			want := Detection{Name: tc.h.Name(), Path: tc.defaultPath, Installed: true,
 				Installs: []Install{cli(filepath.Join(string(filepath.Separator), "fake", binary), "1.2.3")}}
 			require.Equal(t, want, d)
@@ -1403,6 +1397,79 @@ func TestDetect(t *testing.T) {
 			require.Equal(t, dir, filepath.Dir(d.Path), "--config-dir wins over the environment")
 		})
 	}
+}
+
+func TestLoadRecordsRenamesClaudeCode(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, SaveRecords(dir, RecordFile{Harnesses: map[string]Record{ClaudeCode: {TeamID: "team-a"}}}))
+	file, err := LoadRecords(dir)
+	require.NoError(t, err)
+	require.Equal(t, map[string]Record{Claude: {TeamID: "team-a"}}, file.Harnesses)
+}
+
+func TestClaudeDesktopConfigFollowsClaudeCodeSettings(t *testing.T) {
+	// The app's files are in its own library when the settings are in Claude
+	// Code's default directory, else under the settings directory, so that
+	// --config-dir keeps both apps' files together.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	native := claudeDesktopConfig(filepath.Join(home, ".claude", "settings.json"))
+	require.Equal(t, claudeDesktopConfigID+".json", filepath.Base(native))
+	require.Contains(t, native, "Claude-3p")
+	require.NotContains(t, native, ".claude")
+	dir := t.TempDir()
+	require.Equal(t, filepath.Join(dir, "Claude-3p", "configLibrary", claudeDesktopConfigID+".json"), claudeDesktopConfig(filepath.Join(dir, "settings.json")))
+	for _, name := range []string{"claude-desktop-b0dgYBn", "claude-desktop-XP9WlBD"} {
+		require.False(t, claudeDesktopDeniedID(name), name)
+	}
+	require.True(t, claudeDesktopDeniedID("claude-desktop-aGLMbcd"))
+}
+
+func TestClaudeDesktopFilesWithClaudeCodeSettings(t *testing.T) {
+	h := claudeHarness{}
+	path := settingsPath(t, h)
+	opts := PrepareOptions{Endpoint: testEndpoint, Installs: []Install{{Kind: InstallDesktop, Binary: "/Applications/Claude.app/Contents/MacOS/Claude"}}}
+	plans, err := h.Prepare(path, testRoutes(), opts)
+	require.NoError(t, err)
+	require.Len(t, plans, 4, "Claude Code's settings, the app config, the library's applied config, and the app's mode")
+	require.NoError(t, ApplyPlans(plans, testToken))
+	config := claudeDesktopConfig(path)
+	data := load(t, config)
+	require.Equal(t, ClaudeCode, get(data, claudeDesktopMarkerPath).Data)
+	require.Equal(t, true, get(data, []string{"autoModeEnabled"}).Data, "Auto mode is offered in Cowork as well as Code")
+	require.Equal(t, true, get(data, []string{"toolSearchEnabled"}).Data)
+	models := data["inferenceModels"].([]any)
+	require.Equal(t, "sonnet", models[0].(map[string]any)["anthropicFamilyTier"], "no listed background route, so the primary serves Auto mode")
+	for _, m := range models[1:] {
+		require.NotContains(t, m.(map[string]any), "anthropicFamilyTier")
+	}
+	require.Equal(t, testToken, data["inferenceGatewayApiKey"])
+	require.Equal(t, claudeDesktopID(config), load(t, claudeDesktopMetaPath(config))["appliedId"])
+	require.Equal(t, "3p", load(t, claudeDesktopAppConfigPath(config))["deploymentMode"])
+	status, err := h.Inspect(Detection{Name: Claude, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateConfigured, status.State)
+	require.Contains(t, status.Managed, "inferenceModels")
+
+	plans, err = h.Prepare(path, testRoutes(), opts)
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	for _, p := range plans {
+		require.False(t, p.Changed, "repeating setup changes nothing: %s", p.Path)
+	}
+
+	// Without the app, setup leaves its files alone and teardown still removes them.
+	plans, err = h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint})
+	require.NoError(t, err)
+	require.Len(t, plans, 1)
+	teardown(t, h, path)
+	require.NoFileExists(t, config)
+	require.NotContains(t, load(t, claudeDesktopMetaPath(config)), "appliedId")
+	require.Equal(t, "1p", load(t, claudeDesktopAppConfigPath(config))["deploymentMode"])
+	status, err = h.Inspect(Detection{Name: Claude, Path: path})
+	require.NoError(t, err)
+	require.Equal(t, StateNotConfigured, status.State)
 }
 
 func TestMalformedSettingsAreReported(t *testing.T) {
@@ -1426,10 +1493,13 @@ type codexDaemonExecer struct {
 }
 
 func (e *codexDaemonExecer) LookPath(name string) (string, error) {
-	if e.binaries != nil && !e.binaries[name] {
+	if e.binaries == nil {
+		return e.fakeExecer.LookPath(name)
+	}
+	if !e.binaries[name] {
 		return "", exec.ErrNotFound
 	}
-	return e.fakeExecer.LookPath(name)
+	return filepath.Join(string(filepath.Separator), "fake", name), nil
 }
 
 func (e *codexDaemonExecer) Exec(command *exec.Cmd) error {
