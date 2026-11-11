@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"charm.land/huh/v2"
+	lipglossv2 "charm.land/lipgloss/v2"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -444,7 +445,7 @@ func (c *CommandContext) RunPrompt(field huh.Field) error {
 	// signal, which huh handles itself by returning huh.ErrUserAborted. I/O is
 	// set explicitly because huh's accessible mode (e.g. TERM=dumb) defaults
 	// output to stdout, which would corrupt command output.
-	form := huh.NewForm(huh.NewGroup(field)).WithShowHelp(false).WithInput(c.Stdin).WithOutput(c.Stderr)
+	form := huh.NewForm(huh.NewGroup(field)).WithTheme(huh.ThemeFunc(promptTheme)).WithShowHelp(false).WithInput(c.Stdin).WithOutput(c.Stderr)
 	if answers, ok := c.promptAnswers(); ok {
 		if len(*answers) == 0 {
 			return errors.New("no answer for the prompt")
@@ -454,6 +455,33 @@ func (c *CommandContext) RunPrompt(field huh.Field) error {
 		form = form.WithAccessible(true).WithInput(strings.NewReader(answer + "\n"))
 	}
 	return form.RunWithContext(c)
+}
+
+// promptTheme styles prompts with the terminal's default foreground plus the
+// base ANSI colors, which the user's terminal theme defines. huh's default
+// theme uses fixed RGB and 256-color values that can vanish against a
+// background they were not picked for.
+func promptTheme(isDark bool) *huh.Styles {
+	cyan, red := lipglossv2.Color("6"), lipglossv2.Color("1")
+	t := huh.ThemeBase(isDark)
+	t.Focused.Title = t.Focused.Title.Bold(true)
+	// Faint rather than bright black, which some themes (Solarized) set to
+	// the background color.
+	t.Focused.Description = t.Focused.Description.Faint(true)
+	t.Focused.ErrorIndicator = t.Focused.ErrorIndicator.Foreground(red)
+	t.Focused.ErrorMessage = t.Focused.ErrorMessage.Foreground(red)
+	t.Focused.SelectSelector = t.Focused.SelectSelector.Foreground(cyan)
+	t.Focused.MultiSelectSelector = t.Focused.MultiSelectSelector.Foreground(cyan)
+	t.Focused.SelectedOption = t.Focused.SelectedOption.Foreground(cyan)
+	t.Focused.SelectedPrefix = t.Focused.SelectedPrefix.Foreground(cyan)
+	t.Focused.TextInput.Prompt = t.Focused.TextInput.Prompt.Foreground(cyan)
+
+	border := t.Blurred.Base
+	t.Blurred = t.Focused
+	t.Blurred.Base = border
+	t.Blurred.Card = border
+	t.Blurred.MultiSelectSelector = lipglossv2.NewStyle().SetString("  ")
+	return t
 }
 
 // OAuthConfig returns the OAuth2 configuration for the given host.

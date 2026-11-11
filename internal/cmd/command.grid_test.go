@@ -1576,6 +1576,9 @@ func Test_Grid_Setup_ServedModelPrompt(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	h.Require.Contains(h.Stderr.String(), question)
 	h.Require.True(shown())
+	// Prompts may use the terminal's 16 theme colors but no fixed 256-color
+	// or RGB value, which can vanish against the user's background.
+	h.Require.NotRegexp(`\x1b\[[0-9;]*[34]8;[25];`, h.Stderr.String())
 
 	answer("2", "1")
 	h.Require.NoError(h.Execute(setup...))

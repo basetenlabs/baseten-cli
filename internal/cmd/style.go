@@ -10,9 +10,11 @@ import (
 )
 
 // inlineCodeStyle renders a string like inline code in a markdown renderer:
-// subtle foreground color, no bold. lipgloss / termenv handle NO_COLOR and
-// non-TTY downgrade automatically.
-var inlineCodeStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "63", Dark: "117"})
+// subtle foreground color, no bold. The color is ANSI cyan, which the user's
+// terminal theme defines, so it stays legible on any background the theme was
+// built for. lipgloss / termenv handle NO_COLOR and non-TTY downgrade
+// automatically.
+var inlineCodeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 
 // linkStyle renders a hyperlink's visible text: the inline-code color plus an
 // underline so links read as links. lipgloss handles NO_COLOR and non-TTY
