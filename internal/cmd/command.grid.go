@@ -244,23 +244,17 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 	}
 	providers := harness.NewProviders(connections)
 	var routes []harness.Route
-	var skipped, unresolved []string
+	var skipped []string
 	for _, l := range listed {
 		r, err := harness.NewRoute(l, providers)
 		switch {
 		case err == nil:
 			routes = append(routes, r)
-			if kind, _ := l.Target.Discriminator(); kind == "CONNECTION" && r.Provider == "" {
-				unresolved = append(unresolved, l.Name)
-			}
 		case !forSync && slices.ContainsFunc(targets, func(t gridHarnessTarget) bool { return t.record.Route == l.Name }):
 			return nil, cmd.NewErrValidation(err)
 		default:
 			skipped = append(skipped, l.Name)
 		}
-	}
-	if len(unresolved) > 0 {
-		ctx.Logf("warning: routes whose connection is not in the team's connections are called with the Chat Completions API: %s\n", strings.Join(unresolved, ", "))
 	}
 	if len(routes) == 0 {
 		return nil, cmd.NewErrValidation(errors.New("none of the team's routes have usable model metadata"))

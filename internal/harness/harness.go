@@ -162,6 +162,12 @@ const (
 	TargetAPIChatCompletions TargetAPI = "chat-completions"
 )
 
+var targetAPIsByFormat = map[managementapi.GridRouteMetadataApiFormats]TargetAPI{
+	managementapi.GridRouteMetadataApiFormats_messages:         TargetAPIMessages,
+	managementapi.GridRouteMetadataApiFormats_responses:        TargetAPIResponses,
+	managementapi.GridRouteMetadataApiFormats_chat_completions: TargetAPIChatCompletions,
+}
+
 // Route is a Baseten route as shown in a harness's model picker, with the model
 // capabilities supplied by the route's own metadata.
 type Route struct {
@@ -222,19 +228,21 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	if m == nil {
 		return r, fmt.Errorf("route %q has no model metadata", r.Name)
 	}
+	formats := m.ApiFormats
+	if len(formats) == 0 {
+		return r, fmt.Errorf("route %q has no supported API formats", r.Name)
+	}
+	var known bool
+	if r.TargetAPI, known = targetAPIsByFormat[formats[0]]; !known {
+		return r, fmt.Errorf("route %q prefers unknown API format %q", r.Name, formats[0])
+	}
 	r.ContextWindow, r.OutputLimit = deref(m.ContextWindow), deref(m.MaxOutputTokens)
 	r.InputModalities = slices.DeleteFunc(slices.Clone(m.InputModalities), func(modality string) bool {
 		return modality != "text" && modality != "image"
 	})
 	r.Tools = deref(m.Tools)
 	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
-	// Without formats the route's APIs are unknown, so every harness lists it.
-	r.Messages, r.Responses = true, true
-	r.TargetAPI = TargetAPIChatCompletions
-	if f := m.SupportedApiFormats; f != nil {
-		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
-		r.TargetAPI = preferredTargetAPI(f, r.Provider)
-	}
+	r.Messages, r.Responses = slices.Contains(formats, managementapi.GridRouteMetadataApiFormats_messages), slices.Contains(formats, managementapi.GridRouteMetadataApiFormats_responses)
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
 		if r.Cost != nil && c.LongContext != nil {
@@ -242,20 +250,6 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 		}
 	}
 	return r, validateRoute(r)
-}
-
-func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats, provider string) TargetAPI {
-	switch {
-	case deref(f.ChatCompletions) && (provider == ProviderBaseten || provider == ""):
-		// NB(nikhil): MAPIs specifically advertise all compatibility, but prefer chat completions.
-		return TargetAPIChatCompletions
-	case deref(f.Messages):
-		return TargetAPIMessages
-	case deref(f.Responses):
-		return TargetAPIResponses
-	default:
-		return TargetAPIChatCompletions
-	}
 }
 
 // newCost returns nil unless both input and output prices are known.
