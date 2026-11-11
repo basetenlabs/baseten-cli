@@ -186,7 +186,7 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 		require.NoError(t, os.MkdirAll(h.configDir, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(h.configDir, file), []byte(content), 0o600))
 	}
-	out, errOut, err := cli(t, "grid", "setup", "--harness", name, "--config-dir", h.configDir, "--use-session-credential", "--yes")
+	out, errOut, err := cli(t, "grid", "setup", "--harness", name, "--config-dir", h.configDir, "--yes")
 	if err != nil {
 		msg := strings.TrimSpace(errOut + out)
 		switch {
