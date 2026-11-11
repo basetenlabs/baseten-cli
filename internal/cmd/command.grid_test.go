@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -2206,6 +2207,26 @@ func Test_Grid_Setup_ServedModelSelectedHarnesses(t *testing.T) {
 	h.Require.Equal(before["claude"], after["claude"], "harnesses not selected keep their records")
 	h.Require.Equal(before["opencode"], after["opencode"])
 }
+
+func Test_Grid_Setup_PromptUsesTerminalForeground(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	serveServedModelRoutes(api, "auto")
+	h.Context = internalcmd.WithPromptAnswers(h.Context, "1", "1")
+	question := "Show which model served each response on intelligent routes in Claude Code?"
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", t.TempDir()))
+	// huh's default theme colors prompt text for a dark background, leaving
+	// it near-white on a light one; prompts keep the terminal's foreground.
+	for line := range strings.Lines(h.Stderr.String()) {
+		if strings.Contains(line, question) {
+			h.Require.NotRegexp(terminalEscape, line)
+			return
+		}
+	}
+	h.Require.Fail("prompt not shown", h.Stderr.String())
+}
+
+var terminalEscape = regexp.MustCompile(`\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]`)
 
 // serveFirstPartyRoutes serves an Anthropic route and an OpenAI route, each
 // through a team connection, a Baseten-hosted route, and a route whose
