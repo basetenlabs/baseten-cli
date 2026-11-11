@@ -76,12 +76,7 @@ func gridRouteFixture(target map[string]any) map[string]any {
 		"target":       target,
 		"invoke_url":   "https://coding.baseten.co",
 		"created_at":   "2026-09-17T10:00:00Z",
-		"metadata": map[string]any{
-			"slug": nil, "display_name": nil, "release_date": nil, "provider": nil,
-			"context_window": 128000, "max_output_tokens": 4096, "input_modalities": []any{"text"}, "tools": true,
-			"reasoning_effort_levels": nil, "parallel_tool_calls": nil, "cost": nil,
-			"supported_api_formats": []any{"chat_completions", "messages", "responses"},
-		},
+		"metadata":     nil,
 	}
 }
 

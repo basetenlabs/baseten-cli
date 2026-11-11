@@ -162,11 +162,11 @@ func TestPiAnthropicThinkingCompatibility(t *testing.T) {
 			tools := true
 			api := managementapi.GridRoute{
 				Name: "acme/custom", DisplayName: "Custom",
-				Metadata: managementapi.GridRouteMetadata{
+				Metadata: &managementapi.GridRouteMetadata{
 					ContextWindow: &tc.contextWindow, MaxOutputTokens: &tc.outputLimit,
 					InputModalities: []string{"text", "image"}, Tools: &tools,
 					ReasoningEffortLevels: &tc.reasoningLevels,
-					SupportedApiFormats:   []managementapi.GridRouteMetadataSupportedApiFormats{managementapi.GridRouteMetadataSupportedApiFormats_messages},
+					ApiFormats:            []managementapi.GridRouteMetadataApiFormats{managementapi.GridRouteMetadataApiFormats_messages},
 				},
 			}
 			require.NoError(t, json.Unmarshal([]byte(`{"type":"CONNECTION","connection_id":"conn-a","model":"`+tc.model+`"}`), &api.Target))
@@ -294,12 +294,12 @@ func TestPiCarriesCompleteRouteCost(t *testing.T) {
 
 func TestNewRoute(t *testing.T) {
 	_, err := NewRoute(managementapi.GridRoute{Name: "acme/bare"}, nil)
-	require.ErrorContains(t, err, `route "acme/bare" has no supported API formats`)
+	require.ErrorContains(t, err, `route "acme/bare" has no model metadata`)
 
 	ptr := func(v float32) *float32 { return &v }
 	tools, ctx, out := true, 128000, 4096
-	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", Metadata: managementapi.GridRouteMetadata{
-		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, SupportedApiFormats: chatCompletionsFormats,
+	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.GridRouteMetadata{
+		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, ApiFormats: chatCompletionsFormats,
 		Cost: &managementapi.ExploreCost{Input: ptr(0.3), Output: ptr(1.2), LongContext: &managementapi.ExploreCostValues{Input: ptr(0.6)}},
 	}}, nil)
 	require.NoError(t, err)
@@ -316,7 +316,7 @@ func TestRouteTargetComesFromConnections(t *testing.T) {
 	require.Equal(t, Providers{"conn-a": ProviderAnthropic, "conn-o": ProviderOpenAI, "conn-x": "XAI"}, providers)
 
 	tools, ctx, out := true, 128000, 4096
-	metadata := managementapi.GridRouteMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, SupportedApiFormats: chatCompletionsFormats}
+	metadata := &managementapi.GridRouteMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, ApiFormats: chatCompletionsFormats}
 	for _, tc := range []struct {
 		name         string
 		target       string

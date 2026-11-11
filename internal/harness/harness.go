@@ -162,10 +162,10 @@ const (
 	TargetAPIChatCompletions TargetAPI = "chat-completions"
 )
 
-var targetAPIsByFormat = map[managementapi.GridRouteMetadataSupportedApiFormats]TargetAPI{
-	managementapi.GridRouteMetadataSupportedApiFormats_messages:         TargetAPIMessages,
-	managementapi.GridRouteMetadataSupportedApiFormats_responses:        TargetAPIResponses,
-	managementapi.GridRouteMetadataSupportedApiFormats_chat_completions: TargetAPIChatCompletions,
+var targetAPIsByFormat = map[managementapi.GridRouteMetadataApiFormats]TargetAPI{
+	managementapi.GridRouteMetadataApiFormats_messages:         TargetAPIMessages,
+	managementapi.GridRouteMetadataApiFormats_responses:        TargetAPIResponses,
+	managementapi.GridRouteMetadataApiFormats_chat_completions: TargetAPIChatCompletions,
 }
 
 // Route is a Baseten route as shown in a harness's model picker, with the model
@@ -225,7 +225,10 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	r := Route{ID: api.Id, Name: api.Name, DisplayName: api.DisplayName, Router: routeIsRouter(api)}
 	r.Provider, r.UpstreamModel = routeTarget(api, providers)
 	m := api.Metadata
-	formats := m.SupportedApiFormats
+	if m == nil {
+		return r, fmt.Errorf("route %q has no model metadata", r.Name)
+	}
+	formats := m.ApiFormats
 	if len(formats) == 0 {
 		return r, fmt.Errorf("route %q has no supported API formats", r.Name)
 	}
@@ -239,7 +242,7 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	})
 	r.Tools = deref(m.Tools)
 	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
-	r.Messages, r.Responses = slices.Contains(formats, managementapi.GridRouteMetadataSupportedApiFormats_messages), slices.Contains(formats, managementapi.GridRouteMetadataSupportedApiFormats_responses)
+	r.Messages, r.Responses = slices.Contains(formats, managementapi.GridRouteMetadataApiFormats_messages), slices.Contains(formats, managementapi.GridRouteMetadataApiFormats_responses)
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
 		if r.Cost != nil && c.LongContext != nil {

@@ -40,12 +40,14 @@ import (
 // harnessRouteMetadata is usable model metadata for route fixtures.
 var harnessRouteMetadata = map[string]any{
 	"context_window": 128000, "max_output_tokens": 4096, "input_modalities": []string{"text"}, "tools": true,
-	"supported_api_formats": []any{"chat_completions", "messages", "responses"},
+	"supported_api_formats": map[string]any{"messages": true, "responses": true, "chat_completions": true},
+	"api_formats":           []any{"chat_completions", "messages", "responses"},
 }
 
 var messagesFirstRouteMetadata = map[string]any{
 	"context_window": 128000, "max_output_tokens": 4096, "input_modalities": []string{"text"}, "tools": true,
-	"supported_api_formats": []any{"messages", "responses", "chat_completions"},
+	"supported_api_formats": map[string]any{"messages": true, "responses": true, "chat_completions": true},
+	"api_formats":           []any{"messages", "responses", "chat_completions"},
 }
 
 // fakeHarnessExecer finds the one binary it names, or every bare name as on
@@ -1855,7 +1857,7 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 	}))
 	t.Cleanup(gateway.Close)
 	h, api := gridAPI(t, gateway.URL)
-	wide := maps.Clone(harnessRouteMetadata)
+	wide := maps.Clone(messagesFirstRouteMetadata)
 	wide["context_window"] = 1000000
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-auto", "name": "acme/auto", "display_name": "Auto", "invoke_url": gateway.URL, "metadata": wide,
@@ -3064,9 +3066,9 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 // connection no longer exists.
 func serveFirstPartyRoutes(api *MockManagementAPI) {
 	messages := maps.Clone(harnessRouteMetadata)
-	messages["supported_api_formats"] = []any{"messages"}
+	messages["supported_api_formats"], messages["api_formats"] = map[string]any{"messages": true}, []any{"messages"}
 	responses := maps.Clone(harnessRouteMetadata)
-	responses["supported_api_formats"] = []any{"responses"}
+	responses["supported_api_formats"], responses["api_formats"] = map[string]any{"responses": true}, []any{"responses"}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
 			map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-a", "name": "acme/claude", "display_name": "Claude", "invoke_url": api.URL, "metadata": messages,
@@ -3294,7 +3296,7 @@ func Test_Grid_Setup_RouteMetadata(t *testing.T) {
 
 	h.Stderr.Reset()
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude", "--primary-route-id", "route-bare", "--config-dir", t.TempDir(), "--yes"))
-	h.Require.Contains(h.Stderr.String(), `route "acme/bare" has no supported API formats`)
+	h.Require.Contains(h.Stderr.String(), `route "acme/bare" has no model metadata`)
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"), "a failed setup creates no key")
 
 	// A route's cost reaches OpenCode, and needs both input and output prices.
@@ -3316,7 +3318,7 @@ func Test_Grid_Setup_RoutesByAPIFormat(t *testing.T) {
 	h, api := fakeGridAPI(t)
 	formats := func(apiFormats ...any) map[string]any {
 		m := maps.Clone(harnessRouteMetadata)
-		m["supported_api_formats"] = apiFormats
+		m["api_formats"] = apiFormats
 		return m
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
@@ -3547,7 +3549,7 @@ func harnessRoute(api *MockManagementAPI, name string) map[string]any {
 	metadata := harnessRouteMetadata
 	if name == "gpt" {
 		metadata = maps.Clone(harnessRouteMetadata)
-		metadata["supported_api_formats"] = []any{"responses"}
+		metadata["supported_api_formats"], metadata["api_formats"] = map[string]any{"messages": false, "responses": true}, []any{"responses"}
 	}
 	return map[string]any{
 		"id": "route-" + name, "name": "acme/" + name, "display_name": "acme/" + name,
