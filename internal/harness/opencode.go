@@ -365,7 +365,9 @@ func openCodeV1Settings(routes []Route, s Selection, endpoint, bearer string) []
 	for _, r := range routes {
 		variants := map[string]any{}
 		for _, level := range xhighReasoningLevels(r.ReasoningLevels) {
-			variants[level] = map[string]any{"reasoningEffort": level}
+			if settings := openCodeVariantSettings(r, level); settings != nil {
+				variants[level] = settings
+			}
 		}
 		model := map[string]any{
 			"name":       r.DisplayName,
@@ -411,7 +413,9 @@ func openCodeV2Settings(routes []Route, s Selection, endpoint, bearer string) []
 	for _, r := range routes {
 		variants := []any{}
 		for _, level := range xhighReasoningLevels(r.ReasoningLevels) {
-			variants = append(variants, map[string]any{"id": level, "settings": map[string]any{"reasoningEffort": level}})
+			if settings := openCodeVariantSettings(r, level); settings != nil {
+				variants = append(variants, map[string]any{"id": level, "settings": settings})
+			}
 		}
 		model := map[string]any{
 			"name":         r.DisplayName,
@@ -438,6 +442,16 @@ func openCodeV2Settings(routes []Route, s Selection, endpoint, bearer string) []
 			"models":   models,
 		}),
 	}
+}
+
+func openCodeVariantSettings(r Route, level string) map[string]any {
+	if r.TargetAPI == TargetAPIMessages && piAdaptiveThinking(r.UpstreamModel) {
+		if level == "none" {
+			return nil
+		}
+		return map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}, "effort": level}
+	}
+	return map[string]any{"reasoningEffort": level}
 }
 
 // openCodeV1Cost is OpenCode's per-model price, in USD per 1M tokens.

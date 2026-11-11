@@ -397,6 +397,24 @@ func (c *CommandContext) IsInteractive() bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
+// TerminalWidth returns the width of the terminal stdout is attached to,
+// honoring any override installed via WithTerminalWidth, or false when
+// stdout isn't a terminal.
+func (c *CommandContext) TerminalWidth() (int, bool) {
+	if w, ok := c.Value(terminalWidthKey{}).(int); ok {
+		return w, true
+	}
+	f, ok := c.Stdout.(*os.File)
+	if !ok || !term.IsTerminal(int(f.Fd())) {
+		return 0, false
+	}
+	w, _, _ := term.GetSize(int(f.Fd()))
+	if w <= 0 {
+		w = 80
+	}
+	return w, true
+}
+
 // ConfirmYesNo prompts the user with a yes/no question. Returns an ErrUsage
 // when stdin is not a terminal so callers can instruct the user to pass --yes
 // or similar. Returns a non-nil error if the user declines.
@@ -677,6 +695,14 @@ func WithTicker(ctx context.Context, fn func(time.Duration) (<-chan time.Time, f
 
 type nowKey struct{}
 type sleepKey struct{}
+type terminalWidthKey struct{}
+
+// WithTerminalWidth returns a context that makes CommandContext.TerminalWidth
+// report stdout as a terminal of the given width. Intended for tests of
+// output that only a terminal gets, such as charts.
+func WithTerminalWidth(ctx context.Context, width int) context.Context {
+	return context.WithValue(ctx, terminalWidthKey{}, width)
+}
 
 // WithNow returns a context that pins CommandContext.Now to fn. Intended for
 // tests; production code uses time.Now via the default path.
@@ -845,6 +871,13 @@ func (a *authInfo) resolve() error {
 		a.remote, a.err = NewRemote(a.session.RemoteURL())
 	})
 	return a.err
+}
+
+// Reset forgets the resolved session and remote, so the next use resolves them
+// again. For a command that changes the stored profiles partway through.
+func (a *authInfo) Reset() {
+	a.once = sync.Once{}
+	a.err, a.remote, a.session = nil, nil, nil
 }
 
 // Remote returns the remote for this invocation, derived from the selected

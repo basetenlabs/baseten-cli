@@ -425,6 +425,42 @@ func Test_Grid_Setup_TextSummary(t *testing.T) {
 	h.Require.NotContains(h.Stderr.String(), "Created Grid API key")
 }
 
+func Test_Grid_Setup_SignsInWithoutCurrentProfile(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	t.Setenv("BASETEN_PROFILE", "")
+	h.Require.NoError(configDirStore(t).RemoveProfile(t.Context(), "alice"))
+	api.SetRoute("POST", "/v1/users/auth/device/authorize", 200, map[string]any{
+		"device_code": "dev-code", "user_code": "ABCD-EFGH", "verification_uri": "https://auth.example.com/device", "expires_in": 300, "interval": 1,
+	})
+	api.SetRoute("POST", "/v1/users/auth/device/token", 200, map[string]any{"access_token": "access-xyz", "refresh_token": "refresh-xyz", "token_type": "Bearer", "expires_in": 3600})
+	api.SetRoute("GET", "/v1/users/me", 200, map[string]string{"user_id": "user-a", "email": "user@example.com", "workspace_name": "my-workspace"})
+	dir := t.TempDir()
+	args := []string{"grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes", "--output", "json"}
+
+	// Not interactive: no sign-in is attempted.
+	h.Require.Error(h.Execute(args...))
+	h.Require.Empty(h.OpenedURLs)
+
+	h.Context = internalcmd.WithPromptAnswers(h.Context)
+	// A dry run does not sign in either.
+	h.Require.Error(h.Execute(append(slices.Clone(args), "--dry-run")...))
+	h.Require.Empty(h.OpenedURLs)
+
+	h.Require.NoError(h.Execute(args...))
+	h.Require.Equal([]string{"https://auth.example.com/device"}, h.OpenedURLs)
+	name, _, ok, err := configDirStore(t).CurrentProfile()
+	h.Require.NoError(err)
+	h.Require.True(ok)
+	h.Require.Contains(name, "user@example.com")
+	h.Require.Contains(h.Stderr.String(), "Logged in as user@example.com (my-workspace) as profile "+name+"\n")
+	// Setup's result is the only document on stdout.
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	h.Require.Contains(result, "items")
+	h.Require.Equal(name, harnessRecordFile(t).Harnesses["claude"].Profile)
+}
+
 func Test_Grid_Setup_RequiresHarnessWhenNotInteractive(t *testing.T) {
 	skipUnlessSupported(t)
 	h := NewCommandHarness(t)
@@ -1239,7 +1275,7 @@ func serveServedModelRoutes(api *MockManagementAPI, routers ...string) {
 			display = name
 		}
 		items = append(items, map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-" + name, "name": "acme/" + name, "display_name": display, "invoke_url": api.URL, "metadata": wide,
-			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}})
+			"target": map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "name": "General"}, "tradeoff": "balanced"}})
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
 }
@@ -1823,7 +1859,7 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 	wide["context_window"] = 1000000
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-auto", "name": "acme/auto", "display_name": "Auto", "invoke_url": gateway.URL, "metadata": wide,
-			"target": map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-auto", "slug": "acme/auto"}, "allowed_routes": []any{}}}},
+			"target": map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "name": "General"}, "tradeoff": "balanced"}}},
 		"pagination": map[string]any{"has_more": false},
 	})
 	root := t.TempDir()
@@ -2258,7 +2294,7 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	route := func(id, name, display string, metadata, target map[string]any) map[string]any {
 		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": metadata, "target": target}
 	}
-	router := map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}
+	router := map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "name": "General"}, "tradeoff": "balanced"}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
 			route("route-primary", "acme/primary", "Primary", harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
@@ -2879,7 +2915,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", messagesFirstRouteMetadata, map[string]any{"type": "CLASSIFIER", "default_route": map[string]any{"id": "route-primary", "slug": "acme/primary"}, "allowed_routes": []any{}}),
+			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", messagesFirstRouteMetadata, map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "name": "General"}, "tradeoff": "balanced"}),
 			route("route-primary", "acme/primary", "Primary", harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
 		},
 		"pagination": map[string]any{"has_more": false},
@@ -4397,7 +4433,7 @@ func Test_Grid_Help(t *testing.T) {
 		{"grid", "connection", "create"},
 		{"grid", "connection", "update"},
 		{"grid", "connection", "delete"},
-		{"grid", "classifier", "list"},
+		{"grid", "route-classifier", "list"},
 	} {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -4513,7 +4549,14 @@ func Test_Grid_Setup_RejectsEmptyOrInvalidTeamScope(t *testing.T) {
 	}
 }
 
-func Test_Grid_Classifier_List(t *testing.T) {
+func routeClassifierFixture(id, name string) map[string]any {
+	return map[string]any{
+		"id": id, "name": name, "supported_tradeoffs": []any{},
+		"decidable_models": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
+	}
+}
+
+func Test_Grid_RouteClassifier_List(t *testing.T) {
 	for _, empty := range []bool{false, true} {
 		for _, output := range []string{"text", "json", "jsonl"} {
 			t.Run(fmt.Sprintf("%t/%s", empty, output), func(t *testing.T) {
@@ -4521,23 +4564,24 @@ func Test_Grid_Classifier_List(t *testing.T) {
 				m := h.MockManagementAPI()
 				items := []any{}
 				if !empty {
-					items = append(items, map[string]any{"id": "general-v1", "name": "General"})
+					items = append(items, routeClassifierFixture("general-v1", "General"))
 				}
 				body := gridRoutePage(items, nil)
-				m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+				m.SetRouteFunc("GET", "/v1/grid/route_classifiers", func(w http.ResponseWriter, r *http.Request) {
 					h.Require.Equal("Bearer test-key", r.Header.Get("Authorization"))
 					h.Require.Empty(r.URL.RawQuery)
 					w.Header().Set("Content-Type", "application/json")
 					_ = json.NewEncoder(w).Encode(body)
 				})
-				h.Require.NoError(h.Execute("grid", "classifier", "list", "--output", output))
+				h.Require.NoError(h.Execute("grid", "route-classifier", "list", "--output", output))
 				h.Require.Len(m.Calls(), 1)
 				if output == "text" {
 					if empty {
-						h.Require.Contains(h.Stderr.String(), "No classifiers found")
+						h.Require.Contains(h.Stderr.String(), "No route classifiers found")
 					} else {
-						h.Require.Contains(h.Stdout.String(), "general-v1")
-						h.Require.Contains(h.Stdout.String(), "General")
+						for _, text := range []string{"TRADEOFFS", "DECIDABLE MODELS", "general-v1", "General", "all", "zai-org/GLM-5.3, anthropic/claude-opus-5-5"} {
+							h.Require.Contains(h.Stdout.String(), text)
+						}
 					}
 				} else {
 					var got any
@@ -4549,34 +4593,44 @@ func Test_Grid_Classifier_List(t *testing.T) {
 	}
 }
 
-func Test_Grid_Classifier_Describe(t *testing.T) {
+func Test_Grid_RouteClassifier_Describe(t *testing.T) {
+	routeClassifier := routeClassifierFixture("general-v1", "General")
+	routeClassifier["supported_tradeoffs"] = []any{"cost", "balanced"}
 	for _, output := range []string{"text", "json", "jsonl"} {
 		t.Run(output, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			m.SetRouteFunc("GET", "/v1/grid/classifiers/general-v1", func(w http.ResponseWriter, r *http.Request) {
+			m.SetRouteFunc("GET", "/v1/grid/route_classifiers/general-v1", func(w http.ResponseWriter, r *http.Request) {
 				h.Require.Equal("Bearer test-key", r.Header.Get("Authorization"))
 				h.Require.Empty(r.URL.RawQuery)
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": "general-v1", "name": "General"})
+				_ = json.NewEncoder(w).Encode(routeClassifier)
 			})
-			h.Require.NoError(h.Execute("grid", "classifier", "describe", "--id", "general-v1", "--output", output))
+			h.Require.NoError(h.Execute("grid", "route-classifier", "describe", "--id", "general-v1", "--output", output))
 			h.Require.Len(m.Calls(), 1)
 			if output == "text" {
-				h.Require.Contains(h.Stdout.String(), "general-v1")
-				h.Require.Contains(h.Stdout.String(), "General")
+				for _, text := range []string{
+					"ID:               general-v1",
+					"Name:             General",
+					"Tradeoffs:        cost, balanced",
+					"Decidable Models: zai-org/GLM-5.3, anthropic/claude-opus-5-5",
+				} {
+					h.Require.Contains(h.Stdout.String(), text)
+				}
 			} else {
-				h.Require.JSONEq(`{"id":"general-v1","name":"General"}`, h.Stdout.String())
+				want, err := json.Marshal(routeClassifier)
+				h.Require.NoError(err)
+				h.Require.JSONEq(string(want), h.Stdout.String())
 			}
 		})
 	}
 }
 
-func Test_Grid_Classifier_Describe_Errors(t *testing.T) {
+func Test_Grid_RouteClassifier_Describe_Errors(t *testing.T) {
 	t.Run("empty id", func(t *testing.T) {
 		h := NewCommandHarness(t)
 		m := h.MockManagementAPI()
-		h.Require.Error(h.Execute("grid", "classifier", "describe", "--id", ""))
+		h.Require.Error(h.Execute("grid", "route-classifier", "describe", "--id", ""))
 		h.Require.Equal(2, h.ExitCode)
 		h.Require.Empty(m.Calls())
 	})
@@ -4584,31 +4638,31 @@ func Test_Grid_Classifier_Describe_Errors(t *testing.T) {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			m.SetRoute("GET", "/v1/grid/classifiers/general-v1", status, map[string]string{"error": "unavailable"})
-			h.Require.Error(h.Execute("grid", "classifier", "describe", "--id", "general-v1", "--output", "json"))
+			m.SetRoute("GET", "/v1/grid/route_classifiers/general-v1", status, map[string]string{"error": "unavailable"})
+			h.Require.Error(h.Execute("grid", "route-classifier", "describe", "--id", "general-v1", "--output", "json"))
 			h.Require.Equal(status, decodeJSONErrorEnvelope(h).APIStatusCode)
 		})
 	}
 }
 
-func Test_Grid_Classifier_List_Errors(t *testing.T) {
+func Test_Grid_RouteClassifier_List_Errors(t *testing.T) {
 	for _, status := range []int{401, 403, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			m.SetRoute("GET", "/v1/grid/classifiers", status, map[string]string{"error": "unavailable"})
-			h.Require.Error(h.Execute("grid", "classifier", "list", "--output", "json"))
+			m.SetRoute("GET", "/v1/grid/route_classifiers", status, map[string]string{"error": "unavailable"})
+			h.Require.Error(h.Execute("grid", "route-classifier", "list", "--output", "json"))
 			h.Require.Equal(status, decodeJSONErrorEnvelope(h).APIStatusCode)
 		})
 	}
 	t.Run("malformed", func(t *testing.T) {
 		h := NewCommandHarness(t)
 		m := h.MockManagementAPI()
-		m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+		m.SetRouteFunc("GET", "/v1/grid/route_classifiers", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"items":`))
 		})
-		h.Require.ErrorContains(h.Execute("grid", "classifier", "list"), "unexpected end of JSON input")
+		h.Require.ErrorContains(h.Execute("grid", "route-classifier", "list"), "unexpected end of JSON input")
 	})
 }
 
@@ -4639,14 +4693,14 @@ func Test_Grid_Setup_ReplacesDeletedKey(t *testing.T) {
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 }
 
-func Test_Grid_Classifier_List_Pagination(t *testing.T) {
+func Test_Grid_RouteClassifier_List_Pagination(t *testing.T) {
 	for _, output := range []string{"text", "json", "jsonl"} {
 		t.Run(output, func(t *testing.T) {
 			h := NewCommandHarness(t)
 			m := h.MockManagementAPI()
-			first := map[string]any{"id": "general-v1", "name": "General"}
-			second := map[string]any{"id": "coding-v1", "name": "Coding"}
-			m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+			first := routeClassifierFixture("general-v1", "General")
+			second := routeClassifierFixture("coding-v1", "Coding")
+			m.SetRouteFunc("GET", "/v1/grid/route_classifiers", func(w http.ResponseWriter, r *http.Request) {
 				h.Require.NotContains(r.URL.Query(), "team_id")
 				body := gridRoutePage([]any{first}, "next")
 				if r.URL.Query().Get("cursor") == "next" {
@@ -4655,8 +4709,8 @@ func Test_Grid_Classifier_List_Pagination(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(body)
 			})
-			h.Require.NoError(h.Execute("grid", "classifier", "list", "--output", output))
-			h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/classifiers"))
+			h.Require.NoError(h.Execute("grid", "route-classifier", "list", "--output", output))
+			h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/route_classifiers"))
 			if output == "text" {
 				h.Require.Contains(h.Stdout.String(), "General")
 				h.Require.Contains(h.Stdout.String(), "Coding")
@@ -4669,22 +4723,22 @@ func Test_Grid_Classifier_List_Pagination(t *testing.T) {
 	}
 }
 
-func Test_Grid_Classifier_List_PageError(t *testing.T) {
+func Test_Grid_RouteClassifier_List_PageError(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRouteFunc("GET", "/v1/grid/classifiers", func(w http.ResponseWriter, r *http.Request) {
+	m.SetRouteFunc("GET", "/v1/grid/route_classifiers", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("cursor") != "" {
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"message": "unavailable"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(gridRoutePage([]any{map[string]any{"id": "general-v1", "name": "General"}}, "next"))
+		_ = json.NewEncoder(w).Encode(gridRoutePage([]any{routeClassifierFixture("general-v1", "General")}, "next"))
 	})
-	h.Require.Error(h.Execute("grid", "classifier", "list", "--output", "json"))
+	h.Require.Error(h.Execute("grid", "route-classifier", "list", "--output", "json"))
 	h.Require.Equal(500, decodeJSONErrorEnvelope(h).APIStatusCode)
 	h.Require.NotContains(h.Stdout.String(), "general-v1")
-	h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/classifiers"))
+	h.Require.Equal(2, countCalls(m, "GET", "/v1/grid/route_classifiers"))
 }
 
 func gridSettingsFixture() map[string]any {

@@ -24,6 +24,8 @@ func gridRouteCases() []gridRouteCase {
 		name   string
 		flags  []string
 		target map[string]any
+		// responseTarget is the target as GET returns it; defaults to target.
+		responseTarget map[string]any
 	}{
 		{
 			name:   "model-api",
@@ -35,15 +37,29 @@ func gridRouteCases() []gridRouteCase {
 			flags:  []string{"--target-type", "connection", "--target-model", "test-model", "--target-connection-id", "c123456"},
 			target: map[string]any{"type": "CONNECTION", "model": "test-model", "connection_id": "c123456"},
 		},
+		{
+			name:   "intelligent",
+			flags:  []string{"--target-type", "intelligent", "--route-classifier-id", "general-v1", "--tradeoff", "balanced"},
+			target: map[string]any{"type": "INTELLIGENT", "route_classifier_id": "general-v1", "tradeoff": "balanced"},
+			responseTarget: map[string]any{
+				"type":             "INTELLIGENT",
+				"route_classifier": map[string]any{"id": "general-v1", "name": "General"},
+				"tradeoff":         "balanced",
+			},
+		},
 	}
 	cases := make([]gridRouteCase, 0, len(targets))
 	for _, tc := range targets {
+		responseTarget := tc.target
+		if tc.responseTarget != nil {
+			responseTarget = tc.responseTarget
+		}
 		cases = append(cases, gridRouteCase{
 			Name:     tc.name,
 			Flags:    tc.flags,
 			Create:   map[string]any{"team_id": "t123456", "display_name": "Assistant", "target": tc.target},
 			Target:   tc.target,
-			Response: gridRouteFixture(tc.target),
+			Response: gridRouteFixture(responseTarget),
 		})
 	}
 	return cases
@@ -107,7 +123,7 @@ func Test_Grid_Route_Update_RejectsTargets(t *testing.T) {
 			m := h.MockManagementAPI()
 			args := append([]string{"grid", "route", "update", "--id", "r123456", "--display-name", "New label"}, tc.Flags...)
 			h.Require.Error(h.Execute(args...))
-			h.Require.Equal(2, h.ExitCode, "non-classifier targets cannot be updated")
+			h.Require.Equal(2, h.ExitCode, "targets cannot be updated")
 			h.Require.Empty(m.Calls())
 		})
 	}
@@ -127,25 +143,12 @@ func Test_Grid_Route_Create_DefaultDisplayName(t *testing.T) {
 }
 
 func Test_Grid_Route_Update_DisplayNameAndDescription(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		flags []string
-	}{
-		{"omitted", nil},
-		{"empty-classifier-id", []string{"--classifier-id", ""}},
-		{"empty-default-route-id", []string{"--default-route-id", ""}},
-		{"both-empty", []string{"--classifier-id", "", "--default-route-id", ""}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := NewCommandHarness(t)
-			m := h.MockManagementAPI()
-			m.SetRoute("PATCH", "/v1/grid/routes/r123456", 200, gridRouteCases()[0].Response)
-			args := append([]string{"grid", "route", "update", "--id", "r123456", "--display-name", "New label", "--description", ""}, tc.flags...)
-			h.Require.NoError(h.Execute(args...))
-			h.Require.Equal(map[string]any{"display_name": "New label", "description": ""}, m.FindCall("PATCH", "/v1/grid/routes/r123456").BodyJSON(t))
-			h.Require.Len(m.Calls(), 1)
-		})
-	}
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", "/v1/grid/routes/r123456", 200, gridRouteCases()[0].Response)
+	h.Require.NoError(h.Execute("grid", "route", "update", "--id", "r123456", "--display-name", "New label", "--description", ""))
+	h.Require.Equal(map[string]any{"display_name": "New label", "description": ""}, m.FindCall("PATCH", "/v1/grid/routes/r123456").BodyJSON(t))
+	h.Require.Len(m.Calls(), 1)
 }
 
 func Test_Grid_Route_Describe_Update_Delete_ExactName(t *testing.T) {
@@ -306,6 +309,13 @@ func Test_Grid_Route_Create_InvalidTargets(t *testing.T) {
 		{"--target-type", "connection", "--target-model", "model"},
 		{"--target-type", "connection", "--target-connection-id", "c123456"},
 		{"--target-type", "invalid", "--target-model", "model", "--target-connection-id", "c123456"},
+		{"--target-type", "intelligent"},
+		{"--target-type", "intelligent", "--route-classifier-id", "general-v1"},
+		{"--target-type", "intelligent", "--tradeoff", "balanced"},
+		{"--target-type", "intelligent", "--route-classifier-id", "general-v1", "--tradeoff", "invalid"},
+		{"--target-type", "intelligent", "--route-classifier-id", "general-v1", "--tradeoff", "balanced", "--target-model", "model"},
+		{"--target-type", "baseten-model-api", "--target-model", "model", "--route-classifier-id", "general-v1"},
+		{"--target-type", "connection", "--target-model", "model", "--target-connection-id", "c123456", "--tradeoff", "balanced"},
 		// Targets and flags the routes API no longer accepts.
 		{"--target-type", "openai", "--target-model", "model", "--target-secret", "key"},
 		{"--target-type", "anthropic", "--target-model", "model", "--target-secret", "key"},
@@ -352,16 +362,22 @@ func Test_Grid_Route_Describe_AllTargetFields(t *testing.T) {
 			m := h.MockManagementAPI()
 			m.SetRoute("GET", "/v1/grid/routes/r123456", 200, tc.Response)
 			h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
-			for _, field := range []string{"ID:", "Name:", "Display Name:", "Team Name:", "Target Type:", "Target Model:", "Invoke URL:", "Created:"} {
+			for _, field := range []string{"ID:", "Name:", "Display Name:", "Team Name:", "Target Type:", "Invoke URL:", "Created:"} {
 				h.Require.Contains(h.Stdout.String(), field)
 			}
 			h.Require.Contains(h.Stdout.String(), "Target Type:      "+tc.Flags[1])
-			h.Require.Contains(h.Stdout.String(), "Target Model:     "+tc.Flags[3])
 			h.Require.NotContains(h.Stdout.String(), "Provider:")
 			h.Require.NotContains(h.Stdout.String(), "Secret")
-			if tc.Name == "connection" {
+			switch tc.Name {
+			case "intelligent":
+				h.Require.NotContains(h.Stdout.String(), "Target Model:")
+				h.Require.Contains(h.Stdout.String(), "Route Classifier: General (general-v1)")
+				h.Require.Contains(h.Stdout.String(), "Tradeoff:         balanced")
+			case "connection":
+				h.Require.Contains(h.Stdout.String(), "Target Model:     "+tc.Flags[3])
 				h.Require.Contains(h.Stdout.String(), "Target Connection: c123456")
-			} else {
+			default:
+				h.Require.Contains(h.Stdout.String(), "Target Model:     "+tc.Flags[3])
 				h.Require.NotContains(h.Stdout.String(), "Connection")
 			}
 		})
@@ -586,29 +602,29 @@ func Test_Grid_Route_List_UnknownTarget(t *testing.T) {
 	h.Require.Empty(h.Stderr.String())
 }
 
-func Test_Grid_Route_Describe_ClassifierTarget(t *testing.T) {
+func Test_Grid_Route_Describe_IntelligentTarget(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	target := map[string]any{
-		"type":           "CLASSIFIER",
-		"classifier":     map[string]any{"id": "c123456", "name": "intent-v2"},
-		"default_route":  map[string]any{"id": "r1", "slug": "acme/fast"},
-		"allowed_routes": []any{map[string]any{"id": "r1", "slug": "acme/fast"}, map[string]any{"id": "r2", "slug": "acme/smart"}},
+		"type": "INTELLIGENT",
+		"route_classifier": map[string]any{
+			"id": "general-v1", "name": "General", "supported_tradeoffs": []any{},
+			"decidable_models": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
+		},
+		"tradeoff": "balanced",
 	}
-	classifier := gridRouteFixture(target)
-	classifier["name"] = "acme/auto"
-	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, classifier)
+	route := gridRouteFixture(target)
+	route["name"] = "acme/auto"
+	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, route)
 	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
 	for _, text := range []string{
-		"Target Type:      classifier",
-		"Classifier:       intent-v2 (c123456)",
-		"Default Route:    acme/fast (r1)",
-		"Allowed Routes:   acme/fast (r1), acme/smart (r2)",
+		"Target Type:      intelligent",
+		"Route Classifier: General (general-v1)",
+		"Tradeoff:         balanced",
 	} {
 		h.Require.Contains(h.Stdout.String(), text)
 	}
 	h.Require.NotContains(h.Stdout.String(), "Target Model:")
-	h.Require.Len(m.Calls(), 1, "the response already contains the target IDs")
 
 	for _, output := range []string{"json", "jsonl"} {
 		h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456", "--output", output))
@@ -620,15 +636,6 @@ func Test_Grid_Route_Describe_ClassifierTarget(t *testing.T) {
 		h.Require.NoError(err)
 		h.Require.JSONEq(string(want), string(got.Target))
 	}
-
-	// A router created before classifiers could be selected has none, but
-	// still has its routes.
-	target["classifier"] = nil
-	m.SetRoute("GET", "/v1/grid/routes/r123456", 200, gridRouteFixture(target))
-	h.Stdout.Reset()
-	h.Require.NoError(h.Execute("grid", "route", "describe", "--id", "r123456"))
-	h.Require.NotContains(h.Stdout.String(), "Classifier:")
-	h.Require.Contains(h.Stdout.String(), "Default Route:    acme/fast (r1)")
 }
 
 func Test_Grid_Route_Describe_UnknownTarget(t *testing.T) {
@@ -671,49 +678,6 @@ func Test_Grid_Route_Create_DefaultTeam(t *testing.T) {
 			h.Require.Equal(tc.Target, body["target"])
 			h.Require.Len(m.Calls(), 1, "default team selection must not require a team-list request")
 			h.Require.Contains(h.Stdout.String(), `"team_name": "Engineering"`)
-		})
-	}
-}
-
-func Test_Grid_Route_Create_Update_ClassifierTarget(t *testing.T) {
-	target := map[string]any{"type": "CLASSIFIER", "classifier_id": "general-v1", "allowed_route_ids": []any{"r123456", "r234567"}, "default_route_id": "r123456"}
-	response := gridRouteFixture(map[string]any{"type": "CLASSIFIER", "classifier": map[string]any{"id": "general-v1", "name": "General"}, "allowed_routes": []any{map[string]any{"id": "r123456", "slug": "acme/a"}, map[string]any{"id": "r234567", "slug": "acme/b"}}, "default_route": map[string]any{"id": "r123456", "slug": "acme/a"}})
-	for _, verb := range []string{"create", "update"} {
-		t.Run(verb, func(t *testing.T) {
-			h := NewCommandHarness(t)
-			m := h.MockManagementAPI()
-			method, path := "POST", "/v1/grid/routes"
-			args := []string{"grid", "route", verb, "--classifier-id", "general-v1", "--allowed-route-id", "r123456", "--allowed-route-id", "r234567", "--default-route-id", "r123456", "--output", "json"}
-			if verb == "create" {
-				args = append(args, "--target-type", "classifier")
-			} else {
-				method, path = "PATCH", path+"/r345678"
-				args = append(args, "--id", "r345678")
-			}
-			m.SetRoute(method, path, 200, response)
-			h.Require.NoError(h.Execute(args...))
-			h.Require.Len(m.Calls(), 1)
-			h.Require.Equal(map[string]any{"target": target}, m.FindCall(method, path).BodyJSON(t))
-		})
-	}
-}
-
-func Test_Grid_Route_Create_Update_InvalidClassifierFlags(t *testing.T) {
-	for _, args := range [][]string{
-		{"create", "--target-type", "classifier"},
-		{"create", "--target-type", "classifier", "--target-model", "model"},
-		{"create", "--target-type", "connection", "--target-model", "model", "--target-connection-id", "c123456", "--classifier-id", "general-v1"},
-		{"update", "--id", "r123456", "--classifier-id", "general-v1"},
-		{"update", "--id", "r123456", "--classifier-id", ""},
-		{"update", "--id", "r123456", "--display-name", "Name", "--classifier-id", "general-v1"},
-		{"update", "--id", "r123456", "--classifier-id", "general-v1", "--allowed-route-id", "", "--default-route-id", "r234567"},
-	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			h := NewCommandHarness(t)
-			m := h.MockManagementAPI()
-			h.Require.Error(h.Execute(append([]string{"grid", "route"}, args...)...))
-			h.Require.Equal(2, h.ExitCode)
-			h.Require.Empty(m.Calls())
 		})
 	}
 }
