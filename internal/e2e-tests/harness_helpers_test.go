@@ -161,7 +161,7 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 	})
 	h := &harnessTest{name: name, binary: found, prefix: variant.prefix, root: root}
 	switch name {
-	case "claude-code":
+	case "claude":
 		h.configDir = filepath.Join(h.root, ".claude")
 	case "codex":
 		h.configDir = filepath.Join(h.root, ".codex")
@@ -257,7 +257,7 @@ func harnessEnvironmentalSetupError(msg string) bool {
 func (h *harnessTest) loadConfig(t *testing.T) {
 	t.Helper()
 	switch h.name {
-	case "claude-code":
+	case "claude":
 		h.loadClaudeConfig(t)
 	case "codex":
 		h.loadCodexConfig(t)
@@ -820,13 +820,13 @@ func (h *harnessTest) thinkingArgs(model harnessModel) []string {
 }
 
 func (h *harnessTest) searches() bool {
-	return h.name == "claude-code" || h.name == "codex"
+	return h.name == "claude" || h.name == "codex"
 }
 
 func claudeAssertThinking(t *testing.T, model harnessModel, events []claudeStreamEvent, stdout string) {
 	t.Helper()
 	blocks := claudeThinkingBlocks(events)
-	step(t, "claude-code %s: thinking blocks %d", model.id, blocks)
+	step(t, "claude %s: thinking blocks %d", model.id, blocks)
 	require.Greater(t, blocks, 0, "stream-json shows no thinking block under %s, so thinking never engaged; stdout:\n%s", model.id, stdout)
 }
 
@@ -858,7 +858,7 @@ func openCodeAssertThinking(t *testing.T, model harnessModel, objects []map[stri
 func (h *harnessTest) switchTurn(t *testing.T, workspace string, model harnessModel, session, prompt string) string {
 	t.Helper()
 	switch h.name {
-	case "claude-code":
+	case "claude":
 		return h.claudeTurn(t, workspace, model, session, prompt)
 	case "codex":
 		return h.codexTurn(t, workspace, model, session, prompt)
@@ -880,10 +880,10 @@ func (h *harnessTest) claudeTurn(t *testing.T, workspace string, model harnessMo
 	sessionID, _, ok := claudeResult(events)
 	require.True(t, ok, "stream-json has no result event; stdout:\n%s\nstderr:\n%s", stdout, stderr)
 	uses := claudeToolUses(events)
-	require.Contains(t, uses, "WebSearch", "claude-code never invoked WebSearch; tool uses: %v; stdout:\n%s", uses, stdout)
-	require.True(t, slices.ContainsFunc(uses, func(use string) bool { return use != "WebSearch" }), "claude-code ran no tool besides WebSearch; tool uses: %v; stdout:\n%s", uses, stdout)
+	require.Contains(t, uses, "WebSearch", "claude never invoked WebSearch; tool uses: %v; stdout:\n%s", uses, stdout)
+	require.True(t, slices.ContainsFunc(uses, func(use string) bool { return use != "WebSearch" }), "claude ran no tool besides WebSearch; tool uses: %v; stdout:\n%s", uses, stdout)
 	claudeAssertThinking(t, model, events, stdout)
-	require.NotEmpty(t, sessionID, "claude-code's result event has no session_id; stdout:\n%s", stdout)
+	require.NotEmpty(t, sessionID, "claude's result event has no session_id; stdout:\n%s", stdout)
 	return sessionID
 }
 

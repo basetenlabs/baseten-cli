@@ -44,8 +44,8 @@ func TestE2EHarnessThinking(t *testing.T) {
 		require.Contains(t, piAssistantText(objects), harnessThinkingMarker, "pi's final reply lacks the marker; stdout:\n%s\nstderr:\n%s", stdout, stderr)
 		piAssertThinking(t, model, objects, stdout)
 	})
-	t.Run("claude-code", func(t *testing.T) {
-		h := newHarnessTest(t, "claude-code", "claude")
+	t.Run("claude", func(t *testing.T) {
+		h := newHarnessTest(t, "claude", "claude")
 		model := h.pickModel(t, harnessBaseten, h.thinkingNeed())
 		args := append([]string{"-p", "--output-format", "stream-json", "--verbose"}, h.thinkingArgs(model)...)
 		stdout, stderr := h.run(t, t.TempDir(), append(args, harnessThinkingPrompt)...)
@@ -53,7 +53,7 @@ func TestE2EHarnessThinking(t *testing.T) {
 		harnessAssertNoAPIError(t, stdout+stderr)
 		_, result, ok := claudeResult(events)
 		require.True(t, ok, "stream-json has no result event; stdout:\n%s\nstderr:\n%s", stdout, stderr)
-		require.Contains(t, result, harnessThinkingMarker, "claude-code's final reply lacks the marker; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		require.Contains(t, result, harnessThinkingMarker, "claude's final reply lacks the marker; stdout:\n%s\nstderr:\n%s", stdout, stderr)
 		claudeAssertThinking(t, model, events, stdout)
 	})
 	t.Run("codex", func(t *testing.T) {
@@ -83,14 +83,14 @@ func TestE2EHarnessThinking(t *testing.T) {
 }
 
 func TestE2EHarnessToolCall(t *testing.T) {
-	t.Run("claude-code", func(t *testing.T) {
-		h := newHarnessTest(t, "claude-code", "claude")
+	t.Run("claude", func(t *testing.T) {
+		h := newHarnessTest(t, "claude", "claude")
 		model := h.pickModel(t, harnessBaseten, harnessAnyModel)
 		workspace := harnessSeedWorkspace(t, map[string]string{"task.txt": harnessClaudeToolWord + "\n"})
 		stdout, stderr := h.run(t, workspace, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--model", model.id, harnessToolTaskPrompt)
 		events := parseClaudeStream(stdout)
 		harnessAssertNoAPIError(t, stdout+stderr)
-		require.NotEmpty(t, claudeToolUses(events), "claude-code made no tool calls; stdout:\n%s", stdout)
+		require.NotEmpty(t, claudeToolUses(events), "claude made no tool calls; stdout:\n%s", stdout)
 		require.Equal(t, harnessReadWorkspaceFileTrimmed(t, workspace, "task.txt"), harnessReadWorkspaceFileTrimmed(t, workspace, "answer.txt"))
 	})
 	t.Run("codex", func(t *testing.T) {
@@ -132,18 +132,18 @@ func TestE2EHarnessToolCall(t *testing.T) {
 }
 
 func TestE2EHarnessWebSearch(t *testing.T) {
-	t.Run("claude-code", func(t *testing.T) {
-		h := newHarnessTest(t, "claude-code", "claude")
+	t.Run("claude", func(t *testing.T) {
+		h := newHarnessTest(t, "claude", "claude")
 		model := h.pickModel(t, harnessBaseten, harnessAnyModel)
 		prompt := "Use the WebSearch tool to find the version number of the most recent stable release of Python. Reply with only the version number."
 		stdout, stderr := h.run(t, t.TempDir(), "-p", prompt, "--output-format", "stream-json", "--verbose", "--allowedTools", "WebSearch", "--model", model.id)
 		events := parseClaudeStream(stdout)
 		harnessAssertNoAPIError(t, stdout+stderr)
 		uses := claudeToolUses(events)
-		require.Contains(t, uses, "WebSearch", "claude-code never invoked WebSearch; tool uses: %v; stdout:\n%s", uses, stdout)
+		require.Contains(t, uses, "WebSearch", "claude never invoked WebSearch; tool uses: %v; stdout:\n%s", uses, stdout)
 		_, result, ok := claudeResult(events)
 		require.True(t, ok, "stream-json has no result event; stdout:\n%s\nstderr:\n%s", stdout, stderr)
-		require.Regexp(t, regexp.MustCompile(`\d+\.\d+(\.\d+)?`), result, "claude-code's reply is not a version number; stdout:\n%s", stdout)
+		require.Regexp(t, regexp.MustCompile(`\d+\.\d+(\.\d+)?`), result, "claude's reply is not a version number; stdout:\n%s", stdout)
 	})
 	t.Run("codex", func(t *testing.T) {
 		h := newHarnessTest(t, "codex", "codex")
@@ -175,7 +175,7 @@ func TestE2EHarnessModelSwitch(t *testing.T) {
 		seed, recall string
 	}
 	cases := []switchCase{
-		{"claude-code", func(t *testing.T) *harnessTest { return newHarnessTest(t, "claude-code", "claude") }, harnessClaudeSwitchWord, harnessClaudeRecallWord},
+		{"claude", func(t *testing.T) *harnessTest { return newHarnessTest(t, "claude", "claude") }, harnessClaudeSwitchWord, harnessClaudeRecallWord},
 		{"codex", func(t *testing.T) *harnessTest { return newHarnessTest(t, "codex", "codex") }, harnessCodexSwitchWord, harnessCodexRecallWord},
 		{"pi", func(t *testing.T) *harnessTest { return newHarnessTest(t, "pi", "pi") }, harnessPiSwitchWord, harnessPiRecallWord},
 	}
