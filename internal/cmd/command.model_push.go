@@ -169,6 +169,9 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 		if err == nil {
 			if created.Deployment.Status == managementapi.DeploymentStatus_ACTIVE {
 				printf("\n✅ Model %s is deployed and active\n", created.Model.Name)
+			} else if reason := created.Deployment.FailureReason; reason != nil && *reason != "" {
+				printf("\n⚠️  Model %s was pushed but the deployment did not become active (status: %s, reason: %s)\n",
+					created.Model.Name, created.Deployment.Status, *reason)
 			} else {
 				printf("\n⚠️  Model %s was pushed but the deployment did not become active (status: %s)\n",
 					created.Model.Name, created.Deployment.Status)
@@ -195,6 +198,9 @@ func commandModelPush(ctx *CommandContext, flags *cmd.ModelPushFlags) error {
 		// The object above already carries the failed status, so it stands as
 		// the single document on stdout.
 		ctx.SuppressJSONError()
+		if reason := created.Deployment.FailureReason; reason != nil && *reason != "" {
+			return fmt.Errorf("failed deployment status: %s (reason: %s)", created.Deployment.Status, *reason)
+		}
 		return fmt.Errorf("failed deployment status: %s", created.Deployment.Status)
 	}
 	return nil

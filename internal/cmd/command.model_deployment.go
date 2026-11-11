@@ -171,6 +171,9 @@ func commandModelDeploymentDescribe(ctx *CommandContext, flags *cmd.ModelDeploym
 		ctx.Outputf("Environment:  %s\n", *dep.Environment)
 	}
 	ctx.Outputf("Status:       %s\n", dep.Status)
+	if dep.FailureReason != nil && *dep.FailureReason != "" {
+		ctx.Outputf("Failure:      %s\n", *dep.FailureReason)
+	}
 	if dep.InstanceTypeName != nil {
 		ctx.Outputf("Instance:     %s\n", *dep.InstanceTypeName)
 	}
