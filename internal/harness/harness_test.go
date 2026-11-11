@@ -21,6 +21,8 @@ const testToken = "baseten-harness-test-token"
 
 const testEndpoint = "https://inference.example.com"
 
+var chatCompletionsFormats = []managementapi.GridRouteMetadataApiFormats{managementapi.GridRouteMetadataApiFormats_chat_completions}
+
 func testRoute(name, displayName string) Route {
 	return Route{
 		ID: name, Name: name, DisplayName: displayName,
@@ -33,11 +35,12 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 	contextWindow, mirroredOutput, tools := 500000, 500000, true
 	route, err := NewRoute(managementapi.GridRoute{
 		Name: "acme/possible",
-		Metadata: &managementapi.ExploreMetadata{
+		Metadata: &managementapi.GridRouteMetadata{
 			ContextWindow:   &contextWindow,
 			MaxOutputTokens: &mirroredOutput,
 			InputModalities: []string{"text", "image"},
 			Tools:           &tools,
+			ApiFormats:      chatCompletionsFormats,
 		},
 	}, nil)
 	require.NoError(t, err)
@@ -47,11 +50,12 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 	impossibleOutput := 500001
 	_, err = NewRoute(managementapi.GridRoute{
 		Name: "acme/impossible",
-		Metadata: &managementapi.ExploreMetadata{
+		Metadata: &managementapi.GridRouteMetadata{
 			ContextWindow:   &contextWindow,
 			MaxOutputTokens: &impossibleOutput,
 			InputModalities: []string{"text"},
 			Tools:           &tools,
+			ApiFormats:      chatCompletionsFormats,
 		},
 	}, nil)
 	require.ErrorContains(t, err, "no usable context and output limits")
@@ -59,7 +63,7 @@ func TestNewRouteAcceptsMirroredOutputLimit(t *testing.T) {
 
 func TestNewRouteMarksIntelligentRoutes(t *testing.T) {
 	tools, ctx, out := true, 128000, 4096
-	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools}
+	metadata := &managementapi.GridRouteMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, ApiFormats: chatCompletionsFormats}
 	for _, tc := range []struct {
 		target string
 		want   bool
@@ -80,73 +84,48 @@ func TestNewRouteMarksIntelligentRoutes(t *testing.T) {
 	require.False(t, r.IntelligentRoute, "a route without a target type is not a router")
 }
 
-func TestNewRoutePicksTargetAPIFromFormats(t *testing.T) {
-	yes, no, tools, ctx, out := true, false, true, 128000, 4096
+func TestNewRouteTakesTargetAPIFromFirstSupportedAPIFormat(t *testing.T) {
+	tools, ctx, out := true, 128000, 4096
+	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI}
 	for _, tc := range []struct {
-		name    string
-		formats *managementapi.ExploreMetadataAPIFormats
-		want    TargetAPI
+		name                string
+		target              string
+		formats             []managementapi.GridRouteMetadataApiFormats
+		want                TargetAPI
+		messages, responses bool
+		err                 string
 	}{
-		{"no formats", nil, TargetAPIChatCompletions},
-		{"chat completions", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}, TargetAPIChatCompletions},
-		{"messages", &managementapi.ExploreMetadataAPIFormats{Messages: &yes}, TargetAPIMessages},
-		{"responses", &managementapi.ExploreMetadataAPIFormats{Responses: &yes}, TargetAPIResponses},
-		{"chat completions before messages", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes}, TargetAPIChatCompletions},
-		{"chat completions before responses", &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}, TargetAPIChatCompletions},
-		{"messages before responses", &managementapi.ExploreMetadataAPIFormats{Messages: &yes, Responses: &yes}, TargetAPIMessages},
-		{"none advertised", &managementapi.ExploreMetadataAPIFormats{Messages: &no, Responses: &no, ChatCompletions: &no}, TargetAPIChatCompletions},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r, err := NewRoute(managementapi.GridRoute{
-				Name: "acme/route", DisplayName: "Route",
-				Metadata: &managementapi.ExploreMetadata{
-					ContextWindow: &ctx, MaxOutputTokens: &out,
-					InputModalities: []string{"text"}, Tools: &tools,
-					SupportedApiFormats: tc.formats,
-				},
-			}, nil)
-			require.NoError(t, err)
-			require.Equal(t, tc.want, r.TargetAPI)
-		})
-	}
-}
-
-func TestNewRoutePrefersNativeTargetAPIForExternalProviders(t *testing.T) {
-	yes, tools, ctx, out := true, true, 128000, 4096
-	all := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Messages: &yes, Responses: &yes}
-	completionsAndResponses := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes, Responses: &yes}
-	completions := &managementapi.ExploreMetadataAPIFormats{ChatCompletions: &yes}
-	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI, "conn-bedrock": ProviderBedrock, "conn-vertex": ProviderVertex}
-	for _, tc := range []struct {
-		name    string
-		target  string
-		formats *managementapi.ExploreMetadataAPIFormats
-		want    TargetAPI
-	}{
-		{"baseten prefers chat completions", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, all, TargetAPIChatCompletions},
-		{"intelligent route prefers chat completions", `{"type": "INTELLIGENT"}`, all, TargetAPIChatCompletions},
-		{"unknown connection prefers chat completions", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, all, TargetAPIChatCompletions},
-		{"anthropic prefers messages", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, all, TargetAPIMessages},
-		{"openai prefers responses", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, completionsAndResponses, TargetAPIResponses},
-		{"bedrock prefers responses", `{"type": "CONNECTION", "connection_id": "conn-bedrock", "model": "openai.gpt"}`, completionsAndResponses, TargetAPIResponses},
-		{"vertex prefers messages", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "claude"}`, all, TargetAPIMessages},
-		{"external falls back to chat completions", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "gemini"}`, completions, TargetAPIChatCompletions},
+		{"intelligent route", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{"messages", "responses", "chat_completions"}, TargetAPIMessages, true, true, ""},
+		{"model api", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, []managementapi.GridRouteMetadataApiFormats{"chat_completions", "messages", "responses"}, TargetAPIChatCompletions, true, true, ""},
+		{"model api in the server's order", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, []managementapi.GridRouteMetadataApiFormats{"messages", "chat_completions"}, TargetAPIMessages, true, false, ""},
+		{"responses only", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, []managementapi.GridRouteMetadataApiFormats{"responses"}, TargetAPIResponses, false, true, ""},
+		{"messages only", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, []managementapi.GridRouteMetadataApiFormats{"messages"}, TargetAPIMessages, true, false, ""},
+		{"empty", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{}, "", false, false, `route "acme/route" has no supported API formats`},
+		{"unknown first", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{"future_format", "messages"}, "", false, false, `route "acme/route" prefers unknown API format "future_format"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := managementapi.GridRoute{
 				Name: "acme/route", DisplayName: "Route",
-				Metadata: &managementapi.ExploreMetadata{
+				Metadata: &managementapi.GridRouteMetadata{
 					ContextWindow: &ctx, MaxOutputTokens: &out,
 					InputModalities: []string{"text"}, Tools: &tools,
-					SupportedApiFormats: tc.formats,
+					ApiFormats: tc.formats,
 				},
 			}
 			require.NoError(t, json.Unmarshal([]byte(tc.target), &api.Target))
 			r, err := NewRoute(api, providers)
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				return
+			}
 			require.NoError(t, err)
 			require.Equal(t, tc.want, r.TargetAPI)
+			require.Equal(t, tc.messages, r.Messages, "Claude Code lists routes whose formats include messages")
+			require.Equal(t, tc.responses, r.Responses, "Codex lists routes whose formats include responses")
 		})
 	}
+	_, err := NewRoute(managementapi.GridRoute{Name: "acme/route"}, providers)
+	require.ErrorContains(t, err, `route "acme/route" has no model metadata`)
 }
 
 func TestNewRouteKeepsOnlyTextAndImageInputModalities(t *testing.T) {
@@ -154,9 +133,10 @@ func TestNewRouteKeepsOnlyTextAndImageInputModalities(t *testing.T) {
 	route := func(modalities ...string) (Route, error) {
 		return NewRoute(managementapi.GridRoute{
 			Name: "acme/av", DisplayName: "AV",
-			Metadata: &managementapi.ExploreMetadata{
+			Metadata: &managementapi.GridRouteMetadata{
 				ContextWindow: &ctx, MaxOutputTokens: &out,
 				InputModalities: modalities, Tools: &tools,
+				ApiFormats: chatCompletionsFormats,
 			},
 		}, nil)
 	}
@@ -1222,6 +1202,7 @@ func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	routes[0].TargetAPI = TargetAPIMessages
 	routes[1].TargetAPI = TargetAPIResponses
 	routes[2].TargetAPI = TargetAPIChatCompletions
+	routes[3].TargetAPI, routes[3].IntelligentRoute = TargetAPIMessages, true
 	setup(t, piHarness{}, path, routes, Selection{})
 	provider := get(load(t, path), piProviderPath).Data.(map[string]any)
 	require.Equal(t, "openai-completions", provider["api"])
@@ -1235,6 +1216,8 @@ func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.Equal(t, "anthropic-messages", models["acme/primary"]["api"])
 	require.Equal(t, testEndpoint, models["acme/primary"]["baseUrl"], "Pi's Anthropic client appends /v1")
 	require.Equal(t, true, get(models["acme/primary"], []string{"compat", "forceAdaptiveThinking"}).Data)
+	require.NotContains(t, models["acme/primary"]["compat"], "sendSessionAffinityHeaders")
+	require.Equal(t, map[string]any{"forceAdaptiveThinking": true, "sendSessionAffinityHeaders": true}, models["acme/fallback"]["compat"])
 	require.Equal(t, "openai-responses", models["acme/background"]["api"])
 	require.NotContains(t, models["acme/background"], "baseUrl")
 	require.NotContains(t, models["acme/background"], "compat")

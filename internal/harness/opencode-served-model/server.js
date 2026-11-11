@@ -7,7 +7,11 @@ const intelligentRoutes = new Map(Object.entries(routes.intelligentRoutes ?? rou
 function chunkModel(line) {
   if (!line.startsWith("data:")) return ""
   try {
-    const model = JSON.parse(line.slice(5)).model
+    const chunk = JSON.parse(line.slice(5))
+    const chatCompletionsModel = chunk.model
+    const messagesModel = chunk.message?.model
+    const responsesModel = chunk.response?.model
+    const model = chatCompletionsModel ?? messagesModel ?? responsesModel
     return typeof model === "string" ? model : ""
   } catch {
     return ""
