@@ -147,7 +147,7 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 		t.Skipf("%s is not on PATH", variant.binary)
 	}
 
-	root, err := os.MkdirTemp("", "baseten-cli-e2e-")
+	root, err := os.MkdirTemp(t.TempDir(), "baseten-cli-e2e-")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		err := os.RemoveAll(root)
@@ -156,7 +156,12 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 			err = os.RemoveAll(root)
 		}
 		if err != nil {
-			t.Logf("harness root %s not fully removed: %v", root, err)
+			moved := filepath.Join(os.TempDir(), "baseten-cli-e2e-stuck-"+filepath.Base(root))
+			if os.Rename(root, moved) == nil {
+				t.Logf("harness root %s moved to %s", root, moved)
+			} else {
+				t.Logf("harness root %s not fully removed: %v", root, err)
+			}
 		}
 	})
 	h := &harnessTest{name: name, binary: found, prefix: variant.prefix, root: root}
