@@ -122,31 +122,6 @@ func codexDaemonCommand(ctx context.Context, execer Execer, dir string, args ...
 	return result, nil
 }
 
-func CodexLoggedIn(ctx context.Context, execer Execer, dir string) bool {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	_, err := codexCommand(ctx, execer, dir, "login", "status")
-	return err == nil
-}
-
-func CodexLogout(ctx context.Context, execer Execer, dir string) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	_, err := codexCommand(ctx, execer, dir, "logout")
-	return err
-}
-
-func CodexCloudConfigPath(dir string) string {
-	return filepath.Join(dir, "cloud-config-bundle-cache.json")
-}
-
-func CodexClearCloudConfig(dir string) error {
-	if err := os.Remove(CodexCloudConfigPath(dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
-}
-
 func CodexDaemonSocket(ctx context.Context, execer Execer, dir string) string {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -267,10 +242,15 @@ func (codexHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([
 		desired([]string{"model_provider"}, providerID),
 		desired([]string{"model_catalog_json"}, catalogPath(path)),
 		desired([]string{"review_model"}, s.Primary),
-		desired([]string{"forced_login_method"}, "api"),
 		desired([]string{"model_providers", providerID}, provider),
 	}
-	p, err := prepareSettings(path, credentialPath, func(map[string]any) ([]setting, error) { return values, nil })
+	p, err := prepareSettings(path, credentialPath, func(d map[string]any) ([]setting, error) {
+		// Earlier setups disabled ChatGPT login, which hides Codex's ChatGPT plugins.
+		if d["forced_login_method"] == "api" {
+			return append(values, setting{Path: []string{"forced_login_method"}}), nil
+		}
+		return values, nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -325,6 +305,7 @@ func codexTeardownPaths(data map[string]any, catalog string) [][]string {
 	if data["model_catalog_json"] == catalog {
 		paths = append(paths, []string{"model_catalog_json"})
 	}
+	// Written by setups from before ChatGPT login was allowed.
 	if data["forced_login_method"] == "api" {
 		paths = append(paths, []string{"forced_login_method"})
 	}

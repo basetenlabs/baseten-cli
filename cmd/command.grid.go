@@ -27,7 +27,7 @@ var commandGrid = Command{
 				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
 				"The Grid API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
-				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
+				"For Codex, setup also restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those. " +
 				"For Claude Desktop, setup adds a config to the app's third-party config library and switches the app to third-party mode; quit and reopen the app to load it.\n\n" +
 				"Setup also adds a served-model indicator for intelligent routes in Claude Code, Pi, and OpenCode 2. " +
@@ -131,7 +131,7 @@ var commandGrid = Command{
 				"Teardown also deletes the Grid API key the removed harnesses use, once no other harness on this machine uses it, " +
 				"except a key installed with --use-session-credential, whose lifecycle this CLI does not own. " +
 				"It forgets the recorded setup so 'grid sync' no longer refreshes the removed harnesses. " +
-				"It works after the harness is uninstalled. For Codex, teardown re-enables ChatGPT login and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. Run 'codex login' to sign back in. " +
+				"It works after the harness is uninstalled. For Codex, teardown restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For Claude Desktop, teardown switches the app back to its own login and removes Baseten's config from the library.",
 			Flags: GridTeardownFlags{},
 			Output: &CommandOutput[GridPlanList]{

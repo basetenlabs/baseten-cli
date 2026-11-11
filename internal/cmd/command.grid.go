@@ -537,11 +537,6 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		return err
 	}
 	replaced = slices.DeleteFunc(replaced, func(key string) bool { return key == token })
-	for i := range targets {
-		if targets[i].Name() == harness.Codex {
-			gridHarnessLogoutCodex(ctx, filepath.Dir(targets[i].detection.Path), f.Yes)
-		}
-	}
 	if err := harness.ApplyPlans(plans, token); err != nil {
 		return err
 	}
@@ -785,11 +780,6 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 				return err
 			}
 		}
-		for j := range run.targets {
-			if run.targets[j].Name() == harness.Codex {
-				gridHarnessLogoutCodex(ctx, filepath.Dir(run.targets[j].detection.Path), f.Yes)
-			}
-		}
 		if err := harness.ApplyPlans(run.plans, token); err != nil {
 			return err
 		}
@@ -924,33 +914,6 @@ func gridHarnessReplacedWarnings(ctx *CommandContext, plans []*harness.Plan) {
 	if len(replaced) > 0 {
 		ctx.Logf("warning: existing integration settings in %s will be overwritten; teardown does not restore them\n", strings.Join(replaced, ", "))
 	}
-}
-
-func gridHarnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
-	if !harness.CodexLoggedIn(ctx, ctx.Execer(), dir) {
-		return
-	}
-	hint := "Run `codex logout` and delete `" + gridHarnessDisplayPath(harness.CodexCloudConfigPath(dir)) + "` to stop the workspace default model from overriding the Baseten route."
-	ctx.LogLine("Signing codex out of OpenAI/ChatGPT and disabling ChatGPT login while the Baseten harness is configured.")
-	if !yes && ctx.ConfirmYesNo("Sign codex out of OpenAI/ChatGPT now?") != nil {
-		ctx.LogLine(hint)
-		return
-	}
-	if err := harness.CodexLogout(ctx, ctx.Execer(), dir); err != nil {
-		auth := filepath.Join(dir, "auth.json")
-		if os.Remove(auth) != nil {
-			ctx.Logf("warning: codex logout failed: %v\n", err)
-			ctx.LogLine(hint)
-			return
-		}
-		ctx.Logf("warning: codex logout failed (%v); removed %s instead\n", err, gridHarnessDisplayPath(auth))
-	}
-	if err := harness.CodexClearCloudConfig(dir); err != nil {
-		ctx.Logf("warning: could not remove the cached workspace policy: %v\n", err)
-		ctx.LogLine(hint)
-		return
-	}
-	ctx.LogLine("Signed codex out of OpenAI/ChatGPT and cleared the cached workspace policy.")
 }
 
 const gridHarnessCodexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done to pick up the new models."
@@ -1251,7 +1214,6 @@ func commandGridTeardown(ctx *CommandContext, f *cmd.GridTeardownFlags) error {
 	for _, choice := range selected {
 		if choice.Name() == harness.Codex && slices.Contains(names, harness.Codex) {
 			gridHarnessRestartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
-			ctx.LogLine("Teardown removed the ChatGPT login restriction. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch.")
 		}
 	}
 	if ctx.JSON {
