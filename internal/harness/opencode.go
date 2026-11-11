@@ -38,9 +38,10 @@ type openCodeServedModelConfig struct {
 var openCodeVersionPattern = regexp.MustCompile(`(\d+)\.\d+`)
 
 // OpenCode reads two settings formats from the same file. V1 is the original
-// format; OpenCode 2 adds a native format and keeps reading V1. Setup writes
-// V1 unless the file already has native V2 settings, so a file that works
-// with both versions stays that way until the user migrates it themselves.
+// format; OpenCode 2 adds a native format and keeps reading V1, while OpenCode
+// 1 refuses to start if either settings file in the directory has V2 keys.
+// Setup writes V2 when no OpenCode 1 can be broken by it: either file already
+// has V2 keys, or every detected install is OpenCode 2. Otherwise it writes V1.
 type openCodeFormat int
 
 const (
@@ -52,14 +53,72 @@ const (
 // one replaces a V1 key, so any of them means the file has been migrated.
 var openCodeV2Keys = []string{"providers", "agents", "permissions", "plugins", "commands"}
 
-// openCodeFormatOf picks the format setup writes to a file with these settings.
-func openCodeFormatOf(data map[string]any) openCodeFormat {
-	for _, key := range openCodeV2Keys {
-		if _, ok := data[key]; ok {
-			return openCodeV2
-		}
+func openCodeHasV2Keys(data map[string]any) bool {
+	return slices.ContainsFunc(openCodeV2Keys, func(key string) bool {
+		_, ok := data[key]
+		return ok
+	})
+}
+
+// openCodeFormatOf picks the format setup writes to the file at path, which
+// has these settings.
+func openCodeFormatOf(path string, data map[string]any, installs []Install) openCodeFormat {
+	if openCodeHasV2Keys(data) || len(installs) > 0 && len(openCode1Binaries(installs)) == 0 {
+		return openCodeV2
+	}
+	// The sibling only decides the format, so one that cannot be read is ignored.
+	if _, sibling, err := readConfig(openCodeSiblingPath(path)); err == nil && openCodeHasV2Keys(sibling) {
+		return openCodeV2
 	}
 	return openCodeV1
+}
+
+// openCodeSiblingPath is the other settings file OpenCode reads from the same
+// directory.
+func openCodeSiblingPath(path string) string {
+	sibling := "opencode.jsonc"
+	if filepath.Base(path) == sibling {
+		sibling = "opencode.json"
+	}
+	return filepath.Join(filepath.Dir(path), sibling)
+}
+
+// openCode1Binaries lists the installs that are OpenCode 1, or whose version
+// is unknown and so may be.
+func openCode1Binaries(installs []Install) []string {
+	var binaries []string
+	for _, i := range installs {
+		if openCodeMajorVersion(i.Version) < 2 {
+			binaries = append(binaries, i.Binary)
+		}
+	}
+	return binaries
+}
+
+// openCodeClaudeVersionPattern is the pattern OpenCode reads a Claude model's
+// version from, so Grid and OpenCode agree on which models bind thinking blocks.
+var openCodeClaudeVersionPattern = regexp.MustCompile(`(?:^|[./])claude-[a-z]+-(\d+)(?:[.-](\d{1,2}))?(?:$|[-:@])`)
+
+// openCodeBindsThinkingBlocks reports whether a route serves a Claude model
+// that binds each thinking block to the system prompt and tools it was
+// produced under, which is Claude 5.1 and later. OpenCode 2 infers this from
+// the model ID, but here that is the route's name, not the model. Only direct
+// Anthropic Messages routes are marked: other providers are untested.
+func openCodeBindsThinkingBlocks(r Route) bool {
+	if r.TargetAPI != TargetAPIMessages || r.Provider != ProviderAnthropic {
+		return false
+	}
+	return claudeBindsThinkingBlocks(r.UpstreamModel)
+}
+
+func claudeBindsThinkingBlocks(model string) bool {
+	match := openCodeClaudeVersionPattern.FindStringSubmatch(strings.ToLower(model))
+	if match == nil {
+		return false
+	}
+	major, _ := strconv.Atoi(match[1])
+	minor, _ := strconv.Atoi(match[2])
+	return major > 5 || major == 5 && minor >= 1
 }
 
 var (
@@ -214,7 +273,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 	if err != nil {
 		return nil, err
 	}
-	format := openCodeFormatOf(current)
+	format := openCodeFormatOf(path, current, opts.Installs)
 	credentialPath, bearerPath := openCodeV1CredentialPath, openCodeV1BearerPath
 	if format == openCodeV2 {
 		credentialPath, bearerPath = openCodeV2CredentialPath, openCodeV2BearerPath
@@ -259,6 +318,9 @@ func (openCodeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 		return nil, err
 	}
 	p.bearerPath = bearerPath
+	if format == openCodeV1 && HasOpenCode2(Detection{Installs: opts.Installs}) && slices.ContainsFunc(routes, openCodeBindsThinkingBlocks) {
+		p.Notes = append(p.Notes, "warning: wrote OpenCode's original settings format, because OpenCode 1 cannot read OpenCode 2's and these installs are OpenCode 1 or of unknown version: "+strings.Join(openCode1Binaries(opts.Installs), ", ")+". OpenCode 2 sessions on Claude 5.1 and later can then fail with an invalid thinking block signature error after an OpenCode upgrade. Upgrade or remove those installs, then rerun setup.")
+	}
 	plans, err := withOpenCodeServedModel(p, routes, opts.NoOpenCodeServedModel)
 	if err != nil {
 		return nil, err
@@ -428,6 +490,11 @@ func openCodeV2Settings(routes []Route, s Selection, endpoint, bearer string) []
 		}
 		if npm, ok := openCodeModelPackages[r.TargetAPI]; ok {
 			model["package"] = openCodeV2Packages[npm]
+		}
+		// Lets OpenCode drop thinking blocks the API would reject once an
+		// OpenCode upgrade changes the system prompt or tools.
+		if openCodeBindsThinkingBlocks(r) {
+			model["compatibility"] = map[string]any{"supportsThinkingBlockBinding": true}
 		}
 		models[r.Name] = model
 	}
