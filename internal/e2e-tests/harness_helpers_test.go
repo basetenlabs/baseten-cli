@@ -113,17 +113,18 @@ func newHarnessTest(t *testing.T, name, binary string) *harnessTest {
 
 func newOpenCodeHarnessTest(t *testing.T, variant harnessOpenCodeVariant) *harnessTest {
 	t.Helper()
+	compactionSeed := map[string]string{harnessOpenCodeSettings: `{"compaction": {"auto": false}}`}
 	if !variant.opencode2 {
-		return newHarnessVariantTest(t, "opencode", harnessVariant{binary: "opencode", major: "1"})
+		return newHarnessVariantTest(t, "opencode", harnessVariant{binary: "opencode", major: "1", seed: compactionSeed})
 	}
 	binary := os.Getenv("BASETEN_TEST_OPENCODE2")
 	if binary == "" {
 		t.Skip("BASETEN_TEST_OPENCODE2 not set")
 	}
 	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	spec := harnessVariant{binary: binary, prefix: []string{"--standalone"}}
+	spec := harnessVariant{binary: binary, prefix: []string{"--standalone"}, seed: compactionSeed}
 	if variant.v2Config {
-		spec.seed = map[string]string{harnessOpenCodeSettings: `{"providers": {}}`}
+		spec.seed = map[string]string{harnessOpenCodeSettings: `{"compaction": {"auto": false}, "providers": {}}`}
 	}
 	h := newHarnessVariantTest(t, "opencode", spec)
 	h.opencode2 = true
