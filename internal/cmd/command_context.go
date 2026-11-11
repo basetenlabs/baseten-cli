@@ -444,7 +444,11 @@ func (c *CommandContext) RunPrompt(field huh.Field) error {
 	// signal, which huh handles itself by returning huh.ErrUserAborted. I/O is
 	// set explicitly because huh's accessible mode (e.g. TERM=dumb) defaults
 	// output to stdout, which would corrupt command output.
-	form := huh.NewForm(huh.NewGroup(field)).WithShowHelp(false).WithInput(c.Stdin).WithOutput(c.Stderr)
+	//
+	// huh's base theme leaves titles and options in the terminal's default
+	// foreground. Its default Charm theme colors them for one background,
+	// drawing options near-white on a light terminal.
+	form := huh.NewForm(huh.NewGroup(field)).WithTheme(huh.ThemeFunc(huh.ThemeBase)).WithShowHelp(false).WithInput(c.Stdin).WithOutput(c.Stderr)
 	if answers, ok := c.promptAnswers(); ok {
 		if len(*answers) == 0 {
 			return errors.New("no answer for the prompt")
