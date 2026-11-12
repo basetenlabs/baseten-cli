@@ -23,17 +23,17 @@ func ResolveTeam(ctx context.Context, api *managementapi.Client, input string) (
 	if input == "" {
 		return "", nil
 	}
-	team, err := resolveTeamOrOnly(ctx, api, input)
+	team, err := ResolveTeamOrOnly(ctx, api, input)
 	if err != nil {
 		return "", err
 	}
 	return team.Id, nil
 }
 
-// resolveTeamOrOnly is ResolveTeam for callers that also need the team's name. An
+// ResolveTeamOrOnly is ResolveTeam for callers that also need the team's name. An
 // empty input selects the only team there is; with several, the user has to say
 // which, the CLI never picks one.
-func resolveTeamOrOnly(ctx context.Context, api *managementapi.Client, input string) (*managementapi.Team, error) {
+func ResolveTeamOrOnly(ctx context.Context, api *managementapi.Client, input string) (*managementapi.Team, error) {
 	resp, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
 	if err != nil {
 		return nil, fmt.Errorf("list teams: %w", err)
@@ -70,13 +70,13 @@ func resolveTeamOrOnly(ctx context.Context, api *managementapi.Client, input str
 	return nil, fmt.Errorf("no team matched %q", input)
 }
 
-// callWithTeam runs call for the team a --team flag names, or with nil when the
+// CallWithTeam runs call for the team a --team flag names, or with nil when the
 // flag is empty so the server uses the caller's only team. When the caller
 // belongs to several, the server's error lists them: on a terminal the user
 // picks one and call runs again with it, otherwise the error names the teams
 // to pass as --team. The list comes from the error, so no request is spent
 // listing teams for callers who have only one.
-func callWithTeam[T any](ctx *CommandContext, api *managementapi.Client, team string, call func(teamID *string) (T, error)) (T, error) {
+func CallWithTeam[T any](ctx *CommandContext, api *managementapi.Client, team string, call func(teamID *string) (T, error)) (T, error) {
 	id, err := ResolveTeam(ctx, api, team)
 	if err != nil {
 		var zero T
@@ -115,7 +115,7 @@ func callWithTeam[T any](ctx *CommandContext, api *managementapi.Client, team st
 		// The API error stays in the chain for --output json, but its raw body
 		// stays out of the message.
 		msg := fmt.Sprintf("you belong to %d teams; pass --team with one of %s", len(teams), strings.Join(names, ", "))
-		return out, &cmd.ErrUsage{CommandErrorMeta: cmd.NewCommandErrorMeta(msg, err)}
+		return out, &cmd.ErrValidation{CommandErrorMeta: cmd.NewCommandErrorMeta(msg, err)}
 	}
 	options := make([]huh.Option[string], len(teams))
 	for i, t := range teams {

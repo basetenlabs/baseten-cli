@@ -597,7 +597,8 @@ func Test_Grid_Setup_Teams(t *testing.T) {
 	})
 	args := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"}
 	h.Require.Error(h.Execute(append(args, "--output", "json")...))
-	h.Require.Equal(int(public.ExitUsage), h.ExitCode)
+	h.Require.Equal(int(public.ExitValidation), h.ExitCode)
+	h.Require.NotContains(h.Stderr.String(), "Usage:")
 	h.Require.Contains(h.Stderr.String(), `you belong to 2 teams; pass --team with one of "Engineering", "Research"`)
 	h.Require.NotContains(h.Stderr.String(), "AMBIGUOUS_TEAM")
 	h.Require.Equal(400, decodeJSONErrorEnvelope(h).APIStatusCode)

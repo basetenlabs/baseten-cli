@@ -182,7 +182,7 @@ func gridLoadHarnessSetupRoutes(ctx *CommandContext, api *managementapi.Client, 
 	forHarnesses := true
 	// teamID is the team last sent, which after a pick is the chosen one.
 	var teamID *string
-	listed, err := callWithTeam(ctx, api, selectedTeam, func(id *string) ([]managementapi.GridRoute, error) {
+	listed, err := CallWithTeam(ctx, api, selectedTeam, func(id *string) ([]managementapi.GridRoute, error) {
 		teamID = id
 		return listGridRoutes(ctx, api, managementapi.GetV1GridRoutesParams{TeamId: id, ForHarnesses: &forHarnesses})
 	})
