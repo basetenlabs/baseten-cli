@@ -334,7 +334,7 @@ func cliRun(ctx context.Context, options cliRunOptions) cliResult {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
-		result.Err = fmt.Errorf("baseten %s: %w", strings.Join(options.Args, " "), err)
+		result.Err = fmt.Errorf("baseten %s: exit %d", strings.Join(options.Args, " "), exitErr.ExitCode())
 		return result
 	}
 	result.Err = err
