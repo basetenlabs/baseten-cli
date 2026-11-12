@@ -171,8 +171,8 @@ func trussBoolArg(args []string, name string, set bool) []string {
 }
 
 // trussIntArg appends "--name value" when value is non-zero. Every integer flag
-// forwarded to truss is a count, timeout, or priority for which zero is not a
-// meaningful request, so zero means "not given" and truss applies its default.
+// forwarded through it is a count or timeout for which zero is not a meaningful
+// request, so zero means "not given" and truss applies its default.
 func trussIntArg(args []string, name string, value int) []string {
 	if value == 0 {
 		return args
