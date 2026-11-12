@@ -15,11 +15,13 @@ var commandOrgIdentityProvider = Command{
 		{
 			Name:    "list-predefined",
 			Summary: "List predefined identity providers",
-			Description: "List the identity providers Baseten predefines. Pass a value from the " +
-				"PREDEFINED column to 'baseten org identity-provider create --predefined'.",
+			Description: "List the identity providers Baseten supports. Pass a value from the " +
+				"KIND column to 'baseten org identity-provider create --kind'.",
 			Flags: OrgIdentityProviderListPredefinedFlags{},
 			Output: &CommandOutput[managementapi.PredefinedIdentityProviders]{
-				TextDescription: "Table with columns: PREDEFINED, NAME, ISSUER URL.",
+				TextDescription: "Table with columns: KIND, NAME, ISSUER URL. ISSUER URL shows an " +
+					"example when each account, tenant, or cluster has its own issuer, which you pass " +
+					"as --issuer-url.",
 				Examples: []CommandExample{
 					{
 						Description: "List the predefined identity providers.",
@@ -28,16 +30,16 @@ var commandOrgIdentityProvider = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print just the issuer URLs.",
-					Command:     "baseten org identity-provider list-predefined --jq '.items[].issuer_url'",
+					Command:     "baseten org identity-provider list-predefined --jq '.items[].issuer_url // .items[].issuer_url_example'",
 				},
 			},
 		},
 		{
 			Name:    "create",
 			Summary: "Add an identity provider",
-			Description: "Add a predefined identity provider with --predefined, or register a " +
-				"custom one with --name and --issuer-url. A custom provider's signing keys are " +
-				"discovered from the issuer's /.well-known/openid-configuration.",
+			Description: "Add one of the identity providers Baseten supports. AWS IAM, Amazon EKS, " +
+				"Azure managed identity, and Azure Kubernetes Service also take your --issuer-url, " +
+				"in the format 'baseten org identity-provider list-predefined' shows.",
 			Flags: OrgIdentityProviderCreateFlags{},
 			Output: &CommandOutput[managementapi.IdentityProvider]{
 				TextDescription: "Prints the new provider's ID on stdout, and \"Created identity " +
@@ -45,19 +47,19 @@ var commandOrgIdentityProvider = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Add GitHub Actions.",
-						Command:     "baseten org identity-provider create --predefined github-actions",
+						Command:     "baseten org identity-provider create --kind github-actions",
 					},
 					{
-						Description: "Register a custom provider.",
+						Description: "Add an Amazon EKS cluster's issuer.",
 						CommandLines: []string{
-							"baseten org identity-provider create --name prod-eks",
+							"baseten org identity-provider create --kind aws-eks --name prod-eks",
 							"--issuer-url https://oidc.eks.us-west-2.amazonaws.com/id/EXAMPLE",
 						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print just the new provider's ID.",
-					Command:     "baseten org identity-provider create --predefined gcp --jq '.id'",
+					Command:     "baseten org identity-provider create --kind gcp --jq '.id'",
 				},
 			},
 		},
@@ -67,7 +69,7 @@ var commandOrgIdentityProvider = Command{
 			Description: "List the organization's identity providers.",
 			Flags:       OrgIdentityProviderListFlags{},
 			Output: &CommandOutput[IdentityProviderList]{
-				TextDescription: "Table with columns: ID, NAME, TYPE, ISSUER URL, CREATED. When " +
+				TextDescription: "Table with columns: ID, NAME, KIND, ISSUER URL, CREATED. When " +
 					"none exist, prints \"No identity providers found.\" to stderr.",
 				Examples: []CommandExample{
 					{
@@ -75,13 +77,13 @@ var commandOrgIdentityProvider = Command{
 						Command:     "baseten org identity-provider list",
 					},
 					{
-						Description: "List only custom providers.",
-						Command:     "baseten org identity-provider list --type custom",
+						Description: "List only Amazon EKS providers.",
+						Command:     "baseten org identity-provider list --kind aws-eks",
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print just the issuer URLs.",
-					Command:     "baseten org identity-provider list --jq '.items[].issuer_url'",
+					Command:     "baseten org identity-provider list --jq '.items[].predefined.issuer_url'",
 				},
 			},
 		},
@@ -101,7 +103,7 @@ var commandOrgIdentityProvider = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print the provider's issuer URL.",
-					Command:     "baseten org identity-provider describe --name github-actions --jq '.issuer_url'",
+					Command:     "baseten org identity-provider describe --name github-actions --jq '.predefined.issuer_url'",
 				},
 			},
 		},
@@ -143,32 +145,6 @@ var commandOrgIdentityProvider = Command{
 				},
 			},
 		},
-		{
-			Name:    "verify",
-			Summary: "Check an identity provider's signing keys",
-			Description: "Check that an issuer's signing keys can be fetched and parsed. Pass " +
-				"--issuer-url to check an issuer before adding it, or --id or --name to re-check " +
-				"a saved provider.",
-			Flags: OrgIdentityProviderVerifyFlags{},
-			Output: &CommandOutput[managementapi.VerifyIdentityProviderResponse]{
-				TextDescription: "On success, prints the key IDs found, one per line, on stdout. On " +
-					"failure, the command fails with the reason.",
-				Examples: []CommandExample{
-					{
-						Description: "Check an issuer before adding it.",
-						Command:     "baseten org identity-provider verify --issuer-url https://token.actions.githubusercontent.com",
-					},
-					{
-						Description: "Re-check a saved provider.",
-						Command:     "baseten org identity-provider verify --name prod-eks",
-					},
-				},
-				JQExample: CommandExample{
-					Description: "Print whether the check passed.",
-					Command:     "baseten org identity-provider verify --name prod-eks --jq '.ok'",
-				},
-			},
-		},
 	},
 }
 
@@ -191,16 +167,16 @@ type OrgIdentityProviderListPredefinedFlags struct {
 type OrgIdentityProviderCreateFlags struct {
 	CommandFlags
 
-	Predefined  string `flag:"predefined" desc:"Add this predefined provider. Mutually exclusive with --issuer-url." enum:"github-actions,gcp"`
-	Name        string `flag:"name" desc:"Name, unique in the organization. Required for a custom provider; defaults to the display name for a predefined one."`
-	IssuerURL   string `flag:"issuer-url" desc:"A custom provider's issuer: the exact iss claim of its tokens, an https URL. Can't be changed."`
+	Kind        string `flag:"kind" desc:"Which provider. Can't be changed." enum:"github-actions,gcp,baseten,aws-iam,aws-eks,azure-managed-identity-v1,azure-managed-identity-v2,azure-aks" required:"true"`
+	Name        string `flag:"name" desc:"Name, unique in the organization. Defaults to the provider's display name, so pass one when adding a second issuer of the same provider."`
+	IssuerURL   string `flag:"issuer-url" desc:"Your issuer, for aws-iam, aws-eks, azure-managed-identity-v1, azure-managed-identity-v2, and azure-aks: the exact iss claim of your tokens. Can't be passed for other providers, or changed."`
 	Description string `flag:"description" desc:"Optional description."`
 }
 
 type OrgIdentityProviderListFlags struct {
 	CommandFlags
 
-	Type string `flag:"type" desc:"Only list predefined or only custom providers." enum:"predefined,custom"`
+	Kind string `flag:"kind" desc:"Only list providers of this kind." enum:"github-actions,gcp,baseten,aws-iam,aws-eks,azure-managed-identity-v1,azure-managed-identity-v2,azure-aks"`
 }
 
 type OrgIdentityProviderDescribeFlags struct {
@@ -219,12 +195,4 @@ type OrgIdentityProviderUpdateFlags struct {
 type OrgIdentityProviderDeleteFlags struct {
 	CommandFlags
 	IdentityProviderRefFlags
-}
-
-type OrgIdentityProviderVerifyFlags struct {
-	CommandFlags
-
-	IssuerURL string `flag:"issuer-url" desc:"Issuer to check, an https URL." oneof:"identity-provider-verify"`
-	ID        string `flag:"id" desc:"ID of a saved identity provider to re-check." oneof:"identity-provider-verify"`
-	Name      string `flag:"name" desc:"Name of a saved identity provider to re-check, or a predefined provider's value such as github-actions." oneof:"identity-provider-verify"`
 }
