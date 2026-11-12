@@ -25,6 +25,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/harness"
+	"github.com/creack/pty"
 	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 )
@@ -2206,6 +2207,48 @@ func Test_Grid_Setup_ServedModelSelectedHarnesses(t *testing.T) {
 	after := harnessRecordFile(t).Harnesses
 	h.Require.Equal(before["claude"], after["claude"], "harnesses not selected keep their records")
 	h.Require.Equal(before["opencode"], after["opencode"])
+}
+
+func Test_Grid_Setup_HarnessPicker(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := fakeGridAPI(t)
+	// Types keys at the picker as a person would: the prompt discards input
+	// sent before it starts, and handles a key only after the one before it.
+	run := func(keys ...string) error {
+		t.Helper()
+		control, terminal, err := pty.Open()
+		h.Require.NoError(err)
+		defer control.Close()
+		defer terminal.Close()
+		go func() {
+			time.Sleep(time.Second)
+			for _, k := range keys {
+				_, _ = control.WriteString(k)
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+		h.StdinReader = terminal
+		return h.Execute("grid", "setup", "--dry-run")
+	}
+	const up, down, enter = "\x1b[A", "\x1b[B", "\r"
+
+	// Enter picks claude, Space picks codex, Enter unpicks it, Enter picks
+	// opencode. Down from pi, the last harness, reaches the Continue button,
+	// the only thing that confirms.
+	h.Require.NoError(run(enter, down, " ", enter, down, enter, down, down, enter))
+	h.Require.Contains(h.Stdout.String(), "\nclaude\n")
+	h.Require.Contains(h.Stdout.String(), "\nopencode\n")
+	h.Require.NotContains(h.Stdout.String(), "\ncodex\n")
+
+	// Leaving the list with nothing picked stays on it until a harness is chosen.
+	h.Require.NoError(run(down, down, down, down, up, up, enter, down, down, down, enter))
+	h.Require.Contains(h.Stdout.String(), "\ncodex\n")
+	h.Require.NotContains(h.Stdout.String(), "\nclaude\n")
+
+	// Up from the buttons returns to the list.
+	h.Require.NoError(run(enter, down, down, down, down, up, enter, down, enter))
+	h.Require.Contains(h.Stdout.String(), "\nclaude\n")
+	h.Require.Contains(h.Stdout.String(), "\npi\n")
 }
 
 func Test_Grid_Setup_PromptUsesTerminalForeground(t *testing.T) {
