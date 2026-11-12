@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	publiccmd "github.com/basetenlabs/baseten-cli/cmd"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 )
 
@@ -209,6 +210,7 @@ func Test_Model_Describe_ByNameNotFound(t *testing.T) {
 
 	err := h.Execute("model", "describe", "--model-name", "ghost")
 	h.Require.ErrorContains(err, `no model named "ghost"`)
+	h.Require.Equal(int(publiccmd.ExitNotFound), h.ExitCode)
 }
 
 func Test_Model_Describe_TeamWithID_Rejected(t *testing.T) {

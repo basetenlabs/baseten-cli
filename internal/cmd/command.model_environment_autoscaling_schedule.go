@@ -364,9 +364,9 @@ func autoscalingScheduleFind(
 		}
 	}
 	if ref.ScheduleID != "" {
-		return nil, fmt.Errorf("no autoscaling schedule %s on this environment", ref.ScheduleID)
+		return nil, cmd.NewErrNotFound(fmt.Errorf("no autoscaling schedule %s on this environment", ref.ScheduleID))
 	}
-	return nil, fmt.Errorf("no autoscaling schedule named %q on this environment", ref.ScheduleName)
+	return nil, cmd.NewErrNotFound(fmt.Errorf("no autoscaling schedule named %q on this environment", ref.ScheduleName))
 }
 
 // autoscalingScheduleMerge applies the caller's changes to the schedule as it
