@@ -176,7 +176,7 @@ func gridSelectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup 
 	// The arrow keys carry on from the last harness to the buttons and back,
 	// which huh otherwise reaches only with Tab and Shift+Tab.
 	last := options[len(options)-1].Value
-	err := ctx.runPromptForm(huh.NewForm(huh.NewGroup(
+	err := ctx.RunPromptForm(huh.NewForm(huh.NewGroup(
 		&promptArrowExit{Field: list, arrow: "down", exit: tea.KeyPressMsg{Code: tea.KeyTab}, atEdge: func() bool {
 			hovered, ok := list.Hovered()
 			return ok && hovered == last

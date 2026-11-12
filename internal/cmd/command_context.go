@@ -439,12 +439,12 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 // RunPrompt runs a single interactive prompt field, aborting it when the
 // command context is cancelled.
 func (c *CommandContext) RunPrompt(field huh.Field) error {
-	return c.runPromptForm(huh.NewForm(huh.NewGroup(field)))
+	return c.RunPromptForm(huh.NewForm(huh.NewGroup(field)))
 }
 
-// runPromptForm runs form with the CLI's prompt theme and I/O, aborting it
+// RunPromptForm runs form with the CLI's prompt theme and I/O, aborting it
 // when the command context is cancelled.
-func (c *CommandContext) runPromptForm(form *huh.Form) error {
+func (c *CommandContext) RunPromptForm(form *huh.Form) error {
 	// Equivalent to the form's own Run, which ignores the context and so
 	// leaves the prompt running when the command is cancelled by a SIGTERM or
 	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
@@ -484,18 +484,6 @@ func (f *promptArrowExit) Update(msg tea.Msg) (huh.Model, tea.Cmd) {
 	field, cmd := f.Field.Update(msg)
 	f.Field = field.(huh.Field)
 	return f, cmd
-}
-
-// promptTheme is huh's base theme with buttons that take their colors from
-// the terminal: the base theme's fixed black and white draw the unfocused
-// button as the darker, more prominent one on a light background.
-func promptTheme(isDark bool) *huh.Styles {
-	t := huh.ThemeBase(isDark)
-	for _, styles := range []*huh.FieldStyles{&t.Focused, &t.Blurred} {
-		styles.FocusedButton = styles.FocusedButton.UnsetForeground().UnsetBackground().Reverse(true)
-		styles.BlurredButton = styles.BlurredButton.UnsetForeground().UnsetBackground()
-	}
-	return t
 }
 
 // OAuthConfig returns the OAuth2 configuration for the given host.
