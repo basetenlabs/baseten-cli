@@ -203,16 +203,17 @@ func TestE2EHarnessModelSwitch(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {
 			t.Parallel()
-			h := c.start(t)
-			search1, search2 := "", ""
-			if h.searches() {
-				search1, search2 = harnessSwitchSearch1, harnessSwitchSearch2
-				if h.name == "claude" {
-					search1, search2 = harnessClaudeSwitchSearch1, harnessClaudeSwitchSearch2
-				}
-			}
 			for _, direction := range harnessDirections {
 				t.Run(direction.from+"-to-"+direction.to, func(t *testing.T) {
+					t.Parallel()
+					h := c.start(t)
+					search1, search2 := "", ""
+					if h.searches() {
+						search1, search2 = harnessSwitchSearch1, harnessSwitchSearch2
+						if h.name == "claude" {
+							search1, search2 = harnessClaudeSwitchSearch1, harnessClaudeSwitchSearch2
+						}
+					}
 					modelA, modelB := h.pickModel(t, direction.from, h.thinkingNeed()), h.pickModel(t, direction.to, h.thinkingNeed())
 					workspace := harnessSeedWorkspace(t, map[string]string{"seed.txt": c.seed + "\n"})
 					session := h.switchTurn(t, workspace, modelA, "", fmt.Sprintf(harnessSwitchPhase1, search1, c.recall))
