@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
@@ -151,7 +153,14 @@ func gridSelectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup 
 		options = append(options, huh.NewOption(label, s.Name()))
 	}
 	var names []string
-	err := ctx.RunPrompt(huh.NewMultiSelect[string]().
+	proceed := true
+	// Enter toggles a harness like Space does, so confirming is its own step
+	// on the buttons below the list.
+	keys := huh.NewDefaultKeyMap()
+	keys.MultiSelect.Toggle = key.NewBinding(key.WithKeys("enter", "space", "x"))
+	keys.MultiSelect.Next = key.NewBinding(key.WithKeys("tab"))
+	keys.MultiSelect.Submit = key.NewBinding(key.WithKeys("tab"))
+	list := huh.NewMultiSelect[string]().
 		Title("Select harnesses to configure").
 		Options(options...).
 		// Without a height, huh takes the title's line out of the options' rows
@@ -160,12 +169,26 @@ func gridSelectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup 
 		Value(&names).
 		Validate(func(names []string) error {
 			if len(names) == 0 {
-				return errors.New("choose at least one harness (space to select, enter to confirm)")
+				return errors.New("choose at least one harness")
 			}
 			return nil
-		}))
+		})
+	// The arrow keys carry on from the last harness to the buttons and back,
+	// which huh otherwise reaches only with Tab and Shift+Tab.
+	last := options[len(options)-1].Value
+	err := ctx.runPromptForm(huh.NewForm(huh.NewGroup(
+		&promptArrowExit{Field: list, arrow: "down", exit: tea.KeyPressMsg{Code: tea.KeyTab}, atEdge: func() bool {
+			hovered, ok := list.Hovered()
+			return ok && hovered == last
+		}},
+		&promptArrowExit{Field: huh.NewConfirm().Affirmative("Continue").Negative("").Value(&proceed),
+			arrow: "up", exit: tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}, atEdge: func() bool { return true }},
+	)).WithKeyMap(keys))
 	if err != nil {
 		return nil, err
+	}
+	if !proceed {
+		return nil, huh.ErrUserAborted
 	}
 	return slices.DeleteFunc(selected, func(s gridSelectedHarness) bool { return !slices.Contains(names, s.Name()) }), nil
 }
