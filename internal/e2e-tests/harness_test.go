@@ -24,6 +24,10 @@ const harnessSwitchSearch1 = " First, before anything else, call your web search
 
 const harnessSwitchSearch2 = " First, before anything else, call your web search tool to look up the latest stable major version of Node.js. Do not answer it from memory."
 
+const harnessClaudeSwitchSearch1 = " First, before anything else, use the WebSearch tool to look up the version number of the latest stable release of Python. Do not answer it from memory."
+
+const harnessClaudeSwitchSearch2 = " First, before anything else, use the WebSearch tool to look up the latest stable major version of Node.js. Do not answer it from memory."
+
 var harnessDirections = []struct{ from, to string }{
 	{harnessBaseten, harnessAnthropic},
 	{harnessBaseten, harnessOpenAI},
@@ -190,6 +194,9 @@ func TestE2EHarnessModelSwitch(t *testing.T) {
 			search1, search2 := "", ""
 			if h.searches() {
 				search1, search2 = harnessSwitchSearch1, harnessSwitchSearch2
+				if h.name == "claude" {
+					search1, search2 = harnessClaudeSwitchSearch1, harnessClaudeSwitchSearch2
+				}
 			}
 			for _, direction := range harnessDirections {
 				t.Run(direction.from+"-to-"+direction.to, func(t *testing.T) {
