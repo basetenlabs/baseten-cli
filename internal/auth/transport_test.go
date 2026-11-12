@@ -302,7 +302,7 @@ func newTokenExchangeServer(t *testing.T, refuse bool) *tokenExchangeServer {
 		require.Equal(t, "/v1/auth/token", r.URL.Path)
 		var body map[string]string
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		s.Assertions = append(s.Assertions, body["assertion"])
+		s.Assertions = append(s.Assertions, body["subject_token"])
 		w.Header().Set("Content-Type", "application/json")
 		if s.refuse {
 			w.WriteHeader(http.StatusBadRequest)
