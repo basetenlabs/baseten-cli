@@ -209,9 +209,7 @@ func TestE2ESandbox(t *testing.T) {
 		require.NoError(t, pty.Setsize(session.terminal, &pty.Winsize{Rows: 40, Cols: 120}))
 		// SIGWINCH, which tells connect the window changed, as a terminal
 		// would. Signal 28 on Linux and macOS.
-		process, err := os.FindProcess(os.Getpid())
-		require.NoError(t, err)
-		require.NoError(t, process.Signal(syscall.Signal(28)))
+		require.NoError(t, (<-session.processes).Signal(syscall.Signal(28)))
 		// The redraw, which starts by clearing the line, shows the resize
 		// reached the shell.
 		session.waitFor("\x1b[K")
@@ -332,13 +330,14 @@ type e2eConnectSession struct {
 	t *testing.T
 	// terminal is the command's stdin and stdout; control is the other side,
 	// where keys are typed and output read.
-	terminal *os.File
-	control  *os.File
-	chunks   <-chan []byte
-	output   string
-	seen     int
-	stderr   *bytes.Buffer
-	done     <-chan error
+	terminal  *os.File
+	control   *os.File
+	processes <-chan *os.Process
+	chunks    <-chan []byte
+	output    string
+	seen      int
+	stderr    *bytes.Buffer
+	done      <-chan error
 }
 
 // startE2EConnect runs 'sandbox connect' in a new pseudo-terminal of the
@@ -367,16 +366,18 @@ func startE2EConnect(t *testing.T, name string, rows, cols uint16) *e2eConnectSe
 	t.Cleanup(cancel)
 	var stderr bytes.Buffer
 	done := make(chan error, 1)
+	processes := make(chan *os.Process, 1)
 	go func() {
 		done <- cliRun(ctx, cliRunOptions{
-			Args:   []string{"sandbox", "connect", "--name", name},
-			Env:    testEnvOverlay(),
-			Stdin:  terminal,
-			Stdout: terminal,
-			Stderr: &stderr,
+			Args:    []string{"sandbox", "connect", "--name", name},
+			Env:     testEnvOverlay(),
+			Stdin:   terminal,
+			Stdout:  terminal,
+			Stderr:  &stderr,
+			Process: processes,
 		}).Err
 	}()
-	return &e2eConnectSession{t: t, terminal: terminal, control: control, chunks: chunks, stderr: &stderr, done: done}
+	return &e2eConnectSession{t: t, terminal: terminal, control: control, processes: processes, chunks: chunks, stderr: &stderr, done: done}
 }
 
 // run waits for the shell's prompt, types a command and Enter, then waits

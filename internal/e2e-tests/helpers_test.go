@@ -269,6 +269,8 @@ type cliRunOptions struct {
 	// [cliResult] capturing it.
 	Stdout io.Writer
 	Stderr io.Writer
+
+	Process chan<- *os.Process
 }
 
 // cliResult is the outcome of [cliRun].
@@ -329,7 +331,13 @@ func cliRun(ctx context.Context, options cliRunOptions) cliResult {
 		command.Stdin = options.Stdin
 	}
 	command.WaitDelay = 5 * time.Second
-	err = command.Run()
+	err = command.Start()
+	if err == nil {
+		if options.Process != nil {
+			options.Process <- command.Process
+		}
+		err = command.Wait()
+	}
 	result.Stdout, result.Stderr = stdout.String(), stderr.String()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
