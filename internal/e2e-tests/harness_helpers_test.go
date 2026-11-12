@@ -433,6 +433,16 @@ func harnessLevels(levels ...string) []string {
 	})
 }
 
+func harnessRequestedLevel(model harnessModel) string {
+	ceiling := slices.Index(harnessEffortLevels, "high")
+	for _, level := range model.levels {
+		if slices.Index(harnessEffortLevels, level) >= ceiling {
+			return level
+		}
+	}
+	return model.levels[0]
+}
+
 func harnessReadJSON(t *testing.T, path string) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -850,11 +860,11 @@ func (h *harnessTest) thinkingArgs(model harnessModel) []string {
 	case h.name == "codex":
 		return []string{"-m", model.id, "-c", "model_reasoning_effort=high"}
 	case h.name == "pi":
-		return []string{"--thinking", model.levels[0], "--model", model.id}
+		return []string{"--thinking", harnessRequestedLevel(model), "--model", model.id}
 	case h.opencode2:
-		return []string{"--thinking", "-m", model.id + "#" + model.levels[0]}
+		return []string{"--thinking", "-m", model.id + "#" + harnessRequestedLevel(model)}
 	case h.name == "opencode":
-		return []string{"--thinking", "--variant", model.levels[0], "-m", model.id}
+		return []string{"--thinking", "--variant", harnessRequestedLevel(model), "-m", model.id}
 	}
 	return []string{"--model", model.id}
 }
