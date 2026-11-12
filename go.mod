@@ -3,6 +3,8 @@ module github.com/basetenlabs/baseten-cli
 go 1.26.10
 
 require (
+	charm.land/bubbles/v2 v2.0.0
+	charm.land/bubbletea/v2 v2.0.2
 	charm.land/fang/v2 v2.0.1
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.3
@@ -11,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.21
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
-	github.com/basetenlabs/baseten-go v0.6.1-0.20261109151651-507eefa358cc
+	github.com/basetenlabs/baseten-go v0.6.1-0.20261111201723-c4bf729e00aa
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.7
@@ -41,8 +43,6 @@ require (
 )
 
 require (
-	charm.land/bubbles/v2 v2.0.0 // indirect
-	charm.land/bubbletea/v2 v2.0.2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.10 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.23 // indirect

@@ -609,6 +609,32 @@ func Test_Model_Push_WaitFailure(t *testing.T) {
 	h.Require.NotContains(result, "error")
 }
 
+// When the server reports why a deployment failed, --wait surfaces the reason
+// in both the error and the settled verdict, and the JSON result carries it.
+func Test_Model_Push_WaitFailureReason(t *testing.T) {
+	h := newModelPushHarness(t)
+	stubModelPushTimeAndSleep(h)
+	h.API.SetRouteFunc("GET", "/v1/models/model-123/deployments/deploy-456", func(w http.ResponseWriter, _ *http.Request) {
+		resp := deploymentResponse("DEPLOY_FAILED")
+		resp["failure_reason"] = "hf://org/repo@main: No files found to mirror"
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	dir := h.WriteModelDir(modelPushMinimalConfig)
+	err := h.Execute("model", "push", "--dir", dir, "--wait", "--output", "json")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(),
+		"failed deployment status: DEPLOY_FAILED (reason: hf://org/repo@main: No files found to mirror)")
+	h.Require.Contains(h.Stderr.String(),
+		"did not become active (status: DEPLOY_FAILED, reason: hf://org/repo@main: No files found to mirror)")
+
+	var result map[string]any
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
+	dep, _ := result["deployment"].(map[string]any)
+	h.Require.Equal("hf://org/repo@main: No files found to mirror", dep["failure_reason"])
+}
+
 // A development push replaces the dev deployment in place, and the server
 // reports FAILED while the old service is gone, so --wait keeps polling
 // through it and settles on the ACTIVE that follows.

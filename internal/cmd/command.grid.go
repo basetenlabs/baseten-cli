@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
@@ -34,8 +36,8 @@ func init() {
 	Register("grid teardown", commandGridTeardown)
 	Register("grid token", commandGridToken)
 	Register("grid claude-served-model", commandGridClaudeServedModel)
-	Register("grid classifier list", commandGridClassifierList)
-	Register("grid classifier describe", commandGridClassifierDescribe)
+	Register("grid route-classifier list", commandGridRouteClassifierList)
+	Register("grid route-classifier describe", commandGridRouteClassifierDescribe)
 	Register("grid team-settings describe", commandGridTeamSettingsDescribe)
 	Register("grid team-settings update", commandGridTeamSettingsUpdate)
 	Register("grid user-settings list", commandGridUserSettingsList)
@@ -151,7 +153,14 @@ func gridSelectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup 
 		options = append(options, huh.NewOption(label, s.Name()))
 	}
 	var names []string
-	err := ctx.RunPrompt(huh.NewMultiSelect[string]().
+	proceed := true
+	// Enter toggles a harness like Space does, so confirming is its own step
+	// on the buttons below the list.
+	keys := huh.NewDefaultKeyMap()
+	keys.MultiSelect.Toggle = key.NewBinding(key.WithKeys("enter", "space", "x"))
+	keys.MultiSelect.Next = key.NewBinding(key.WithKeys("tab"))
+	keys.MultiSelect.Submit = key.NewBinding(key.WithKeys("tab"))
+	list := huh.NewMultiSelect[string]().
 		Title("Select harnesses to configure").
 		Options(options...).
 		// Without a height, huh takes the title's line out of the options' rows
@@ -160,12 +169,26 @@ func gridSelectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup 
 		Value(&names).
 		Validate(func(names []string) error {
 			if len(names) == 0 {
-				return errors.New("choose at least one harness (space to select, enter to confirm)")
+				return errors.New("choose at least one harness")
 			}
 			return nil
-		}))
+		})
+	// The arrow keys carry on from the last harness to the buttons and back,
+	// which huh otherwise reaches only with Tab and Shift+Tab.
+	last := options[len(options)-1].Value
+	err := ctx.RunPromptForm(huh.NewForm(huh.NewGroup(
+		&promptArrowExit{Field: list, arrow: "down", exit: tea.KeyPressMsg{Code: tea.KeyTab}, atEdge: func() bool {
+			hovered, ok := list.Hovered()
+			return ok && hovered == last
+		}},
+		&promptArrowExit{Field: huh.NewConfirm().Affirmative("Continue").Negative("").Value(&proceed),
+			arrow: "up", exit: tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}, atEdge: func() bool { return true }},
+	)).WithKeyMap(keys))
 	if err != nil {
 		return nil, err
+	}
+	if !proceed {
+		return nil, huh.ErrUserAborted
 	}
 	return slices.DeleteFunc(selected, func(s gridSelectedHarness) bool { return !slices.Contains(names, s.Name()) }), nil
 }
@@ -245,23 +268,17 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 	}
 	providers := harness.NewProviders(connections)
 	var routes []harness.Route
-	var skipped, unresolved []string
+	var skipped []string
 	for _, l := range listed {
 		r, err := harness.NewRoute(l, providers)
 		switch {
 		case err == nil:
 			routes = append(routes, r)
-			if kind, _ := l.Target.Discriminator(); kind == "CONNECTION" && r.Provider == "" {
-				unresolved = append(unresolved, l.Name)
-			}
 		case !forSync && slices.ContainsFunc(targets, func(t gridHarnessTarget) bool { return t.record.Route == l.Name }):
 			return nil, cmd.NewErrValidation(err)
 		default:
 			skipped = append(skipped, l.Name)
 		}
-	}
-	if len(unresolved) > 0 {
-		ctx.Logf("warning: routes whose connection is not in the team's connections are called with the Chat Completions API: %s\n", strings.Join(unresolved, ", "))
 	}
 	if len(routes) == 0 {
 		return nil, cmd.NewErrValidation(errors.New("none of the team's routes have usable model metadata"))
@@ -308,9 +325,9 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		return nil, err
 	}
 	helper := ""
-	routers := slices.ContainsFunc(routes, func(r harness.Route) bool { return r.Router })
+	hasIntelligentRoute := slices.ContainsFunc(routes, func(r harness.Route) bool { return r.IntelligentRoute })
 	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool {
-		return t.record.CredentialSource == harness.CredentialSourceHelper || (routers && t.Name() == harness.Claude && !t.record.NoClaudeServedModel)
+		return t.record.CredentialSource == harness.CredentialSourceHelper || (hasIntelligentRoute && t.Name() == harness.Claude && !t.record.NoClaudeServedModel)
 	}) {
 		var warning string
 		if helper, warning, err = gridHelperPath(); err != nil {
@@ -374,16 +391,41 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return err
+	}
+	// With no current profile, sign in here instead of sending the user to
+	// auth login. The new profile becomes the current one, as auth login's
+	// would; there is none to displace. A dry run changes nothing, so it does
+	// not sign in.
+	if session.ProfileName() == "" && !session.IsEphemeral() && !f.DryRun && ctx.IsInteractive() {
+		store, err := NewAuthStore(false)
+		if err != nil {
+			return err
+		}
+		remote, err := ctx.authInfo.Remote()
+		if err != nil {
+			return err
+		}
+		ctx.LogLine("Not logged in; signing in with your browser. To use an API key instead, run `baseten auth login --with-api-key` first.")
+		// Reported on stderr: stdout is for setup's own result.
+		profileName, user, err := loginWebProfile(ctx, store, remote, &cmd.AuthLoginFlags{})
+		if err != nil {
+			return err
+		}
+		ctx.Logf("Logged in as %s (%s) as profile %s\n", deref(user.Email), deref(user.WorkspaceName), profileName)
+		ctx.authInfo.Reset()
+		if session, err = ctx.authInfo.Session(); err != nil {
+			return err
+		}
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
 	api := cl.API()
 	team, listed, err := gridLoadHarnessSetupRoutes(ctx, api, f.Team)
-	if err != nil {
-		return err
-	}
-	session, err := ctx.authInfo.Session()
 	if err != nil {
 		return err
 	}
@@ -584,7 +626,7 @@ func gridOffersServedModel(selected []gridSelectedHarness, listed []managementap
 			routes = append(routes, r)
 		}
 	}
-	return slices.ContainsFunc(selected[i].Routes(routes), func(r harness.Route) bool { return r.Router })
+	return slices.ContainsFunc(selected[i].Routes(routes), func(r harness.Route) bool { return r.IntelligentRoute })
 }
 
 func gridAskServedModel(ctx *CommandContext, harnessLabels []string) (bool, error) {
@@ -1497,17 +1539,17 @@ func gridEnsureHarnessToken(ctx *CommandContext, api *managementapi.Client, team
 	return created.ApiKey, nil
 }
 
-func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFlags) error {
+func commandGridRouteClassifierList(ctx *CommandContext, f *cmd.GridRouteClassifierListFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	params := managementapi.GetV1GridClassifiersParams{}
-	var items []managementapi.GridClassifier
+	params := managementapi.GetV1GridRouteClassifiersParams{}
+	var items []managementapi.GridRouteClassifier
 	for {
-		page, err := cl.API().GetGridClassifiers(ctx, params)
+		page, err := cl.API().GetGridRouteClassifiers(ctx, params)
 		if err != nil {
-			return fmt.Errorf("listing classifiers: %w", err)
+			return fmt.Errorf("listing route classifiers: %w", err)
 		}
 		items = append(items, page.Items...)
 		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
@@ -1516,22 +1558,27 @@ func commandGridClassifierList(ctx *CommandContext, f *cmd.GridClassifierListFla
 		params.Cursor = page.Pagination.Cursor
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.GridClassifierList{Items: normalizeJSONSlice(items)})
+		ctx.OutputJSON(cmd.GridRouteClassifierList{Items: normalizeJSONSlice(items)})
 		return nil
 	}
 	if len(items) == 0 {
-		ctx.LogLine("No classifiers found.")
+		ctx.LogLine("No route classifiers found.")
 		return nil
 	}
 	var rows [][]string
-	for _, classifier := range items {
-		rows = append(rows, []string{classifier.Id, classifier.Name})
+	for _, routeClassifier := range items {
+		rows = append(rows, []string{
+			routeClassifier.Id,
+			routeClassifier.Name,
+			gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs),
+			strings.Join(routeClassifier.DecidableModels, ", "),
+		})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME", "TRADEOFFS", "DECIDABLE MODELS"}, Rows: rows})
 	return nil
 }
 
-func commandGridClassifierDescribe(ctx *CommandContext, f *cmd.GridClassifierDescribeFlags) error {
+func commandGridRouteClassifierDescribe(ctx *CommandContext, f *cmd.GridRouteClassifierDescribeFlags) error {
 	if f.ID == "" {
 		return cmd.NewErrUsagef("--id must not be empty")
 	}
@@ -1539,17 +1586,31 @@ func commandGridClassifierDescribe(ctx *CommandContext, f *cmd.GridClassifierDes
 	if err != nil {
 		return err
 	}
-	classifier, err := cl.API().GetGridClassifiersClassifierId(ctx, f.ID)
+	routeClassifier, err := cl.API().GetGridRouteClassifiersRouteClassifierId(ctx, f.ID)
 	if err != nil {
-		return fmt.Errorf("getting classifier: %w", err)
+		return fmt.Errorf("getting route classifier: %w", err)
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(classifier)
+		ctx.OutputJSON(routeClassifier)
 		return nil
 	}
-	ctx.Outputf("ID:   %s\n", classifier.Id)
-	ctx.Outputf("Name: %s\n", classifier.Name)
+	ctx.Outputf("ID:               %s\n", routeClassifier.Id)
+	ctx.Outputf("Name:             %s\n", routeClassifier.Name)
+	ctx.Outputf("Tradeoffs:        %s\n", gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs))
+	ctx.Outputf("Decidable Models: %s\n", strings.Join(routeClassifier.DecidableModels, ", "))
 	return nil
+}
+
+// The API returns no tradeoffs when the route classifier supports all of them.
+func gridRouteClassifierTradeoffsText(tradeoffs []managementapi.GridRouteClassifierSupportedTradeoffs) string {
+	if len(tradeoffs) == 0 {
+		return "all"
+	}
+	names := make([]string, 0, len(tradeoffs))
+	for _, tradeoff := range tradeoffs {
+		names = append(names, string(tradeoff))
+	}
+	return strings.Join(names, ", ")
 }
 
 func gridTeamID(ctx *CommandContext, api *managementapi.Client, team string) (*string, error) {
@@ -1889,7 +1950,7 @@ func commandGridClaudeServedModel(ctx *CommandContext, flags *cmd.GridClaudeServ
 		message, prompt = payload.LastAssistantMessage, payload.PromptID
 	}
 	requested, served := gridAwaitClaudeServedModel(ctx, payload.TranscriptPath, message, prompt, cmp.Or(flags.Wait, gridClaudeServedModelWait))
-	label, ok := gridClaudeServedModelRouterLabel(flags.Router, requested)
+	label, ok := gridClaudeServedModelIntelligentRouteLabel(append(flags.IntelligentRoute, flags.Router...), requested)
 	switch {
 	case served == "" || !ok:
 	case flags.Hook:
@@ -1917,9 +1978,9 @@ func gridAwaitClaudeServedModel(ctx context.Context, transcript, message, prompt
 	}
 }
 
-func gridClaudeServedModelRouterLabel(routers []string, model string) (string, bool) {
-	for _, router := range routers {
-		if id, label, _ := strings.Cut(router, "="); id == model {
+func gridClaudeServedModelIntelligentRouteLabel(intelligentRoutes []string, model string) (string, bool) {
+	for _, intelligentRoute := range intelligentRoutes {
+		if id, label, _ := strings.Cut(intelligentRoute, "="); id == model {
 			return cmp.Or(label, id), true
 		}
 	}

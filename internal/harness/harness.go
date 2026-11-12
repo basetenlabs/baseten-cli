@@ -162,6 +162,12 @@ const (
 	TargetAPIChatCompletions TargetAPI = "chat-completions"
 )
 
+var targetAPIsByFormat = map[managementapi.GridRouteMetadataApiFormats]TargetAPI{
+	managementapi.GridRouteMetadataApiFormats_messages:         TargetAPIMessages,
+	managementapi.GridRouteMetadataApiFormats_responses:        TargetAPIResponses,
+	managementapi.GridRouteMetadataApiFormats_chat_completions: TargetAPIChatCompletions,
+}
+
 // Route is a Baseten route as shown in a harness's model picker, with the model
 // capabilities supplied by the route's own metadata.
 type Route struct {
@@ -170,16 +176,16 @@ type Route struct {
 	Name        string
 	DisplayName string
 	// Provider is the route's upstream provider, such as ProviderAnthropic.
-	// It is "" when unknown, as for a router that picks a route per request.
-	Provider        string
-	UpstreamModel   string
-	Router          bool
-	ContextWindow   int
-	OutputLimit     int
-	InputModalities []string
-	Tools           bool
-	ReasoningLevels []string
-	ParallelTools   bool
+	// It is "" when unknown, as for an intelligent route that picks a model per request.
+	Provider         string
+	UpstreamModel    string
+	IntelligentRoute bool
+	ContextWindow    int
+	OutputLimit      int
+	InputModalities  []string
+	Tools            bool
+	ReasoningLevels  []string
+	ParallelTools    bool
 	// Messages and Responses report whether the route serves the Anthropic
 	// Messages API and the OpenAI Responses API.
 	Messages  bool
@@ -216,11 +222,19 @@ func NewProviders(connections []managementapi.GridConnection) Providers {
 // route that reaches one through a team connection. It fails if the route's
 // model metadata is missing or is not enough to configure a harness.
 func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
-	r := Route{ID: api.Id, Name: api.Name, DisplayName: api.DisplayName, Router: routeIsRouter(api)}
+	r := Route{ID: api.Id, Name: api.Name, DisplayName: api.DisplayName, IntelligentRoute: routeIsIntelligentRoute(api)}
 	r.Provider, r.UpstreamModel = routeTarget(api, providers)
 	m := api.Metadata
 	if m == nil {
 		return r, fmt.Errorf("route %q has no model metadata", r.Name)
+	}
+	formats := m.ApiFormats
+	if len(formats) == 0 {
+		return r, fmt.Errorf("route %q has no supported API formats", r.Name)
+	}
+	var known bool
+	if r.TargetAPI, known = targetAPIsByFormat[formats[0]]; !known {
+		return r, fmt.Errorf("route %q prefers unknown API format %q", r.Name, formats[0])
 	}
 	r.ContextWindow, r.OutputLimit = deref(m.ContextWindow), deref(m.MaxOutputTokens)
 	r.InputModalities = slices.DeleteFunc(slices.Clone(m.InputModalities), func(modality string) bool {
@@ -228,13 +242,7 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 	})
 	r.Tools = deref(m.Tools)
 	r.ReasoningLevels, r.ParallelTools = deref(m.ReasoningEffortLevels), deref(m.ParallelToolCalls)
-	// Without formats the route's APIs are unknown, so every harness lists it.
-	r.Messages, r.Responses = true, true
-	r.TargetAPI = TargetAPIChatCompletions
-	if f := m.SupportedApiFormats; f != nil {
-		r.Messages, r.Responses = deref(f.Messages), deref(f.Responses)
-		r.TargetAPI = preferredTargetAPI(f, r.Provider)
-	}
+	r.Messages, r.Responses = slices.Contains(formats, managementapi.GridRouteMetadataApiFormats_messages), slices.Contains(formats, managementapi.GridRouteMetadataApiFormats_responses)
 	if c := m.Cost; c != nil {
 		r.Cost = newCost(managementapi.ExploreCostValues{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite})
 		if r.Cost != nil && c.LongContext != nil {
@@ -242,20 +250,6 @@ func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
 		}
 	}
 	return r, validateRoute(r)
-}
-
-func preferredTargetAPI(f *managementapi.ExploreMetadataAPIFormats, provider string) TargetAPI {
-	switch {
-	case deref(f.ChatCompletions) && (provider == ProviderBaseten || provider == ""):
-		// NB(nikhil): MAPIs specifically advertise all compatibility, but prefer chat completions.
-		return TargetAPIChatCompletions
-	case deref(f.Messages):
-		return TargetAPIMessages
-	case deref(f.Responses):
-		return TargetAPIResponses
-	default:
-		return TargetAPIChatCompletions
-	}
 }
 
 // newCost returns nil unless both input and output prices are known.
@@ -363,7 +357,7 @@ func routeTarget(api managementapi.GridRoute, providers Providers) (string, stri
 	return "", ""
 }
 
-func routeIsRouter(api managementapi.GridRoute) bool {
+func routeIsIntelligentRoute(api managementapi.GridRoute) bool {
 	kind, _ := api.Target.Discriminator()
 	return kind != "" && kind != ProviderBaseten && kind != "CONNECTION"
 }
