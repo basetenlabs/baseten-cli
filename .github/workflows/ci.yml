@@ -61,6 +61,15 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: astral-sh/setup-uv@v5
 
+      - name: Harness e2e test
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          # Forks won't have these secrets so e2e tests skip, but pushes
+          # to main will run them.
+          BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
+          BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
+        run: go test -v -tags=e2e -timeout 40m -parallel 16 -run '^TestE2EHarness' ./internal/e2e-tests/...
+
       - name: E2E test
         if: matrix.os == 'ubuntu-latest'
         env:
@@ -71,12 +80,3 @@ jobs:
         # -v so each test and its step logs stream as the run progresses; without
         # it a hung run shows no output at all and the stuck test is unknowable.
         run: go test -v -tags=e2e -timeout 30m -skip '^TestE2EHarness' ./internal/e2e-tests/...
-
-      - name: Harness e2e test
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          # Forks won't have these secrets so e2e tests skip, but pushes
-          # to main will run them.
-          BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
-          BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
-        run: go test -v -tags=e2e -timeout 40m -parallel 16 -run '^TestE2EHarness' ./internal/e2e-tests/...
