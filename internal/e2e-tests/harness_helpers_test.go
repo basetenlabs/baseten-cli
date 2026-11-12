@@ -83,6 +83,7 @@ type harnessTest struct {
 	opencode2 bool
 	root      string
 	configDir string
+	env       map[string]string
 	endpoint  string
 	models    []harnessModel
 }
@@ -92,6 +93,7 @@ type harnessVariant struct {
 	major  string
 	prefix []string
 	seed   map[string]string
+	env    map[string]string
 }
 
 type harnessOpenCodeVariant struct {
@@ -121,8 +123,12 @@ func newOpenCodeHarnessTest(t *testing.T, variant harnessOpenCodeVariant) *harne
 	if binary == "" {
 		t.Skip("BASETEN_TEST_OPENCODE2 not set")
 	}
-	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	spec := harnessVariant{binary: binary, prefix: []string{"--standalone"}, seed: compactionSeed}
+	spec := harnessVariant{
+		binary: binary,
+		prefix: []string{"--standalone"},
+		seed:   compactionSeed,
+		env:    map[string]string{"PATH": filepath.Dir(binary) + string(os.PathListSeparator) + os.Getenv("PATH")},
+	}
 	if variant.v2Config {
 		spec.seed = map[string]string{harnessOpenCodeSettings: `{"compaction": {"auto": false}, "providers": {}}`}
 	}
@@ -139,9 +145,12 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 	}
 	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
 	require.NotEmpty(t, remoteURL, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
-	t.Setenv("BASETEN_API_KEY", apiKey)
-	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
-	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
+	env := map[string]string{
+		"BASETEN_API_KEY":    apiKey,
+		"BASETEN_REMOTE_URL": remoteURL,
+		"BASETEN_CONFIG_DIR": t.TempDir(),
+	}
+	maps.Copy(env, variant.env)
 
 	found, err := exec.LookPath(variant.binary)
 	if err != nil {
@@ -180,8 +189,9 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 	}
 	for _, entry := range harnessHomeEnv(t, h.root, h.configDir) {
 		key, value, _ := strings.Cut(entry, "=")
-		t.Setenv(key, value)
+		env[key] = value
 	}
+	h.env = env
 	if variant.major != "" {
 		stdout, _ := h.run(t, t.TempDir(), "--version")
 		if version := strings.TrimSpace(stdout); !strings.HasPrefix(version, variant.major+".") {
@@ -192,7 +202,7 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 		require.NoError(t, os.MkdirAll(h.configDir, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(h.configDir, file), []byte(content), 0o600))
 	}
-	out, errOut, err := cli(t, "grid", "setup", "--harness", name, "--config-dir", h.configDir, "--yes")
+	out, errOut, err := cliWithEnv(t, env, "grid", "setup", "--harness", name, "--config-dir", h.configDir, "--yes")
 	if err != nil {
 		msg := strings.TrimSpace(errOut + out)
 		switch {
@@ -206,30 +216,43 @@ func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *h
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if _, errOut, err := cliCtx(t, ctx, "grid", "teardown", "--harness", name, "--config-dir", h.configDir, "--yes"); err != nil {
+		if _, errOut, err := cliCtxWithEnv(t, ctx, env, "grid", "teardown", "--harness", name, "--config-dir", h.configDir, "--yes"); err != nil {
 			t.Logf("grid teardown failed, so the setup's Grid API key may remain: %v\nstderr: %s", err, errOut)
 		}
 	})
 	step(t, "%s harness setup complete (config %s)", name, h.configDir)
 	h.loadConfig(t)
 	require.NotEmpty(t, h.endpoint, "harness setup wrote no endpoint for %s", name)
-	classes := harnessRouteClasses(t)
+	classes := harnessRouteClasses(t, env)
 	for i := range h.models {
 		h.models[i].class = cmp.Or(classes[h.models[i].route], harnessOther)
 	}
 	return h
 }
 
-func harnessRouteClasses(t *testing.T) map[string]string {
+func cliWithEnv(t *testing.T, env map[string]string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), defaultCLITimeout)
+	defer cancel()
+	return cliCtxWithEnv(t, ctx, env, args...)
+}
+
+func cliCtxWithEnv(t *testing.T, ctx context.Context, env map[string]string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	result := cliRun(ctx, cliRunOptions{Args: args, Stdin: strings.NewReader(""), Env: env})
+	return result.Stdout, result.Stderr, result.Err
+}
+
+func harnessRouteClasses(t *testing.T, env map[string]string) map[string]string {
 	t.Helper()
 	providers := map[string]string{}
-	for _, connection := range harnessCLIItems(t, "grid", "connection", "list", "--output", "json") {
+	for _, connection := range harnessCLIItems(t, env, "grid", "connection", "list", "--output", "json") {
 		id, _ := connection["id"].(string)
 		config, _ := connection["config"].(map[string]any)
 		providers[id], _ = config["provider"].(string)
 	}
 	classes := map[string]string{}
-	for _, route := range harnessCLIItems(t, "grid", "route", "list", "--output", "json") {
+	for _, route := range harnessCLIItems(t, env, "grid", "route", "list", "--output", "json") {
 		name, _ := route["name"].(string)
 		target, _ := route["target"].(map[string]any)
 		kind, _ := target["type"].(string)
@@ -241,9 +264,9 @@ func harnessRouteClasses(t *testing.T) map[string]string {
 	return classes
 }
 
-func harnessCLIItems(t *testing.T, args ...string) []map[string]any {
+func harnessCLIItems(t *testing.T, env map[string]string, args ...string) []map[string]any {
 	t.Helper()
-	out, errOut, err := cli(t, args...)
+	out, errOut, err := cliWithEnv(t, env, args...)
 	require.NoError(t, err, "baseten %s: %s", strings.Join(args, " "), errOut)
 	var list struct {
 		Items []map[string]any `json:"items"`
@@ -447,11 +470,15 @@ func harnessHomeEnv(t *testing.T, root, configDir string) []string {
 	}
 }
 
-func harnessProcessEnv(t *testing.T, root, configDir string) []string {
+func harnessProcessEnv(t *testing.T, root, configDir string, overlay map[string]string) []string {
 	t.Helper()
 	env := append(harnessHomeEnv(t, root, configDir), "DISABLE_TELEMETRY=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
 	for _, name := range []string{"PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "TEMP", "TMP", "PROGRAMFILES", "PROGRAMDATA"} {
-		if value, ok := os.LookupEnv(name); ok {
+		value, ok := overlay[name]
+		if !ok {
+			value, ok = os.LookupEnv(name)
+		}
+		if ok {
 			env = append(env, name+"="+value)
 		}
 	}
@@ -471,7 +498,7 @@ func (h *harnessTest) runWithTimeout(t *testing.T, dir string, timeout time.Dura
 	defer cancel()
 	command := exec.CommandContext(ctx, h.binary, args...)
 	command.Dir = dir
-	command.Env = harnessProcessEnv(t, h.root, h.configDir)
+	command.Env = harnessProcessEnv(t, h.root, h.configDir, h.env)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	command.WaitDelay = 5 * time.Second

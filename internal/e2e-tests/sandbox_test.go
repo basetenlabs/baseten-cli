@@ -38,9 +38,11 @@ func setupSandboxE2E(t *testing.T) {
 	}
 	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
 	require.NotEmpty(t, remoteURL, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
-	t.Setenv("BASETEN_API_KEY", apiKey)
-	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
-	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
+	setTestEnv(t, map[string]string{
+		"BASETEN_API_KEY":    apiKey,
+		"BASETEN_REMOTE_URL": remoteURL,
+		"BASETEN_CONFIG_DIR": t.TempDir(),
+	})
 }
 
 // createE2ESandbox creates a sandbox and registers its deletion, which runs
@@ -368,6 +370,7 @@ func startE2EConnect(t *testing.T, name string, rows, cols uint16) *e2eConnectSe
 	go func() {
 		done <- cliRun(ctx, cliRunOptions{
 			Args:   []string{"sandbox", "connect", "--name", name},
+			Env:    testEnvOverlay(),
 			Stdin:  terminal,
 			Stdout: terminal,
 			Stderr: &stderr,
@@ -446,7 +449,7 @@ func TestE2ESandboxVolume(t *testing.T) {
 	// Fails only with the 409 of a volume still mounted in a sandbox being
 	// deleted; any other failure fails the test.
 	deleteVolume := func(ctx context.Context) (map[string]any, bool) {
-		result := cliRun(ctx, cliRunOptions{Args: []string{"sandbox", "volume", "delete", "--name", volumeName, "--yes", "--output", "json"}})
+		result := cliRun(ctx, cliRunOptions{Args: []string{"sandbox", "volume", "delete", "--name", volumeName, "--yes", "--output", "json"}, Env: testEnvOverlay()})
 		if result.Err == nil {
 			var deleted map[string]any
 			require.NoError(t, json.Unmarshal([]byte(result.Stdout), &deleted))
@@ -488,7 +491,7 @@ func TestE2ESandboxVolume(t *testing.T) {
 	updated := cliJSON[map[string]any](t, "sandbox", "volume", "update", "--name", volumeName,
 		"--label", "created_by=cli-e2e", "--label", "stage=two")
 	require.Equal(t, map[string]any{"created_by": "cli-e2e", "stage": "two"}, updated["labels"])
-	shrunk := cliRun(t.Context(), cliRunOptions{Args: []string{"sandbox", "volume", "update", "--name", volumeName, "--size", "256", "--output", "json"}})
+	shrunk := cliRun(t.Context(), cliRunOptions{Args: []string{"sandbox", "volume", "update", "--name", volumeName, "--size", "256", "--output", "json"}, Env: testEnvOverlay()})
 	require.Error(t, shrunk.Err)
 	require.Equal(t, http.StatusBadRequest, shrunk.APIStatus(t), "stdout: %s\nstderr: %s", shrunk.Stdout, shrunk.Stderr)
 
