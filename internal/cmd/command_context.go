@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
@@ -438,7 +439,13 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 // RunPrompt runs a single interactive prompt field, aborting it when the
 // command context is cancelled.
 func (c *CommandContext) RunPrompt(field huh.Field) error {
-	// Equivalent to the field's own Run, which ignores the context and so
+	return c.RunPromptForm(huh.NewForm(huh.NewGroup(field)))
+}
+
+// RunPromptForm runs form with the CLI's prompt theme and I/O, aborting it
+// when the command context is cancelled.
+func (c *CommandContext) RunPromptForm(form *huh.Form) error {
+	// Equivalent to the form's own Run, which ignores the context and so
 	// leaves the prompt running when the command is cancelled by a SIGTERM or
 	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
 	// signal, which huh handles itself by returning huh.ErrUserAborted. I/O is
@@ -448,7 +455,7 @@ func (c *CommandContext) RunPrompt(field huh.Field) error {
 	// huh's base theme leaves titles and options in the terminal's default
 	// foreground. Its default Charm theme colors them for one background,
 	// drawing options near-white on a light terminal.
-	form := huh.NewForm(huh.NewGroup(field)).WithTheme(huh.ThemeFunc(huh.ThemeBase)).WithShowHelp(false).WithInput(c.Stdin).WithOutput(c.Stderr)
+	form = form.WithTheme(huh.ThemeFunc(promptTheme)).WithShowHelp(false).WithInput(c.Stdin).WithOutput(c.Stderr)
 	if answers, ok := c.promptAnswers(); ok {
 		if len(*answers) == 0 {
 			return errors.New("no answer for the prompt")
@@ -458,6 +465,25 @@ func (c *CommandContext) RunPrompt(field huh.Field) error {
 		form = form.WithAccessible(true).WithInput(strings.NewReader(answer + "\n"))
 	}
 	return form.RunWithContext(c)
+}
+
+// promptArrowExit makes an arrow key leave a prompt field for its neighbor
+// when the field's own cursor has nowhere further to go.
+type promptArrowExit struct {
+	huh.Field
+	arrow  string
+	atEdge func() bool
+	// exit is the key the field itself moves to the neighbor on.
+	exit tea.KeyPressMsg
+}
+
+func (f *promptArrowExit) Update(msg tea.Msg) (huh.Model, tea.Cmd) {
+	if press, ok := msg.(tea.KeyPressMsg); ok && press.String() == f.arrow && f.atEdge() {
+		msg = f.exit
+	}
+	field, cmd := f.Field.Update(msg)
+	f.Field = field.(huh.Field)
+	return f, cmd
 }
 
 // OAuthConfig returns the OAuth2 configuration for the given host.
