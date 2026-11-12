@@ -162,11 +162,11 @@ func TestPiAnthropicThinkingCompatibility(t *testing.T) {
 			tools := true
 			api := managementapi.GridRoute{
 				Name: "acme/custom", DisplayName: "Custom",
-				Metadata: &managementapi.ExploreMetadata{
+				Metadata: &managementapi.GridRouteMetadata{
 					ContextWindow: &tc.contextWindow, MaxOutputTokens: &tc.outputLimit,
 					InputModalities: []string{"text", "image"}, Tools: &tools,
 					ReasoningEffortLevels: &tc.reasoningLevels,
-					SupportedApiFormats:   &managementapi.ExploreMetadataAPIFormats{Messages: &tools},
+					ApiFormats:            []managementapi.GridRouteMetadataApiFormats{managementapi.GridRouteMetadataApiFormats_messages},
 				},
 			}
 			require.NoError(t, json.Unmarshal([]byte(`{"type":"CONNECTION","connection_id":"conn-a","model":"`+tc.model+`"}`), &api.Target))
@@ -298,12 +298,11 @@ func TestNewRoute(t *testing.T) {
 
 	ptr := func(v float32) *float32 { return &v }
 	tools, ctx, out := true, 128000, 4096
-	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.ExploreMetadata{
-		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools,
+	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.GridRouteMetadata{
+		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, ApiFormats: chatCompletionsFormats,
 		Cost: &managementapi.ExploreCost{Input: ptr(0.3), Output: ptr(1.2), LongContext: &managementapi.ExploreCostValues{Input: ptr(0.6)}},
 	}}, nil)
 	require.NoError(t, err)
-	require.True(t, r.Messages && r.Responses, "a route without API formats is listed in every harness")
 	require.Equal(t, &Cost{Input: 0.3, Output: 1.2}, r.Cost, "a long-context price without output is dropped")
 }
 
@@ -317,7 +316,7 @@ func TestRouteTargetComesFromConnections(t *testing.T) {
 	require.Equal(t, Providers{"conn-a": ProviderAnthropic, "conn-o": ProviderOpenAI, "conn-x": "XAI"}, providers)
 
 	tools, ctx, out := true, 128000, 4096
-	metadata := &managementapi.ExploreMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools}
+	metadata := &managementapi.GridRouteMetadata{ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, ApiFormats: chatCompletionsFormats}
 	for _, tc := range []struct {
 		name         string
 		target       string
@@ -329,7 +328,7 @@ func TestRouteTargetComesFromConnections(t *testing.T) {
 		{"xai connection", `{"type": "CONNECTION", "connection_id": "conn-x", "model": "grok"}`, "XAI", "grok"},
 		{"unknown connection", `{"type": "CONNECTION", "connection_id": "conn-gone", "model": "gpt"}`, "", "gpt"},
 		{"baseten model api", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, ProviderBaseten, ""},
-		{"classifier", `{"type": "CLASSIFIER", "classifier": {"id": "c", "name": "intent"}, "default_route": {"id": "r", "slug": "acme/a"}, "allowed_routes": []}`, "", ""},
+		{"intelligent", `{"type": "INTELLIGENT"}`, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := managementapi.GridRoute{Name: "acme/route", DisplayName: "Route", Metadata: metadata}
