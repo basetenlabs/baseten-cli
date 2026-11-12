@@ -229,3 +229,48 @@ func TestJSONErrorInterruptIsAnEnvelope(t *testing.T) {
 	h.Require.Equal(cmd.ExitInterrupted, jsonErr.ExitCode)
 	h.Require.Zero(jsonErr.APIStatusCode)
 }
+
+func TestAPIErrorTextShowsMessageLines(t *testing.T) {
+	h := NewCommandHarness(t)
+	// The body the API returned for an API key type it did not accept.
+	message := "1 validation error for APIKeysRequestV1\ntype\n  Input should be 'PERSONAL' or 'GRID' [type=enum, input_value='ROUTES', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.12/v/enum"
+	h.MockManagementAPI().SetRoute("GET", billingUsagePath, 400, map[string]any{"code": "VALIDATION_ERROR", "message": message})
+
+	h.Require.Error(h.Execute("org", "billing", "usage"))
+	h.Require.Equal(int(cmd.ExitValidation), h.ExitCode)
+	h.Require.Equal("fetching billing usage: request failed (HTTP 400, VALIDATION_ERROR)\n\n"+
+		"  1 validation error for APIKeysRequestV1\n"+
+		"  type\n"+
+		"    Input should be 'PERSONAL' or 'GRID' [type=enum, input_value='ROUTES', input_type=str]\n"+
+		"      For further information visit https://errors.pydantic.dev/2.12/v/enum\n", h.Stderr.String())
+
+	// --verbose adds the raw body.
+	h.Require.Error(h.Execute("org", "billing", "usage", "--verbose"))
+	h.Require.Contains(h.Stderr.String(), "\n\n  response body: {\"code\":\"VALIDATION_ERROR\"")
+
+	// JSON output keeps the raw body in the message.
+	h.Require.Error(h.Execute("org", "billing", "usage", "--output", "json"))
+	h.Require.Contains(decodeJSONErrorEnvelope(h).Message, `"code":"VALIDATION_ERROR"`)
+}
+
+func TestAPIErrorTextKeepsOneLineMessageOnOneLine(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", billingUsagePath, 409, map[string]any{"code": "CONFLICT", "message": "Usage summary is being rebuilt"})
+	h.Require.Error(h.Execute("org", "billing", "usage"))
+	h.Require.Equal("fetching billing usage: Usage summary is being rebuilt (HTTP 409, CONFLICT)\n", h.Stderr.String())
+
+	// A proxy's body has a message under "error" and no code.
+	h.MockManagementAPI().SetRoute("GET", billingUsagePath, 401, map[string]any{"error": "Unauthorized"})
+	h.Require.Error(h.Execute("org", "billing", "usage"))
+	h.Require.Equal("fetching billing usage: Unauthorized (HTTP 401)\n", h.Stderr.String())
+}
+
+func TestAPIErrorTextNonJSONBodyPrintsAsIs(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRouteFunc("GET", billingUsagePath, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(502)
+		_, _ = w.Write([]byte("<html>Bad Gateway</html>"))
+	})
+	h.Require.Error(h.Execute("org", "billing", "usage"))
+	h.Require.Equal("fetching billing usage: baseten API error (HTTP 502): <html>Bad Gateway</html>\n", h.Stderr.String())
+}
