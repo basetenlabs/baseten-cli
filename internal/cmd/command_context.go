@@ -655,7 +655,7 @@ func (c *CommandContext) httpClient() *http.Client {
 	if cl, ok := c.Value(httpClientKey{}).(*http.Client); ok {
 		return cl
 	}
-	return http.DefaultClient
+	return client.NewDefaultHTTPClient()
 }
 
 type httpClientKey struct{}
