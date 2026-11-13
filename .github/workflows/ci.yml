@@ -23,6 +23,8 @@ jobs:
         run: |
           go mod tidy
           go fmt ./...
+          go -C internal/e2e-tests mod tidy
+          go -C internal/e2e-tests fmt ./...
           git diff --exit-code
 
       # The harness tests run the installed Claude Code, Codex, OpenCode, and Pi
@@ -68,7 +70,7 @@ jobs:
           # to main will run them.
           BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
           BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
-        run: go test -v -tags=e2e -timeout 40m -parallel 16 -run '^TestE2EHarness' ./internal/e2e-tests/...
+        run: go -C internal/e2e-tests test -v -tags=e2e -timeout 40m -parallel 16 -run '^TestE2EHarness' ./...
 
       - name: E2E test
         if: matrix.os == 'ubuntu-latest'
@@ -79,4 +81,4 @@ jobs:
           BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
         # -v so each test and its step logs stream as the run progresses; without
         # it a hung run shows no output at all and the stuck test is unknowable.
-        run: go test -v -tags=e2e -timeout 30m -skip '^TestE2EHarness' ./internal/e2e-tests/...
+        run: go -C internal/e2e-tests test -v -tags=e2e -timeout 30m -skip '^TestE2EHarness' ./...
