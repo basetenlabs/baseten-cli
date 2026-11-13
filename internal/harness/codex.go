@@ -270,7 +270,8 @@ func (codexHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([
 		desired([]string{"forced_login_method"}, "api"),
 		desired([]string{"model_providers", providerID}, provider),
 	}
-	p, err := prepareSettings(path, credentialPath, func(map[string]any) ([]setting, error) { return values, nil })
+	owned := func(d map[string]any) [][]string { return codexTeardownPaths(d, catalogPath(path)) }
+	p, err := prepareSettings(path, credentialPath, owned, func(map[string]any) ([]setting, error) { return values, nil })
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +307,7 @@ func (codexHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([
 			"experimental_supported_tools": []any{},
 		})
 	}
-	catalog, err := prepareSettings(catalogPath(path), nil, func(map[string]any) ([]setting, error) {
+	catalog, err := prepareSettings(catalogPath(path), nil, wholeFileOwned, func(map[string]any) ([]setting, error) {
 		return []setting{desired([]string{"models"}, models)}, nil
 	})
 	if err != nil {

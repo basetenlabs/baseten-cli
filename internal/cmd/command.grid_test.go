@@ -929,10 +929,16 @@ func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "model")
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "modelPicker.options")
 	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
-	h.Require.Contains(h.Stdout.String(), "Existing integration settings will be overwritten")
+	h.Require.Contains(h.Stdout.String(), "  Replaces          your model, modelPicker.options")
 
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
-	h.Require.Contains(h.Stderr.String(), "existing integration settings in claude will be overwritten")
+	h.Require.Contains(h.Stderr.String(), "Replaces your model settings in Claude Code.\n")
+	h.Require.NotContains(h.Stderr.String(), "--dry-run", "--yes skips the prompt the hint is for")
+	h.Require.NotContains(h.Stderr.String(), "warning")
+
+	// Rerunning only rewrites settings the first run wrote.
+	h.Require.NoError(h.Execute(append(args, "--yes", "--background-route-id", "route-primary")...))
+	h.Require.NotContains(h.Stderr.String(), "Replaces your")
 	picker := readHarnessSettings(t, "claude", path)["modelPicker"].(map[string]any)
 	h.Require.Equal([]any{map[string]any{"model": "acme/primary", "label": "Primary"}}, picker["options"])
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))

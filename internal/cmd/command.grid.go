@@ -437,10 +437,10 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	passed := ctx.Command.Flags().Changed("hide-served-model-indicator")
 	servedModel := !f.HideServedModel
 	var offered, labels []string
-	for _, h := range []struct{ name, label string }{{harness.Claude, "Claude Code"}, {harness.Pi, "Pi"}, {harness.OpenCode, "OpenCode"}} {
-		if gridOffersServedModel(selected, listed, h.name) {
-			offered = append(offered, h.name)
-			labels = append(labels, h.label)
+	for _, name := range []string{harness.Claude, harness.Pi, harness.OpenCode} {
+		if gridOffersServedModel(selected, listed, name) {
+			offered = append(offered, name)
+			labels = append(labels, gridHarnessLabel(name))
 		}
 	}
 	if len(labels) > 0 && !passed && !f.Yes && !f.DryRun && ctx.IsInteractive() {
@@ -517,7 +517,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	case ctx.verbose || f.DryRun:
 		gridHarnessVerboseSetupSummary(ctx, team, targets, plans)
 	default:
-		gridHarnessReplacedWarnings(ctx, plans)
+		gridHarnessReplacedNotice(ctx, plans, f.Yes)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -629,11 +629,7 @@ func gridOffersServedModel(selected []gridSelectedHarness, listed []managementap
 }
 
 func gridAskServedModel(ctx *CommandContext, harnessLabels []string) (bool, error) {
-	last := len(harnessLabels) - 1
-	harnessLabel := harnessLabels[last]
-	if last > 0 {
-		harnessLabel = strings.Join(harnessLabels[:last], ", ") + " and " + harnessLabel
-	}
+	harnessLabel := gridJoinLabels(harnessLabels)
 	show := true
 	err := ctx.RunPrompt(huh.NewSelect[bool]().
 		Title("Show which model served each response on intelligent routes in "+harnessLabel+"?").
@@ -762,7 +758,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 			gridHarnessVerboseSetupSummary(ctx, run.team, run.targets, run.plans)
 		}
 	default:
-		gridHarnessReplacedWarnings(ctx, plans)
+		gridHarnessReplacedNotice(ctx, plans, f.Yes)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -931,16 +927,46 @@ func gridHarnessSessionAPIKey(ctx *CommandContext) (string, error) {
 	return key, nil
 }
 
-func gridHarnessReplacedWarnings(ctx *CommandContext, plans []*harness.Plan) {
-	var replaced []string
+// gridHarnessReplacedNotice names the harnesses whose own settings setup
+// replaces, before asking to apply. Settings an earlier setup wrote don't count.
+func gridHarnessReplacedNotice(ctx *CommandContext, plans []*harness.Plan, yes bool) {
+	var labels []string
 	for _, p := range plans {
-		if len(p.Replaced) > 0 && !slices.Contains(replaced, p.Harness) {
-			replaced = append(replaced, p.Harness)
+		if label := gridHarnessLabel(p.Harness); len(p.Replaced) > 0 && !slices.Contains(labels, label) {
+			labels = append(labels, label)
 		}
 	}
-	if len(replaced) > 0 {
-		ctx.Logf("warning: existing integration settings in %s will be overwritten; teardown does not restore them\n", strings.Join(replaced, ", "))
+	if len(labels) == 0 {
+		return
 	}
+	ctx.Logf("Replaces your model settings in %s.\n", gridJoinLabels(labels))
+	if !yes {
+		ctx.LogLine("Preview with --dry-run. To remove Grid later, run baseten grid teardown.")
+	}
+}
+
+// gridHarnessLabel returns the name users know a harness by.
+func gridHarnessLabel(name string) string {
+	switch name {
+	case harness.Claude:
+		return "Claude Code"
+	case harness.Codex:
+		return "Codex"
+	case harness.OpenCode:
+		return "OpenCode"
+	case harness.Pi:
+		return "Pi"
+	}
+	return name
+}
+
+// gridJoinLabels joins labels as "A", "A and B", or "A, B and C".
+func gridJoinLabels(labels []string) string {
+	last := len(labels) - 1
+	if last < 1 {
+		return strings.Join(labels, "")
+	}
+	return strings.Join(labels[:last], ", ") + " and " + labels[last]
 }
 
 func gridHarnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
@@ -1343,25 +1369,23 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 		if choice.Name() == harness.Claude {
 			ctx.Outputf("  Fallback route    %s\n", accent.Render(cmp.Or(s.Fallback, s.Primary)))
 		}
-		changed, replaced := false, false
+		changed := false
+		var replaced []string
 		for _, p := range plans {
 			if p.Harness != choice.Name() {
 				continue
 			}
 			changed = changed || p.Changed
-			replaced = replaced || len(p.Replaced) > 0
+			replaced = append(replaced, p.Replaced...)
 			ctx.VerboseLogf("Config: %s\nSettings: %s\n", p.Path, strings.Join(p.Keys, ", "))
-			if len(p.Replaced) > 0 {
-				ctx.VerboseLogf("Settings to replace: %s\n", strings.Join(p.Replaced, ", "))
-			}
 		}
 		result := "Already configured"
 		if changed {
 			result = "Changes ready to apply"
 		}
 		ctx.Outputf("  Result            %s\n", accent.Render(result))
-		if replaced {
-			ctx.OutputLine("  Existing integration settings will be overwritten; teardown does not restore them.")
+		if len(replaced) > 0 {
+			ctx.Outputf("  Replaces          your %s\n", strings.Join(replaced, ", "))
 		}
 	}
 	ctx.OutputLine("")
