@@ -517,7 +517,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	case ctx.verbose || f.DryRun:
 		gridHarnessVerboseSetupSummary(ctx, team, targets, plans)
 	default:
-		gridHarnessReplacedNotice(ctx, plans, f.Yes)
+		gridHarnessReplacedNotice(ctx, plans)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -758,7 +758,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 			gridHarnessVerboseSetupSummary(ctx, run.team, run.targets, run.plans)
 		}
 	default:
-		gridHarnessReplacedNotice(ctx, plans, f.Yes)
+		gridHarnessReplacedNotice(ctx, plans)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -927,22 +927,14 @@ func gridHarnessSessionAPIKey(ctx *CommandContext) (string, error) {
 	return key, nil
 }
 
-// gridHarnessReplacedNotice names the harnesses whose own settings setup
-// replaces, before asking to apply. Settings an earlier setup wrote don't count.
-func gridHarnessReplacedNotice(ctx *CommandContext, plans []*harness.Plan, yes bool) {
-	var labels []string
-	for _, p := range plans {
-		if label := gridHarnessLabel(p.Harness); len(p.Replaced) > 0 && !slices.Contains(labels, label) {
-			labels = append(labels, label)
-		}
-	}
-	if len(labels) == 0 {
+// gridHarnessReplacedNotice says setup changes the user's own harness settings,
+// before asking to apply. Settings an earlier setup wrote don't count.
+func gridHarnessReplacedNotice(ctx *CommandContext, plans []*harness.Plan) {
+	if !slices.ContainsFunc(plans, func(p *harness.Plan) bool { return len(p.Replaced) > 0 }) {
 		return
 	}
-	ctx.Logf("Replaces your model settings in %s.\n", gridJoinLabels(labels))
-	if !yes {
-		ctx.LogLine("Preview with --dry-run. To remove Grid later, run baseten grid teardown.")
-	}
+	ctx.LogLine("Modifies harness settings to set Grid as the gateway with your configured models.")
+	ctx.LogLine("To remove Grid, run baseten grid teardown.")
 }
 
 // gridHarnessLabel returns the name users know a harness by.
