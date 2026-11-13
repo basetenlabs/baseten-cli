@@ -623,6 +623,42 @@ func Test_Grid_Setup_Teams(t *testing.T) {
 	h.Require.Nil(api.FindCall("GET", "/v1/teams"))
 	h.Require.NoFileExists(harnessSettingsFile("claude", dir))
 	h.Require.Empty(harnessRecordFile(t).Harnesses)
+
+	// A server that lists the teams lets setup ask which on a terminal and name them otherwise.
+	h, api = fakeGridAPI(t)
+	api.SetRouteFunc("GET", "/v1/grid/routes", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !r.URL.Query().Has("team_id") {
+			w.WriteHeader(400)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": "VALIDATION_ERROR", "message": "Team ID is required when you belong to multiple.", "details": map[string]any{
+				"reason": "AMBIGUOUS_TEAM", "teams": []any{map[string]any{"id": "team-a", "name": "Engineering"}, map[string]any{"id": "team-b", "name": "Research"}},
+			}})
+			return
+		}
+		route := map[string]any{"id": "route-primary", "name": "acme/primary", "team_id": "team-b", "team_name": "Research", "invoke_url": api.URL, "metadata": harnessRouteMetadata}
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{route}, "pagination": map[string]any{"has_more": false}})
+	})
+	args := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"}
+	h.Require.Error(h.Execute(append(args, "--output", "json")...))
+	h.Require.Equal(int(public.ExitValidation), h.ExitCode)
+	h.Require.NotContains(h.Stderr.String(), "Usage:")
+	h.Require.Contains(h.Stderr.String(), `you belong to 2 teams; pass --team with one of "Engineering", "Research"`)
+	h.Require.NotContains(h.Stderr.String(), "AMBIGUOUS_TEAM")
+	h.Require.Equal(400, decodeJSONErrorEnvelope(h).APIStatusCode)
+	h.Require.Len(api.Calls(), 1)
+	h.Require.NoFileExists(harnessSettingsFile("opencode", dir))
+	h.Require.Empty(harnessRecordFile(t).Harnesses)
+	h.Context = internalcmd.WithPromptAnswers(h.Context, "2")
+	h.Require.NoError(h.Execute(args...))
+	var queries []string
+	for _, c := range api.Calls() {
+		if c.Path == "/v1/grid/routes" {
+			queries = append(queries, c.Query().Get("team_id"))
+		}
+	}
+	// The failed run above, then this run's first try and its retry with the pick.
+	h.Require.Equal([]string{"", "", "team-b"}, queries)
+	h.Require.Equal("team-b", harnessRecordFile(t).Harnesses["opencode"].TeamID)
 }
 
 func Test_Grid_Setup_KeyPerTeamAndUser(t *testing.T) {
