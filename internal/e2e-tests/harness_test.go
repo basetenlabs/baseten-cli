@@ -184,6 +184,9 @@ func TestE2EHarnessWebSearch(t *testing.T) {
 	})
 	for _, variant := range harnessOpenCodeVariants {
 		t.Run(variant.label, func(t *testing.T) {
+			if variant.opencode2 {
+				t.Skip("opencode v2 cancels the request when the server-side web search tool fires in non-interactive run mode, so the search turn never completes")
+			}
 			t.Parallel()
 			h := newOpenCodeHarnessTest(t, variant)
 			model := h.pickModel(t, harnessAnthropic, harnessAnyModel)

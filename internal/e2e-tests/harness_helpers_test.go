@@ -870,7 +870,7 @@ func (h *harnessTest) thinkingArgs(model harnessModel) []string {
 }
 
 func (h *harnessTest) searches() bool {
-	return h.name == "claude" || h.name == "codex" || h.name == "pi" || h.name == "opencode"
+	return h.name == "claude" || h.name == "codex" || h.name == "pi"
 }
 
 func claudeAssertThinking(t *testing.T, model harnessModel, events []claudeStreamEvent, stdout string) {
