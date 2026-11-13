@@ -932,8 +932,10 @@ func gridHarnessSetupNotice(ctx *CommandContext, plans []*harness.Plan) {
 	if !slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Changed }) {
 		return
 	}
+	ctx.LogLine("")
 	ctx.LogLine("Modifies harness settings to set Grid as the gateway with your configured models.")
 	ctx.LogLine("To remove Grid, run baseten grid teardown.")
+	ctx.LogLine("")
 }
 
 func gridHarnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {

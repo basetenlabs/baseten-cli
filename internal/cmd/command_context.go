@@ -246,12 +246,22 @@ func (c *CommandContext) Log(v string) {
 
 // LogLine writes a line to stderr.
 func (c *CommandContext) LogLine(v string) {
-	panicOnOutputError(fmt.Fprintln(c.Stderr, v))
+	panicOnOutputError(fmt.Fprintln(c.Stderr, c.styleWarning(v)))
 }
 
 // Logf writes formatted output to stderr.
 func (c *CommandContext) Logf(format string, args ...any) {
-	panicOnOutputError(fmt.Fprintf(c.Stderr, format, args...))
+	panicOnOutputError(fmt.Fprint(c.Stderr, c.styleWarning(fmt.Sprintf(format, args...))))
+}
+
+// styleWarning colors a leading "warning:" so it stands out from other stderr
+// lines; color is dropped when stderr is not a terminal.
+func (c *CommandContext) styleWarning(s string) string {
+	rest, ok := strings.CutPrefix(s, warningPrefix)
+	if !ok {
+		return s
+	}
+	return lipgloss.NewRenderer(c.Stderr).NewStyle().Inherit(warningStyle).Render(warningPrefix) + rest
 }
 
 // VerboseLog writes to stderr if verbose mode is enabled.
