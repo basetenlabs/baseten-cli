@@ -308,7 +308,11 @@ func buildCommand(def cmd.Command, parentPath string, options *ExecuteOptions) *
 			ce := normalizeError(runErr)
 			c.SilenceErrors = true
 			c.SilenceUsage = true
-			fmt.Fprintln(options.Stderr, ce)
+			text := ce.Error()
+			if formatted, ok := apiErrorText(ce, ctx.verbose); ok {
+				text = formatted
+			}
+			fmt.Fprintln(options.Stderr, text)
 			ctx.writeJSONError(ce, runErr)
 			// A subprocess exit code is the child's, not ours. Delegated tools
 			// like truss exit 2 for their own validation errors, which collides

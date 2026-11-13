@@ -40,9 +40,9 @@ type JSONErrorEnvelope struct {
 
 // JSONError is the error object inside a [JSONErrorEnvelope].
 type JSONError struct {
-	// Message is the human-readable failure message, identical to the line
-	// written to stderr. For a failure originating in an API response this
-	// includes the raw response body.
+	// Message is the human-readable failure message. For a failure
+	// originating in an API response it includes the raw response body, which
+	// stderr shows as the message text after the status and code instead.
 	Message string `json:"message"`
 	// Type is the name of the typed error, matching the names listed in the
 	// exit-code tables of `baseten --help-output` and each command's

@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/inferenceapi"
@@ -139,4 +142,82 @@ func apiErrorFields(err error) cmd.JSONError {
 	}
 	out.APIDetails = body.Details
 	return out
+}
+
+// apiErrorText renders a failure from an API response for stderr. The raw
+// body escapes the message's newlines and buries it in JSON, so the message
+// is shown as text after the status and code. Returns false when err did not
+// come from an API response, or its body has no message, so the caller prints
+// the error as is.
+func apiErrorText(err error, verbose bool) (string, bool) {
+	status, apiText, rawBody, ok := apiResponse(err)
+	if !ok {
+		return "", false
+	}
+	// Commands wrap the API error with what they were doing, which is kept.
+	prefix, found := strings.CutSuffix(err.Error(), apiText)
+	if !found {
+		return "", false
+	}
+	var body struct {
+		apiErrorBody
+		Message string `json:"message"`
+		// The inference API and upstream proxies put the message under
+		// "error" or "detail". FastAPI's validation detail is a list, so
+		// these stay untyped and only a string is used.
+		Error  any `json:"error"`
+		Detail any `json:"detail"`
+	}
+	_ = json.Unmarshal([]byte(rawBody), &body)
+	message := body.Message
+	for _, alt := range []any{body.Error, body.Detail} {
+		if s, isString := alt.(string); message == "" && isString {
+			message = s
+		}
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return "", false
+	}
+	statusText := fmt.Sprintf("HTTP %d", status)
+	if code := cmp.Or(body.Code, body.ErrorCode); code != "" {
+		statusText += ", " + code
+	}
+	var b strings.Builder
+	if !strings.Contains(message, "\n") {
+		fmt.Fprintf(&b, "%s%s (%s)", prefix, message, statusText)
+	} else {
+		fmt.Fprintf(&b, "%srequest failed (%s)\n", prefix, statusText)
+		for line := range strings.Lines(message) {
+			b.WriteString("\n  " + strings.TrimRight(line, "\r\n"))
+		}
+	}
+	if verbose {
+		b.WriteString("\n\n  response body: " + rawBody)
+	}
+	return b.String(), true
+}
+
+// apiResponse finds a failed API response in err's chain and returns its
+// status, the error text the client formatted for it, and its body.
+func apiResponse(err error) (status int, text, body string, ok bool) {
+	var mre *managementapi.ResponseError
+	var ire *inferenceapi.ResponseError
+	var irer *inferenceapi.ResponseErrorResponse
+	var sre *sandboxapi.ResponseError
+	switch {
+	case errors.As(err, &mre):
+		return mre.StatusCode, mre.Error(), mre.Body, true
+	case errors.As(err, &ire):
+		return ire.StatusCode, ire.Error(), ire.Body, true
+	case errors.As(err, &irer):
+		decoded, marshalErr := json.Marshal(irer.ErrorResponse)
+		if marshalErr != nil {
+			return 0, "", "", false
+		}
+		return irer.StatusCode, irer.Error(), string(decoded), true
+	case errors.As(err, &sre):
+		return sre.StatusCode, sre.Error(), sre.Body, true
+	}
+	return 0, "", "", false
 }
