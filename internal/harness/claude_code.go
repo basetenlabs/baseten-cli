@@ -156,9 +156,6 @@ func (h claudeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 	p.Replaced = slices.DeleteFunc(p.Replaced, func(key string) bool {
 		return key == pathKey(claudeStopHooksPath) || key == pathKey(claudeSessionStartHooksPath)
 	})
-	if claudeHasServedModelHook(p.config) {
-		p.Notes = append(p.Notes, "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
-	}
 	plans := []*Plan{p}
 	if HasClaudeDesktop(opts.Installs) {
 		desktop, err := claudeDesktopPrepare(claudeDesktopConfig(path), routes, s, endpoint, helper)

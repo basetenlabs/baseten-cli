@@ -502,9 +502,6 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		for _, warning := range p.Warnings {
 			ctx.Warn(warning)
 		}
-		for _, note := range p.Notes {
-			ctx.LogLine(note)
-		}
 	}
 	var sessionToken string
 	if credentialSource == harness.CredentialSourceSession {

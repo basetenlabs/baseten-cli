@@ -538,7 +538,6 @@ type Plan struct {
 	// Changes lists each setting the plan adds, updates or removes, without values.
 	// It is empty for plans that write a whole file.
 	Changes []Change
-	Notes   []string
 	// Warnings are notes about something setup could not do as asked.
 	Warnings []string
 	Managed  bool

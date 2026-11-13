@@ -1368,7 +1368,7 @@ func Test_Grid_Setup_ServedModelStopHook(t *testing.T) {
 
 	for range 2 {
 		h.Require.NoError(h.Execute(setup...))
-		h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
+		h.Require.NotContains(h.Stderr.String(), "Existing statusLine")
 		h.Require.NotContains(h.Stderr.String(), "will be overwritten")
 		settings := readHarnessSettings(t, "claude", path)
 		h.Require.Equal(original["statusLine"], settings["statusLine"])
@@ -1455,7 +1455,6 @@ func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
 			h.Require.NoError(os.WriteFile(path, raw, 0o600))
 
 			h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
-			h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
 			settings := readHarnessSettings(t, "claude", path)
 			h.Require.Equal(user["statusLine"], settings["statusLine"])
 			h.Require.Equal([]any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --intelligent-route 'acme/auto=auto' --hook"}}}},
