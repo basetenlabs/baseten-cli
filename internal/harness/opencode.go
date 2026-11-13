@@ -310,7 +310,7 @@ func withOpenCodeServedModel(p *Plan, routes []Route, off bool) ([]*Plan, error)
 	case show && (free || owned):
 		return []*Plan{p, prepareFiles(dir, files)}, nil
 	case show:
-		p.Notes = append(p.Notes, "warning: "+dir+" already exists and was not written by baseten grid setup; leaving it unchanged, so OpenCode will not show which model served each response on auto routes.")
+		p.Warnings = append(p.Warnings, dir+" already exists and was not written by baseten grid setup; leaving it unchanged, so OpenCode will not show which model served each response on auto routes.")
 	case owned:
 		return []*Plan{p, prepareFilesRemoval(dir, files)}, nil
 	}

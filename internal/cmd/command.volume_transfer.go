@@ -253,7 +253,7 @@ func commandVolumePull(ctx *CommandContext, flags *cmd.VolumePullFlags) error {
 		return nil
 	}
 	for _, warning := range warnings {
-		ctx.Logf("Warning: %s\n", warning)
+		ctx.Warn(warning)
 	}
 	ctx.Outputf("✨ Volume version was successfully downloaded ✨\n\n")
 	ctx.Outputf("Ref:         %s\n", volumeRefText(result.VersionRef, flags.VolumeRefFlags))

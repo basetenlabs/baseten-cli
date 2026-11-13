@@ -264,8 +264,8 @@ func commandModelEnvironmentUpdatePromotion(
 	ctx *CommandContext, flags *cmd.ModelEnvironmentUpdatePromotionFlags,
 ) error {
 	if flags.RampUpWhilePromoting.Pointer() != nil || flags.RampUpDurationSeconds.Pointer() != nil {
-		ctx.Logf("warning: --ramp-up-while-promoting and --ramp-up-duration-seconds are deprecated: " +
-			"models no longer support canary promotions. Use --rolling-deploy true for a gradual promotion.\n")
+		ctx.Warnf("--ramp-up-while-promoting and --ramp-up-duration-seconds are deprecated: " +
+			"models no longer support canary promotions. Use --rolling-deploy true for a gradual promotion.")
 	}
 	settings := promotionSettingsFromFlags(flags)
 	resp, err := patchModelEnvironment(ctx, flags.ModelEnvironmentFlags,

@@ -15,11 +15,9 @@ import (
 // non-TTY downgrade automatically.
 var inlineCodeStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "63", Dark: "117"})
 
-// warningStyle colors the "warning:" prefix of stderr lines with the
+// warningStyle colors the "warning:" prefix of [CommandContext.Warn] with the
 // terminal's own yellow, so it follows the user's theme.
 var warningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
-
-const warningPrefix = "warning:"
 
 // linkStyle renders a hyperlink's visible text: the inline-code color plus an
 // underline so links read as links. lipgloss handles NO_COLOR and non-TTY

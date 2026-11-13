@@ -246,22 +246,24 @@ func (c *CommandContext) Log(v string) {
 
 // LogLine writes a line to stderr.
 func (c *CommandContext) LogLine(v string) {
-	panicOnOutputError(fmt.Fprintln(c.Stderr, c.styleWarning(v)))
+	panicOnOutputError(fmt.Fprintln(c.Stderr, v))
 }
 
 // Logf writes formatted output to stderr.
 func (c *CommandContext) Logf(format string, args ...any) {
-	panicOnOutputError(fmt.Fprint(c.Stderr, c.styleWarning(fmt.Sprintf(format, args...))))
+	panicOnOutputError(fmt.Fprintf(c.Stderr, format, args...))
 }
 
-// styleWarning colors a leading "warning:" so it stands out from other stderr
-// lines; color is dropped when stderr is not a terminal.
-func (c *CommandContext) styleWarning(s string) string {
-	rest, ok := strings.CutPrefix(s, warningPrefix)
-	if !ok {
-		return s
-	}
-	return lipgloss.NewRenderer(c.Stderr).NewStyle().Inherit(warningStyle).Render(warningPrefix) + rest
+// Warn writes msg to stderr as one warning line, with a "warning:" prefix
+// colored when stderr is a terminal.
+func (c *CommandContext) Warn(msg string) {
+	prefix := lipgloss.NewRenderer(c.Stderr).NewStyle().Inherit(warningStyle).Render("warning:")
+	panicOnOutputError(fmt.Fprintln(c.Stderr, prefix, strings.TrimSuffix(msg, "\n")))
+}
+
+// Warnf formats a message and writes it with [CommandContext.Warn].
+func (c *CommandContext) Warnf(format string, args ...any) {
+	c.Warn(fmt.Sprintf(format, args...))
 }
 
 // VerboseLog writes to stderr if verbose mode is enabled.

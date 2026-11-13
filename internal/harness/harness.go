@@ -539,8 +539,10 @@ type Plan struct {
 	// It is empty for plans that write a whole file.
 	Changes []Change
 	Notes   []string
-	Managed bool
-	Changed bool
+	// Warnings are notes about something setup could not do as asked.
+	Warnings []string
+	Managed  bool
+	Changed  bool
 
 	file           *configFile
 	data           []byte
@@ -793,7 +795,7 @@ func prepareSealedFile(path string, body []byte, missing string) ([]*Plan, error
 		return nil, err
 	}
 	if f.exists && !gridSetupSealed(f.data) {
-		return []*Plan{{Path: path, Notes: []string{"warning: existing " + path + " left unchanged; " + missing}, file: f, data: f.data}}, nil
+		return []*Plan{{Path: path, Warnings: []string{"existing " + path + " left unchanged; " + missing}, file: f, data: f.data}}, nil
 	}
 	data := append(slices.Clone(body), gridSetupSeal(body)...)
 	return []*Plan{{Path: path, Managed: true, Changed: !bytes.Equal(data, f.data), file: f, data: data}}, nil

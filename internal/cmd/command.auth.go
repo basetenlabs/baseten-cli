@@ -114,7 +114,7 @@ func commandAuthLogout(ctx *CommandContext, flags *cmd.AuthLogoutFlags) error {
 
 	if profile.AuthType == auth.AuthTypeOAuth {
 		if err := revokeOAuthSession(ctx, profileName); err != nil {
-			ctx.Logf("warning: server-side session revocation failed: %v\n", err)
+			ctx.Warnf("server-side session revocation failed: %v", err)
 		}
 	}
 
@@ -427,7 +427,7 @@ func loginWebProfile(ctx *CommandContext, store *auth.Store, remote *Remote, fla
 		profileName = defaultProfileName(email, remote)
 	}
 
-	warnWriter := func(msg string) { ctx.Log(msg) }
+	warnWriter := ctx.Warn
 	// The profile may have been another user's.
 	if err := clearCachedTokens(ctx, store, profileName); err != nil {
 		return "", nil, err
@@ -493,7 +493,7 @@ func loginAPIKey(ctx *CommandContext, store *auth.Store, remote *Remote, flags *
 		return cmd.NewErrUsagef("profile name cannot be empty")
 	}
 
-	warnWriter := func(msg string) { ctx.Log(msg) }
+	warnWriter := ctx.Warn
 	// The profile may have been another user's.
 	if err := clearCachedTokens(ctx, store, profileName); err != nil {
 		return err
