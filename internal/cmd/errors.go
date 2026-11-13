@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-go/client"
 	"github.com/basetenlabs/baseten-go/client/inferenceapi"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/basetenlabs/baseten-go/client/sandboxapi"
@@ -26,6 +27,7 @@ func (*ErrSubprocess) Meaning() string          { return "Subprocess exit code" 
 
 // normalizeError turns any returned error into a [cmd.CommandError]: raw
 // HTTP client errors become the matching typed error via [cmd.WrapHTTPStatus],
+// a refused workload identity token exchange becomes [cmd.ErrAuth], and
 // anything else falls back to [cmd.ErrGeneric]. Returns nil on a nil input.
 func normalizeError(err error) cmd.CommandError {
 	if err == nil {
@@ -37,6 +39,9 @@ func normalizeError(err error) cmd.CommandError {
 	}
 	if status, ok := knownHTTPStatus(err); ok {
 		return cmd.WrapHTTPStatus(status, err)
+	}
+	if errors.Is(err, client.ErrInvalidGrant) {
+		return cmd.NewErrAuth(err)
 	}
 	return cmd.NewErrGeneric(err)
 }

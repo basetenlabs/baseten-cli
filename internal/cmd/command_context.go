@@ -529,7 +529,7 @@ func (c *CommandContext) selectExplicitProfile(err error) (string, error) {
 }
 
 // SetDefaultProfile sets a fallback profile, used only when no profile is
-// selected via --profile, BASETEN_API_KEY, or BASETEN_PROFILE. It must be
+// selected via --profile, BASETEN_API_KEY, workload identity, or BASETEN_PROFILE. It must be
 // called before anything that resolves auth (AuthTransport, NewManagementClient,
 // NewInferenceClient, or the Remote/Session accessors): the session resolves
 // once and is cached, so a call afterward has no effect.
@@ -551,11 +551,17 @@ func (c *CommandContext) AuthTransport() (*auth.Transport, *Remote, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return &auth.Transport{
+	t := &auth.Transport{
 		Session:     session,
 		OAuthConfig: OAuthConfig(remote.ManagementURL()),
 		Base:        c.httpClient().Transport,
-	}, remote, nil
+	}
+	if session.WorkloadIdentity() != nil {
+		if t.WorkloadIdentity, err = c.authInfo.workloadIdentityCredentials(c.httpClient()); err != nil {
+			return nil, nil, err
+		}
+	}
+	return t, remote, nil
 }
 
 // NewManagementClient creates a management API client that resolves
@@ -884,6 +890,22 @@ type authInfo struct {
 	err     error
 	remote  *Remote
 	session *auth.Session
+
+	wifOnce  sync.Once
+	wifErr   error
+	wifCreds *client.WorkloadIdentityCredentials
+}
+
+// workloadIdentityCredentials returns the invocation's workload identity
+// credentials, built once so every client shares one cached access token.
+func (a *authInfo) workloadIdentityCredentials(httpClient *http.Client) (*client.WorkloadIdentityCredentials, error) {
+	if err := a.resolve(); err != nil {
+		return nil, err
+	}
+	a.wifOnce.Do(func() {
+		a.wifCreds, a.wifErr = a.session.NewWorkloadIdentityCredentials(a.remote.ManagementURL(), httpClient)
+	})
+	return a.wifCreds, a.wifErr
 }
 
 func (a *authInfo) resolve() error {
