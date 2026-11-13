@@ -579,6 +579,9 @@ func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 				providers = "model_providers"
 			}
 			require.NoError(t, put(d, []string{providers, providerID}, value{}))
+			if h.Name() == OpenCode {
+				require.NoError(t, put(d, openCodeV1BuildPath, value{}))
+			}
 			delete(d, "forced_login_method")
 			require.Equal(t, d, load(t, path))
 		})
@@ -990,6 +993,11 @@ func TestOpenCodeFormatFollowsTheFile(t *testing.T) {
 			require.Equal(t, tc.want == openCodeV2, get(d, openCodeV2ProviderPath).Exists)
 			require.Equal(t, tc.want == openCodeV1, get(d, openCodeV1ProviderPath).Exists)
 			require.Equal(t, providerID+"/acme/primary", d["model"])
+			buildPath := openCodeV1BuildPath
+			if tc.want == openCodeV2 {
+				buildPath = openCodeV2BuildPath
+			}
+			require.Equal(t, providerID+"/acme/primary", get(d, buildPath).Data)
 			token, err := openCodeHarness{}.Credential(path)
 			require.NoError(t, err)
 			require.Equal(t, testToken, token)
@@ -1013,6 +1021,7 @@ func TestOpenCodeV2Settings(t *testing.T) {
 
 	require.Equal(t, providerID+"/acme/primary", d["model"])
 	require.Equal(t, providerID+"/"+defaultBackgroundRoute, get(d, openCodeV2BackgroundPath).Data)
+	require.Equal(t, providerID+"/acme/primary", get(d, openCodeV2BuildPath).Data)
 	for _, key := range openCodeV2SubagentPaths {
 		require.Equal(t, providerID+"/acme/subagent", get(d, key).Data)
 	}
@@ -1064,6 +1073,7 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	require.Len(t, status.Routes, 4)
 	require.Contains(t, status.Managed, "providers."+providerID)
 	require.Contains(t, status.Managed, "agents.title.model")
+	require.Contains(t, status.Managed, "agents.build.model")
 
 	// A refresh is a no-op, and stays V2.
 	for _, p := range setup(t, openCodeHarness{}, path, routes, Selection{Subagent: "acme/subagent"}) {
@@ -1085,11 +1095,13 @@ func TestOpenCodeSetupAfterMigrationRetiresV1Settings(t *testing.T) {
 	save(t, path, d)
 
 	plans := setup(t, openCodeHarness{}, path, testRoutes(), Selection{Background: "acme/background"})
-	require.ElementsMatch(t, []string{"provider." + providerID, "small_model", "agent.general.model", "agent.explore.model"}, plans[0].Replaced)
+	require.ElementsMatch(t, []string{"provider." + providerID, "small_model", "agent.build.model", "agent.general.model", "agent.explore.model"}, plans[0].Replaced)
 	d = load(t, path)
 	require.True(t, get(d, openCodeV2ProviderPath).Exists)
 	require.False(t, get(d, openCodeV1ProviderPath).Exists)
 	require.NotContains(t, d, "small_model")
+	require.False(t, get(d, openCodeV1BuildPath).Exists, "retired V1 build model")
+	require.Equal(t, providerID+"/acme/primary", get(d, openCodeV2BuildPath).Data)
 	require.Equal(t, providerID+"/acme/background", get(d, openCodeV2BackgroundPath).Data)
 	for _, key := range openCodeV1SubagentPaths {
 		require.False(t, get(d, key).Exists, "retired V1 subagent settings")
@@ -1112,11 +1124,13 @@ func TestOpenCodeTeardownSweepsBothFormats(t *testing.T) {
 		"provider":    map[string]any{providerID: map[string]any{"npm": "x"}, "other": map[string]any{"npm": "y"}},
 		"providers":   map[string]any{providerID: map[string]any{"package": "x"}, "other": map[string]any{"package": "y"}},
 		"agent": map[string]any{
+			"build":   map[string]any{"model": providerID + "/acme/primary"},
 			"general": map[string]any{"model": providerID + "/acme/subagent"},
 			"explore": map[string]any{"model": "other/model"},
 		},
 		"agents": map[string]any{
 			"title":   map[string]any{"model": providerID + "/acme/background"},
+			"build":   map[string]any{"model": providerID + "/acme/primary"},
 			"general": map[string]any{"model": providerID + "/acme/subagent", "mode": "subagent"},
 			"explore": map[string]any{"model": "other/model"},
 		},
@@ -1153,6 +1167,7 @@ func TestOpenCodeV2TeardownPreservesAnotherProviderSelection(t *testing.T) {
 	require.Equal(t, StateInactive, status.State)
 	teardown(t, openCodeHarness{}, path)
 	require.NoError(t, put(d, openCodeV2ProviderPath, value{}))
+	require.NoError(t, put(d, openCodeV2BuildPath, value{}))
 	require.NoError(t, put(d, openCodeV2SubagentPaths[1], value{}))
 	require.Equal(t, d, load(t, path))
 }

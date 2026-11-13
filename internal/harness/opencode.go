@@ -69,13 +69,16 @@ var (
 	openCodeV2ProviderPath = []string{"providers", providerID}
 )
 
-// Subagent and background model settings, per format. V2 has no small_model;
-// the title agent is what OpenCode 2 maps it to.
+// Model selection settings, per format. V2 has no small_model; the title agent
+// is what OpenCode 2 maps it to. The build agent is OpenCode's default, so its
+// model is pinned alongside the global model key.
 var (
 	openCodeV1SubagentPaths  = [][]string{{"agent", "general", "model"}, {"agent", "explore", "model"}}
 	openCodeV2SubagentPaths  = [][]string{{"agents", "general", "model"}, {"agents", "explore", "model"}}
 	openCodeV1BackgroundPath = []string{"small_model"}
 	openCodeV2BackgroundPath = []string{"agents", "title", "model"}
+	openCodeV1BuildPath      = []string{"agent", "build", "model"}
+	openCodeV2BuildPath      = []string{"agents", "build", "model"}
 )
 
 // openCodeModelPackages maps the API a route serves to the AI SDK package
@@ -392,6 +395,7 @@ func openCodeV1Settings(routes []Route, s Selection, endpoint, bearer string) []
 	return []setting{
 		desired([]string{"model"}, providerID+"/"+s.Primary),
 		desired(openCodeV1BackgroundPath, providerID+"/"+s.Background),
+		desired(openCodeV1BuildPath, providerID+"/"+s.Primary),
 		desired(openCodeV1ProviderPath, map[string]any{
 			"npm":  "@ai-sdk/openai-compatible",
 			"name": "Baseten",
@@ -436,6 +440,7 @@ func openCodeV2Settings(routes []Route, s Selection, endpoint, bearer string) []
 	return []setting{
 		desired([]string{"model"}, providerID+"/"+s.Primary),
 		desired(openCodeV2BackgroundPath, providerID+"/"+s.Background),
+		desired(openCodeV2BuildPath, providerID+"/"+s.Primary),
 		desired(openCodeV2ProviderPath, map[string]any{
 			"name":     "Baseten",
 			"package":  openCodeV2Packages["@ai-sdk/openai-compatible"],
@@ -501,15 +506,15 @@ func openCodeV2Cost(c Cost) []any {
 // any model selection that points at it. A model the user pointed at another
 // provider is theirs.
 func openCodeOwnedPaths(data map[string]any, format openCodeFormat) [][]string {
-	provider, background, subagents := openCodeV1ProviderPath, openCodeV1BackgroundPath, openCodeV1SubagentPaths
+	provider, background, build, subagents := openCodeV1ProviderPath, openCodeV1BackgroundPath, openCodeV1BuildPath, openCodeV1SubagentPaths
 	if format == openCodeV2 {
-		provider, background, subagents = openCodeV2ProviderPath, openCodeV2BackgroundPath, openCodeV2SubagentPaths
+		provider, background, build, subagents = openCodeV2ProviderPath, openCodeV2BackgroundPath, openCodeV2BuildPath, openCodeV2SubagentPaths
 	}
 	var paths [][]string
 	if get(data, provider).Exists {
 		paths = append(paths, provider)
 	}
-	for _, key := range append([][]string{background}, subagents...) {
+	for _, key := range append([][]string{background, build}, subagents...) {
 		if model, _ := get(data, key).Data.(string); strings.HasPrefix(model, providerID+"/") {
 			paths = append(paths, key)
 		}
