@@ -23,6 +23,7 @@ func init() {
 	Register("org billing usage", commandOrgBillingUsage)
 	Register("org audit-logs", commandOrgAuditLogs)
 	Register("org describe", commandOrgDescribe)
+	Register("org update", commandOrgUpdate)
 	Register("org regions", commandOrgRegions)
 }
 
@@ -565,10 +566,44 @@ func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error 
 	if info.Name != nil && *info.Name != "" {
 		ctx.Outputf("Name:                 %s\n", *info.Name)
 	}
+	ctx.Outputf("Personal API Keys:    %s\n", allowedOrBlocked(info.AllowPersonalApiKeys))
+	ctx.Outputf("Service Account Keys: %s\n", allowedOrBlocked(info.AllowServiceAccountApiKeys))
 	if info.AwsAssumeRole != nil {
 		ctx.Outputf("AWS AssumeRole:\n")
 		ctx.Outputf("  Baseten Role ARN:     %s\n", info.AwsAssumeRole.BasetenRoleArn)
 		ctx.Outputf("  AWS External ID:      %s\n", info.AwsAssumeRole.ExternalId)
 	}
+	return nil
+}
+
+// allowedOrBlocked renders an org setting that gates creating new API keys.
+func allowedOrBlocked(allowed bool) string {
+	if allowed {
+		return "allowed"
+	}
+	return "blocked for new keys"
+}
+
+func commandOrgUpdate(ctx *CommandContext, flags *cmd.OrgUpdateFlags) error {
+	req := managementapi.UpdateOrganizationRequest{
+		AllowPersonalApiKeys:       flags.AllowPersonalAPIKeys.Pointer(),
+		AllowServiceAccountApiKeys: flags.AllowServiceAccountAPIKeys.Pointer(),
+	}
+	if req == (managementapi.UpdateOrganizationRequest{}) {
+		return cmd.NewErrUsagef("nothing to update; pass --allow-personal-api-keys or --allow-service-account-api-keys")
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	info, err := cl.API().PatchOrganizationsMe(ctx, req)
+	if err != nil {
+		return fmt.Errorf("updating organization: %w", err)
+	}
+	if ctx.JSON {
+		ctx.OutputJSON(info)
+		return nil
+	}
+	ctx.LogLine("Updated organization")
 	return nil
 }

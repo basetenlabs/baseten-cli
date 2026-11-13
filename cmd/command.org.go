@@ -9,7 +9,7 @@ import (
 var commandOrg = Command{
 	Name:        "org",
 	Summary:     "Manage organization resources",
-	Description: "Manage API keys, secrets, and billing for the active organization.",
+	Description: "Manage API keys, secrets, billing, and workload identity federation for the active organization.",
 	Children: []Command{
 		{
 			Name:    "api-key",
@@ -147,7 +147,8 @@ var commandOrg = Command{
 			Description: "Describe the caller's organization.",
 			Flags:       OrgDescribeFlags{},
 			Output: &CommandOutput[managementapi.OrganizationInfo]{
-				TextDescription: "Field-per-line summary: org ID, name (when set), and the AWS AssumeRole role ARN and external ID (if enabled).",
+				TextDescription: "Field-per-line summary: org ID, name (when set), whether new personal and service account API keys " +
+					"can be created, and the AWS AssumeRole role ARN and external ID (if enabled).",
 				Examples: []CommandExample{
 					{
 						Description: "Describe the organization.",
@@ -160,6 +161,7 @@ var commandOrg = Command{
 				},
 			},
 		},
+		commandOrgIdentityProvider,
 		{
 			Name:    "regions",
 			Summary: "List available deployment regions",
@@ -263,6 +265,7 @@ var commandOrg = Command{
 				},
 			},
 		},
+		commandOrgServiceAccount,
 		{
 			Name:        "team",
 			Summary:     "View teams",
@@ -306,6 +309,27 @@ var commandOrg = Command{
 							Command:     "baseten org team list --jq '.teams[].name'",
 						},
 					},
+				},
+			},
+		},
+		commandOrgTrustRule,
+		{
+			Name:    "update",
+			Summary: "Update organization settings",
+			Description: "Update the organization's API key settings. Turning a setting off only " +
+				"stops new keys from being created; existing keys keep working.",
+			Flags: OrgUpdateFlags{},
+			Output: &CommandOutput[managementapi.OrganizationInfo]{
+				TextDescription: "Prints \"Updated organization\" to stderr; no stdout output.",
+				Examples: []CommandExample{
+					{
+						Description: "Stop new service account API keys from being created.",
+						Command:     "baseten org update --allow-service-account-api-keys false",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the updated personal API key setting.",
+					Command:     "baseten org update --allow-personal-api-keys false --jq '.allow_personal_api_keys'",
 				},
 			},
 		},
@@ -412,6 +436,14 @@ type OrgTeamDescribeFlags struct {
 // OrgDescribeFlags configures `baseten org describe`.
 type OrgDescribeFlags struct {
 	CommandFlags
+}
+
+// OrgUpdateFlags configures `baseten org update`.
+type OrgUpdateFlags struct {
+	CommandFlags
+
+	AllowPersonalAPIKeys       OptionalFlag[bool] `flag:"allow-personal-api-keys" desc:"Whether members can create new personal API keys."`
+	AllowServiceAccountAPIKeys OptionalFlag[bool] `flag:"allow-service-account-api-keys" desc:"Whether new team and organization API keys can be created."`
 }
 
 type OrgUserListFlags struct {
