@@ -25,6 +25,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/harness"
+	"github.com/creack/pty"
 	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 )
@@ -667,6 +668,57 @@ func Test_Grid_Setup_KeyCreationFailureCanBeRetried(t *testing.T) {
 	api.SetRoute("POST", "/v1/teams/team-a/api_keys", 200, map[string]string{"api_key": "secret-team-a"})
 	h.Require.NoError(h.Execute(args...))
 	h.Require.FileExists(harnessSettingsFile("opencode", dir))
+}
+
+func Test_Grid_Setup_RetriesKeyCreationOnServerError(t *testing.T) {
+	skipUnlessSupported(t)
+	for _, tc := range []struct {
+		name       string
+		failures   int
+		wantPosts  int
+		wantDelays []time.Duration
+		wantErr    bool
+	}{
+		{name: "succeeds on the second post", failures: 1, wantPosts: 2, wantDelays: []time.Duration{1500 * time.Millisecond}},
+		{name: "succeeds on the third post", failures: 2, wantPosts: 3, wantDelays: []time.Duration{1500 * time.Millisecond, 3 * time.Second}},
+		{name: "fails on the third post", failures: 3, wantPosts: 3, wantDelays: []time.Duration{1500 * time.Millisecond, 3 * time.Second}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			var delays []time.Duration
+			h.Context = internalcmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+				delays = append(delays, d)
+				return nil
+			})
+			posts := 0
+			api.SetRouteFunc("POST", "/v1/teams/team-a/api_keys", func(w http.ResponseWriter, _ *http.Request) {
+				posts++
+				status := http.StatusInternalServerError
+				payload := map[string]string{"message": "deadlock detected"}
+				if posts > tc.failures {
+					status = http.StatusOK
+					payload = map[string]string{"api_key": "secret-team-a"}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(payload)
+			})
+			dir := t.TempDir()
+			err := h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes")
+			h.Require.Equal(tc.wantPosts, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+			h.Require.Equal(tc.wantDelays, delays)
+			if tc.wantErr {
+				h.Require.Error(err)
+				h.Require.Contains(h.Stderr.String(), "creating Grid API key")
+				h.Require.NoFileExists(harnessSettingsFile("opencode", dir))
+				return
+			}
+			h.Require.NoError(err)
+			settings, err := os.ReadFile(harnessSettingsFile("opencode", dir))
+			h.Require.NoError(err)
+			h.Require.Contains(string(settings), "secret-team-a")
+		})
+	}
 }
 
 func Test_Grid_Setup_KeyringUnavailableStoresPlaintext(t *testing.T) {

@@ -16,6 +16,8 @@ const harnessThinkingQuestion = "how many positive integers below 1000 are divis
 
 const harnessThinkingPrompt = "Think it through carefully without using any tools: " + harnessThinkingQuestion + " End your final reply with exactly this line: " + harnessThinkingMarker
 
+const harnessWebSearchPrompt = "Use the web search tool to find the version number of the most recent stable release of Python. Reply with only the version number."
+
 const harnessSwitchPhase1 = "Do all of the following.%s Think it through carefully: " + harnessThinkingQuestion + " Read the file seed.txt in the current working directory, then create a file named stage1.txt in the current working directory containing exactly the contents of seed.txt and nothing else. Remember the word %s; I will ask about it later."
 
 const harnessSwitchPhase2 = "Do all of the following.%s Think it through carefully: how many positive integers below 2000 are divisible by 9 or by 13, but not by both? Recall the word I asked you to remember. Read the file stage1.txt in the current working directory, then create a file named stage2.txt in the current working directory containing exactly two lines and nothing else: that word on line 1 and the first line of stage1.txt on line 2."
@@ -37,6 +39,7 @@ var harnessDirections = []struct{ from, to string }{
 
 func TestE2EHarnessThinking(t *testing.T) {
 	t.Run("pi", func(t *testing.T) {
+		t.Parallel()
 		h := newHarnessTest(t, "pi", "pi")
 		model := h.pickModel(t, harnessBaseten, h.thinkingNeed())
 		prompt := "Reason through this step by step, showing your reasoning as you go, and compute 17 * 23. End your reply with exactly this line: " + harnessThinkingMarker
@@ -49,6 +52,7 @@ func TestE2EHarnessThinking(t *testing.T) {
 		piAssertThinking(t, model, objects, stdout)
 	})
 	t.Run("claude", func(t *testing.T) {
+		t.Parallel()
 		h := newHarnessTest(t, "claude", "claude")
 		model := h.pickModel(t, harnessBaseten, h.thinkingNeed())
 		args := append([]string{"-p", "--output-format", "stream-json", "--verbose"}, h.thinkingArgs(model)...)
@@ -61,6 +65,7 @@ func TestE2EHarnessThinking(t *testing.T) {
 		claudeAssertThinking(t, model, events, stdout)
 	})
 	t.Run("codex", func(t *testing.T) {
+		t.Parallel()
 		h := newHarnessTest(t, "codex", "codex")
 		model := h.pickModel(t, harnessBaseten, h.thinkingNeed())
 		workspace := t.TempDir()
@@ -73,6 +78,7 @@ func TestE2EHarnessThinking(t *testing.T) {
 	})
 	for _, variant := range harnessOpenCodeVariants {
 		t.Run(variant.label, func(t *testing.T) {
+			t.Parallel()
 			h := newOpenCodeHarnessTest(t, variant)
 			model := h.pickModel(t, harnessBaseten, h.thinkingNeed())
 			args := append([]string{"run", "--format", "json"}, h.thinkingArgs(model)...)
@@ -88,6 +94,7 @@ func TestE2EHarnessThinking(t *testing.T) {
 
 func TestE2EHarnessToolCall(t *testing.T) {
 	t.Run("claude", func(t *testing.T) {
+		t.Parallel()
 		h := newHarnessTest(t, "claude", "claude")
 		model := h.pickModel(t, harnessBaseten, harnessAnyModel)
 		workspace := harnessSeedWorkspace(t, map[string]string{"task.txt": harnessClaudeToolWord + "\n"})
@@ -98,6 +105,7 @@ func TestE2EHarnessToolCall(t *testing.T) {
 		require.Equal(t, harnessReadWorkspaceFileTrimmed(t, workspace, "task.txt"), harnessReadWorkspaceFileTrimmed(t, workspace, "answer.txt"))
 	})
 	t.Run("codex", func(t *testing.T) {
+		t.Parallel()
 		h := newHarnessTest(t, "codex", "codex")
 		model := h.pickModel(t, harnessBaseten, harnessAnyModel)
 		workspace := harnessSeedWorkspace(t, map[string]string{"task.txt": harnessCodexToolWord + "\n"})
@@ -109,6 +117,7 @@ func TestE2EHarnessToolCall(t *testing.T) {
 		require.Equal(t, harnessReadWorkspaceFileTrimmed(t, workspace, "task.txt"), harnessReadWorkspaceFileTrimmed(t, workspace, "answer.txt"))
 	})
 	t.Run("pi", func(t *testing.T) {
+		t.Parallel()
 		h := newHarnessTest(t, "pi", "pi")
 		model := h.pickModel(t, harnessBaseten, harnessAnyModel)
 		workspace := harnessSeedWorkspace(t, map[string]string{"task.txt": harnessPiToolWord + "\n"})
@@ -122,6 +131,7 @@ func TestE2EHarnessToolCall(t *testing.T) {
 	})
 	for _, variant := range harnessOpenCodeVariants {
 		t.Run(variant.label, func(t *testing.T) {
+			t.Parallel()
 			h := newOpenCodeHarnessTest(t, variant)
 			model := h.pickModel(t, harnessBaseten, harnessAnyModel)
 			workspace := harnessSeedWorkspace(t, map[string]string{"task.txt": harnessOpenCodeToolWord + "\n"})
@@ -137,6 +147,7 @@ func TestE2EHarnessToolCall(t *testing.T) {
 
 func TestE2EHarnessWebSearch(t *testing.T) {
 	t.Run("claude", func(t *testing.T) {
+		t.Parallel()
 		h := newHarnessTest(t, "claude", "claude")
 		model := h.pickModel(t, harnessBaseten, harnessAnyModel)
 		prompt := "Use the WebSearch tool to find the version number of the most recent stable release of Python. Reply with only the version number."
@@ -150,6 +161,7 @@ func TestE2EHarnessWebSearch(t *testing.T) {
 		require.Regexp(t, regexp.MustCompile(`\d+\.\d+(\.\d+)?`), result, "claude's reply is not a version number; stdout:\n%s", stdout)
 	})
 	t.Run("codex", func(t *testing.T) {
+		t.Parallel()
 		h := newHarnessTest(t, "codex", "codex")
 		model := h.pickModel(t, harnessBaseten, harnessAnyModel)
 		workspace := t.TempDir()
@@ -161,13 +173,28 @@ func TestE2EHarnessWebSearch(t *testing.T) {
 		require.Regexp(t, regexp.MustCompile(`\d+\.\d+(\.\d+)?`), codexLastAgentMessage(objects), "codex's reply is not a version number; stdout:\n%s", stdout)
 	})
 	t.Run("pi", func(t *testing.T) {
-		newHarnessTest(t, "pi", "pi")
-		t.Skip("pi has no web search tool (built-ins: read, bash, edit, write, grep, find, ls) and grid setup configures none; Baseten's server-side search runs only when the client sends a web_search tool, which pi never does")
+		t.Parallel()
+		h := newHarnessTest(t, "pi", "pi")
+		model := h.pickModel(t, harnessAnthropic, harnessAnyModel)
+		stdout, stderr := h.run(t, t.TempDir(), "-p", "--mode", "json", "--no-session", "--offline", "--model", model.id, harnessWebSearchPrompt)
+		harnessAssertNoAPIError(t, stdout+stderr)
+		objects := harnessJSONObjects(stdout)
+		require.Zero(t, piErrorTurns(objects), "pi ended a turn with an API error; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		require.Regexp(t, regexp.MustCompile(`3\.1[2-9]\.\d+`), piAssistantText(objects), "pi's reply is not a current Python version; stdout:\n%s\nstderr:\n%s", stdout, stderr)
 	})
 	for _, variant := range harnessOpenCodeVariants {
 		t.Run(variant.label, func(t *testing.T) {
-			newOpenCodeHarnessTest(t, variant)
-			t.Skip("grid setup configures no web search for opencode: v1 ships no search tool by default, v2's search asks the user to pick a provider, which a non-interactive run cancels, and opencode's search uses its own hosted providers, not Baseten routes")
+			if variant.opencode2 {
+				t.Skip("opencode v2 cancels the request when the server-side web search tool fires in non-interactive run mode, so the search turn never completes")
+			}
+			t.Parallel()
+			h := newOpenCodeHarnessTest(t, variant)
+			model := h.pickModel(t, harnessAnthropic, harnessAnyModel)
+			stdout, stderr := h.run(t, t.TempDir(), "run", "--format", "json", "-m", model.id, harnessWebSearchPrompt)
+			harnessAssertNoAPIError(t, stdout+stderr)
+			objects := harnessJSONObjects(stdout)
+			require.Empty(t, harnessEventsOf(objects, "error"), "opencode emitted error events; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+			require.Regexp(t, regexp.MustCompile(`3\.1[2-9]\.\d+`), openCodeEventText(objects, "text"), "opencode's reply is not a current Python version; stdout:\n%s\nstderr:\n%s", stdout, stderr)
 		})
 	}
 }
@@ -190,16 +217,18 @@ func TestE2EHarnessModelSwitch(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {
-			h := c.start(t)
-			search1, search2 := "", ""
-			if h.searches() {
-				search1, search2 = harnessSwitchSearch1, harnessSwitchSearch2
-				if h.name == "claude" {
-					search1, search2 = harnessClaudeSwitchSearch1, harnessClaudeSwitchSearch2
-				}
-			}
+			t.Parallel()
 			for _, direction := range harnessDirections {
 				t.Run(direction.from+"-to-"+direction.to, func(t *testing.T) {
+					t.Parallel()
+					h := c.start(t)
+					search1, search2 := "", ""
+					if h.searches() {
+						search1, search2 = harnessSwitchSearch1, harnessSwitchSearch2
+						if h.name == "claude" {
+							search1, search2 = harnessClaudeSwitchSearch1, harnessClaudeSwitchSearch2
+						}
+					}
 					modelA, modelB := h.pickModel(t, direction.from, h.thinkingNeed()), h.pickModel(t, direction.to, h.thinkingNeed())
 					workspace := harnessSeedWorkspace(t, map[string]string{"seed.txt": c.seed + "\n"})
 					session := h.switchTurn(t, workspace, modelA, "", fmt.Sprintf(harnessSwitchPhase1, search1, c.recall))

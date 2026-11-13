@@ -23,6 +23,8 @@ jobs:
         run: |
           go mod tidy
           go fmt ./...
+          go -C internal/e2e-tests mod tidy
+          go -C internal/e2e-tests fmt ./...
           git diff --exit-code
 
       # The harness tests run the installed Claude Code, Codex, OpenCode, and Pi
@@ -37,8 +39,8 @@ jobs:
       - name: Install harnesses
         if: matrix.os != 'windows-latest'
         run: |
-          npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai @earendil-works/pi-coding-agent
-          npm install -g --prefix "$RUNNER_TEMP/opencode2" @opencode/cli
+          npm install -g @anthropic-ai/claude-code@2.1.322 @openai/codex@0.168.0 opencode-ai@1.19.5 @earendil-works/pi-coding-agent@1.3.0
+          npm install -g --prefix "$RUNNER_TEMP/opencode2" @opencode/cli@2.2.5
           echo "BASETEN_TEST_OPENCODE2=$RUNNER_TEMP/opencode2/bin/opencode" >> "$GITHUB_ENV"
 
       - name: Test
@@ -61,6 +63,15 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: astral-sh/setup-uv@v5
 
+      - name: Harness e2e test
+        if: matrix.os != 'windows-latest'
+        env:
+          # Forks won't have these secrets so e2e tests skip, but pushes
+          # to main will run them.
+          BASETEN_E2E_TEST_API_KEY: ${{ secrets.BASETEN_E2E_TEST_API_KEY }}
+          BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
+        run: go -C internal/e2e-tests test -v -tags=e2e -timeout 40m -parallel 16 -run '^TestE2EHarness' ./...
+
       - name: E2E test
         if: matrix.os == 'ubuntu-latest'
         env:
@@ -70,4 +81,4 @@ jobs:
           BASETEN_E2E_TEST_REMOTE_URL: ${{ secrets.BASETEN_E2E_TEST_REMOTE_URL }}
         # -v so each test and its step logs stream as the run progresses; without
         # it a hung run shows no output at all and the stuck test is unknowable.
-        run: go test -v -tags=e2e -timeout 40m ./internal/e2e-tests/...
+        run: go -C internal/e2e-tests test -v -tags=e2e -timeout 30m -skip '^TestE2EHarness' ./...

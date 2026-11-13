@@ -6,16 +6,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,11 +120,103 @@ type pushedDeployment struct {
 // repoRoot returns the module root (two levels up from this file in
 // internal/e2e-tests), so commands like `go build ./cmd/baseten` run against
 // the current source rather than whatever the working directory happens to be.
-func repoRoot(t *testing.T) string {
-	t.Helper()
+func repoRoot() string {
 	_, file, _, ok := runtime.Caller(0)
-	require.True(t, ok, "runtime.Caller failed")
+	if !ok {
+		panic("runtime.Caller failed")
+	}
 	return filepath.Join(filepath.Dir(file), "..", "..")
+}
+
+func TestMain(m *testing.M) {
+	if err := buildCLIBinary(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
+var (
+	cliBinaryOnce sync.Once
+	cliBinaryPath string
+	cliBinaryErr  error
+)
+
+func buildCLIBinary() error {
+	cliBinaryOnce.Do(func() {
+		goTool, err := exec.LookPath("go")
+		if err != nil {
+			goTool = filepath.Join(runtime.GOROOT(), "bin", "go")
+			if _, statErr := os.Stat(goTool); statErr != nil {
+				cliBinaryErr = fmt.Errorf("locating the go tool to build baseten-cli-test: %w", err)
+				return
+			}
+		}
+		dir, err := os.MkdirTemp("", "baseten-cli-e2e-")
+		if err != nil {
+			cliBinaryErr = err
+			return
+		}
+		path := filepath.Join(dir, "baseten-cli-test")
+		build := exec.Command(goTool, "build", "-o", path, "./cmd/baseten")
+		build.Dir = repoRoot()
+		if out, err := build.CombinedOutput(); err != nil {
+			cliBinaryErr = fmt.Errorf("building baseten-cli-test: %w\n%s", err, out)
+			return
+		}
+		cliBinaryPath = path
+	})
+	return cliBinaryErr
+}
+
+func cliBinary() (string, error) {
+	if err := buildCLIBinary(); err != nil {
+		return "", err
+	}
+	return cliBinaryPath, nil
+}
+
+var (
+	cliEnvMu sync.Mutex
+	cliEnv   = map[string]string{}
+)
+
+func setTestEnv(t *testing.T, env map[string]string) {
+	t.Helper()
+	cliEnvMu.Lock()
+	previous := maps.Clone(cliEnv)
+	maps.Copy(cliEnv, env)
+	cliEnvMu.Unlock()
+	t.Cleanup(func() {
+		cliEnvMu.Lock()
+		cliEnv = previous
+		cliEnvMu.Unlock()
+	})
+}
+
+func testEnvOverlay() map[string]string {
+	cliEnvMu.Lock()
+	defer cliEnvMu.Unlock()
+	return maps.Clone(cliEnv)
+}
+
+func environWith(env map[string]string) []string {
+	out := os.Environ()
+	for key, value := range env {
+		prefix := key + "="
+		replaced := false
+		for i := range out {
+			if strings.HasPrefix(out[i], prefix) {
+				out[i] = prefix + value
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, prefix+value)
+		}
+	}
+	return out
 }
 
 const (
@@ -137,7 +232,7 @@ const (
 	pushCLITimeout = 15 * time.Minute
 )
 
-// cli runs the CLI in-process with the given args, returning captured stdout
+// cli runs the CLI subprocess with the given args, returning captured stdout
 // and stderr. Non-zero exits surface as a non-nil error. The call is bounded by
 // defaultCLITimeout; use cliCtx for a command that needs longer.
 func cli(t *testing.T, args ...string) (stdout, stderr string, err error) {
@@ -157,13 +252,15 @@ func cliCtx(t *testing.T, ctx context.Context, args ...string) (stdout, stderr s
 // cliWithStdin is cliCtx that pipes the given string to the command's stdin.
 func cliWithStdin(t *testing.T, ctx context.Context, stdin string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	result := cliRun(ctx, cliRunOptions{Args: args, Stdin: strings.NewReader(stdin)})
+	result := cliRun(ctx, cliRunOptions{Args: args, Stdin: strings.NewReader(stdin), Env: testEnvOverlay()})
 	return result.Stdout, result.Stderr, result.Err
 }
 
 // cliRunOptions configures [cliRun].
 type cliRunOptions struct {
 	Args []string
+
+	Env map[string]string
 
 	// Stdin is the command's stdin, empty when nil.
 	Stdin io.Reader
@@ -172,6 +269,8 @@ type cliRunOptions struct {
 	// [cliResult] capturing it.
 	Stdout io.Writer
 	Stderr io.Writer
+
+	Process chan<- *os.Process
 }
 
 // cliResult is the outcome of [cliRun].
@@ -208,33 +307,45 @@ func (r cliResult) APIStatus(t *testing.T) int {
 	return last.Error.APIStatusCode
 }
 
-// cliRun runs the CLI in-process until it exits. It is the e2e tests' only way
+// cliRun runs the CLI subprocess until it exits. It is the e2e tests' only way
 // into the CLI, so they use it the way a user would: through arguments, the
 // standard streams, and the exit code.
 func cliRun(ctx context.Context, options cliRunOptions) cliResult {
+	var result cliResult
+	binary, err := cliBinary()
+	if err != nil {
+		result.Err = err
+		return result
+	}
 	var stdout, stderr bytes.Buffer
-	execute := cmd.ExecuteOptions{
-		Args:   options.Args,
-		Stdin:  options.Stdin,
-		Stdout: &stdout,
-		Stderr: &stderr,
-	}
-	if execute.Stdin == nil {
-		execute.Stdin = strings.NewReader("")
-	}
+	command := exec.CommandContext(ctx, binary, options.Args...)
+	command.Env = environWith(options.Env)
+	command.Stdout, command.Stderr = &stdout, &stderr
 	if options.Stdout != nil {
-		execute.Stdout = options.Stdout
+		command.Stdout = options.Stdout
 	}
 	if options.Stderr != nil {
-		execute.Stderr = options.Stderr
+		command.Stderr = options.Stderr
 	}
-	var result cliResult
-	execute.ExitWithCode = func(code int) { result.ExitCode = code }
-	result.Err = cmd.Execute(ctx, execute)
-	if result.Err == nil && result.ExitCode != 0 {
-		result.Err = fmt.Errorf("baseten %s: exit %d", strings.Join(options.Args, " "), result.ExitCode)
+	if options.Stdin != nil {
+		command.Stdin = options.Stdin
+	}
+	command.WaitDelay = 5 * time.Second
+	err = command.Start()
+	if err == nil {
+		if options.Process != nil {
+			options.Process <- command.Process
+		}
+		err = command.Wait()
 	}
 	result.Stdout, result.Stderr = stdout.String(), stderr.String()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		result.ExitCode = exitErr.ExitCode()
+		result.Err = fmt.Errorf("baseten %s: exit %d", strings.Join(options.Args, " "), exitErr.ExitCode())
+		return result
+	}
+	result.Err = err
 	return result
 }
 

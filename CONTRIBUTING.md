@@ -21,10 +21,10 @@
 
 ## End-to-end tests
 
-E2e tests live in `internal/e2e-tests/` behind the `e2e` build tag and run against a live Baseten environment. They auto-skip when `BASETEN_E2E_TEST_API_KEY` is unset, so CI must opt in explicitly.
+E2e tests live in `internal/e2e-tests/`, their own Go module, behind the `e2e` build tag and run against a live Baseten environment. They auto-skip when `BASETEN_E2E_TEST_API_KEY` is unset, so CI must opt in explicitly.
 
 - Keep them fast and high-level smoke only; do not exhaustively cover flag permutations (that belongs in unit tests).
-- Invoke the CLI in-process via `cmd.Execute` rather than shelling out to a built binary.
+- Run the CLI as a subprocess through the helpers (`cliRun`) rather than in-process, so tests exercise the binary the way a user would.
 - Use the CLI as a user would: only `helpers_test.go` may import this repository's packages.
 - Tests must be idempotent and clean up resources they create.
 - Use random/unique identifiers for created resources so parallel or repeated runs don't clash.
@@ -34,10 +34,10 @@ E2e tests live in `internal/e2e-tests/` behind the `e2e` build tag and run again
 ```bash
 BASETEN_E2E_TEST_API_KEY=... \
 BASETEN_E2E_TEST_REMOTE_URL=... \
-    go test -v -tags=e2e ./internal/e2e-tests/...
+    go -C internal/e2e-tests test -v -tags=e2e ./...
 ```
 
-CI runs the harness tests (`TestE2EHarness*`) in their own job. To run only them locally, add `-run '^TestE2EHarness'`.
+CI runs the harness tests (`TestE2EHarness*`) in their own step on linux and macOS. To run only them locally, add `-run '^TestE2EHarness'`.
 
 ## Releasing
 

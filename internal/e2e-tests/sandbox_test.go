@@ -38,9 +38,11 @@ func setupSandboxE2E(t *testing.T) {
 	}
 	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
 	require.NotEmpty(t, remoteURL, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
-	t.Setenv("BASETEN_API_KEY", apiKey)
-	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
-	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
+	setTestEnv(t, map[string]string{
+		"BASETEN_API_KEY":    apiKey,
+		"BASETEN_REMOTE_URL": remoteURL,
+		"BASETEN_CONFIG_DIR": t.TempDir(),
+	})
 }
 
 // createE2ESandbox creates a sandbox and registers its deletion, which runs
@@ -207,9 +209,7 @@ func TestE2ESandbox(t *testing.T) {
 		require.NoError(t, pty.Setsize(session.terminal, &pty.Winsize{Rows: 40, Cols: 120}))
 		// SIGWINCH, which tells connect the window changed, as a terminal
 		// would. Signal 28 on Linux and macOS.
-		process, err := os.FindProcess(os.Getpid())
-		require.NoError(t, err)
-		require.NoError(t, process.Signal(syscall.Signal(28)))
+		require.NoError(t, (<-session.processes).Signal(syscall.Signal(28)))
 		// The redraw, which starts by clearing the line, shows the resize
 		// reached the shell.
 		session.waitFor("\x1b[K")
@@ -330,13 +330,14 @@ type e2eConnectSession struct {
 	t *testing.T
 	// terminal is the command's stdin and stdout; control is the other side,
 	// where keys are typed and output read.
-	terminal *os.File
-	control  *os.File
-	chunks   <-chan []byte
-	output   string
-	seen     int
-	stderr   *bytes.Buffer
-	done     <-chan error
+	terminal  *os.File
+	control   *os.File
+	processes <-chan *os.Process
+	chunks    <-chan []byte
+	output    string
+	seen      int
+	stderr    *bytes.Buffer
+	done      <-chan error
 }
 
 // startE2EConnect runs 'sandbox connect' in a new pseudo-terminal of the
@@ -365,15 +366,18 @@ func startE2EConnect(t *testing.T, name string, rows, cols uint16) *e2eConnectSe
 	t.Cleanup(cancel)
 	var stderr bytes.Buffer
 	done := make(chan error, 1)
+	processes := make(chan *os.Process, 1)
 	go func() {
 		done <- cliRun(ctx, cliRunOptions{
-			Args:   []string{"sandbox", "connect", "--name", name},
-			Stdin:  terminal,
-			Stdout: terminal,
-			Stderr: &stderr,
+			Args:    []string{"sandbox", "connect", "--name", name},
+			Env:     testEnvOverlay(),
+			Stdin:   terminal,
+			Stdout:  terminal,
+			Stderr:  &stderr,
+			Process: processes,
 		}).Err
 	}()
-	return &e2eConnectSession{t: t, terminal: terminal, control: control, chunks: chunks, stderr: &stderr, done: done}
+	return &e2eConnectSession{t: t, terminal: terminal, control: control, processes: processes, chunks: chunks, stderr: &stderr, done: done}
 }
 
 // run waits for the shell's prompt, types a command and Enter, then waits
@@ -446,7 +450,7 @@ func TestE2ESandboxVolume(t *testing.T) {
 	// Fails only with the 409 of a volume still mounted in a sandbox being
 	// deleted; any other failure fails the test.
 	deleteVolume := func(ctx context.Context) (map[string]any, bool) {
-		result := cliRun(ctx, cliRunOptions{Args: []string{"sandbox", "volume", "delete", "--name", volumeName, "--yes", "--output", "json"}})
+		result := cliRun(ctx, cliRunOptions{Args: []string{"sandbox", "volume", "delete", "--name", volumeName, "--yes", "--output", "json"}, Env: testEnvOverlay()})
 		if result.Err == nil {
 			var deleted map[string]any
 			require.NoError(t, json.Unmarshal([]byte(result.Stdout), &deleted))
@@ -488,7 +492,7 @@ func TestE2ESandboxVolume(t *testing.T) {
 	updated := cliJSON[map[string]any](t, "sandbox", "volume", "update", "--name", volumeName,
 		"--label", "created_by=cli-e2e", "--label", "stage=two")
 	require.Equal(t, map[string]any{"created_by": "cli-e2e", "stage": "two"}, updated["labels"])
-	shrunk := cliRun(t.Context(), cliRunOptions{Args: []string{"sandbox", "volume", "update", "--name", volumeName, "--size", "256", "--output", "json"}})
+	shrunk := cliRun(t.Context(), cliRunOptions{Args: []string{"sandbox", "volume", "update", "--name", volumeName, "--size", "256", "--output", "json"}, Env: testEnvOverlay()})
 	require.Error(t, shrunk.Err)
 	require.Equal(t, http.StatusBadRequest, shrunk.APIStatus(t), "stdout: %s\nstderr: %s", shrunk.Stdout, shrunk.Stderr)
 
