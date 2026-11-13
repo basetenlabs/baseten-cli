@@ -517,7 +517,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	case ctx.verbose || f.DryRun:
 		gridHarnessVerboseSetupSummary(ctx, team, targets, plans)
 	default:
-		gridHarnessReplacedWarnings(ctx, plans)
+		gridHarnessSetupNotice(ctx, plans)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -528,7 +528,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		return nil
 	}
 	if !f.Yes {
-		if err := ctx.ConfirmYesNo("Apply these harness changes?"); err != nil {
+		if err := ctx.ConfirmYesNo("Set up Grid?"); err != nil {
 			return err
 		}
 	}
@@ -755,14 +755,10 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 	// NB(nikhil): Re-extract targets / plans from the runs, because they might have changed due to
 	// route eligibility.
 	targets, plans := extractFromGridSyncRuns(runs)
-	switch {
-	case ctx.JSON:
-	case ctx.verbose || f.DryRun:
+	if !ctx.JSON && (ctx.verbose || f.DryRun) {
 		for _, run := range runs {
 			gridHarnessVerboseSetupSummary(ctx, run.team, run.targets, run.plans)
 		}
-	default:
-		gridHarnessReplacedWarnings(ctx, plans)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -789,7 +785,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		return nil
 	}
 	if !f.Yes {
-		if err := ctx.ConfirmYesNo("Apply these harness changes?"); err != nil {
+		if err := ctx.ConfirmYesNo("Update harness settings?"); err != nil {
 			return err
 		}
 	}
@@ -931,16 +927,13 @@ func gridHarnessSessionAPIKey(ctx *CommandContext) (string, error) {
 	return key, nil
 }
 
-func gridHarnessReplacedWarnings(ctx *CommandContext, plans []*harness.Plan) {
-	var replaced []string
-	for _, p := range plans {
-		if len(p.Replaced) > 0 && !slices.Contains(replaced, p.Harness) {
-			replaced = append(replaced, p.Harness)
-		}
+// gridHarnessSetupNotice says what setup is about to change, before asking to apply.
+func gridHarnessSetupNotice(ctx *CommandContext, plans []*harness.Plan) {
+	if !slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Changed }) {
+		return
 	}
-	if len(replaced) > 0 {
-		ctx.Logf("warning: existing integration settings in %s will be overwritten; teardown does not restore them\n", strings.Join(replaced, ", "))
-	}
+	ctx.LogLine("Modifies harness settings to set Grid as the gateway with your configured models.")
+	ctx.LogLine("To remove Grid, run baseten grid teardown.")
 }
 
 func gridHarnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
@@ -1343,25 +1336,23 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 		if choice.Name() == harness.Claude {
 			ctx.Outputf("  Fallback route    %s\n", accent.Render(cmp.Or(s.Fallback, s.Primary)))
 		}
-		changed, replaced := false, false
+		changed := false
+		var replaced []string
 		for _, p := range plans {
 			if p.Harness != choice.Name() {
 				continue
 			}
 			changed = changed || p.Changed
-			replaced = replaced || len(p.Replaced) > 0
+			replaced = append(replaced, p.Replaced...)
 			ctx.VerboseLogf("Config: %s\nSettings: %s\n", p.Path, strings.Join(p.Keys, ", "))
-			if len(p.Replaced) > 0 {
-				ctx.VerboseLogf("Settings to replace: %s\n", strings.Join(p.Replaced, ", "))
-			}
 		}
 		result := "Already configured"
 		if changed {
 			result = "Changes ready to apply"
 		}
 		ctx.Outputf("  Result            %s\n", accent.Render(result))
-		if replaced {
-			ctx.OutputLine("  Existing integration settings will be overwritten; teardown does not restore them.")
+		if len(replaced) > 0 {
+			ctx.Outputf("  Replaces          %s\n", strings.Join(replaced, ", "))
 		}
 	}
 	ctx.OutputLine("")
