@@ -51,8 +51,7 @@ var commandSandbox = Command{
 			Summary: "Describe a sandbox (PRE-RELEASE)",
 			Description: sandboxPreRelease +
 				"Retrieves one sandbox's record: status, URL, image, memory, CPU, region, labels, and " +
-				"environment variables. Secret environment variable values are masked unless " +
-				"--show-secrets is passed.",
+				"environment variables. Secret environment variable values are masked.",
 			Flags: SandboxDescribeFlags{},
 			Output: &CommandOutput[managementapi.Sandbox]{
 				TextDescription: "One field per line describing the sandbox. Empty fields are left out.",
@@ -271,8 +270,6 @@ type SandboxListFlags struct {
 type SandboxDescribeFlags struct {
 	CommandFlags
 	SandboxRefFlags
-
-	ShowSecrets bool `flag:"show-secrets" desc:"Reveal secret environment variable values. Requires the workspace administrator role; other callers still see masked values."`
 }
 
 // SandboxEnvFlags set a sandbox's environment variables.

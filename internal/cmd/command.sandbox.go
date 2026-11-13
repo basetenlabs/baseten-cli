@@ -128,11 +128,7 @@ func commandSandboxDescribe(ctx *CommandContext, flags *cmd.SandboxDescribeFlags
 	if err != nil {
 		return err
 	}
-	params := managementapi.GetSandboxParams{TeamId: teamID}
-	if flags.ShowSecrets {
-		params.ShowSecrets = &flags.ShowSecrets
-	}
-	record, err := client.API().GetSandbox(ctx, flags.Name, params)
+	record, err := client.API().GetSandbox(ctx, flags.Name, managementapi.GetSandboxParams{TeamId: teamID})
 	if err != nil {
 		return fmt.Errorf("describing sandbox %s: %w", flags.Name, err)
 	}
