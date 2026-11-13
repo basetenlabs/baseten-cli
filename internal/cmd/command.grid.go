@@ -1532,8 +1532,8 @@ func gridEnsureHarnessToken(ctx *CommandContext, api *managementapi.Client, team
 	}
 	created, err := api.PostTeamsApiKeys(ctx, team.Id, req)
 	var re *managementapi.ResponseError
-	if errors.As(err, &re) && re.StatusCode >= http.StatusInternalServerError {
-		if err := ctx.Sleep(gridKeyCreateRetryDelay); err != nil {
+	for retry := 1; errors.As(err, &re) && re.StatusCode >= http.StatusInternalServerError && retry < 3; retry++ {
+		if err := ctx.Sleep(gridKeyCreateRetryDelay * time.Duration(retry)); err != nil {
 			return "", err
 		}
 		created, err = api.PostTeamsApiKeys(ctx, team.Id, req)
