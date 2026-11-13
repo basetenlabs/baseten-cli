@@ -80,7 +80,7 @@ func (s *Store) SetGridToken(ctx context.Context, scope GridTokenScope, teamID s
 		return ctxErr
 	}
 	if keyringErr != nil && warnWriter != nil {
-		warnWriter(fmt.Sprintf("warning: could not cache the Grid token in the system keyring: %v\n", keyringErr))
+		warnWriter(fmt.Sprintf("could not cache the Grid token in the system keyring: %v", keyringErr))
 	}
 	return nil
 }

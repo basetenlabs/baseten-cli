@@ -766,7 +766,7 @@ func TestOpenCodeGitContextPluginKeepsUserFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(plugin, []byte("export default {}\n"), 0o600))
 	plans := setupGitContext(t, h, path)
 	require.True(t, slices.ContainsFunc(plans, func(p *Plan) bool {
-		return slices.ContainsFunc(p.Notes, func(note string) bool { return strings.Contains(note, plugin+" left unchanged") })
+		return slices.ContainsFunc(p.Warnings, func(warning string) bool { return strings.Contains(warning, plugin+" left unchanged") })
 	}))
 	teardown(t, h, path)
 	written, err := os.ReadFile(plugin)
@@ -1288,7 +1288,7 @@ func TestPiGitContextExtensionKeepsUserFile(t *testing.T) {
 	user := "export default function () {}\n"
 	require.NoError(t, os.WriteFile(target, []byte(user), 0o600))
 	plans := setupGitContext(t, h, path)
-	require.Contains(t, plans[len(plans)-1].Notes, "warning: existing "+target+" left unchanged; Pi sessions will not include the git repository, branch, and commit")
+	require.Contains(t, plans[len(plans)-1].Warnings, "existing "+target+" left unchanged; Pi sessions will not include the git repository, branch, and commit")
 	teardown(t, h, path)
 	raw, err := os.ReadFile(target)
 	require.NoError(t, err)
