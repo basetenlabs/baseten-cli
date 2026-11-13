@@ -670,6 +670,31 @@ func Test_Grid_Setup_KeyCreationFailureCanBeRetried(t *testing.T) {
 	h.Require.FileExists(harnessSettingsFile("opencode", dir))
 }
 
+func Test_Grid_Setup_RetriesKeyCreationOnServerError(t *testing.T) {
+	skipUnlessSupported(t)
+	h, api := fakeGridAPI(t)
+	h.Context = internalcmd.WithSleep(h.Context, func(_ context.Context, _ time.Duration) error { return nil })
+	posts := 0
+	api.SetRouteFunc("POST", "/v1/teams/team-a/api_keys", func(w http.ResponseWriter, _ *http.Request) {
+		posts++
+		status := http.StatusInternalServerError
+		payload := map[string]string{"message": "deadlock detected"}
+		if posts > 1 {
+			status = http.StatusOK
+			payload = map[string]string{"api_key": "secret-team-a"}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(payload)
+	})
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"))
+	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	settings, err := os.ReadFile(harnessSettingsFile("opencode", dir))
+	h.Require.NoError(err)
+	h.Require.Contains(string(settings), "secret-team-a")
+}
+
 func Test_Grid_Setup_KeyringUnavailableStoresPlaintext(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)

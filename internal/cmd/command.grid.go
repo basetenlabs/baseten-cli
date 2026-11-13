@@ -1482,6 +1482,8 @@ func gridDefaultHarnessKeyName(hostname string) string {
 	return fmt.Sprintf("baseten-harness-%s-%06x", cmp.Or(strings.Join(parts, "-"), "local-machine"), rand.N(1<<24))
 }
 
+const gridKeyCreateRetryDelay = 1500 * time.Millisecond
+
 // gridEnsureHarnessToken returns the Grid API key setup installs: the one saved
 // on this machine for this profile, user, and team while it still exists, or
 // else a new one.
@@ -1524,10 +1526,18 @@ func gridEnsureHarnessToken(ctx *CommandContext, api *managementapi.Client, team
 		}
 		name = gridDefaultHarnessKeyName(hostname)
 	}
-	created, err := api.PostTeamsApiKeys(ctx, team.Id, managementapi.CreateAPIKeyRequest{
+	req := managementapi.CreateAPIKeyRequest{
 		Type: managementapi.APIKeyCategory_GRID,
 		Name: &name,
-	})
+	}
+	created, err := api.PostTeamsApiKeys(ctx, team.Id, req)
+	var re *managementapi.ResponseError
+	if errors.As(err, &re) && re.StatusCode >= http.StatusInternalServerError {
+		if err := ctx.Sleep(gridKeyCreateRetryDelay); err != nil {
+			return "", err
+		}
+		created, err = api.PostTeamsApiKeys(ctx, team.Id, req)
+	}
 	if err != nil {
 		return "", fmt.Errorf("creating Grid API key: %w", err)
 	}
