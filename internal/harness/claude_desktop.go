@@ -203,24 +203,18 @@ func claudeDesktopPrepare(path string, routes []Route, selection Selection, endp
 			values = append(values, setting{Path: p})
 		}
 	}
-	config, err := prepareSettings(path, credentialPath, claudeDesktopTeardownPaths, func(map[string]any) ([]setting, error) { return values, nil })
+	config, err := prepareSettings(path, credentialPath, func(map[string]any) ([]setting, error) { return values, nil })
 	if err != nil {
 		return nil, err
 	}
-	meta, err := prepareSettings(claudeDesktopMetaPath(path), nil, func(d map[string]any) [][]string {
-		return claudeDesktopMetaTeardownPaths(d, claudeDesktopID(path))
-	}, func(map[string]any) ([]setting, error) {
+	meta, err := prepareSettings(claudeDesktopMetaPath(path), nil, func(map[string]any) ([]setting, error) {
 		return []setting{desired([]string{"appliedId"}, claudeDesktopID(path))}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	// 3p mode makes the app start with the applied config instead of a Claude login.
-	// Teardown switches the app back to 1p, so the mode is not a setting of the
-	// user's that setup replaces.
-	mode, err := prepareSettings(claudeDesktopAppConfigPath(path), nil, func(map[string]any) [][]string {
-		return [][]string{{"deploymentMode"}}
-	}, func(map[string]any) ([]setting, error) {
+	mode, err := prepareSettings(claudeDesktopAppConfigPath(path), nil, func(map[string]any) ([]setting, error) {
 		return []setting{desired([]string{"deploymentMode"}, "3p")}, nil
 	})
 	if err != nil {
@@ -244,23 +238,6 @@ func claudeDesktopCredential(path string) (string, error) {
 	return token, nil
 }
 
-// claudeDesktopTeardownPaths returns the config keys that are Baseten's.
-func claudeDesktopTeardownPaths(d map[string]any) [][]string {
-	if !claudeDesktopOwned(d) {
-		return nil
-	}
-	return claudeDesktopPaths
-}
-
-// claudeDesktopMetaTeardownPaths returns the meta keys that are Baseten's: the
-// applied config ID, while it is Baseten's config.
-func claudeDesktopMetaTeardownPaths(d map[string]any, id string) [][]string {
-	if d["appliedId"] != id {
-		return nil
-	}
-	return [][]string{{"appliedId"}}
-}
-
 func claudeDesktopTeardown(path string) ([]*Plan, error) {
 	_, data, err := readConfig(path)
 	if err != nil {
@@ -277,7 +254,7 @@ func claudeDesktopTeardown(path string) ([]*Plan, error) {
 	// deleted: the app treats a missing deploymentMode as a first run before
 	// sign-in.
 	if claudeDesktopOwned(data) && applied["appliedId"] == id {
-		mode, err := prepareSettings(claudeDesktopAppConfigPath(path), nil, nil, func(map[string]any) ([]setting, error) {
+		mode, err := prepareSettings(claudeDesktopAppConfigPath(path), nil, func(map[string]any) ([]setting, error) {
 			return []setting{desired([]string{"deploymentMode"}, "1p")}, nil
 		})
 		if err != nil {
@@ -287,12 +264,20 @@ func claudeDesktopTeardown(path string) ([]*Plan, error) {
 		plans = append(plans, mode)
 	}
 	meta, err := prepareTeardown(claudeDesktopMetaPath(path), func(d map[string]any) [][]string {
-		return claudeDesktopMetaTeardownPaths(d, id)
+		if d["appliedId"] != id {
+			return nil
+		}
+		return [][]string{{"appliedId"}}
 	})
 	if err != nil {
 		return nil, err
 	}
-	config, err := prepareTeardown(path, claudeDesktopTeardownPaths)
+	config, err := prepareTeardown(path, func(d map[string]any) [][]string {
+		if !claudeDesktopOwned(d) {
+			return nil
+		}
+		return claudeDesktopPaths
+	})
 	if err != nil {
 		return nil, err
 	}

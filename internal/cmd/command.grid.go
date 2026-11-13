@@ -437,10 +437,10 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	passed := ctx.Command.Flags().Changed("hide-served-model-indicator")
 	servedModel := !f.HideServedModel
 	var offered, labels []string
-	for _, name := range []string{harness.Claude, harness.Pi, harness.OpenCode} {
-		if gridOffersServedModel(selected, listed, name) {
-			offered = append(offered, name)
-			labels = append(labels, gridHarnessLabel(name))
+	for _, h := range []struct{ name, label string }{{harness.Claude, "Claude Code"}, {harness.Pi, "Pi"}, {harness.OpenCode, "OpenCode"}} {
+		if gridOffersServedModel(selected, listed, h.name) {
+			offered = append(offered, h.name)
+			labels = append(labels, h.label)
 		}
 	}
 	if len(labels) > 0 && !passed && !f.Yes && !f.DryRun && ctx.IsInteractive() {
@@ -517,7 +517,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	case ctx.verbose || f.DryRun:
 		gridHarnessVerboseSetupSummary(ctx, team, targets, plans)
 	default:
-		gridHarnessReplacedNotice(ctx, plans)
+		gridHarnessSetupNotice(ctx, plans)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -629,7 +629,11 @@ func gridOffersServedModel(selected []gridSelectedHarness, listed []managementap
 }
 
 func gridAskServedModel(ctx *CommandContext, harnessLabels []string) (bool, error) {
-	harnessLabel := gridJoinLabels(harnessLabels)
+	last := len(harnessLabels) - 1
+	harnessLabel := harnessLabels[last]
+	if last > 0 {
+		harnessLabel = strings.Join(harnessLabels[:last], ", ") + " and " + harnessLabel
+	}
 	show := true
 	err := ctx.RunPrompt(huh.NewSelect[bool]().
 		Title("Show which model served each response on intelligent routes in "+harnessLabel+"?").
@@ -751,14 +755,10 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 	// NB(nikhil): Re-extract targets / plans from the runs, because they might have changed due to
 	// route eligibility.
 	targets, plans := extractFromGridSyncRuns(runs)
-	switch {
-	case ctx.JSON:
-	case ctx.verbose || f.DryRun:
+	if !ctx.JSON && (ctx.verbose || f.DryRun) {
 		for _, run := range runs {
 			gridHarnessVerboseSetupSummary(ctx, run.team, run.targets, run.plans)
 		}
-	default:
-		gridHarnessReplacedNotice(ctx, plans)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -927,38 +927,13 @@ func gridHarnessSessionAPIKey(ctx *CommandContext) (string, error) {
 	return key, nil
 }
 
-// gridHarnessReplacedNotice says setup changes the user's own harness settings,
-// before asking to apply. Settings an earlier setup wrote don't count.
-func gridHarnessReplacedNotice(ctx *CommandContext, plans []*harness.Plan) {
-	if !slices.ContainsFunc(plans, func(p *harness.Plan) bool { return len(p.Replaced) > 0 }) {
+// gridHarnessSetupNotice says what setup is about to change, before asking to apply.
+func gridHarnessSetupNotice(ctx *CommandContext, plans []*harness.Plan) {
+	if !slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Changed }) {
 		return
 	}
 	ctx.LogLine("Modifies harness settings to set Grid as the gateway with your configured models.")
 	ctx.LogLine("To remove Grid, run baseten grid teardown.")
-}
-
-// gridHarnessLabel returns the name users know a harness by.
-func gridHarnessLabel(name string) string {
-	switch name {
-	case harness.Claude:
-		return "Claude Code"
-	case harness.Codex:
-		return "Codex"
-	case harness.OpenCode:
-		return "OpenCode"
-	case harness.Pi:
-		return "Pi"
-	}
-	return name
-}
-
-// gridJoinLabels joins labels as "A", "A and B", or "A, B and C".
-func gridJoinLabels(labels []string) string {
-	last := len(labels) - 1
-	if last < 1 {
-		return strings.Join(labels, "")
-	}
-	return strings.Join(labels[:last], ", ") + " and " + labels[last]
 }
 
 func gridHarnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
@@ -1377,7 +1352,7 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 		}
 		ctx.Outputf("  Result            %s\n", accent.Render(result))
 		if len(replaced) > 0 {
-			ctx.Outputf("  Replaces          your %s\n", strings.Join(replaced, ", "))
+			ctx.Outputf("  Replaces          %s\n", strings.Join(replaced, ", "))
 		}
 	}
 	ctx.OutputLine("")

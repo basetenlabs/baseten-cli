@@ -147,7 +147,7 @@ func (h claudeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 	if helper != nil {
 		credentialPath = nil
 	}
-	p, err := prepareSettings(path, credentialPath, claudeTeardownPaths, func(data map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, credentialPath, func(data map[string]any) ([]setting, error) {
 		return claudeSettings(routes, s, endpoint, data, helper, cli, opts.NoClaudeServedModel, opts.GitContext)
 	})
 	if err != nil {

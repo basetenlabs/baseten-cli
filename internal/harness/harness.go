@@ -668,10 +668,7 @@ func credential(path string, key []string) (string, error) {
 	return token, nil
 }
 
-// prepareSettings plans writing build's settings into the file at path. owned
-// reports the keys the file already holds as Baseten's, the same keys teardown
-// removes; changing those is not replacing the user's settings. nil owns none.
-func prepareSettings(path string, credentialPath []string, owned func(map[string]any) [][]string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
+func prepareSettings(path string, credentialPath []string, build func(map[string]any) ([]setting, error)) (*Plan, error) {
 	f, d, err := readConfig(path)
 	if err != nil {
 		return nil, err
@@ -700,27 +697,13 @@ func prepareSettings(path string, credentialPath []string, owned func(map[string
 			}
 		}
 	}
-	var ours [][]string
-	if owned != nil {
-		ours = owned(original)
-	}
 	for _, v := range settings {
-		if before := get(original, v.Path); before.Exists && !same(before, get(d, v.Path)) && !ownedPath(ours, v.Path) {
+		if before := get(original, v.Path); before.Exists && !same(before, get(d, v.Path)) {
 			p.Replaced = append(p.Replaced, pathKey(v.Path))
 		}
 	}
 	return p, p.encode()
 }
-
-// ownedPath reports whether p is one of owned or nested under one.
-func ownedPath(owned [][]string, p []string) bool {
-	return slices.ContainsFunc(owned, func(o []string) bool {
-		return len(o) <= len(p) && slices.Equal(o, p[:len(o)])
-	})
-}
-
-// wholeFileOwned claims every key of a file Baseten writes and teardown deletes whole.
-func wholeFileOwned(map[string]any) [][]string { return [][]string{{}} }
 
 // prepareTeardown deletes the settings that scope reports as Baseten's.
 func prepareTeardown(path string, scope func(map[string]any) [][]string) (*Plan, error) {

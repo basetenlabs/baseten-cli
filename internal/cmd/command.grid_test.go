@@ -929,14 +929,19 @@ func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "model")
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "modelPicker.options")
 	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
-	h.Require.Contains(h.Stdout.String(), "  Replaces          your model, modelPicker.options")
+	h.Require.Contains(h.Stdout.String(), "  Replaces          model, modelPicker.options")
 
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
 	h.Require.Contains(h.Stderr.String(), "Modifies harness settings to set Grid as the gateway with your configured models.\nTo remove Grid, run baseten grid teardown.\n")
 	h.Require.NotContains(h.Stderr.String(), "warning")
-
-	// Rerunning only rewrites settings the first run wrote.
-	h.Require.NoError(h.Execute(append(args, "--yes", "--background-route-id", "route-primary")...))
+	// Sync is routine, so it applies changes without the notice.
+	edited := readHarnessSettings(t, "claude", path)
+	edited["model"] = "edited/model"
+	raw, err := json.Marshal(edited)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Equal("acme/primary", readHarnessSettings(t, "claude", path)["model"])
 	h.Require.NotContains(h.Stderr.String(), "Modifies harness settings")
 	picker := readHarnessSettings(t, "claude", path)["modelPicker"].(map[string]any)
 	h.Require.Equal([]any{map[string]any{"model": "acme/primary", "label": "Primary"}}, picker["options"])

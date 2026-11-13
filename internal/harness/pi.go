@@ -97,13 +97,13 @@ func (piHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([]*P
 		"headers":    map[string]any{clientHeader: Pi},
 		"models":     models,
 	})
-	p, err := prepareSettings(path, credentialPath, piModelsTeardownPaths, func(map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, credentialPath, func(map[string]any) ([]setting, error) {
 		return []setting{provider}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	settings, err := prepareSettings(piSettingsPath(path), nil, piSettingsTeardownPaths, func(map[string]any) ([]setting, error) {
+	settings, err := prepareSettings(piSettingsPath(path), nil, func(map[string]any) ([]setting, error) {
 		return []setting{
 			desired([]string{"defaultProvider"}, providerID),
 			desired([]string{"defaultModel"}, s.Primary),
@@ -263,9 +263,6 @@ func piCost(c *Cost) map[string]any {
 
 // piSettingsTeardownPaths resets Pi's default model only while Baseten is the
 // default provider; a default the user pointed at another provider is theirs.
-// piModelsTeardownPaths returns the models keys that are Baseten's: its provider.
-func piModelsTeardownPaths(map[string]any) [][]string { return [][]string{piProviderPath} }
-
 func piSettingsTeardownPaths(data map[string]any) [][]string {
 	if data["defaultProvider"] != providerID {
 		return nil
@@ -278,7 +275,7 @@ func (piHarness) Teardown(path string) ([]*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	models, err := prepareTeardown(path, piModelsTeardownPaths)
+	models, err := prepareTeardown(path, func(map[string]any) [][]string { return [][]string{piProviderPath} })
 	if err != nil {
 		return nil, err
 	}

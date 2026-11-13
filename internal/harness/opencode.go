@@ -221,7 +221,7 @@ func (openCodeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 	if format == openCodeV2 {
 		credentialPath, bearerPath = openCodeV2CredentialPath, openCodeV2BearerPath
 	}
-	p, err := prepareSettings(path, credentialPath, openCodeTeardownPaths, func(current map[string]any) ([]setting, error) {
+	p, err := prepareSettings(path, credentialPath, func(current map[string]any) ([]setting, error) {
 		// Like the API key, keep the file's header until ApplyPlans inserts the real one.
 		bearer, _ := get(current, bearerPath).Data.(string)
 		var values []setting

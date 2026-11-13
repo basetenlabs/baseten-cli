@@ -1085,8 +1085,7 @@ func TestOpenCodeSetupAfterMigrationRetiresV1Settings(t *testing.T) {
 	save(t, path, d)
 
 	plans := setup(t, openCodeHarness{}, path, testRoutes(), Selection{Background: "acme/background"})
-	// Retiring Baseten's own V1 settings replaces nothing of the user's.
-	require.Empty(t, plans[0].Replaced)
+	require.ElementsMatch(t, []string{"provider." + providerID, "small_model", "agent.general.model", "agent.explore.model"}, plans[0].Replaced)
 	d = load(t, path)
 	require.True(t, get(d, openCodeV2ProviderPath).Exists)
 	require.False(t, get(d, openCodeV1ProviderPath).Exists)
@@ -1632,21 +1631,4 @@ func TestCodexClearCloudConfig(t *testing.T) {
 	require.NoError(t, CodexClearCloudConfig(dir))
 	require.NoError(t, os.MkdirAll(filepath.Join(cache, "child"), 0o700))
 	require.Error(t, CodexClearCloudConfig(dir))
-}
-
-// A rerun with a new route list and default route only rewrites Baseten's own
-// settings, so it reports nothing of the user's as replaced.
-func TestRerunReplacesNothingOfTheUsers(t *testing.T) {
-	for _, h := range All() {
-		t.Run(h.Name(), func(t *testing.T) {
-			path := settingsPath(t, h)
-			setup(t, h, path, testRoutes(), Selection{Primary: "acme/primary"})
-			routes := append(testRoutes(), testRoute("acme/new", "New"))
-			plans := setup(t, h, path, routes, Selection{Primary: "acme/new"})
-			require.True(t, slices.ContainsFunc(plans, func(p *Plan) bool { return p.Changed }), "the rerun changes settings")
-			for _, p := range plans {
-				require.Empty(t, p.Replaced, p.Path)
-			}
-		})
-	}
 }
