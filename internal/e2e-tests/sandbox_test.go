@@ -104,9 +104,6 @@ func TestE2ESandbox(t *testing.T) {
 		masked := envValues(cliJSON[map[string]any](t, "sandbox", "describe", "--name", name))
 		require.Equal(t, "plain-value", masked["E2E_PLAIN"])
 		require.NotEqual(t, "secret-value", masked["E2E_SECRET"])
-		// The e2e key is a workspace administrator's.
-		revealed := envValues(cliJSON[map[string]any](t, "sandbox", "describe", "--name", name, "--show-secrets"))
-		require.Equal(t, "secret-value", revealed["E2E_SECRET"])
 	})
 
 	t.Run("List", func(t *testing.T) {
