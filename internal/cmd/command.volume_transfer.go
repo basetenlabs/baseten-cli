@@ -27,6 +27,10 @@ func init() {
 }
 
 func commandVolumeCat(ctx *CommandContext, flags *cmd.VolumeCatFlags) error {
+	concurrency, err := volumeConcurrency(flags.VolumeTransferFlags, 0)
+	if err != nil {
+		return err
+	}
 	// A file's bytes are whatever the volume holds, so there is nothing to
 	// render as JSON and nothing for --jq to read. Refused rather than
 	// ignored, since the alternative is a pipe fed something that is not JSON.
@@ -78,7 +82,7 @@ func commandVolumeCat(ctx *CommandContext, flags *cmd.VolumeCatFlags) error {
 		},
 		Hasher:      volumeHasher,
 		Store:       &volumeObjectStore{ctx: ctx},
-		Concurrency: volumeConcurrency(flags.VolumeTransferFlags, 0),
+		Concurrency: concurrency,
 	})
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", ref, err)
@@ -87,6 +91,10 @@ func commandVolumeCat(ctx *CommandContext, flags *cmd.VolumeCatFlags) error {
 }
 
 func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
+	concurrency, err := volumeConcurrency(flags.VolumeTransferFlags, flags.FileJobs)
+	if err != nil {
+		return err
+	}
 	dir := ctx.Args[0]
 	ref, err := volumeParseRef(ctx.Args[1])
 	if err != nil {
@@ -132,7 +140,7 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 		// skip uploading content it already holds.
 		Store:       &volumeObjectStore{ctx: ctx},
 		Progress:    progress,
-		Concurrency: volumeConcurrency(flags.VolumeTransferFlags, flags.FileJobs),
+		Concurrency: concurrency,
 	})
 	elapsed := ctx.Now().Sub(started)
 	transferDuration := stopProgress()
@@ -182,6 +190,10 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 }
 
 func commandVolumePull(ctx *CommandContext, flags *cmd.VolumePullFlags) error {
+	concurrency, err := volumeConcurrency(flags.VolumeTransferFlags, 0)
+	if err != nil {
+		return err
+	}
 	ref, err := volumeParseRef(ctx.Args[0])
 	if err != nil {
 		return err
@@ -214,7 +226,7 @@ func commandVolumePull(ctx *CommandContext, flags *cmd.VolumePullFlags) error {
 		Hasher:       volumeHasher,
 		Store:        &volumeObjectStore{ctx: ctx},
 		Progress:     progress,
-		Concurrency:  volumeConcurrency(flags.VolumeTransferFlags, 0),
+		Concurrency:  concurrency,
 	})
 	elapsed := ctx.Now().Sub(started)
 	transferDuration := stopProgress()
@@ -279,12 +291,25 @@ func volumeHasher() hash.Hash {
 // volumeConcurrency translates the transfer flags. Zero stays zero: each
 // limit has its own meaning for it, documented on the options, and none of
 // them is "no limit".
-func volumeConcurrency(flags cmd.VolumeTransferFlags, fileJobs int) client.VolumeConcurrencyOptions {
+func volumeConcurrency(flags cmd.VolumeTransferFlags, fileJobs int) (client.VolumeConcurrencyOptions, error) {
+	// Zero means the default, but a negative value would quietly mean it too.
+	for _, f := range []struct {
+		name  string
+		value int
+	}{
+		{"--file-jobs", fileJobs},
+		{"--chunk-operations", flags.ChunkOperations},
+		{"--max-in-flight-mib", flags.MaxInFlightMiB},
+	} {
+		if f.value < 0 {
+			return client.VolumeConcurrencyOptions{}, cmd.NewErrUsagef("%s must not be negative", f.name)
+		}
+	}
 	return client.VolumeConcurrencyOptions{
 		FileJobs:         fileJobs,
 		ChunkOperations:  flags.ChunkOperations,
 		MaxBytesInFlight: int64(flags.MaxInFlightMiB) * 1024 * 1024,
-	}
+	}, nil
 }
 
 // volumeProgressInterval bounds output while retaining the latest counters.
