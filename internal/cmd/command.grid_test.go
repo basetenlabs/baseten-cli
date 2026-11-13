@@ -573,6 +573,7 @@ func Test_Grid_Setup_OpenCodeFormatFollowsTheFile(t *testing.T) {
 	h.Require.NotContains(settings, "provider")
 	h.Require.NotContains(settings, "small_model")
 	h.Require.Equal("baseten-harness/deepseek-ai/DeepSeek-V4.1-Flash", settings["agents"].(map[string]any)["title"].(map[string]any)["model"])
+	h.Require.Equal("baseten-harness/acme/primary", settings["agents"].(map[string]any)["build"].(map[string]any)["model"])
 
 	h.Require.NoError(h.Execute("grid", "status", "--harness", "opencode", "--config-dir", dir, "--output", "json"))
 	var statuses public.GridStatusList
@@ -1251,6 +1252,7 @@ func Test_Grid_Setup_IntelligentRouteInPickers(t *testing.T) {
 	opencode := readHarnessSettings(t, "opencode", filepath.Join(root, "opencode", "opencode.json"))
 	h.Require.Equal("baseten-harness/acme/auto", opencode["model"])
 	h.Require.Equal("baseten-harness/acme/auto", opencode["small_model"])
+	h.Require.Equal("baseten-harness/acme/auto", opencode["agent"].(map[string]any)["build"].(map[string]any)["model"])
 	models := opencode["provider"].(map[string]any)["baseten-harness"].(map[string]any)["models"].(map[string]any)
 	h.Require.Contains(models, "acme/auto")
 	h.Require.Equal(map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/auto"].(map[string]any)["provider"])
