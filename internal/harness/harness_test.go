@@ -963,29 +963,67 @@ func openCodeV2File() map[string]any {
 	}
 }
 
-func TestOpenCodeFormatFollowsTheFile(t *testing.T) {
+func setupOpenCode(t *testing.T, path string, routes []Route, s Selection, installs []Install) []*Plan {
+	t.Helper()
+	plans, err := openCodeHarness{}.Prepare(path, routes, PrepareOptions{Selection: s, Endpoint: testEndpoint, Installs: installs})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	return plans
+}
+
+const openCodeApp = "/Applications/OpenCode.app/Contents/Resources/opencode-cli"
+
+var (
+	openCode1CLI = cli(onPATH("opencode"), "1.18.13")
+	openCode2CLI = cli(onPATH("opencode"), "opencode v2.2.7")
+	openCode2App = desktop(openCodeApp, "opencode v2.2.7")
+)
+
+func TestOpenCodeFormat(t *testing.T) {
+	v1Keys := map[string]any{"provider": map[string]any{}, "agent": map[string]any{}, "small_model": "x/y", "permission": map[string]any{}}
 	for _, tc := range []struct {
 		name string
 		file map[string]any
-		want openCodeFormat
+		// sibling is opencode.json beside the opencode.jsonc that setup writes.
+		sibling  string
+		installs []Install
+		want     openCodeFormat
 	}{
-		{"no file", nil, openCodeV1},
-		{"empty", map[string]any{}, openCodeV1},
-		{"shared keys only", map[string]any{"model": "x/y", "theme": "dark", "mcp": map[string]any{}}, openCodeV1},
-		{"v1 keys", map[string]any{"provider": map[string]any{}, "agent": map[string]any{}, "small_model": "x/y", "permission": map[string]any{}}, openCodeV1},
-		{"providers", map[string]any{"providers": map[string]any{}}, openCodeV2},
-		{"agents", map[string]any{"agents": map[string]any{}}, openCodeV2},
-		{"permissions", map[string]any{"permissions": []any{}}, openCodeV2},
-		{"plugins", map[string]any{"plugins": []any{}}, openCodeV2},
-		{"commands", map[string]any{"commands": map[string]any{}}, openCodeV2},
-		{"mixed", map[string]any{"provider": map[string]any{}, "providers": map[string]any{}}, openCodeV2},
+		{name: "no file", want: openCodeV1},
+		{name: "empty", file: map[string]any{}, want: openCodeV1},
+		{name: "shared keys only", file: map[string]any{"model": "x/y", "theme": "dark", "mcp": map[string]any{}}, want: openCodeV1},
+		{name: "v1 keys", file: v1Keys, want: openCodeV1},
+		{name: "providers", file: map[string]any{"providers": map[string]any{}}, want: openCodeV2},
+		{name: "agents", file: map[string]any{"agents": map[string]any{}}, want: openCodeV2},
+		{name: "permissions", file: map[string]any{"permissions": []any{}}, want: openCodeV2},
+		{name: "plugins", file: map[string]any{"plugins": []any{}}, want: openCodeV2},
+		{name: "commands", file: map[string]any{"commands": map[string]any{}}, want: openCodeV2},
+		{name: "mixed", file: map[string]any{"provider": map[string]any{}, "providers": map[string]any{}}, want: openCodeV2},
+		{name: "opencode 2 only", installs: []Install{openCode2CLI, openCode2App}, want: openCodeV2},
+		{name: "opencode 2 only with v1 keys", file: v1Keys, installs: []Install{openCode2App}, want: openCodeV2},
+		{name: "opencode 1 only", installs: []Install{openCode1CLI}, want: openCodeV1},
+		{name: "opencode 1 and 2", installs: []Install{openCode1CLI, openCode2App}, want: openCodeV1},
+		{name: "unknown version and opencode 2", installs: []Install{openCode2CLI, desktop(openCodeApp, "")}, want: openCodeV1},
+		{name: "sibling with v2 keys", file: map[string]any{}, sibling: "{\n // migrated\n \"providers\": {},\n}\n", installs: []Install{openCode1CLI}, want: openCodeV2},
+		{name: "sibling with v1 keys", file: map[string]any{}, sibling: `{"provider": {}}`, want: openCodeV1},
+		{name: "invalid sibling", file: map[string]any{}, sibling: `{"providers": `, want: openCodeV1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := settingsPath(t, openCodeHarness{})
+			sibling := filepath.Join(filepath.Dir(path), "opencode.json")
+			if tc.sibling != "" {
+				path = filepath.Join(filepath.Dir(path), "opencode.jsonc")
+				require.NoError(t, os.WriteFile(sibling, []byte(tc.sibling), 0o600))
+			}
 			if tc.file != nil {
 				save(t, path, tc.file)
 			}
-			setup(t, openCodeHarness{}, path, testRoutes(), Selection{})
+			setupOpenCode(t, path, testRoutes(), Selection{}, tc.installs)
+			if tc.sibling != "" {
+				raw, err := os.ReadFile(sibling)
+				require.NoError(t, err)
+				require.Equal(t, tc.sibling, string(raw), "the sibling is only read")
+			}
 			d := load(t, path)
 			require.Equal(t, tc.want == openCodeV2, get(d, openCodeV2ProviderPath).Exists)
 			require.Equal(t, tc.want == openCodeV1, get(d, openCodeV1ProviderPath).Exists)
@@ -1076,31 +1114,124 @@ func TestOpenCodeV2Settings(t *testing.T) {
 }
 
 func TestOpenCodeSetupAfterMigrationRetiresV1Settings(t *testing.T) {
-	path := settingsPath(t, openCodeHarness{})
-	setup(t, openCodeHarness{}, path, testRoutes(), Selection{Subagent: "acme/subagent", Background: "acme/background"})
-	// The user migrates their own settings but leaves Baseten's block alone.
-	d := load(t, path)
-	d["agents"] = map[string]any{"reviewer": map[string]any{"mode": "subagent"}}
-	require.NoError(t, put(d, []string{"agent", "mine", "model"}, value{Exists: true, Data: "other/model"}))
-	save(t, path, d)
+	// Each case switches setup to V2 while Baseten's V1 block is still in the file.
+	for _, tc := range []struct {
+		name     string
+		migrated bool
+		sibling  string
+		installs []Install
+	}{
+		{name: "user migrated the file", migrated: true},
+		{name: "user migrated the sibling", sibling: `{"providers": {}}`},
+		{name: "only opencode 2 installed", installs: []Install{openCode2CLI}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "opencode.jsonc")
+			setup(t, openCodeHarness{}, path, testRoutes(), Selection{Subagent: "acme/subagent", Background: "acme/background"})
+			d := load(t, path)
+			require.True(t, get(d, openCodeV1ProviderPath).Exists)
+			if tc.migrated {
+				d["agents"] = map[string]any{"reviewer": map[string]any{"mode": "subagent"}}
+			}
+			if tc.sibling != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(path), "opencode.json"), []byte(tc.sibling), 0o600))
+			}
+			require.NoError(t, put(d, []string{"agent", "mine", "model"}, value{Exists: true, Data: "other/model"}))
+			save(t, path, d)
 
-	plans := setup(t, openCodeHarness{}, path, testRoutes(), Selection{Background: "acme/background"})
-	require.ElementsMatch(t, []string{"provider." + providerID, "small_model", "agent.general.model", "agent.explore.model"}, plans[0].Replaced)
-	d = load(t, path)
-	require.True(t, get(d, openCodeV2ProviderPath).Exists)
-	require.False(t, get(d, openCodeV1ProviderPath).Exists)
-	require.NotContains(t, d, "small_model")
-	require.Equal(t, providerID+"/acme/background", get(d, openCodeV2BackgroundPath).Data)
-	for _, key := range openCodeV1SubagentPaths {
-		require.False(t, get(d, key).Exists, "retired V1 subagent settings")
+			plans := setupOpenCode(t, path, testRoutes(), Selection{Background: "acme/background"}, tc.installs)
+			require.ElementsMatch(t, []string{"provider." + providerID, "small_model", "agent.general.model", "agent.explore.model"}, plans[0].Replaced)
+			d = load(t, path)
+			require.True(t, get(d, openCodeV2ProviderPath).Exists)
+			require.False(t, get(d, openCodeV1ProviderPath).Exists)
+			require.NotContains(t, d, "small_model")
+			require.Equal(t, providerID+"/acme/background", get(d, openCodeV2BackgroundPath).Data)
+			for _, key := range openCodeV1SubagentPaths {
+				require.False(t, get(d, key).Exists, "retired V1 subagent settings")
+			}
+			for _, key := range openCodeV2SubagentPaths {
+				require.False(t, get(d, key).Exists, "no --subagent-route-id on this run")
+			}
+			require.Equal(t, "other/model", get(d, []string{"agent", "mine", "model"}).Data, "the user's V1 agent stays")
+			token, err := openCodeHarness{}.Credential(path)
+			require.NoError(t, err)
+			require.Equal(t, testToken, token)
+			require.Equal(t, "Bearer "+testToken, get(d, openCodeV2BearerPath).Data)
+			require.False(t, get(d, openCodeV1CredentialPath).Exists)
+		})
 	}
-	for _, key := range openCodeV2SubagentPaths {
-		require.False(t, get(d, key).Exists, "no --subagent-route-id on this run")
+}
+
+func TestClaudeBindsThinkingBlocks(t *testing.T) {
+	for model, want := range map[string]bool{
+		"claude-fable-5-2": true, "claude-fable-5-1": true, "claude-opus-5-5": true, "claude-sonnet-5-5": true, "claude-opus-6": true,
+		"claude-sonnet-5": false, "claude-sonnet-5-20260101": false, "claude-opus-4-6": false, "claude-opus-4-5-20251101": false,
+		"anthropic.claude-fable-5-2-v1:0": true, "claude-fable-5-2@20261101": true, "Claude-Fable-5-2": true,
+		"acme-claude-fable-5-2": false, "": false, "gpt-6": false,
+	} {
+		require.Equal(t, want, claudeBindsThinkingBlocks(model), model)
 	}
-	require.Equal(t, "other/model", get(d, []string{"agent", "mine", "model"}).Data, "the user's V1 agent stays")
-	token, err := openCodeHarness{}.Credential(path)
-	require.NoError(t, err)
-	require.Equal(t, testToken, token)
+}
+
+// thinkingBlockRoutes are Claude routes of every kind, of which only
+// acme/fable is marked as binding thinking blocks.
+func thinkingBlockRoutes() []Route {
+	route := func(name, provider, model string, api TargetAPI) Route {
+		r := testRoute(name, name)
+		r.Provider, r.UpstreamModel, r.TargetAPI = provider, model, api
+		return r
+	}
+	return []Route{
+		route("acme/fable", ProviderAnthropic, "claude-fable-5-2", TargetAPIMessages),
+		route("acme/opus", ProviderAnthropic, "claude-opus-4-5-20251101", TargetAPIMessages),
+		route("acme/bedrock-fable", ProviderBedrock, "anthropic.claude-fable-5-2-v1:0", TargetAPIMessages),
+		route("acme/fable-completions", ProviderAnthropic, "claude-fable-5-2", TargetAPIChatCompletions),
+	}
+}
+
+func TestOpenCodeThinkingBlockBinding(t *testing.T) {
+	for _, format := range []openCodeFormat{openCodeV1, openCodeV2} {
+		path := settingsPath(t, openCodeHarness{})
+		providerPath := openCodeV1ProviderPath
+		if format == openCodeV2 {
+			save(t, path, openCodeV2File())
+			providerPath = openCodeV2ProviderPath
+		}
+		setup(t, openCodeHarness{}, path, thinkingBlockRoutes(), Selection{})
+		models := get(load(t, path), append(slices.Clone(providerPath), "models")).Data.(map[string]any)
+		for name, model := range models {
+			compatibility, ok := model.(map[string]any)["compatibility"]
+			if format == openCodeV2 && name == "acme/fable" {
+				require.Equal(t, map[string]any{"supportsThinkingBlockBinding": true}, compatibility)
+			} else {
+				require.False(t, ok, "%s in format %d", name, format)
+			}
+		}
+	}
+}
+
+func TestOpenCodeKeptFormatNote(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		routes   []Route
+		installs []Install
+		note     string
+	}{
+		{"opencode 1 and 2", thinkingBlockRoutes(), []Install{openCode1CLI, openCode2App}, onPATH("opencode")},
+		{"unknown version and opencode 2", thinkingBlockRoutes(), []Install{openCode2CLI, desktop(openCodeApp, "")}, openCodeApp},
+		{"no route binds thinking blocks", thinkingBlockRoutes()[1:], []Install{openCode1CLI, openCode2App}, ""},
+		{"opencode 2 only", thinkingBlockRoutes(), []Install{openCode2CLI}, ""},
+		{"opencode 1 only", thinkingBlockRoutes(), []Install{openCode1CLI}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plans := setupOpenCode(t, settingsPath(t, openCodeHarness{}), tc.routes, Selection{}, tc.installs)
+			var want []string
+			if tc.note != "" {
+				want = []string{"warning: wrote OpenCode's original settings format, because OpenCode 1 cannot read OpenCode 2's and these installs are OpenCode 1 or of unknown version: " + tc.note + ". OpenCode 2 sessions on Claude 5.1 and later can then fail with an invalid thinking block signature error after an OpenCode upgrade. Upgrade or remove those installs, then rerun setup."}
+			}
+			require.Equal(t, want, plans[0].Notes)
+		})
+	}
 }
 
 func TestOpenCodeTeardownSweepsBothFormats(t *testing.T) {

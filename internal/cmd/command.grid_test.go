@@ -1088,20 +1088,27 @@ func (g *harnessGateway) sentRequestClasses() []string {
 // OpenCode 1 and 2 install the same `opencode` command, so the one on PATH is
 // taken for OpenCode 1 and OpenCode 2 is the binary named by
 // BASETEN_TEST_OPENCODE2, when set. OpenCode 2 reads both settings formats
-// and runs with each; OpenCode 1 reads only the original.
+// and runs with each; OpenCode 1 reads only the original. Setup writes the
+// original format only while it detects an OpenCode 1, so the v1 cases skip
+// when the one on PATH is not.
 func Test_Grid_Setup_RealHarness(t *testing.T) {
 	skipUnlessSupported(t)
 	type harnessCase struct {
 		label, name, binary string
 		args                []string
-		// seed is a settings file in place before setup, which decides the
-		// OpenCode settings format.
+		// seed is a settings file in place before setup, which with the
+		// detected installs decides the OpenCode settings format.
 		seed string
+		// format is the OpenCode settings format the case runs with.
+		format string
+		// anthropic serves the route from an Anthropic connection on Claude
+		// 5.1 or later, so OpenCode 2's settings mark it as binding thinking blocks.
+		anthropic bool
 	}
 	cases := []harnessCase{
 		{label: "claude", name: "claude", binary: "claude", args: []string{"-p", "Reply with OK."}},
 		{label: "codex", name: "codex", binary: "codex", args: []string{"exec", "--skip-git-repo-check", "Reply with OK."}},
-		{label: "opencode/v1", name: "opencode", binary: "opencode", args: []string{"run", "Reply with OK."}, seed: `{"snapshot": false}`},
+		{label: "opencode/v1", name: "opencode", binary: "opencode", args: []string{"run", "Reply with OK."}, seed: `{"snapshot": false}`, format: "v1"},
 		{label: "pi", name: "pi", binary: "pi", args: []string{"--print", "Reply with OK."}},
 	}
 	if opencode2 := os.Getenv("BASETEN_TEST_OPENCODE2"); opencode2 != "" {
@@ -1109,8 +1116,8 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 		// private one keeps the test off the developer's.
 		args := []string{"run", "--standalone", "Reply with OK."}
 		cases = append(cases,
-			harnessCase{label: "opencode2/v1", name: "opencode", binary: opencode2, args: args, seed: `{"snapshot": false}`},
-			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}, "snapshot": false}`},
+			harnessCase{label: "opencode2/v1", name: "opencode", binary: opencode2, args: args, seed: `{"snapshot": false}`, format: "v1"},
+			harnessCase{label: "opencode2/v2", name: "opencode", binary: opencode2, args: args, seed: `{"providers": {}, "snapshot": false}`, format: "v2", anthropic: true},
 		)
 	}
 	for _, tc := range cases {
@@ -1122,7 +1129,21 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			gateway := &harnessGateway{}
 			server := httptest.NewServer(gateway)
 			t.Cleanup(server.Close)
-			h, _ := gridAPI(t, server.URL)
+			h, api := gridAPI(t, server.URL)
+			if tc.anthropic {
+				metadata := maps.Clone(harnessRouteMetadata)
+				metadata["supported_api_formats"] = map[string]any{"messages": true}
+				api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
+					"items": []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-primary", "name": "acme/primary", "display_name": "Primary", "invoke_url": server.URL, "metadata": metadata,
+						"target": map[string]any{"type": "CONNECTION", "model": "claude-fable-5-2", "connection_id": "conn-anthropic"}}},
+					"pagination": map[string]any{"has_more": false},
+				})
+				api.SetRoute("GET", "/v1/grid/connections", 200, map[string]any{
+					"items": []any{map[string]any{"id": "conn-anthropic", "team_id": "team-a", "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z",
+						"config": map[string]any{"provider": "ANTHROPIC", "secret_id": "s1", "secret_name": "anthropic-key"}}},
+					"pagination": map[string]any{"has_more": false},
+				})
+			}
 			root := t.TempDir()
 			configDir := map[string]string{
 				"claude":   filepath.Join(root, ".claude"),
@@ -1136,6 +1157,21 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			}
 			// The token helper would run this test binary, so the session's key is installed instead.
 			h.Require.NoError(h.Execute("grid", "setup", "--harness", tc.name, "--config-dir", configDir, "--use-session-credential", "--yes", "--git-context"))
+			if tc.format != "" {
+				settings := readHarnessSettings(t, tc.name, harnessSettingsFile(tc.name, configDir))
+				v1, _ := settings["provider"].(map[string]any)
+				v2, _ := settings["providers"].(map[string]any)
+				_, wroteV1 := v1["baseten-harness"]
+				_, wroteV2 := v2["baseten-harness"]
+				if tc.format == "v1" && (!wroteV1 || wroteV2) {
+					t.Skip("setup did not write the original OpenCode settings format, so it detected no OpenCode 1; this case needs the opencode on PATH to be OpenCode 1")
+				}
+				h.Require.Equal(tc.format == "v2", wroteV2, "OpenCode 2's native provider")
+				if tc.anthropic {
+					model := v2["baseten-harness"].(map[string]any)["models"].(map[string]any)["acme/primary"].(map[string]any)
+					h.Require.Equal(map[string]any{"supportsThinkingBlockBinding": true}, model["compatibility"])
+				}
+			}
 
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			defer cancel()
@@ -1199,6 +1235,9 @@ func Test_Grid_Setup_RealHarness(t *testing.T) {
 			}
 			if tc.name == harness.Claude {
 				h.Require.True(slices.ContainsFunc(gateway.sentRequestClasses(), func(v string) bool { return v != "" }), "x-claude-code-request-class")
+			}
+			if tc.anthropic {
+				h.Require.True(gateway.sawWith("acme/primary", `"prefix_mismatch_behavior":"drop_block"`), "OpenCode 2 asks the API to drop thinking blocks bound to a changed context")
 			}
 		})
 	}
@@ -2522,10 +2561,22 @@ var openCodePluginSources = []string{"routes.json", "server.js", "shared.js", "t
 
 func Test_Grid_Setup_OpenCodeServedModel(t *testing.T) {
 	skipUnlessSupported(t)
-	for name, seed := range map[string]string{"original": `{"theme":"dark"}`, "native": `{"providers":{"other":{"name":"Other"}},"theme":"dark"}`} {
+	desktop := "/Applications/OpenCode.app/Contents/Resources/opencode-cli"
+	if runtime.GOOS == "linux" {
+		desktop = "/opt/OpenCode/resources/opencode-cli"
+	}
+	// An OpenCode 1 install sharing the settings keeps the original format.
+	for name, tc := range map[string]struct {
+		seed   string
+		execer versionedHarnessExecer
+	}{
+		"original": {`{"theme":"dark"}`, versionedHarnessExecer{"opencode": "1.19.5", desktop: "opencode v2.0.27"}},
+		"native":   {`{"providers":{"other":{"name":"Other"}},"theme":"dark"}`, openCode2Execer},
+	} {
+		seed := tc.seed
 		t.Run(name, func(t *testing.T) {
 			h, api := fakeGridAPI(t)
-			h.Context = internalcmd.WithExecer(h.Context, openCode2Execer)
+			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
 			serveServedModelRoutes(api, "auto=Auto (Baseten Internal Dogfooding)")
 			dir := t.TempDir()
 			path := harnessSettingsFile("opencode", dir)
