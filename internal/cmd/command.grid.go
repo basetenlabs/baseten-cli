@@ -1321,6 +1321,11 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 	renderer := lipgloss.NewRenderer(ctx.Stdout)
 	accent := renderer.NewStyle().Inherit(inlineCodeStyle)
 	heading := renderer.NewStyle().Bold(true)
+	ops := map[harness.ChangeOp]lipgloss.Style{
+		harness.ChangeAdd:    renderer.NewStyle().Foreground(lipgloss.Color("2")),
+		harness.ChangeUpdate: renderer.NewStyle().Foreground(lipgloss.Color("6")),
+		harness.ChangeRemove: renderer.NewStyle().Foreground(lipgloss.Color("1")),
+	}
 	ctx.Outputf("Team: %s\n", accent.Render(team.Name))
 	for _, choice := range selected {
 		s := choice.selection
@@ -1336,24 +1341,23 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 		if choice.Name() == harness.Claude {
 			ctx.Outputf("  Fallback route    %s\n", accent.Render(cmp.Or(s.Fallback, s.Primary)))
 		}
-		changed := false
-		var replaced []string
+		result := "Already configured"
 		for _, p := range plans {
-			if p.Harness != choice.Name() {
+			if p.Harness != choice.Name() || !p.Changed {
 				continue
 			}
-			changed = changed || p.Changed
-			replaced = append(replaced, p.Replaced...)
-			ctx.VerboseLogf("Config: %s\nSettings: %s\n", p.Path, strings.Join(p.Keys, ", "))
-		}
-		result := "Already configured"
-		if changed {
 			result = "Changes ready to apply"
+			if len(p.Changes) == 0 {
+				ctx.Outputf("\n  Rewrites %s\n", gridHarnessDisplayPath(p.Path))
+				continue
+			}
+			ctx.Outputf("\n  Changes in %s (values hidden):\n", gridHarnessDisplayPath(p.Path))
+			changes := slices.SortedFunc(slices.Values(p.Changes), func(a, b harness.Change) int { return strings.Compare(a.Key, b.Key) })
+			for _, c := range changes {
+				ctx.Outputf("    %s %s\n", ops[c.Op].Render(fmt.Sprintf("%-7s", c.Op)), c.Key)
+			}
 		}
-		ctx.Outputf("  Result            %s\n", accent.Render(result))
-		if len(replaced) > 0 {
-			ctx.Outputf("  Replaces          %s\n", strings.Join(replaced, ", "))
-		}
+		ctx.Outputf("\n  Result            %s\n", accent.Render(result))
 	}
 	ctx.OutputLine("")
 }
