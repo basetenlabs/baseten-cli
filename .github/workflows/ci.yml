@@ -38,7 +38,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai @earendil-works/pi-coding-agent
-          npm install -g --prefix "$RUNNER_TEMP/opencode2" @opencode/cli
+          npm install -g --prefix "$RUNNER_TEMP/opencode2" @opencode/cli@2.2.7
           echo "BASETEN_TEST_OPENCODE2=$RUNNER_TEMP/opencode2/bin/opencode" >> "$GITHUB_ENV"
 
       - name: Test
