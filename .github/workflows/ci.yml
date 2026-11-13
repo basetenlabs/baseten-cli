@@ -64,7 +64,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Harness e2e test
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os != 'windows-latest'
         env:
           # Forks won't have these secrets so e2e tests skip, but pushes
           # to main will run them.

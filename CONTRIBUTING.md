@@ -37,7 +37,7 @@ BASETEN_E2E_TEST_REMOTE_URL=... \
     go -C internal/e2e-tests test -v -tags=e2e ./...
 ```
 
-CI runs the harness tests (`TestE2EHarness*`) in their own step on ubuntu. To run only them locally, add `-run '^TestE2EHarness'`.
+CI runs the harness tests (`TestE2EHarness*`) in their own step on linux and macOS. To run only them locally, add `-run '^TestE2EHarness'`.
 
 ## Releasing
 
