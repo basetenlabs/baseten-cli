@@ -930,7 +930,7 @@ func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "model")
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "modelPicker.options")
 	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
-	h.Require.Contains(h.Stdout.String(), "  Replaces          model, modelPicker.options")
+	h.Require.Contains(h.Stdout.String(), "    Replaces  model, modelPicker.options\n")
 
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
 	h.Require.Contains(h.Stderr.String(), "Modifies harness settings to set Grid as the gateway with your configured models.\nTo remove Grid, run baseten grid teardown.\n")

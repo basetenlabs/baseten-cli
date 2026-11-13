@@ -1325,7 +1325,6 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 	for _, choice := range selected {
 		s := choice.selection
 		ctx.Outputf("\n%s\n", heading.Render(choice.Name()))
-		ctx.Outputf("  Config            %s\n", gridHarnessDisplayPath(choice.detection.Path))
 		ctx.Outputf("  Primary route     %s (%s)\n", accent.Render(s.Primary), s.primarySource)
 		if background := choice.BackgroundRoute(s.Selection); background != "" {
 			ctx.Outputf("  Background route  %s (%s)\n", accent.Render(background), s.backgroundSource)
@@ -1336,26 +1335,59 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 		if choice.Name() == harness.Claude {
 			ctx.Outputf("  Fallback route    %s\n", accent.Render(cmp.Or(s.Fallback, s.Primary)))
 		}
-		changed := false
-		var replaced []string
+		var files []*harness.Plan
 		for _, p := range plans {
-			if p.Harness != choice.Name() {
-				continue
+			if p.Harness == choice.Name() {
+				files = append(files, p)
 			}
-			changed = changed || p.Changed
-			replaced = append(replaced, p.Replaced...)
-			ctx.VerboseLogf("Config: %s\nSettings: %s\n", p.Path, strings.Join(p.Keys, ", "))
 		}
 		result := "Already configured"
-		if changed {
+		if slices.ContainsFunc(files, func(p *harness.Plan) bool { return p.Changed }) {
 			result = "Changes ready to apply"
 		}
 		ctx.Outputf("  Result            %s\n", accent.Render(result))
-		if len(replaced) > 0 {
-			ctx.Outputf("  Replaces          %s\n", strings.Join(replaced, ", "))
+		for _, p := range files {
+			if len(p.Keys) == 0 {
+				continue
+			}
+			ctx.Outputf("\n  %s\n", gridHarnessDisplayPath(p.Path))
+			sets := slices.DeleteFunc(slices.Clone(p.Keys), func(k string) bool { return slices.Contains(p.Replaced, k) })
+			gridHarnessKeyRow(ctx, "Replaces", p.Replaced)
+			gridHarnessKeyRow(ctx, "Sets", sets)
 		}
 	}
 	ctx.OutputLine("")
+}
+
+// gridHarnessKeyRow prints a labelled list of setting names, wrapped to the
+// terminal with continuation lines aligned under the first name.
+func gridHarnessKeyRow(ctx *CommandContext, label string, keys []string) {
+	if len(keys) == 0 {
+		return
+	}
+	prefix := fmt.Sprintf("    %-10s", label)
+	width, ok := ctx.TerminalWidth()
+	if !ok {
+		width = 100
+	}
+	var b strings.Builder
+	line := prefix
+	for i, k := range keys {
+		if i < len(keys)-1 {
+			k += ","
+		}
+		switch {
+		case line == prefix:
+		case len(line)+1+len(k) > width:
+			b.WriteString(line + "\n")
+			line = strings.Repeat(" ", len(prefix))
+		default:
+			line += " "
+		}
+		line += k
+	}
+	b.WriteString(line + "\n")
+	ctx.Outputf("%s", b.String())
 }
 
 // gridUnusedHarnessKeys returns the Grid API keys the selected harnesses use that
