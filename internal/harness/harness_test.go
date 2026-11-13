@@ -559,7 +559,7 @@ func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 			d := load(t, path)
 			d["model"] = "other/user-model"
 			if h.Name() == Codex {
-				require.Equal(t, "api", d["forced_login_method"])
+				d["forced_login_method"] = "api" // left by an earlier setup
 				d["model_provider"] = "other"
 				d["review_model"] = "other/reviewer"
 				d["model_catalog_json"] = "/user/custom-catalog.json"
@@ -898,9 +898,10 @@ func TestCodexPreservesInstructionsAndAgents(t *testing.T) {
 	h := codexHarness{}
 	path := settingsPath(t, h)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
-	require.NoError(t, os.WriteFile(path, []byte("model_instructions_file = \"custom.md\"\n[agents.reviewer]\nconfig_file = \"reviewer.toml\"\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("model_instructions_file = \"custom.md\"\nforced_login_method = \"api\"\n[agents.reviewer]\nconfig_file = \"reviewer.toml\"\n"), 0o644))
 	setup(t, h, path, testRoutes(), Selection{})
 	d := load(t, path)
+	require.NotContains(t, d, "forced_login_method", "setup lifts the login restriction earlier setups wrote")
 	require.Equal(t, "custom.md", d["model_instructions_file"])
 	require.Equal(t, "reviewer.toml", get(d, []string{"agents", "reviewer", "config_file"}).Data)
 	model := load(t, catalogPath(path))["models"].([]any)[0].(map[string]any)
@@ -1606,29 +1607,4 @@ func TestRestartCodexDaemon(t *testing.T) {
 	defer cancel()
 	_, err = RestartCodexDaemon(expired, &codexDaemonExecer{}, dir)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-}
-
-func TestCodexLogin(t *testing.T) {
-	dir := t.TempDir()
-	e := &codexDaemonExecer{outputs: map[string]string{"login status": "Logged in using an API key - sk-***\n", "logout": "Successfully logged out\n"}}
-	require.True(t, CodexLoggedIn(t.Context(), e, dir))
-	require.Contains(t, e.env, "CODEX_HOME="+dir)
-	require.NoError(t, CodexLogout(t.Context(), e, dir))
-	require.False(t, CodexLoggedIn(t.Context(), &codexDaemonExecer{}, dir))
-	require.False(t, CodexLoggedIn(t.Context(), fakeExecer{missing: true}, dir))
-	require.Error(t, CodexLogout(t.Context(), &codexDaemonExecer{}, dir))
-	expired, cancel := context.WithTimeout(t.Context(), 0)
-	defer cancel()
-	require.ErrorIs(t, CodexLogout(expired, &codexDaemonExecer{}, dir), context.DeadlineExceeded)
-}
-
-func TestCodexClearCloudConfig(t *testing.T) {
-	dir := t.TempDir()
-	cache := CodexCloudConfigPath(dir)
-	require.NoError(t, os.WriteFile(cache, []byte("{}"), 0o600))
-	require.NoError(t, CodexClearCloudConfig(dir))
-	require.NoFileExists(t, cache)
-	require.NoError(t, CodexClearCloudConfig(dir))
-	require.NoError(t, os.MkdirAll(filepath.Join(cache, "child"), 0o700))
-	require.Error(t, CodexClearCloudConfig(dir))
 }
