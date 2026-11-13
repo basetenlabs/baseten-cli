@@ -68,7 +68,7 @@ func (s *Store) SetRoutesKey(ctx context.Context, scope RoutesKeyScope, key stri
 			return nil
 		}
 		if warnWriter != nil {
-			warnWriter(fmt.Sprintf("warning: could not store Grid API key in system keyring, storing in plain text: %v\n", keyringErr))
+			warnWriter(fmt.Sprintf("could not store Grid API key in system keyring, storing in plain text: %v", keyringErr))
 		}
 	}
 	af, err := s.loadLocked()

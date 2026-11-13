@@ -193,7 +193,7 @@ func (s *Store) SetOAuthProfile(ctx context.Context, profileName, remoteURL stri
 		}
 		if keyringErr != nil {
 			if warnWriter != nil {
-				warnWriter("warning: could not store credentials in system keyring, storing in plain text\n")
+				warnWriter("could not store credentials in system keyring, storing in plain text")
 			}
 			profile.InsecureOAuthCredential = &cred
 		}
@@ -228,7 +228,7 @@ func (s *Store) SetAPIKeyProfile(ctx context.Context, profileName, remoteURL, ap
 		}
 		if keyringErr != nil {
 			if warnWriter != nil {
-				warnWriter("warning: could not store credentials in system keyring, storing in plain text\n")
+				warnWriter("could not store credentials in system keyring, storing in plain text")
 			}
 			profile.InsecureAPIKey = apiKey
 		}
