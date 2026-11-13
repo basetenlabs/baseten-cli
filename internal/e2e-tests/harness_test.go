@@ -16,6 +16,8 @@ const harnessThinkingQuestion = "how many positive integers below 1000 are divis
 
 const harnessThinkingPrompt = "Think it through carefully without using any tools: " + harnessThinkingQuestion + " End your final reply with exactly this line: " + harnessThinkingMarker
 
+const harnessWebSearchPrompt = "Use the web search tool to find the version number of the most recent stable release of Python. Reply with only the version number."
+
 const harnessSwitchPhase1 = "Do all of the following.%s Think it through carefully: " + harnessThinkingQuestion + " Read the file seed.txt in the current working directory, then create a file named stage1.txt in the current working directory containing exactly the contents of seed.txt and nothing else. Remember the word %s; I will ask about it later."
 
 const harnessSwitchPhase2 = "Do all of the following.%s Think it through carefully: how many positive integers below 2000 are divisible by 9 or by 13, but not by both? Recall the word I asked you to remember. Read the file stage1.txt in the current working directory, then create a file named stage2.txt in the current working directory containing exactly two lines and nothing else: that word on line 1 and the first line of stage1.txt on line 2."
@@ -172,14 +174,24 @@ func TestE2EHarnessWebSearch(t *testing.T) {
 	})
 	t.Run("pi", func(t *testing.T) {
 		t.Parallel()
-		newHarnessTest(t, "pi", "pi")
-		t.Skip("pi has no web search tool (built-ins: read, bash, edit, write, grep, find, ls) and grid setup configures none; Baseten's server-side search runs only when the client sends a web_search tool, which pi never does")
+		h := newHarnessTest(t, "pi", "pi")
+		model := h.pickModel(t, harnessAnthropic, harnessAnyModel)
+		stdout, stderr := h.run(t, t.TempDir(), "-p", "--mode", "json", "--no-session", "--offline", "--model", model.id, harnessWebSearchPrompt)
+		harnessAssertNoAPIError(t, stdout+stderr)
+		objects := harnessJSONObjects(stdout)
+		require.Zero(t, piErrorTurns(objects), "pi ended a turn with an API error; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		require.Regexp(t, regexp.MustCompile(`3\.1[2-9]\.\d+`), piAssistantText(objects), "pi's reply is not a current Python version; stdout:\n%s\nstderr:\n%s", stdout, stderr)
 	})
 	for _, variant := range harnessOpenCodeVariants {
 		t.Run(variant.label, func(t *testing.T) {
 			t.Parallel()
-			newOpenCodeHarnessTest(t, variant)
-			t.Skip("grid setup configures no web search for opencode: v1 ships no search tool by default, v2's search asks the user to pick a provider, which a non-interactive run cancels, and opencode's search uses its own hosted providers, not Baseten routes")
+			h := newOpenCodeHarnessTest(t, variant)
+			model := h.pickModel(t, harnessAnthropic, harnessAnyModel)
+			stdout, stderr := h.run(t, t.TempDir(), "run", "--format", "json", "-m", model.id, harnessWebSearchPrompt)
+			harnessAssertNoAPIError(t, stdout+stderr)
+			objects := harnessJSONObjects(stdout)
+			require.Empty(t, harnessEventsOf(objects, "error"), "opencode emitted error events; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+			require.Regexp(t, regexp.MustCompile(`3\.1[2-9]\.\d+`), openCodeEventText(objects, "text"), "opencode's reply is not a current Python version; stdout:\n%s\nstderr:\n%s", stdout, stderr)
 		})
 	}
 }
