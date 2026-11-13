@@ -919,6 +919,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	skipUnlessSupported(t)
 	h, _ := fakeGridAPI(t)
+	base := h.Context
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude", dir)
 	h.Require.NoError(os.WriteFile(path, []byte(`{"model":"previous","theme":"dark","modelPicker":{"options":[{"model":"my/model","label":"Custom"}]}}`), 0o600))
@@ -934,12 +935,20 @@ func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
 	h.Require.Contains(h.Stderr.String(), "Modifies harness settings to set Grid as the gateway with your configured models.\nTo remove Grid, run baseten grid teardown.\n")
 	h.Require.NotContains(h.Stderr.String(), "warning")
+	h.Context = internalcmd.WithPromptAnswers(base, "2")
+	h.Require.Error(h.Execute(args...), "declining applies nothing")
+	h.Require.Contains(h.Stderr.String(), "Set up Grid?")
+	h.Context = base
 	// Sync is routine, so it applies changes without the notice.
 	edited := readHarnessSettings(t, "claude", path)
 	edited["model"] = "edited/model"
 	raw, err := json.Marshal(edited)
 	h.Require.NoError(err)
 	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	h.Context = internalcmd.WithPromptAnswers(base, "2")
+	h.Require.Error(h.Execute("grid", "sync"), "declining applies nothing")
+	h.Require.Contains(h.Stderr.String(), "Update harness settings?")
+	h.Context = base
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 	h.Require.Equal("acme/primary", readHarnessSettings(t, "claude", path)["model"])
 	h.Require.NotContains(h.Stderr.String(), "Modifies harness settings")

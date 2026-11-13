@@ -528,7 +528,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		return nil
 	}
 	if !f.Yes {
-		if err := ctx.ConfirmYesNo("Apply these harness changes?"); err != nil {
+		if err := ctx.ConfirmYesNo("Set up Grid?"); err != nil {
 			return err
 		}
 	}
@@ -785,7 +785,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		return nil
 	}
 	if !f.Yes {
-		if err := ctx.ConfirmYesNo("Apply these harness changes?"); err != nil {
+		if err := ctx.ConfirmYesNo("Update harness settings?"); err != nil {
 			return err
 		}
 	}
