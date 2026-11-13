@@ -1321,10 +1321,16 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 	renderer := lipgloss.NewRenderer(ctx.Stdout)
 	accent := renderer.NewStyle().Inherit(inlineCodeStyle)
 	heading := renderer.NewStyle().Bold(true)
+	ops := map[harness.ChangeOp]lipgloss.Style{
+		harness.ChangeAdd:    renderer.NewStyle().Foreground(lipgloss.Color("2")),
+		harness.ChangeUpdate: renderer.NewStyle().Foreground(lipgloss.Color("6")),
+		harness.ChangeRemove: renderer.NewStyle().Foreground(lipgloss.Color("1")),
+	}
 	ctx.Outputf("Team: %s\n", accent.Render(team.Name))
 	for _, choice := range selected {
 		s := choice.selection
 		ctx.Outputf("\n%s\n", heading.Render(choice.Name()))
+		ctx.Outputf("  Config            %s\n", gridHarnessDisplayPath(choice.detection.Path))
 		ctx.Outputf("  Primary route     %s (%s)\n", accent.Render(s.Primary), s.primarySource)
 		if background := choice.BackgroundRoute(s.Selection); background != "" {
 			ctx.Outputf("  Background route  %s (%s)\n", accent.Render(background), s.backgroundSource)
@@ -1335,59 +1341,25 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 		if choice.Name() == harness.Claude {
 			ctx.Outputf("  Fallback route    %s\n", accent.Render(cmp.Or(s.Fallback, s.Primary)))
 		}
-		var files []*harness.Plan
-		for _, p := range plans {
-			if p.Harness == choice.Name() {
-				files = append(files, p)
-			}
-		}
 		result := "Already configured"
-		if slices.ContainsFunc(files, func(p *harness.Plan) bool { return p.Changed }) {
-			result = "Changes ready to apply"
-		}
-		ctx.Outputf("  Result            %s\n", accent.Render(result))
-		for _, p := range files {
-			if len(p.Keys) == 0 {
+		for _, p := range plans {
+			if p.Harness != choice.Name() || !p.Changed {
 				continue
 			}
-			ctx.Outputf("\n  %s\n", gridHarnessDisplayPath(p.Path))
-			sets := slices.DeleteFunc(slices.Clone(p.Keys), func(k string) bool { return slices.Contains(p.Replaced, k) })
-			gridHarnessKeyRow(ctx, "Replaces", p.Replaced)
-			gridHarnessKeyRow(ctx, "Sets", sets)
+			result = "Changes ready to apply"
+			if len(p.Changes) == 0 {
+				ctx.Outputf("\n  Rewrites %s\n", gridHarnessDisplayPath(p.Path))
+				continue
+			}
+			ctx.Outputf("\n  Changes in %s (values hidden):\n", gridHarnessDisplayPath(p.Path))
+			changes := slices.SortedFunc(slices.Values(p.Changes), func(a, b harness.Change) int { return strings.Compare(a.Key, b.Key) })
+			for _, c := range changes {
+				ctx.Outputf("    %s %s\n", ops[c.Op].Render(fmt.Sprintf("%-7s", c.Op)), c.Key)
+			}
 		}
+		ctx.Outputf("\n  Result            %s\n", accent.Render(result))
 	}
 	ctx.OutputLine("")
-}
-
-// gridHarnessKeyRow prints a labelled list of setting names, wrapped to the
-// terminal with continuation lines aligned under the first name.
-func gridHarnessKeyRow(ctx *CommandContext, label string, keys []string) {
-	if len(keys) == 0 {
-		return
-	}
-	prefix := fmt.Sprintf("    %-10s", label)
-	width, ok := ctx.TerminalWidth()
-	if !ok {
-		width = 100
-	}
-	var b strings.Builder
-	line := prefix
-	for i, k := range keys {
-		if i < len(keys)-1 {
-			k += ","
-		}
-		switch {
-		case line == prefix:
-		case len(line)+1+len(k) > width:
-			b.WriteString(line + "\n")
-			line = strings.Repeat(" ", len(prefix))
-		default:
-			line += " "
-		}
-		line += k
-	}
-	b.WriteString(line + "\n")
-	ctx.Outputf("%s", b.String())
 }
 
 // gridUnusedHarnessKeys returns the Grid API keys the selected harnesses use that

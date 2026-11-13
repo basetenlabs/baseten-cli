@@ -552,7 +552,7 @@ func (claudeHarness) Teardown(path string) ([]*Plan, error) {
 		if err := put(p.config, hooks.Path, hooks.Installed); err != nil {
 			return nil, err
 		}
-		p.Keys = append(p.Keys, pathKey(hooks.Path))
+		p.addKey(hooks.Path)
 		if err := p.encode(); err != nil {
 			return nil, err
 		}
