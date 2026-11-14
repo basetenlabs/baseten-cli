@@ -429,10 +429,10 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		return err
 	}
 	credentialSource := harness.CredentialSourceHelper
-	// An ephemeral session has no profile the helper could resolve inside the
-	// harness, so its key is installed instead.
-	if f.UseSessionCredential || session.IsEphemeral() {
+	if f.UseSessionCredential {
 		credentialSource = harness.CredentialSourceSession
+	} else if session.IsEphemeral() {
+		credentialSource = harness.CredentialSourceGridKey
 	}
 	passed := ctx.Command.Flags().Changed("hide-served-model-indicator")
 	servedModel := !f.HideServedModel
@@ -462,7 +462,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
 			// A harness that cannot run the helper keeps a key.
-			record.CredentialSource = ""
+			record.CredentialSource = harness.CredentialSourceGridKey
 		}
 		subagentID := f.SubagentRouteID
 		if subagentID != "" && !selected[i].SupportsSubagent() {
@@ -539,7 +539,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		switch t.record.CredentialSource {
 		case harness.CredentialSourceHelper:
 			helperTargets = append(helperTargets, t.gridSelectedHarness)
-		case "":
+		case harness.CredentialSourceGridKey:
 			if token == "" {
 				if token, err = gridEnsureHarnessToken(ctx, api, team, f.KeyName); err != nil {
 					return err
