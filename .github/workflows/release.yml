@@ -45,21 +45,21 @@ jobs:
           # which keeps this one.
           echo "RELEASE_TITLE=$NAME" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: chainguard-actions/actions-checkout@31bbccf724702f8a0dc7a3ed7db8fcca2066babc # v4.4.0
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: chainguard-actions/actions-setup-go@320f6f2294d8e82641a27424fb8def0a2a1e80e6 # v5.6.0
         with:
           go-version-file: go.mod
       - name: Generate a token scoped to homebrew-baseten
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: chainguard-actions/actions-create-github-app-token@15b37cc57a685e864ed64f9fd595932cdfc6ed2e # v3.3.0
         with:
           client-id: ${{ secrets.APP_HOMEBREW_UPDATER_CLIENT_ID }}
           private-key: ${{ secrets.APP_HOMEBREW_UPDATER_PRIVATE_KEY }}
           owner: basetenlabs
           repositories: homebrew-baseten
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: chainguard-actions/goreleaser-goreleaser-action@0e236da93b36df8d970858ee54627745eb28fa62 # v7.3.0
         with:
           version: latest
           args: release --clean
