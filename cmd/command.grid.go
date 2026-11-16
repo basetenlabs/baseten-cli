@@ -24,7 +24,7 @@ var commandGrid = Command{
 				"The team's routes with model metadata are added to each harness's model picker, replacing it. Claude Code and Claude Desktop list the routes that serve " +
 				"the Anthropic Messages API, and Codex lists the routes that serve the OpenAI Responses API. The first listed route is the primary route unless --primary-route-id is set. " +
 				"Use 'baseten grid route list' to find route IDs; harness configurations use the corresponding route names.\n\n" +
-				"Setup overwrites the harness's integration settings without saving their previous values. Running it again refreshes them. " +
+				"Setup sets Grid as the gateway in each harness's settings, replacing the model and endpoint settings it manages; 'baseten grid teardown' removes them but does not restore previous values. Running setup again refreshes them. Use --dry-run to see each change first. " +
 				"The Grid API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
 				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
@@ -35,7 +35,7 @@ var commandGrid = Command{
 				"With --git-context, setup makes each harness add the git origin URL, branch, and commit to the session context when a session starts inside a git repository. This is used for training an improved custom router.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
-				TextDescription: "The created key and follow-up commands. Use --dry-run or --verbose for the configuration of each harness, and --verbose for setting names.",
+				TextDescription: "The created key and follow-up commands. --dry-run lists each setting setup will add, update or remove and stops; --verbose lists the same changes before asking to apply.",
 				Examples: []CommandExample{
 					{
 						Description: "Configure installed harnesses interactively.",
@@ -81,7 +81,7 @@ var commandGrid = Command{
 				"and thread history is preserved. A declined or failed restart is retried on the next sync.",
 			Flags: GridSyncFlags{},
 			Output: &CommandOutput[GridPlanList]{
-				TextDescription: "The refreshed configuration of each harness, like setup. Use --dry-run to preview, and --verbose for per-harness details.",
+				TextDescription: "The refreshed configuration of each harness, like setup. --dry-run lists each setting sync will add, update or remove and stops; --verbose lists the same changes before asking to apply.",
 				Examples: []CommandExample{
 					{
 						Description: "Refresh every configured harness, as a scheduled run does.",
@@ -653,7 +653,7 @@ type GridSetupFlags struct {
 	HideServedModel      bool   `flag:"hide-served-model-indicator" desc:"Hide which model served each response on intelligent routes in the selected harnesses (a status line or Stop hook in Claude Code, an extension in Pi, a plugin in OpenCode 2), and remove it if setup added it before. When omitted, setup shows it, asking first when interactive."`
 	GitContext           bool   `flag:"git-context" desc:"Add the git origin URL, branch, and commit to each Claude Code, OpenCode, and Pi session's context, through a SessionStart hook, plugin, or extension. Without it, setup removes them if it added them before."`
 	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
-	DryRun               bool   `flag:"dry-run" desc:"Preview the configuration without changing files or creating an API key."`
+	DryRun               bool   `flag:"dry-run" desc:"Show the changes without applying them or creating an API key."`
 	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
@@ -662,7 +662,7 @@ type GridSyncFlags struct {
 	CommandFlags
 	HideServedModel bool `flag:"hide-served-model-indicator" desc:"Hide which model served each response on intelligent routes in the synced harnesses (a status line or Stop hook in Claude Code, an extension in Pi, a plugin in OpenCode 2), and remove it if setup added it before. Records the choice; when omitted, sync keeps the recorded one."`
 	GitContext      bool `flag:"git-context" desc:"Add the git origin URL, branch, and commit to each Claude Code, OpenCode, and Pi session's context, through a SessionStart hook, plugin, or extension. Records the choice; =false removes them."`
-	DryRun          bool `flag:"dry-run" desc:"Preview the refresh without changing files or creating an API key."`
+	DryRun          bool `flag:"dry-run" desc:"Show the changes without applying them or creating an API key."`
 	Yes             bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 

@@ -129,7 +129,7 @@ func gridSelectHarnesses(ctx *CommandContext, flags cmd.GridHarnessFlags, setup 
 			status, err := h.Inspect(d)
 			if err != nil {
 				// One broken file shouldn't hide the other harnesses. An explicit --harness still fails.
-				ctx.Logf("warning: skipping %s: settings at %s are misconfigured: %v\n", h.Name(), gridHarnessDisplayPath(d.Path), err)
+				ctx.Warnf("skipping %s: settings at %s are misconfigured: %v", h.Name(), gridHarnessDisplayPath(d.Path), err)
 				continue
 			}
 			if status.State == harness.StateNotConfigured {
@@ -283,7 +283,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		return nil, cmd.NewErrValidation(errors.New("none of the team's routes have usable model metadata"))
 	}
 	if len(skipped) > 0 {
-		ctx.Logf("warning: skipping routes without usable model metadata: %s\n", strings.Join(skipped, ", "))
+		ctx.Warnf("skipping routes without usable model metadata: %s", strings.Join(skipped, ", "))
 	}
 	// One provider configuration serves every route, so they must share an endpoint.
 	endpoint := ""
@@ -334,7 +334,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 		}
 		// Only setup warns; sync rewrites the same helper.
 		if warning != "" && !forSync {
-			ctx.Logf("warning: %s\n", warning)
+			ctx.Warnf("%s", warning)
 		}
 	}
 	var plans []*harness.Plan
@@ -359,7 +359,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 			case "fallback route":
 				using = resolved.Fallback
 			}
-			ctx.Logf("warning: %s: %s %q no longer exists; using %q\n", target.Name(), d[0], d[1], using)
+			ctx.Warnf("%s: %s %q no longer exists; using %q", target.Name(), d[0], d[1], using)
 		}
 		target.selection = selection
 		var targetHelper *harness.Helper
@@ -467,7 +467,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		subagentID := f.SubagentRouteID
 		if subagentID != "" && !selected[i].SupportsSubagent() {
 			subagentID = ""
-			ctx.Logf("warning: --subagent-route-id is not supported by %s; it will be ignored\n", selected[i].Name())
+			ctx.Warnf("--subagent-route-id is not supported by %s; it will be ignored", selected[i].Name())
 		}
 		// Harness configuration and saved sync selections use route names.
 		for _, selection := range []struct {
@@ -499,8 +499,8 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		return err
 	}
 	for _, p := range plans {
-		for _, note := range p.Notes {
-			ctx.LogLine(note)
+		for _, warning := range p.Warnings {
+			ctx.Warn(warning)
 		}
 	}
 	var sessionToken string
@@ -517,7 +517,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	case ctx.verbose || f.DryRun:
 		gridHarnessVerboseSetupSummary(ctx, team, targets, plans)
 	default:
-		gridHarnessReplacedWarnings(ctx, plans)
+		gridHarnessSetupNotice(ctx, plans)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -528,7 +528,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		return nil
 	}
 	if !f.Yes {
-		if err := ctx.ConfirmYesNo("Apply these harness changes?"); err != nil {
+		if err := ctx.ConfirmYesNo("Set up Grid?"); err != nil {
 			return err
 		}
 	}
@@ -696,7 +696,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		}
 		status, err := h.Inspect(d)
 		if err != nil {
-			ctx.Logf("warning: skipping %s: settings at %s are misconfigured: %v\n", h.Name(), gridHarnessDisplayPath(d.Path), err)
+			ctx.Warnf("skipping %s: settings at %s are misconfigured: %v", h.Name(), gridHarnessDisplayPath(d.Path), err)
 			continue
 		}
 		if status.State == harness.StateNotConfigured {
@@ -755,14 +755,10 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 	// NB(nikhil): Re-extract targets / plans from the runs, because they might have changed due to
 	// route eligibility.
 	targets, plans := extractFromGridSyncRuns(runs)
-	switch {
-	case ctx.JSON:
-	case ctx.verbose || f.DryRun:
+	if !ctx.JSON && (ctx.verbose || f.DryRun) {
 		for _, run := range runs {
 			gridHarnessVerboseSetupSummary(ctx, run.team, run.targets, run.plans)
 		}
-	default:
-		gridHarnessReplacedWarnings(ctx, plans)
 	}
 	if f.DryRun {
 		if ctx.JSON {
@@ -789,7 +785,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		return nil
 	}
 	if !f.Yes {
-		if err := ctx.ConfirmYesNo("Apply these harness changes?"); err != nil {
+		if err := ctx.ConfirmYesNo("Update harness settings?"); err != nil {
 			return err
 		}
 	}
@@ -931,16 +927,15 @@ func gridHarnessSessionAPIKey(ctx *CommandContext) (string, error) {
 	return key, nil
 }
 
-func gridHarnessReplacedWarnings(ctx *CommandContext, plans []*harness.Plan) {
-	var replaced []string
-	for _, p := range plans {
-		if len(p.Replaced) > 0 && !slices.Contains(replaced, p.Harness) {
-			replaced = append(replaced, p.Harness)
-		}
+// gridHarnessSetupNotice says what setup is about to change, before asking to apply.
+func gridHarnessSetupNotice(ctx *CommandContext, plans []*harness.Plan) {
+	if !slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Changed }) {
+		return
 	}
-	if len(replaced) > 0 {
-		ctx.Logf("warning: existing integration settings in %s will be overwritten; teardown does not restore them\n", strings.Join(replaced, ", "))
-	}
+	ctx.LogLine("")
+	ctx.LogLine("Modifies harness settings to set Grid as the gateway with your configured models.")
+	ctx.LogLine("To remove Grid, run baseten grid teardown.")
+	ctx.LogLine("")
 }
 
 func gridHarnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
@@ -956,14 +951,14 @@ func gridHarnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
 	if err := harness.CodexLogout(ctx, ctx.Execer(), dir); err != nil {
 		auth := filepath.Join(dir, "auth.json")
 		if os.Remove(auth) != nil {
-			ctx.Logf("warning: codex logout failed: %v\n", err)
+			ctx.Warnf("codex logout failed: %v", err)
 			ctx.LogLine(hint)
 			return
 		}
-		ctx.Logf("warning: codex logout failed (%v); removed %s instead\n", err, gridHarnessDisplayPath(auth))
+		ctx.Warnf("codex logout failed (%v); removed %s instead", err, gridHarnessDisplayPath(auth))
 	}
 	if err := harness.CodexClearCloudConfig(dir); err != nil {
-		ctx.Logf("warning: could not remove the cached workspace policy: %v\n", err)
+		ctx.Warnf("could not remove the cached workspace policy: %v", err)
 		ctx.LogLine(hint)
 		return
 	}
@@ -983,9 +978,9 @@ func gridHarnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) bo
 	clients, err := harness.CodexDaemonClients(ctx, ctx.Execer(), socket)
 	switch {
 	case err != nil:
-		ctx.Logf("warning: could not check for running codex sessions (%v); restarting the codex app-server daemon would interrupt their in-progress turns\n", err)
+		ctx.Warnf("could not check for running codex sessions (%v); restarting the codex app-server daemon would interrupt their in-progress turns", err)
 	case clients > 0:
-		ctx.Logf("warning: restarting the codex app-server daemon will disconnect %d running codex session(s); in-progress turns will be interrupted (thread history is preserved and can be resumed with `codex resume`)\n", clients)
+		ctx.Warnf("restarting the codex app-server daemon will disconnect %d running codex session(s); in-progress turns will be interrupted (thread history is preserved and can be resumed with `codex resume`)", clients)
 	}
 	if (err != nil || clients > 0) && !yes {
 		if ctx.ConfirmYesNo("Restart the codex app-server daemon now?") != nil {
@@ -995,7 +990,7 @@ func gridHarnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) bo
 	}
 	pid, err := harness.RestartCodexDaemon(ctx, ctx.Execer(), dir)
 	if err != nil {
-		ctx.Logf("warning: could not restart the codex app-server daemon: %v\n", err)
+		ctx.Warnf("could not restart the codex app-server daemon: %v", err)
 		ctx.LogLine(gridHarnessCodexDaemonRestartHint)
 		return false
 	}
@@ -1042,7 +1037,7 @@ func gridHarnessDefaults(ctx *CommandContext, api *managementapi.Client, teamID 
 		ctx.VerboseLogf("No harness defaults: HTTP %d\n", re.StatusCode)
 		return nil, nil
 	case err != nil:
-		ctx.Logf("warning: could not read harness defaults, using CLI defaults: %v\n", err)
+		ctx.Warnf("could not read harness defaults, using CLI defaults: %v", err)
 		return nil, nil
 	}
 	return &settings.HarnessDefaults, nil
@@ -1328,6 +1323,11 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 	renderer := lipgloss.NewRenderer(ctx.Stdout)
 	accent := renderer.NewStyle().Inherit(inlineCodeStyle)
 	heading := renderer.NewStyle().Bold(true)
+	ops := map[harness.ChangeOp]lipgloss.Style{
+		harness.ChangeAdd:    renderer.NewStyle().Foreground(lipgloss.Color("2")),
+		harness.ChangeUpdate: renderer.NewStyle().Foreground(lipgloss.Color("6")),
+		harness.ChangeRemove: renderer.NewStyle().Foreground(lipgloss.Color("1")),
+	}
 	ctx.Outputf("Team: %s\n", accent.Render(team.Name))
 	for _, choice := range selected {
 		s := choice.selection
@@ -1343,26 +1343,23 @@ func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Tea
 		if choice.Name() == harness.Claude {
 			ctx.Outputf("  Fallback route    %s\n", accent.Render(cmp.Or(s.Fallback, s.Primary)))
 		}
-		changed, replaced := false, false
+		result := "Already configured"
 		for _, p := range plans {
-			if p.Harness != choice.Name() {
+			if p.Harness != choice.Name() || !p.Changed {
 				continue
 			}
-			changed = changed || p.Changed
-			replaced = replaced || len(p.Replaced) > 0
-			ctx.VerboseLogf("Config: %s\nSettings: %s\n", p.Path, strings.Join(p.Keys, ", "))
-			if len(p.Replaced) > 0 {
-				ctx.VerboseLogf("Settings to replace: %s\n", strings.Join(p.Replaced, ", "))
+			result = "Changes ready to apply"
+			if len(p.Changes) == 0 {
+				ctx.Outputf("\n  Rewrites %s\n", gridHarnessDisplayPath(p.Path))
+				continue
+			}
+			ctx.Outputf("\n  Changes in %s (values hidden):\n", gridHarnessDisplayPath(p.Path))
+			changes := slices.SortedFunc(slices.Values(p.Changes), func(a, b harness.Change) int { return strings.Compare(a.Key, b.Key) })
+			for _, c := range changes {
+				ctx.Outputf("    %s %s\n", ops[c.Op].Render(fmt.Sprintf("%-7s", c.Op)), c.Key)
 			}
 		}
-		result := "Already configured"
-		if changed {
-			result = "Changes ready to apply"
-		}
-		ctx.Outputf("  Result            %s\n", accent.Render(result))
-		if replaced {
-			ctx.OutputLine("  Existing integration settings will be overwritten; teardown does not restore them.")
-		}
+		ctx.Outputf("\n  Result            %s\n", accent.Render(result))
 	}
 	ctx.OutputLine("")
 }
@@ -1401,7 +1398,7 @@ func gridUnusedHarnessKeys(ctx *CommandContext, selected []gridSelectedHarness) 
 		}
 		token, err := h.Credential(d.Path)
 		if err != nil {
-			ctx.Logf("warning: keeping the Grid API key, since %s settings at %s can't be read: %v\n", h.Name(), gridHarnessDisplayPath(d.Path), err)
+			ctx.Warnf("keeping the Grid API key, since %s settings at %s can't be read: %v", h.Name(), gridHarnessDisplayPath(d.Path), err)
 			return nil, nil
 		}
 		delete(keys, token)
@@ -1531,7 +1528,7 @@ func gridEnsureHarnessToken(ctx *CommandContext, api *managementapi.Client, team
 	if err != nil {
 		return "", fmt.Errorf("creating Grid API key: %w", err)
 	}
-	if err := store.SetRoutesKey(ctx, scope, created.ApiKey, ctx.Log); err != nil {
+	if err := store.SetRoutesKey(ctx, scope, created.ApiKey, ctx.Warn); err != nil {
 		return "", err
 	}
 	ctx.Logf("Created Grid API key %s\n", name)
@@ -1920,7 +1917,7 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 		return fmt.Errorf("creating a Grid token: %w", err)
 	}
 	token = &auth.GridToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
-	if err := store.SetGridToken(ctx, scope, teamID, *token, ctx.Log); err != nil {
+	if err := store.SetGridToken(ctx, scope, teamID, *token, ctx.Warn); err != nil {
 		return err
 	}
 	ctx.Output(token.Token + "\n")
