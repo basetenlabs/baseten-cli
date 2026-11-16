@@ -919,6 +919,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	skipUnlessSupported(t)
 	h, _ := fakeGridAPI(t)
+	base := h.Context
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude", dir)
 	h.Require.NoError(os.WriteFile(path, []byte(`{"model":"previous","theme":"dark","modelPicker":{"options":[{"model":"my/model","label":"Custom"}]}}`), 0o600))
@@ -929,10 +930,28 @@ func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "model")
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "modelPicker.options")
 	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
-	h.Require.Contains(h.Stdout.String(), "Existing integration settings will be overwritten")
+	h.Require.Contains(h.Stdout.String(), "  Replaces          model, modelPicker.options")
 
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
-	h.Require.Contains(h.Stderr.String(), "existing integration settings in claude will be overwritten")
+	h.Require.Contains(h.Stderr.String(), "Modifies harness settings to set Grid as the gateway with your configured models.\nTo remove Grid, run baseten grid teardown.\n")
+	h.Require.NotContains(h.Stderr.String(), "warning")
+	h.Context = internalcmd.WithPromptAnswers(base, "2")
+	h.Require.Error(h.Execute(args...), "declining applies nothing")
+	h.Require.Contains(h.Stderr.String(), "Set up Grid?")
+	h.Context = base
+	// Sync is routine, so it applies changes without the notice.
+	edited := readHarnessSettings(t, "claude", path)
+	edited["model"] = "edited/model"
+	raw, err := json.Marshal(edited)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	h.Context = internalcmd.WithPromptAnswers(base, "2")
+	h.Require.Error(h.Execute("grid", "sync"), "declining applies nothing")
+	h.Require.Contains(h.Stderr.String(), "Update harness settings?")
+	h.Context = base
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Equal("acme/primary", readHarnessSettings(t, "claude", path)["model"])
+	h.Require.NotContains(h.Stderr.String(), "Modifies harness settings")
 	picker := readHarnessSettings(t, "claude", path)["modelPicker"].(map[string]any)
 	h.Require.Equal([]any{map[string]any{"model": "acme/primary", "label": "Primary"}}, picker["options"])
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
@@ -2841,6 +2860,48 @@ func Test_Grid_Setup_ServedModelSelectedHarnesses(t *testing.T) {
 	after := harnessRecordFile(t).Harnesses
 	h.Require.Equal(before["claude"], after["claude"], "harnesses not selected keep their records")
 	h.Require.Equal(before["opencode"], after["opencode"])
+}
+
+func Test_Grid_Setup_HarnessPicker(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := fakeGridAPI(t)
+	// Types keys at the picker as a person would: the prompt discards input
+	// sent before it starts, and handles a key only after the one before it.
+	run := func(keys ...string) error {
+		t.Helper()
+		control, terminal, err := pty.Open()
+		h.Require.NoError(err)
+		defer control.Close()
+		defer terminal.Close()
+		go func() {
+			time.Sleep(time.Second)
+			for _, k := range keys {
+				_, _ = control.WriteString(k)
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+		h.StdinReader = terminal
+		return h.Execute("grid", "setup", "--dry-run")
+	}
+	const up, down, enter = "\x1b[A", "\x1b[B", "\r"
+
+	// Enter picks claude, Space picks codex, Enter unpicks it, Enter picks
+	// opencode. Down from pi, the last harness, reaches the Continue button,
+	// the only thing that confirms.
+	h.Require.NoError(run(enter, down, " ", enter, down, enter, down, down, enter))
+	h.Require.Contains(h.Stdout.String(), "\nclaude\n")
+	h.Require.Contains(h.Stdout.String(), "\nopencode\n")
+	h.Require.NotContains(h.Stdout.String(), "\ncodex\n")
+
+	// Leaving the list with nothing picked stays on it until a harness is chosen.
+	h.Require.NoError(run(down, down, down, down, up, up, enter, down, down, down, enter))
+	h.Require.Contains(h.Stdout.String(), "\ncodex\n")
+	h.Require.NotContains(h.Stdout.String(), "\nclaude\n")
+
+	// Up from the buttons returns to the list.
+	h.Require.NoError(run(enter, down, down, down, down, up, enter, down, enter))
+	h.Require.Contains(h.Stdout.String(), "\nclaude\n")
+	h.Require.Contains(h.Stdout.String(), "\npi\n")
 }
 
 func Test_Grid_Setup_PromptUsesTerminalForeground(t *testing.T) {

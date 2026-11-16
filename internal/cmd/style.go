@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 
+	"charm.land/huh/v2"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
@@ -18,6 +19,18 @@ var inlineCodeStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Ligh
 // underline so links read as links. lipgloss handles NO_COLOR and non-TTY
 // downgrade automatically.
 var linkStyle = inlineCodeStyle.Underline(true)
+
+// promptTheme is huh's base theme with buttons that take their colors from
+// the terminal: the base theme's fixed black and white draw the unfocused
+// button as the darker, more prominent one on a light background.
+func promptTheme(isDark bool) *huh.Styles {
+	t := huh.ThemeBase(isDark)
+	for _, styles := range []*huh.FieldStyles{&t.Focused, &t.Blurred} {
+		styles.FocusedButton = styles.FocusedButton.UnsetForeground().UnsetBackground().Reverse(true)
+		styles.BlurredButton = styles.BlurredButton.UnsetForeground().UnsetBackground()
+	}
+	return t
+}
 
 // hyperlink renders url as an OSC 8 terminal hyperlink whose visible text is
 // the url itself, so terminals that support it make the URL clickable and
