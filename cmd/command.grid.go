@@ -35,7 +35,7 @@ var commandGrid = Command{
 				"With --git-context, setup makes each harness add the git origin URL, branch, and commit to the session context when a session starts inside a git repository. This is used for training an improved custom router.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
-				TextDescription: "The created key and follow-up commands. --dry-run lists each setting setup will add, update or remove and stops; --verbose lists the same changes before asking to apply.",
+				TextDescription: "Which harnesses were set up and what to restart. --dry-run lists each setting setup will add, update or remove and stops; --verbose lists the same changes before asking to apply.",
 				Examples: []CommandExample{
 					{
 						Description: "Configure installed harnesses interactively.",
