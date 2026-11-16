@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -21,12 +22,35 @@ func serviceAccountPage(items ...any) map[string]any {
 	return map[string]any{"items": items, "pagination": map[string]any{"has_more": false}}
 }
 
+// setFilteredListRoute serves items at path the way the server filters a list:
+// name keeps the item with that name, ignoring case, and predefined_kind keeps
+// identity providers of that kind.
+func setFilteredListRoute(m *MockManagementAPI, path string, items ...map[string]any) {
+	m.SetRouteFunc("GET", path, func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		matched := []any{}
+		for _, item := range items {
+			if name := query.Get("name"); name != "" && !strings.EqualFold(item["name"].(string), name) {
+				continue
+			}
+			if kind := query.Get("predefined_kind"); kind != "" {
+				if predefined, _ := item["predefined"].(map[string]any); predefined == nil || predefined["kind"] != kind {
+					continue
+				}
+			}
+			matched = append(matched, item)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": matched, "pagination": map[string]any{"has_more": false}})
+	})
+}
+
 // serviceAccountRoutes serves one team account, ci-deployer, for name lookups.
 func serviceAccountRoutes(h *CommandHarness) {
 	account := serviceAccountFixture("sa1", "ci-deployer", "WORKSPACE_MANAGE_ALL")
 	account["team_id"] = "t123456"
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/service_accounts", 200, serviceAccountPage(account))
+	setFilteredListRoute(m, "/v1/service_accounts", account)
 	m.SetRoute("GET", "/v1/service_accounts/sa1", 200, account)
 	m.SetRoute("PATCH", "/v1/service_accounts/sa1", 200, account)
 }
@@ -213,15 +237,4 @@ func Test_Org_ServiceAccount_Delete_ByName(t *testing.T) {
 	h.Require.NotNil(m.FindCall("DELETE", "/v1/service_accounts/sa1"))
 	h.Require.Contains(h.Stderr.String(), "Deleted service account sa1")
 	h.Require.Equal("", h.Stdout.String())
-}
-
-func Test_Org_ServiceAccount_Delete_ByName_MultipleMatches(t *testing.T) {
-	h := NewCommandHarness(t)
-	h.MockManagementAPI().SetRoute("GET", "/v1/service_accounts", 200, serviceAccountPage(
-		serviceAccountFixture("sa1", "dup", "WORKSPACE_INVOKE"),
-		serviceAccountFixture("sa2", "dup", "WORKSPACE_INVOKE"),
-	))
-
-	err := h.Execute("org", "service-account", "delete", "--name", "dup")
-	h.Require.ErrorContains(err, `multiple service accounts named "dup"; pass the ID instead`)
 }

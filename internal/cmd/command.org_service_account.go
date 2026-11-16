@@ -144,38 +144,39 @@ func listServiceAccounts(ctx context.Context, api *managementapi.Client, params 
 	return accounts, nil
 }
 
-func serviceAccountID(a managementapi.ServiceAccount) string { return a.Id }
-
-func serviceAccountNameIs(a managementapi.ServiceAccount, name string) bool { return a.Name == name }
-
 // resolveServiceAccountRef resolves --id or --name to a service account ID.
 // Mutations then address the account by its stable ID.
 func resolveServiceAccountRef(ctx context.Context, api *managementapi.Client, ref cmd.ServiceAccountRefFlags) (string, error) {
 	if ref.ID != "" {
 		return ref.ID, nil
 	}
-	accounts, err := listServiceAccounts(ctx, api, managementapi.GetV1ServiceAccountsParams{})
+	account, err := findServiceAccountByName(ctx, api, ref.Name)
 	if err != nil {
 		return "", err
 	}
-	account, err := findByName("service account", ref.Name, accounts, serviceAccountNameIs)
-	if err != nil {
-		return "", err
+	if account == nil {
+		return "", cmd.NewErrNotFound(fmt.Errorf("no service account named %q", ref.Name))
 	}
 	return account.Id, nil
 }
 
-// resolveServiceAccount resolves a flag that takes a service account name or ID.
+// resolveServiceAccount resolves a flag that takes a service account name or
+// ID. Input that names no account is taken as an ID, which the server checks.
 func resolveServiceAccount(ctx context.Context, api *managementapi.Client, input string) (string, error) {
-	accounts, err := listServiceAccounts(ctx, api, managementapi.GetV1ServiceAccountsParams{})
-	if err != nil {
-		return "", err
-	}
-	account, err := findByIDOrName("service account", input, accounts, serviceAccountID, serviceAccountNameIs)
-	if err != nil {
-		return "", err
+	account, err := findServiceAccountByName(ctx, api, input)
+	if err != nil || account == nil {
+		return input, err
 	}
 	return account.Id, nil
+}
+
+// findServiceAccountByName returns the account with this name, or nil.
+func findServiceAccountByName(ctx context.Context, api *managementapi.Client, name string) (*managementapi.ServiceAccount, error) {
+	page, err := api.GetServiceAccounts(ctx, managementapi.GetV1ServiceAccountsParams{Name: &name})
+	if err != nil {
+		return nil, fmt.Errorf("looking up service account %q: %w", name, err)
+	}
+	return onlyMatch("service account", name, page.Items)
 }
 
 func commandOrgServiceAccountDescribe(ctx *CommandContext, flags *cmd.OrgServiceAccountDescribeFlags) error {

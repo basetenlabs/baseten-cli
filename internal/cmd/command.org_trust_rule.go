@@ -119,13 +119,16 @@ func resolveTrustRuleRef(ctx context.Context, api *managementapi.Client, ref cmd
 	if ref.ID != "" {
 		return ref.ID, nil
 	}
-	rules, err := listTrustRules(ctx, api, managementapi.GetV1AccessTrustRulesParams{})
+	page, err := api.GetAccessTrustRules(ctx, managementapi.GetV1AccessTrustRulesParams{Name: &ref.Name})
+	if err != nil {
+		return "", fmt.Errorf("looking up trust rule %q: %w", ref.Name, err)
+	}
+	rule, err := onlyMatch("trust rule", ref.Name, page.Items)
 	if err != nil {
 		return "", err
 	}
-	rule, err := findByName("trust rule", ref.Name, rules, func(r managementapi.AccessTrustRule, name string) bool { return r.Name == name })
-	if err != nil {
-		return "", err
+	if rule == nil {
+		return "", cmd.NewErrNotFound(fmt.Errorf("no trust rule named %q", ref.Name))
 	}
 	return rule.Id, nil
 }

@@ -36,10 +36,7 @@ func eksProviderFixture() map[string]any {
 // identityProviderRoutes serves a GitHub Actions and an Amazon EKS provider.
 func identityProviderRoutes(h *CommandHarness) {
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/access/identity_providers", 200, map[string]any{
-		"items":      []any{githubActionsProviderFixture(), eksProviderFixture()},
-		"pagination": map[string]any{"has_more": false},
-	})
+	setFilteredListRoute(m, "/v1/access/identity_providers", githubActionsProviderFixture(), eksProviderFixture())
 	m.SetRoute("GET", "/v1/access/identity_providers/idp1", 200, githubActionsProviderFixture())
 	m.SetRoute("GET", "/v1/access/identity_providers/idp2", 200, eksProviderFixture())
 }
@@ -118,7 +115,7 @@ func Test_Org_IdentityProvider_List(t *testing.T) {
 	h.Require.NoError(h.Execute("org", "identity-provider", "list", "--kind", "aws-eks"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "KIND")
-	h.Require.Contains(out, "github-actions")
+	h.Require.NotContains(out, "github-actions")
 	h.Require.Contains(out, "https://oidc.eks.us-west-2.amazonaws.com/id/EXAMPLE")
 	h.Require.Equal("AWS_EKS", h.MockManagementAPI().FindCall("GET", "/v1/access/identity_providers").Query().Get("predefined_kind"))
 }
@@ -167,13 +164,10 @@ func Test_Org_IdentityProvider_Describe_ByKind_MultipleMatches(t *testing.T) {
 	other := eksProviderFixture()
 	other["id"] = "idp3"
 	other["name"] = "staging-eks"
-	h.MockManagementAPI().SetRoute("GET", "/v1/access/identity_providers", 200, map[string]any{
-		"items":      []any{eksProviderFixture(), other},
-		"pagination": map[string]any{"has_more": false},
-	})
+	setFilteredListRoute(h.MockManagementAPI(), "/v1/access/identity_providers", eksProviderFixture(), other)
 
 	err := h.Execute("org", "identity-provider", "describe", "--name", "aws-eks")
-	h.Require.ErrorContains(err, `multiple identity providers named "aws-eks"`)
+	h.Require.ErrorContains(err, `multiple identity providers match "aws-eks"`)
 }
 
 func Test_Org_IdentityProvider_Delete_ByID(t *testing.T) {

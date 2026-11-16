@@ -118,42 +118,51 @@ func listIdentityProviders(ctx context.Context, api *managementapi.Client, param
 	return providers, nil
 }
 
-func identityProviderID(p managementapi.IdentityProvider) string { return p.Id }
-
-// identityProviderNameIs also matches a provider by its kind (github-actions),
-// since its default name is a display name.
-func identityProviderNameIs(p managementapi.IdentityProvider, name string) bool {
-	return p.Name == name || identityProviderKind(p) == name
-}
-
 // resolveIdentityProviderRef resolves --id or --name to an identity provider ID.
 func resolveIdentityProviderRef(ctx context.Context, api *managementapi.Client, ref cmd.IdentityProviderRefFlags) (string, error) {
 	if ref.ID != "" {
 		return ref.ID, nil
 	}
-	providers, err := listIdentityProviders(ctx, api, managementapi.GetV1AccessIdentityProvidersParams{})
+	provider, err := findIdentityProviderByName(ctx, api, ref.Name)
 	if err != nil {
 		return "", err
 	}
-	provider, err := findByName("identity provider", ref.Name, providers, identityProviderNameIs)
-	if err != nil {
-		return "", err
+	if provider == nil {
+		return "", cmd.NewErrNotFound(fmt.Errorf("no identity provider named %q", ref.Name))
 	}
 	return provider.Id, nil
 }
 
 // resolveIdentityProvider resolves a flag that takes an identity provider name
-// or ID.
+// or ID. Input that names no provider is taken as an ID, which the server
+// checks.
 func resolveIdentityProvider(ctx context.Context, api *managementapi.Client, input string) (string, error) {
-	providers, err := listIdentityProviders(ctx, api, managementapi.GetV1AccessIdentityProvidersParams{})
-	if err != nil {
-		return "", err
-	}
-	provider, err := findByIDOrName("identity provider", input, providers, identityProviderID, identityProviderNameIs)
-	if err != nil {
-		return "", err
+	provider, err := findIdentityProviderByName(ctx, api, input)
+	if err != nil || provider == nil {
+		return input, err
 	}
 	return provider.Id, nil
+}
+
+// findIdentityProviderByName returns the provider with this name, or else the
+// provider of this kind (github-actions), since a provider's default name is a
+// display name. It returns nil when neither exists.
+func findIdentityProviderByName(ctx context.Context, api *managementapi.Client, name string) (*managementapi.IdentityProvider, error) {
+	page, err := api.GetAccessIdentityProviders(ctx, managementapi.GetV1AccessIdentityProvidersParams{Name: &name})
+	if err != nil {
+		return nil, fmt.Errorf("looking up identity provider %q: %w", name, err)
+	}
+	if len(page.Items) == 0 {
+		kind := managementapi.PredefinedIdentityProviderKind(enumToAPIValue(name))
+		if !kind.Valid() {
+			return nil, nil
+		}
+		page, err = api.GetAccessIdentityProviders(ctx, managementapi.GetV1AccessIdentityProvidersParams{PredefinedKind: &kind})
+		if err != nil {
+			return nil, fmt.Errorf("looking up identity provider %q: %w", name, err)
+		}
+	}
+	return onlyMatch("identity provider", name, page.Items)
 }
 
 func commandOrgIdentityProviderDescribe(ctx *CommandContext, flags *cmd.OrgIdentityProviderDescribeFlags) error {

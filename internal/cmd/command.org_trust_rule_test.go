@@ -29,10 +29,7 @@ func trustRuleRoutes(h *CommandHarness) {
 	identityProviderRoutes(h)
 	serviceAccountRoutes(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/access/trust_rules", 200, map[string]any{
-		"items":      []any{trustRuleFixture()},
-		"pagination": map[string]any{"has_more": false},
-	})
+	setFilteredListRoute(m, "/v1/access/trust_rules", trustRuleFixture())
 	m.SetRoute("GET", "/v1/access/trust_rules/tr1", 200, trustRuleFixture())
 	m.SetRoute("PATCH", "/v1/access/trust_rules/tr1", 200, trustRuleFixture())
 }
@@ -73,23 +70,6 @@ func Test_Org_TrustRule_Create_ByIDs_JQ(t *testing.T) {
 	h.Require.Equal("\"tr1\"\n", h.Stdout.String())
 }
 
-// Names are free text, so one can equal another account's ID; that collision
-// is deliberate here.
-func Test_Org_TrustRule_Create_IDBeatsMatchingName(t *testing.T) {
-	h := NewCommandHarness(t)
-	trustRuleRoutes(h)
-	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/service_accounts", 200, serviceAccountPage(
-		serviceAccountFixture("sa1", "sa2", "WORKSPACE_MANAGE_ALL"),
-		serviceAccountFixture("sa2", "deployer", "WORKSPACE_MANAGE_ALL"),
-	))
-	m.SetRoute("POST", "/v1/access/trust_rules", 200, trustRuleFixture())
-
-	h.Require.NoError(h.Execute("org", "trust-rule", "create", "--name", "r", "--identity-provider", "idp1",
-		"--service-account", "sa2", "--condition", githubCondition, "--audience", "https://api.baseten.co"))
-	h.Require.Equal("sa2", m.FindCall("POST", "/v1/access/trust_rules").BodyJSON(t)["service_account_id"])
-}
-
 func Test_Org_TrustRule_Create_RequiresConditionAndAudience(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -110,13 +90,18 @@ func Test_Org_TrustRule_Create_RequiresConditionAndAudience(t *testing.T) {
 	}
 }
 
-func Test_Org_TrustRule_Create_UnknownServiceAccount(t *testing.T) {
+func Test_Org_TrustRule_Create_TakesUnknownNameAsID(t *testing.T) {
 	h := NewCommandHarness(t)
 	trustRuleRoutes(h)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/access/trust_rules", 200, trustRuleFixture())
 
-	err := h.Execute("org", "trust-rule", "create", "--name", "r", "--identity-provider", "github-actions",
-		"--service-account", "nope", "--condition", githubCondition, "--audience", "https://api.baseten.co")
-	h.Require.ErrorContains(err, `no service account named "nope"`)
+	h.Require.NoError(h.Execute("org", "trust-rule", "create", "--name", "r", "--identity-provider", "github-actions",
+		"--service-account", "sa9", "--condition", githubCondition, "--audience", "https://api.baseten.co"))
+	h.Require.Equal("sa9", m.FindCall("GET", "/v1/service_accounts").Query().Get("name"))
+	body := m.FindCall("POST", "/v1/access/trust_rules").BodyJSON(t)
+	h.Require.Equal("idp1", body["identity_provider_id"])
+	h.Require.Equal("sa9", body["service_account_id"])
 }
 
 func Test_Org_TrustRule_List_Filters(t *testing.T) {

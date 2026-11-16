@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -66,4 +67,36 @@ func listOrAll(values *[]string) string {
 		return "all"
 	}
 	return strings.Join(*values, ", ")
+}
+
+// listAllPages follows a cursor-paginated list endpoint to its last page.
+// fetch requests the page at cursor, nil for the first.
+func listAllPages[T any](fetch func(cursor *string) ([]T, managementapi.PaginationResponse, error)) ([]T, error) {
+	var items []T
+	var cursor *string
+	for {
+		page, pagination, err := fetch(cursor)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, page...)
+		if !pagination.HasMore || pagination.Cursor == nil {
+			return items, nil
+		}
+		cursor = pagination.Cursor
+	}
+}
+
+// onlyMatch returns the one item a name-filtered list returned, or nil when it
+// returned none. Names are unique per organization, so more than one means the
+// lookup matched by something other than the name.
+func onlyMatch[T any](kind, name string, items []T) (*T, error) {
+	switch len(items) {
+	case 0:
+		return nil, nil
+	case 1:
+		return &items[0], nil
+	default:
+		return nil, fmt.Errorf("multiple %ss match %q; pass the ID instead", kind, name)
+	}
 }
