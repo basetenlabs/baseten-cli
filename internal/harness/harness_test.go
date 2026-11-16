@@ -1215,9 +1215,9 @@ func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	}
 	require.Equal(t, "anthropic-messages", models["acme/primary"]["api"])
 	require.Equal(t, testEndpoint, models["acme/primary"]["baseUrl"], "Pi's Anthropic client appends /v1")
-	require.Equal(t, true, get(models["acme/primary"], []string{"compat", "forceAdaptiveThinking"}).Data)
-	require.NotContains(t, models["acme/primary"]["compat"], "sendSessionAffinityHeaders")
-	require.Equal(t, map[string]any{"forceAdaptiveThinking": true, "sendSessionAffinityHeaders": true}, models["acme/fallback"]["compat"])
+	for _, id := range []string{"acme/primary", "acme/fallback"} {
+		require.Equal(t, map[string]any{"forceAdaptiveThinking": true, "sendSessionAffinityHeaders": true}, models[id]["compat"], "every Messages route sends the session id, intelligent or not")
+	}
 	require.Equal(t, "openai-responses", models["acme/background"]["api"])
 	require.NotContains(t, models["acme/background"], "baseUrl")
 	require.NotContains(t, models["acme/background"], "compat")
