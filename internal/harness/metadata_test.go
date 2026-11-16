@@ -183,7 +183,7 @@ func TestPiAnthropicThinkingCompatibility(t *testing.T) {
 			if tc.adaptive {
 				require.Equal(t, true, get(model, []string{"compat", "forceAdaptiveThinking"}).Data)
 			} else {
-				require.NotContains(t, model, "compat", "legacy models must retain Pi's budget-based thinking")
+				require.NotContains(t, model["compat"], "forceAdaptiveThinking", "legacy models must retain Pi's budget-based thinking")
 			}
 		})
 	}
