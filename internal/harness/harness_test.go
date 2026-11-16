@@ -1334,9 +1334,11 @@ func TestClientHeaderNamesHarness(t *testing.T) {
 			if h.Name() == Claude {
 				require.Equal(t, "1", get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Data)
 				require.Equal(t, "true", get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Data)
+				require.Equal(t, "0", get(load(t, path), []string{"env", "CLAUDE_CODE_TETHER_LIVE"}).Data)
 				teardown(t, h, path)
 				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Exists, "teardown removes the gateway hint key")
 				require.False(t, get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Exists, "teardown removes the tool search key")
+				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_TETHER_LIVE"}).Exists, "teardown removes the tether key")
 			}
 		})
 	}
