@@ -1614,7 +1614,7 @@ func commandGridTeamSettingsDescribe(ctx *CommandContext, f *cmd.GridTeamSetting
 	return nil
 }
 
-func gridOptional[T any](flag cmd.OptionalFlag[T]) managementapi.Optional[T] {
+func optionalFromFlag[T any](flag cmd.OptionalFlag[T]) managementapi.Optional[T] {
 	if !flag.IsSet() {
 		return managementapi.Optional[T]{}
 	}
@@ -1640,8 +1640,8 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 		body.HarnessDefaults = managementapi.NewOptional[managementapi.UpdateGridHarnessDefaults](nil)
 	} else if roles {
 		defaults := managementapi.UpdateGridHarnessDefaults{}
-		primary := managementapi.UpdateGridHarnessModels{Primary: gridOptional(f.PrimaryRouteID)}
-		background := managementapi.UpdateGridHarnessModels{Primary: gridOptional(f.PrimaryRouteID), Background: gridOptional(f.BackgroundRouteID)}
+		primary := managementapi.UpdateGridHarnessModels{Primary: optionalFromFlag(f.PrimaryRouteID)}
+		background := managementapi.UpdateGridHarnessModels{Primary: optionalFromFlag(f.PrimaryRouteID), Background: optionalFromFlag(f.BackgroundRouteID)}
 		switch f.Harness {
 		case harness.Claude:
 			// The API still names the harness claude_code.
@@ -1666,8 +1666,8 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 		body.SpendLimit = managementapi.NewOptional[managementapi.UpdateGridTeamSpendLimitSetting](nil)
 	} else if f.PerMemberMonthlyLimitUSD.IsSet() || f.TeamWideMonthlyLimitUSD.IsSet() {
 		body.SpendLimit = managementapi.NewOptional(&managementapi.UpdateGridTeamSpendLimitSetting{
-			PerMemberMonthlyLimitUsd: gridOptional(f.PerMemberMonthlyLimitUSD),
-			TeamWideMonthlyLimitUsd:  gridOptional(f.TeamWideMonthlyLimitUSD),
+			PerMemberMonthlyLimitUsd: optionalFromFlag(f.PerMemberMonthlyLimitUSD),
+			TeamWideMonthlyLimitUsd:  optionalFromFlag(f.TeamWideMonthlyLimitUSD),
 		})
 	}
 	return body, nil
@@ -1801,7 +1801,7 @@ func commandGridUserSettingsUpdate(ctx *CommandContext, f *cmd.GridUserSettingsU
 	settings, err := cl.API().PatchGridTeamSettingsUsers(ctx, f.User, managementapi.UpdateGridUserSettingsRequest{
 		TeamId: team,
 		SpendLimit: managementapi.NewOptional(&managementapi.UpdateGridSpendLimitSetting{
-			UserMonthlyLimitUsd: gridOptional(f.UserMonthlyLimitUSD), MonthOverrideUsd: gridOptional(f.MonthOverrideUSD),
+			UserMonthlyLimitUsd: optionalFromFlag(f.UserMonthlyLimitUSD), MonthOverrideUsd: optionalFromFlag(f.MonthOverrideUSD),
 		}),
 	})
 	if err != nil {

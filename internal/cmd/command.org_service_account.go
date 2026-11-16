@@ -239,7 +239,7 @@ func commandOrgServiceAccountUpdate(ctx *CommandContext, flags *cmd.OrgServiceAc
 	if flags.NewName != "" {
 		req.Name = &flags.NewName
 	}
-	req.Description = flags.Description.Pointer()
+	req.Description = optionalFromFlag(flags.Description)
 	if req == (managementapi.UpdateServiceAccountRequest{}) {
 		return cmd.NewErrUsagef("nothing to update; pass --new-name, --description or --type")
 	}

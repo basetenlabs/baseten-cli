@@ -187,7 +187,7 @@ func commandOrgIdentityProviderUpdate(ctx *CommandContext, flags *cmd.OrgIdentit
 	if flags.NewName != "" {
 		req.Name = &flags.NewName
 	}
-	req.Description = flags.Description.Pointer()
+	req.Description = optionalFromFlag(flags.Description)
 	if req == (managementapi.UpdateIdentityProviderRequest{}) {
 		return cmd.NewErrUsagef("nothing to update; pass --new-name or --description")
 	}

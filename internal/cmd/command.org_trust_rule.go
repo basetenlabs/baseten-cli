@@ -184,7 +184,7 @@ func commandOrgTrustRuleUpdate(ctx *CommandContext, flags *cmd.OrgTrustRuleUpdat
 	}
 	req := managementapi.UpdateAccessTrustRuleRequest{
 		Name:                          nonEmpty(flags.NewName),
-		Description:                   flags.Description.Pointer(),
+		Description:                   optionalFromFlag(flags.Description),
 		Condition:                     nonEmpty(flags.Condition),
 		Audience:                      nonEmpty(flags.Audience),
 		MaxAccessTokenLifetimeSeconds: flags.MaxAccessTokenLifetimeSeconds.Pointer(),
