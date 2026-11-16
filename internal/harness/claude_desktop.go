@@ -17,8 +17,6 @@ import (
 // file. The claude harness writes them beside Claude Code's settings when the
 // app is installed.
 
-const claudeDesktopModelPrefix = "claude-desktop-"
-
 // claudeDesktopDenied is Claude Desktop's own model ID denylist, which it
 // matches against the lowercased ID before the Claude-name check; an ID it
 // matches never reaches the picker. Copied from Claude Desktop 4.16336.0
@@ -287,8 +285,6 @@ func claudeDesktopTeardown(path string) ([]*Plan, error) {
 	return append(plans, meta, config), nil
 }
 
-// claudeDesktopInspect reports the app's integration state. Its routes are
-// route IDs with the app's labels, since the config holds no route names.
 func claudeDesktopInspect(path string) (Status, error) {
 	r, data, err := inspectConfig(Detection{Path: path})
 	if err != nil {
@@ -298,6 +294,8 @@ func claudeDesktopInspect(path string) (Status, error) {
 	if !claudeDesktopOwned(data) {
 		return r, nil
 	}
+	nameColumn := "ALIAS"
+	r.NameColumnOverride = &nameColumn
 	r.managed(data, claudeDesktopPaths)
 	_, meta, err := readConfig(claudeDesktopMetaPath(path))
 	if err != nil {
@@ -315,10 +313,9 @@ func claudeDesktopInspect(path string) (Status, error) {
 	for i, model := range models {
 		row, _ := model.(map[string]any)
 		name, _ := row["name"].(string)
-		id := strings.TrimPrefix(name, claudeDesktopModelPrefix)
-		labels[id], _ = row["labelOverride"].(string)
+		labels[name], _ = row["labelOverride"].(string)
 		if i == 0 {
-			r.DefaultRoute = id
+			r.DefaultRoute = name
 		}
 	}
 	r.addRoutes(labels)

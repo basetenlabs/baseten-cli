@@ -512,6 +512,8 @@ type Status struct {
 	Routes          []Route
 	// Managed lists the integration settings present in the file.
 	Managed []string
+	// NB(nikhil): Claude desktop requres 'Aliases' instead of the traditional `Name`
+	NameColumnOverride *string
 }
 
 func inspectConfig(d Detection) (Status, map[string]any, error) {

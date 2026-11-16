@@ -1130,15 +1130,16 @@ func commandGridStatus(ctx *CommandContext, f *cmd.GridStatusFlags) error {
 			routes = append(routes, cmd.GridHarnessRoute{Name: route.Name, DisplayName: route.DisplayName})
 		}
 		results = append(results, cmd.GridHarnessStatus{
-			Harness:         r.Name,
-			Config:          r.Path,
-			Installed:       r.Installed,
-			Installs:        gridHarnessInstalls(r.Detection),
-			State:           r.State,
-			DefaultRoute:    r.DefaultRoute,
-			BackgroundRoute: r.BackgroundRoute,
-			Routes:          routes,
-			ManagedSettings: r.Managed,
+			Harness:            r.Name,
+			Config:             r.Path,
+			Installed:          r.Installed,
+			Installs:           gridHarnessInstalls(r.Detection),
+			State:              r.State,
+			DefaultRoute:       r.DefaultRoute,
+			BackgroundRoute:    r.BackgroundRoute,
+			Routes:             routes,
+			ManagedSettings:    r.Managed,
+			NameColumnOverride: r.NameColumnOverride,
 		})
 	}
 	if ctx.JSON {
@@ -1164,7 +1165,11 @@ func commandGridStatus(ctx *CommandContext, f *cmd.GridStatusFlags) error {
 		for _, route := range r.Routes {
 			rows = append(rows, harness.Route{Name: route.Name, DisplayName: route.DisplayName})
 		}
-		gridHarnessRouteTable(ctx, "Configured routes", rows)
+		nameColumn := "NAME"
+		if r.NameColumnOverride != nil {
+			nameColumn = *r.NameColumnOverride
+		}
+		gridHarnessRouteTable(ctx, "Configured routes", nameColumn, rows)
 		ctx.OutputLine("")
 		ctx.VerboseLogf("%s settings: %s\n", r.Harness, strings.Join(r.ManagedSettings, ", "))
 	}
@@ -1306,7 +1311,7 @@ func gridHarnessDisplayPath(path string) string {
 	return path
 }
 
-func gridHarnessRouteTable(ctx *CommandContext, title string, routes []harness.Route) {
+func gridHarnessRouteTable(ctx *CommandContext, title, nameColumn string, routes []harness.Route) {
 	ctx.Outputf("%s: %d\n", title, len(routes))
 	if len(routes) == 0 {
 		return
@@ -1315,7 +1320,7 @@ func gridHarnessRouteTable(ctx *CommandContext, title string, routes []harness.R
 	for _, route := range routes {
 		rows = append(rows, []string{route.Name, route.DisplayName})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "DISPLAY NAME"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{nameColumn, "DISPLAY NAME"}, Rows: rows})
 }
 
 func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, selected []gridHarnessTarget, plans []*harness.Plan) {

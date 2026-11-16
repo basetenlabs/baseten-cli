@@ -599,12 +599,13 @@ type GridHarnessStatus struct {
 	Installed bool   `json:"installed"`
 	// Installs lists every copy of the harness found, the one on PATH first.
 	// They all share the configuration file at Config.
-	Installs        []GridHarnessInstall `json:"installs,omitempty"`
-	State           string               `json:"state"`
-	DefaultRoute    string               `json:"default_route,omitempty"`
-	BackgroundRoute string               `json:"background_route,omitempty"`
-	Routes          []GridHarnessRoute   `json:"routes,omitempty"`
-	ManagedSettings []string             `json:"managed_settings,omitempty"`
+	Installs           []GridHarnessInstall `json:"installs,omitempty"`
+	State              string               `json:"state"`
+	DefaultRoute       string               `json:"default_route,omitempty"`
+	BackgroundRoute    string               `json:"background_route,omitempty"`
+	Routes             []GridHarnessRoute   `json:"routes,omitempty"`
+	ManagedSettings    []string             `json:"managed_settings,omitempty"`
+	NameColumnOverride *string              `json:"-"`
 }
 
 // GridStatusList is the JSON output of `baseten grid status`.
