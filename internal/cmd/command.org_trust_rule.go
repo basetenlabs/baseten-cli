@@ -17,13 +17,6 @@ func init() {
 	Register("org trust-rule delete", commandOrgTrustRuleDelete)
 }
 
-func nonEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
 func commandOrgTrustRuleCreate(ctx *CommandContext, flags *cmd.OrgTrustRuleCreateFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -169,8 +162,14 @@ func commandOrgTrustRuleDescribe(ctx *CommandContext, flags *cmd.OrgTrustRuleDes
 }
 
 func commandOrgTrustRuleUpdate(ctx *CommandContext, flags *cmd.OrgTrustRuleUpdateFlags) error {
-	if flags.NewName == "" && !flags.Description.IsSet() && flags.ServiceAccount == "" &&
-		flags.Condition == "" && flags.Audience == "" && !flags.MaxAccessTokenLifetimeSeconds.IsSet() {
+	req := managementapi.UpdateAccessTrustRuleRequest{
+		Name:                          nonEmpty(flags.NewName),
+		Description:                   optionalFromFlag(flags.Description),
+		Condition:                     nonEmpty(flags.Condition),
+		Audience:                      nonEmpty(flags.Audience),
+		MaxAccessTokenLifetimeSeconds: flags.MaxAccessTokenLifetimeSeconds.Pointer(),
+	}
+	if req == (managementapi.UpdateAccessTrustRuleRequest{}) && flags.ServiceAccount == "" {
 		return cmd.NewErrUsagef("nothing to update; pass --new-name, --description, --service-account, --condition, --audience or --max-access-token-lifetime-seconds")
 	}
 
@@ -181,13 +180,6 @@ func commandOrgTrustRuleUpdate(ctx *CommandContext, flags *cmd.OrgTrustRuleUpdat
 	id, err := resolveTrustRuleRef(ctx, cl.API(), flags.TrustRuleRefFlags)
 	if err != nil {
 		return err
-	}
-	req := managementapi.UpdateAccessTrustRuleRequest{
-		Name:                          nonEmpty(flags.NewName),
-		Description:                   optionalFromFlag(flags.Description),
-		Condition:                     nonEmpty(flags.Condition),
-		Audience:                      nonEmpty(flags.Audience),
-		MaxAccessTokenLifetimeSeconds: flags.MaxAccessTokenLifetimeSeconds.Pointer(),
 	}
 	if flags.ServiceAccount != "" {
 		accountID, err := resolveServiceAccount(ctx, cl.API(), flags.ServiceAccount)

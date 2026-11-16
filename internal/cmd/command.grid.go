@@ -1614,13 +1614,6 @@ func commandGridTeamSettingsDescribe(ctx *CommandContext, f *cmd.GridTeamSetting
 	return nil
 }
 
-func optionalFromFlag[T any](flag cmd.OptionalFlag[T]) managementapi.Optional[T] {
-	if !flag.IsSet() {
-		return managementapi.Optional[T]{}
-	}
-	return managementapi.NewOptional(flag.Pointer())
-}
-
 func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.UpdateGridTeamSettingsRequest, error) {
 	body := managementapi.UpdateGridTeamSettingsRequest{}
 	roles := f.PrimaryRouteID.IsSet() || f.BackgroundRouteID.IsSet()

@@ -152,6 +152,30 @@ func Test_Org_IdentityProvider_Update(t *testing.T) {
 	h.Require.Equal(map[string]any{"name": "eks"}, m.FindCall("PATCH", "/v1/access/identity_providers/idp2").BodyJSON(t))
 }
 
+func Test_Org_IdentityProvider_Update_ClearDescription(t *testing.T) {
+	h := NewCommandHarness(t)
+	identityProviderRoutes(h)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", "/v1/access/identity_providers/idp2", 200, eksProviderFixture())
+
+	h.Require.NoError(h.Execute("org", "identity-provider", "update", "--name", "prod-eks", "--description", ""))
+	h.Require.Equal(map[string]any{"description": ""}, m.FindCall("PATCH", "/v1/access/identity_providers/idp2").BodyJSON(t))
+}
+
+func Test_Org_IdentityProvider_Describe_ByKind_MultipleMatches(t *testing.T) {
+	h := NewCommandHarness(t)
+	other := eksProviderFixture()
+	other["id"] = "idp3"
+	other["name"] = "staging-eks"
+	h.MockManagementAPI().SetRoute("GET", "/v1/access/identity_providers", 200, map[string]any{
+		"items":      []any{eksProviderFixture(), other},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	err := h.Execute("org", "identity-provider", "describe", "--name", "aws-eks")
+	h.Require.ErrorContains(err, `multiple identity providers named "aws-eks"`)
+}
+
 func Test_Org_IdentityProvider_Delete_ByID(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()

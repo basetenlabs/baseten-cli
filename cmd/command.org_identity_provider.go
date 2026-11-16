@@ -30,7 +30,7 @@ var commandOrgIdentityProvider = Command{
 				},
 				JQExample: CommandExample{
 					Description: "Print just the issuer URLs.",
-					Command:     "baseten org identity-provider list-predefined --jq '.items[].issuer_url // .items[].issuer_url_example'",
+					Command:     "baseten org identity-provider list-predefined --jq '.items[] | .issuer_url // .issuer_url_example'",
 				},
 			},
 		},
