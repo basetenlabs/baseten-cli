@@ -27,7 +27,7 @@ var commandGrid = Command{
 				"Setup sets Grid as the gateway in each harness's settings, replacing the model and endpoint settings it manages; 'baseten grid teardown' removes them but does not restore previous values. Running setup again refreshes them. Use --dry-run to see each change first. " +
 				"The Grid API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
-				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
+				"For Codex, setup also signs Codex out of ChatGPT and turns off ChatGPT login while Grid is set up, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those. " +
 				"For Claude Desktop, setup adds a config to the app's third-party config library and switches the app to third-party mode; quit and reopen the app to load it.\n\n" +
 				"Setup also adds a served-model indicator for intelligent routes in Claude Code, Pi, and OpenCode 2. " +
@@ -123,16 +123,16 @@ var commandGrid = Command{
 		},
 		{
 			Name:    "teardown",
-			Summary: "Remove Baseten harness settings (PRE-RELEASE)",
+			Summary: "Remove Grid from harnesses (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
-				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
-				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path. " +
+				"Remove Grid's settings so the harness's own defaults apply. Previous values are not restored, " +
+				"and unrelated settings are kept. Without --harness, removes Grid from every harness set up at its default path. " +
 				"It also removes the served-model status line, Stop hook, extension, or plugin and the git context hook, plugin, or extension that setup added, and keeps your own.\n\n" +
 				"Teardown also deletes the Grid API key the removed harnesses use, once no other harness on this machine uses it, " +
 				"except a key installed with --use-session-credential, whose lifecycle this CLI does not own. " +
 				"It forgets the recorded setup so 'grid sync' no longer refreshes the removed harnesses. " +
 				"It works after the harness is uninstalled. For Codex, teardown re-enables ChatGPT login and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. Run 'codex login' to sign back in. " +
-				"For Claude Desktop, teardown switches the app back to its own login and removes Baseten's config from the library.",
+				"For Claude Desktop, teardown switches the app back to its own login and removes Grid's config from the library.",
 			Flags: GridTeardownFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "The settings removed from each harness. Use --verbose for configuration paths and setting names.",

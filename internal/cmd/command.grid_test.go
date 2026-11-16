@@ -322,7 +322,7 @@ func Test_Grid_Setup_Lifecycle(t *testing.T) {
 
 			h.Require.NoError(h.Execute("grid", "teardown", "--harness", name, "--config-dir", dir, "--dry-run"))
 			h.Require.Contains(h.Stdout.String(), "Removes Grid from "+name)
-			h.Require.Equal(keys > 0, strings.Contains(h.Stdout.String(), "Also delete the Grid API key"))
+			h.Require.Equal(keys > 0, strings.Contains(h.Stdout.String(), "Also deletes the Grid API key"))
 			h.Require.Equal(calls, len(api.Calls()), "status and teardown previews are local")
 			unchanged, err := os.ReadFile(path)
 			h.Require.NoError(err)
@@ -455,7 +455,7 @@ func Test_Grid_Setup_SignsInWithoutCurrentProfile(t *testing.T) {
 	h.Require.NoError(err)
 	h.Require.True(ok)
 	h.Require.Contains(name, "user@example.com")
-	h.Require.Contains(h.Stderr.String(), "Logged in as user@example.com (my-workspace) as profile "+name+"\n")
+	h.Require.Contains(h.Stderr.String(), "Logged in as user@example.com (my-workspace), profile "+name+"\n")
 	// Setup's result is the only document on stdout.
 	var result map[string]any
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
@@ -4481,9 +4481,10 @@ func Test_Grid_Teardown_KeepsSessionCredential(t *testing.T) {
 	// The settings are removed, but the key is never offered for deletion.
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--dry-run"))
 	h.Require.NotContains(h.Stderr.String(), "Keeping the API key")
+	h.Require.Contains(h.Stderr.String(), "Dry run: nothing was changed.\n")
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--dry-run", "--verbose"))
 	h.Require.Contains(h.Stderr.String(), "Keeping the API key installed with --use-session-credential")
-	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also delete the Grid API key")
+	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also deletes the Grid API key")
 	h.Require.NoError(h.Execute(teardown...))
 	raw, err := os.ReadFile(path)
 	h.Require.NoError(err)
@@ -4495,7 +4496,7 @@ func Test_Grid_Teardown_KeepsSessionCredential(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	h.Require.NoError(os.Remove(filepath.Join(recordDir(t), "harness.json")))
 	h.Require.NoError(h.Execute(teardown...))
-	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also delete the Grid API key")
+	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also deletes the Grid API key")
 	raw, err = os.ReadFile(path)
 	h.Require.NoError(err)
 	h.Require.NotContains(string(raw), "test-key", "the settings were removed")

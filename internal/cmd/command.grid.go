@@ -413,7 +413,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		if err != nil {
 			return err
 		}
-		ctx.Logf("Logged in as %s (%s) as profile %s\n", deref(user.Email), deref(user.WorkspaceName), profileName)
+		ctx.Logf("Logged in as %s (%s), profile %s\n", deref(user.Email), deref(user.WorkspaceName), profileName)
 		ctx.authInfo.Reset()
 		if session, err = ctx.authInfo.Session(); err != nil {
 			return err
@@ -530,7 +530,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		if ctx.JSON {
 			outputGridPlansJSON(ctx, plans, nil)
 		} else {
-			ctx.LogLine("Preview only. No files changed and no Grid API key created or deleted.")
+			ctx.LogLine(gridDryRunNotice)
 		}
 		return nil
 	}
@@ -778,7 +778,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		if ctx.JSON {
 			outputGridPlansJSON(ctx, plans, nil)
 		} else {
-			ctx.LogLine("Preview only. No files changed and no Grid API key created.")
+			ctx.LogLine(gridDryRunNotice)
 		}
 		return nil
 	}
@@ -958,6 +958,8 @@ func gridHarnessSetupNotice(ctx *CommandContext, plans []*harness.Plan, codexSig
 	ctx.LogLine("To remove Grid, run baseten grid teardown.")
 	ctx.LogLine("")
 }
+
+const gridDryRunNotice = "Dry run: nothing was changed."
 
 const gridCodexSignOutNotice = "Signs Codex out of ChatGPT while Grid is set up."
 
@@ -1246,21 +1248,21 @@ func commandGridTeardown(ctx *CommandContext, f *cmd.GridTeardownFlags) error {
 		return err
 	}
 	list := strings.Join(names, ", ")
-	question := "Remove Grid from " + list + "?"
+	question := "Remove Grid?"
 	if !ctx.JSON {
-		ctx.Outputf("Removes Grid from %s. Native defaults will apply and unrelated settings are kept.\n", list)
+		ctx.Outputf("Removes Grid from %s; each harness's own defaults apply and your other settings are kept.\n", list)
 	}
 	if len(unused) > 0 {
-		question = "Remove Grid from " + list + " and delete the Grid API key they use?"
+		question = "Remove Grid and delete its API key?"
 		if !ctx.JSON {
-			ctx.OutputLine("Also delete the Grid API key they use, since no other harness on this machine uses it.")
+			ctx.OutputLine("Also deletes the Grid API key they use, since no other harness on this machine uses it.")
 		}
 	}
 	if f.DryRun {
 		if ctx.JSON {
 			outputGridPlansJSON(ctx, plans, nil)
 		} else {
-			ctx.LogLine("Preview only. No files changed and no key deleted.")
+			ctx.LogLine(gridDryRunNotice)
 		}
 		return nil
 	}
