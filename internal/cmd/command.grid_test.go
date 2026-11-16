@@ -3545,8 +3545,8 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 
 func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 	skipUnlessSupported(t)
-	signedOut := "Signed Codex out of ChatGPT."
-	notice := "Signs Codex out of ChatGPT while Grid is set up."
+	signingOut := "Signing codex out of OpenAI/ChatGPT"
+	signedOut := "Signed codex out of OpenAI/ChatGPT and cleared the cached workspace policy."
 	hint := "Run `codex logout` and delete `"
 	for name, tc := range map[string]struct {
 		execer                             *codexDaemonHarnessExecer
@@ -3555,11 +3555,11 @@ func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 		stderr                             []string
 		absent                             []string
 	}{
-		"not logged in":        {&codexDaemonHarnessExecer{}, true, true, true, true, 0, nil, []string{notice, signedOut, "codex logout"}},
-		"api key login":        {&codexDaemonHarnessExecer{apiKey: true}, true, true, true, false, 1, []string{notice, signedOut}, []string{"warning"}},
-		"logged in":            {&codexDaemonHarnessExecer{loggedIn: true}, true, true, false, false, 1, []string{notice, signedOut}, []string{"warning"}},
-		"logout fails":         {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, true, false, true, false, 1, []string{notice, "codex logout failed", "removed", signedOut}, []string{hint}},
-		"logout fails no file": {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, false, false, true, true, 1, []string{"codex logout failed", hint, "cloud-config-bundle-cache.json` to stop the workspace default model from overriding Grid's model."}, []string{"removed", signedOut}},
+		"not logged in":        {&codexDaemonHarnessExecer{}, true, true, true, true, 0, nil, []string{signingOut, "codex logout"}},
+		"api key login":        {&codexDaemonHarnessExecer{apiKey: true}, true, true, true, false, 1, []string{signingOut, signedOut}, []string{"warning"}},
+		"logged in":            {&codexDaemonHarnessExecer{loggedIn: true}, true, true, false, false, 1, []string{signingOut, signedOut}, []string{"warning"}},
+		"logout fails":         {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, true, false, true, false, 1, []string{signingOut, "codex logout failed", "removed", signedOut}, []string{hint}},
+		"logout fails no file": {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, false, false, true, true, 1, []string{"codex logout failed", hint, "cloud-config-bundle-cache.json` to stop the workspace default model from overriding the Baseten route."}, []string{"removed", signedOut}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _ := gridAPI(t, "")
@@ -3572,7 +3572,7 @@ func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 					h.Require.NoError(os.WriteFile(path, []byte("{}"), 0o600))
 				}
 			}
-			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--yes", "--verbose"))
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--yes"))
 			h.Require.Equal(tc.logouts, tc.execer.logouts)
 			h.Require.Equal(1, tc.execer.probes)
 			h.Require.False(tc.execer.forcedAtProbe, "login status must be probed before forced_login_method is written")
@@ -3893,7 +3893,7 @@ func Test_Grid_Setup_DryRunSkipsCodexSignOut(t *testing.T) {
 	h.Require.Equal(0, execer.probes)
 	h.Require.Equal(0, execer.logouts)
 	h.Require.Equal(0, execer.restarts)
-	h.Require.NotContains(h.Stderr.String(), "Signed Codex out")
+	h.Require.NotContains(h.Stderr.String(), "Signing codex out")
 }
 
 // harnessRecordFile reads the harness.json in the test's BASETEN_CONFIG_DIR.
