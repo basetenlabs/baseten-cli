@@ -33,7 +33,7 @@ func commandOrgIdentityProviderListPredefined(ctx *CommandContext, flags *cmd.Or
 	}
 	rows := make([][]string, 0, len(predefined.Items))
 	for _, p := range predefined.Items {
-		issuer := valueOrDash(p.IssuerUrl)
+		issuer := deref(p.IssuerUrl)
 		if p.IssuerUrl == nil && p.IssuerUrlExample != nil {
 			issuer = "yours, such as " + *p.IssuerUrlExample
 		}
@@ -46,13 +46,18 @@ func commandOrgIdentityProviderListPredefined(ctx *CommandContext, flags *cmd.Or
 func commandOrgIdentityProviderCreate(ctx *CommandContext, flags *cmd.OrgIdentityProviderCreateFlags) error {
 	req := managementapi.CreateIdentityProviderRequest{
 		Predefined: managementapi.CreatePredefinedIdentityProviderConfig{
-			Kind:      managementapi.PredefinedIdentityProviderKind(enumToAPIValue(flags.Kind)),
-			IssuerUrl: nonEmpty(flags.IssuerURL),
+			Kind: managementapi.PredefinedIdentityProviderKind(enumToAPIValue(flags.Kind)),
 		},
-		Name:        nonEmpty(flags.Name),
-		Description: nonEmpty(flags.Description),
 	}
-
+	if flags.IssuerURL != "" {
+		req.Predefined.IssuerUrl = &flags.IssuerURL
+	}
+	if flags.Name != "" {
+		req.Name = &flags.Name
+	}
+	if flags.Description != "" {
+		req.Description = &flags.Description
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -61,7 +66,12 @@ func commandOrgIdentityProviderCreate(ctx *CommandContext, flags *cmd.OrgIdentit
 	if err != nil {
 		return fmt.Errorf("creating identity provider: %w", err)
 	}
-	outputCreated(ctx, provider, "identity provider", provider.Name, provider.Id)
+	if ctx.JSON {
+		ctx.OutputJSON(provider)
+		return nil
+	}
+	ctx.Logf("Created identity provider %s\n", provider.Name)
+	ctx.OutputLine(provider.Id)
 	return nil
 }
 
@@ -75,12 +85,20 @@ func commandOrgIdentityProviderList(ctx *CommandContext, flags *cmd.OrgIdentityP
 		kind := managementapi.PredefinedIdentityProviderKind(enumToAPIValue(flags.Kind))
 		params.PredefinedKind = &kind
 	}
-	providers, err := listIdentityProviders(ctx, cl.API(), params)
-	if err != nil {
-		return err
+	var providers []managementapi.IdentityProvider
+	for {
+		page, err := cl.API().GetAccessIdentityProviders(ctx, params)
+		if err != nil {
+			return fmt.Errorf("listing identity providers: %w", err)
+		}
+		providers = append(providers, page.Items...)
+		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
+			break
+		}
+		params.Cursor = page.Pagination.Cursor
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.IdentityProviderList{Items: normalizeJSONSlice(providers)})
+		ctx.OutputJSON(cmd.OrgIdentityProviderList{Items: normalizeJSONSlice(providers)})
 		return nil
 	}
 	if len(providers) == 0 {
@@ -89,7 +107,10 @@ func commandOrgIdentityProviderList(ctx *CommandContext, flags *cmd.OrgIdentityP
 	}
 	rows := make([][]string, 0, len(providers))
 	for _, p := range providers {
-		rows = append(rows, []string{p.Id, p.Name, identityProviderKind(p), valueOrDash(p.Predefined.IssuerUrl), p.CreatedAt.UTC().Format(time.RFC3339)})
+		rows = append(rows, []string{
+			p.Id, p.Name, enumFromAPIValue(string(p.Predefined.Kind)), deref(p.Predefined.IssuerUrl),
+			p.CreatedAt.UTC().Format(time.RFC3339),
+		})
 	}
 	ctx.OutputTable(TableOutput{
 		Headers: []string{"ID", "NAME", "KIND", "ISSUER URL", "CREATED"},
@@ -98,71 +119,42 @@ func commandOrgIdentityProviderList(ctx *CommandContext, flags *cmd.OrgIdentityP
 	return nil
 }
 
-// identityProviderKind renders a provider's kind as create --kind takes it.
-func identityProviderKind(p managementapi.IdentityProvider) string {
-	return enumFromAPIValue(string(p.Predefined.Kind))
-}
-
-func listIdentityProviders(ctx context.Context, api *managementapi.Client, params managementapi.GetV1AccessIdentityProvidersParams) ([]managementapi.IdentityProvider, error) {
-	providers, err := listAllPages(func(cursor *string) ([]managementapi.IdentityProvider, managementapi.PaginationResponse, error) {
-		params.Cursor = cursor
-		page, err := api.GetAccessIdentityProviders(ctx, params)
-		if err != nil {
-			return nil, managementapi.PaginationResponse{}, err
-		}
-		return page.Items, page.Pagination, nil
-	})
+// orgIdentityProviderIDByName looks up the ID of the identity provider with
+// this name, or else of this predefined kind (github-actions), since a
+// provider's default name is a display name.
+func orgIdentityProviderIDByName(ctx context.Context, api *managementapi.Client, name string) (string, error) {
+	page, err := api.GetAccessIdentityProviders(ctx, managementapi.GetV1AccessIdentityProvidersParams{Name: &name})
 	if err != nil {
-		return nil, fmt.Errorf("listing identity providers: %w", err)
+		return "", fmt.Errorf("looking up identity provider %q: %w", name, err)
 	}
-	return providers, nil
+	// Names are unique in the organization, so the filter matches at most one.
+	if len(page.Items) == 1 {
+		return page.Items[0].Id, nil
+	}
+	kind := managementapi.PredefinedIdentityProviderKind(enumToAPIValue(name))
+	if kind.Valid() {
+		page, err = api.GetAccessIdentityProviders(ctx, managementapi.GetV1AccessIdentityProvidersParams{PredefinedKind: &kind})
+		if err != nil {
+			return "", fmt.Errorf("looking up identity provider %q: %w", name, err)
+		}
+		// A kind with a per-customer issuer can be added more than once.
+		if len(page.Items) > 1 {
+			return "", fmt.Errorf("multiple identity providers of kind %q; pass the name or ID instead", name)
+		}
+		if len(page.Items) == 1 {
+			return page.Items[0].Id, nil
+		}
+	}
+	return "", cmd.NewErrNotFound(fmt.Errorf("no identity provider named %q", name))
 }
 
-// resolveIdentityProviderRef resolves --id or --name to an identity provider ID.
-func resolveIdentityProviderRef(ctx context.Context, api *managementapi.Client, ref cmd.IdentityProviderRefFlags) (string, error) {
+// resolveOrgIdentityProviderRef resolves --id or --name to an identity
+// provider ID.
+func resolveOrgIdentityProviderRef(ctx context.Context, api *managementapi.Client, ref cmd.OrgIdentityProviderRefFlags) (string, error) {
 	if ref.ID != "" {
 		return ref.ID, nil
 	}
-	provider, err := findIdentityProviderByName(ctx, api, ref.Name)
-	if err != nil {
-		return "", err
-	}
-	if provider == nil {
-		return "", cmd.NewErrNotFound(fmt.Errorf("no identity provider named %q", ref.Name))
-	}
-	return provider.Id, nil
-}
-
-// resolveIdentityProvider resolves a flag that takes an identity provider name
-// or ID. Input that names no provider is taken as an ID, which the server
-// checks.
-func resolveIdentityProvider(ctx context.Context, api *managementapi.Client, input string) (string, error) {
-	provider, err := findIdentityProviderByName(ctx, api, input)
-	if err != nil || provider == nil {
-		return input, err
-	}
-	return provider.Id, nil
-}
-
-// findIdentityProviderByName returns the provider with this name, or else the
-// provider of this kind (github-actions), since a provider's default name is a
-// display name. It returns nil when neither exists.
-func findIdentityProviderByName(ctx context.Context, api *managementapi.Client, name string) (*managementapi.IdentityProvider, error) {
-	page, err := api.GetAccessIdentityProviders(ctx, managementapi.GetV1AccessIdentityProvidersParams{Name: &name})
-	if err != nil {
-		return nil, fmt.Errorf("looking up identity provider %q: %w", name, err)
-	}
-	if len(page.Items) == 0 {
-		kind := managementapi.PredefinedIdentityProviderKind(enumToAPIValue(name))
-		if !kind.Valid() {
-			return nil, nil
-		}
-		page, err = api.GetAccessIdentityProviders(ctx, managementapi.GetV1AccessIdentityProvidersParams{PredefinedKind: &kind})
-		if err != nil {
-			return nil, fmt.Errorf("looking up identity provider %q: %w", name, err)
-		}
-	}
-	return onlyMatch("identity provider", name, page.Items)
+	return orgIdentityProviderIDByName(ctx, api, ref.Name)
 }
 
 func commandOrgIdentityProviderDescribe(ctx *CommandContext, flags *cmd.OrgIdentityProviderDescribeFlags) error {
@@ -170,7 +162,7 @@ func commandOrgIdentityProviderDescribe(ctx *CommandContext, flags *cmd.OrgIdent
 	if err != nil {
 		return err
 	}
-	id, err := resolveIdentityProviderRef(ctx, cl.API(), flags.IdentityProviderRefFlags)
+	id, err := resolveOrgIdentityProviderRef(ctx, cl.API(), flags.OrgIdentityProviderRefFlags)
 	if err != nil {
 		return err
 	}
@@ -184,19 +176,18 @@ func commandOrgIdentityProviderDescribe(ctx *CommandContext, flags *cmd.OrgIdent
 	}
 	ctx.Outputf("ID:               %s\n", p.Id)
 	ctx.Outputf("Name:             %s\n", p.Name)
-	ctx.Outputf("Description:      %s\n", valueOrDash(p.Description))
-	ctx.Outputf("Kind:             %s\n", identityProviderKind(*p))
-	ctx.Outputf("Issuer URL:       %s\n", valueOrDash(p.Predefined.IssuerUrl))
+	ctx.Outputf("Description:      %s\n", deref(p.Description))
+	ctx.Outputf("Kind:             %s\n", enumFromAPIValue(string(p.Predefined.Kind)))
+	ctx.Outputf("Issuer URL:       %s\n", deref(p.Predefined.IssuerUrl))
 	ctx.Outputf("Created:          %s\n", p.CreatedAt.UTC().Format(time.RFC3339))
 	return nil
 }
 
 func commandOrgIdentityProviderUpdate(ctx *CommandContext, flags *cmd.OrgIdentityProviderUpdateFlags) error {
-	var req managementapi.UpdateIdentityProviderRequest
+	req := managementapi.UpdateIdentityProviderRequest{Description: flags.Description.APIOptional()}
 	if flags.NewName != "" {
 		req.Name = &flags.NewName
 	}
-	req.Description = optionalFromFlag(flags.Description)
 	if req == (managementapi.UpdateIdentityProviderRequest{}) {
 		return cmd.NewErrUsagef("nothing to update; pass --new-name or --description")
 	}
@@ -204,7 +195,7 @@ func commandOrgIdentityProviderUpdate(ctx *CommandContext, flags *cmd.OrgIdentit
 	if err != nil {
 		return err
 	}
-	id, err := resolveIdentityProviderRef(ctx, cl.API(), flags.IdentityProviderRefFlags)
+	id, err := resolveOrgIdentityProviderRef(ctx, cl.API(), flags.OrgIdentityProviderRefFlags)
 	if err != nil {
 		return err
 	}
@@ -225,7 +216,7 @@ func commandOrgIdentityProviderDelete(ctx *CommandContext, flags *cmd.OrgIdentit
 	if err != nil {
 		return err
 	}
-	id, err := resolveIdentityProviderRef(ctx, cl.API(), flags.IdentityProviderRefFlags)
+	id, err := resolveOrgIdentityProviderRef(ctx, cl.API(), flags.OrgIdentityProviderRefFlags)
 	if err != nil {
 		return err
 	}
@@ -233,6 +224,10 @@ func commandOrgIdentityProviderDelete(ctx *CommandContext, flags *cmd.OrgIdentit
 	if err != nil {
 		return fmt.Errorf("deleting identity provider %s: %w", id, err)
 	}
-	outputDeleted(ctx, tomb, "identity provider", tomb.Id)
+	if ctx.JSON {
+		ctx.OutputJSON(tomb)
+		return nil
+	}
+	ctx.Logf("Deleted identity provider %s\n", tomb.Id)
 	return nil
 }

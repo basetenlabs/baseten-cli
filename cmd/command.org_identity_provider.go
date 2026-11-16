@@ -68,7 +68,7 @@ var commandOrgIdentityProvider = Command{
 			Summary:     "List identity providers",
 			Description: "List the organization's identity providers.",
 			Flags:       OrgIdentityProviderListFlags{},
-			Output: &CommandOutput[IdentityProviderList]{
+			Output: &CommandOutput[OrgIdentityProviderList]{
 				TextDescription: "Table with columns: ID, NAME, KIND, ISSUER URL, CREATED. When " +
 					"none exist, prints \"No identity providers found.\" to stderr.",
 				Examples: []CommandExample{
@@ -148,14 +148,14 @@ var commandOrgIdentityProvider = Command{
 	},
 }
 
-// IdentityProviderList is the JSON output of `baseten org identity-provider
+// OrgIdentityProviderList is the JSON output of `baseten org identity-provider
 // list`: the providers aggregated across all pages.
-type IdentityProviderList struct {
+type OrgIdentityProviderList struct {
 	Items []managementapi.IdentityProvider `json:"items"`
 }
 
-// IdentityProviderRefFlags picks one identity provider.
-type IdentityProviderRefFlags struct {
+// OrgIdentityProviderRefFlags picks one identity provider.
+type OrgIdentityProviderRefFlags struct {
 	ID   string `flag:"id" desc:"Identity provider ID." oneof:"identity-provider-ref"`
 	Name string `flag:"name" desc:"Identity provider name, or a predefined provider's value such as github-actions." oneof:"identity-provider-ref"`
 }
@@ -181,12 +181,12 @@ type OrgIdentityProviderListFlags struct {
 
 type OrgIdentityProviderDescribeFlags struct {
 	CommandFlags
-	IdentityProviderRefFlags
+	OrgIdentityProviderRefFlags
 }
 
 type OrgIdentityProviderUpdateFlags struct {
 	CommandFlags
-	IdentityProviderRefFlags
+	OrgIdentityProviderRefFlags
 
 	NewName     string               `flag:"new-name" desc:"New name, unique in the organization."`
 	Description OptionalFlag[string] `flag:"description" desc:"New description. Pass an empty string to clear it."`
@@ -194,5 +194,5 @@ type OrgIdentityProviderUpdateFlags struct {
 
 type OrgIdentityProviderDeleteFlags struct {
 	CommandFlags
-	IdentityProviderRefFlags
+	OrgIdentityProviderRefFlags
 }

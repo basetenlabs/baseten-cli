@@ -48,7 +48,7 @@ var commandOrgServiceAccount = Command{
 			Summary:     "List service accounts",
 			Description: "List the service accounts you can administer.",
 			Flags:       OrgServiceAccountListFlags{},
-			Output: &CommandOutput[ServiceAccountList]{
+			Output: &CommandOutput[OrgServiceAccountList]{
 				TextDescription: "Table with columns: ID, NAME, TYPE, TEAM (a team ID, or - for an " +
 					"organization account), DISABLED, CREATED, LAST USED. When none exist, prints " +
 					"\"No service accounts found.\" to stderr.",
@@ -90,7 +90,7 @@ var commandOrgServiceAccount = Command{
 		{
 			Name:    "update",
 			Summary: "Update a service account",
-			Description: "Update a service account's name, description or access. Access is " +
+			Description: "Update a service account's name, description, access or whether it's disabled. Access is " +
 				"replaced as a whole: to change it, pass --type together with every --model-id, " +
 				"--environment and --model-api-slug the account should keep. The owning team " +
 				"can't change.",
@@ -103,6 +103,10 @@ var commandOrgServiceAccount = Command{
 						Command:     "baseten org service-account update --name ci-deployer --new-name ci",
 					},
 					{
+						Description: "Disable a service account.",
+						Command:     "baseten org service-account update --name ci-deployer --disabled true",
+					},
+					{
 						Description: "Restrict an account to calling the production environment.",
 						Command:     "baseten org service-account update --name invoker --type workspace-invoke --environment production",
 					},
@@ -110,46 +114,6 @@ var commandOrgServiceAccount = Command{
 				JQExample: CommandExample{
 					Description: "Print the account's updated access.",
 					Command:     "baseten org service-account update --name ci --type workspace-manage-all --jq '.preset_permissions'",
-				},
-			},
-		},
-		{
-			Name:    "disable",
-			Summary: "Disable a service account",
-			Description: "Disable a service account so no token can be exchanged for it. Access " +
-				"tokens already issued keep working until they expire. Undo with 'baseten org " +
-				"service-account enable'.",
-			Flags: OrgServiceAccountDisableFlags{},
-			Output: &CommandOutput[managementapi.ServiceAccount]{
-				TextDescription: "Prints \"Disabled service account <name>\" to stderr; no stdout output.",
-				Examples: []CommandExample{
-					{
-						Description: "Disable a service account.",
-						Command:     "baseten org service-account disable --name ci-deployer",
-					},
-				},
-				JQExample: CommandExample{
-					Description: "Print whether the account is now disabled.",
-					Command:     "baseten org service-account disable --name ci-deployer --jq '.disabled'",
-				},
-			},
-		},
-		{
-			Name:        "enable",
-			Summary:     "Enable a service account",
-			Description: "Enable a disabled service account again.",
-			Flags:       OrgServiceAccountEnableFlags{},
-			Output: &CommandOutput[managementapi.ServiceAccount]{
-				TextDescription: "Prints \"Enabled service account <name>\" to stderr; no stdout output.",
-				Examples: []CommandExample{
-					{
-						Description: "Enable a service account.",
-						Command:     "baseten org service-account enable --name ci-deployer",
-					},
-				},
-				JQExample: CommandExample{
-					Description: "Print whether the account is still disabled.",
-					Command:     "baseten org service-account enable --name ci-deployer --jq '.disabled'",
 				},
 			},
 		},
@@ -175,20 +139,20 @@ var commandOrgServiceAccount = Command{
 	},
 }
 
-// ServiceAccountList is the JSON output of `baseten org service-account list`:
+// OrgServiceAccountList is the JSON output of `baseten org service-account list`:
 // the accounts aggregated across all pages.
-type ServiceAccountList struct {
+type OrgServiceAccountList struct {
 	Items []managementapi.ServiceAccount `json:"items"`
 }
 
-// ServiceAccountRefFlags picks one service account.
-type ServiceAccountRefFlags struct {
+// OrgServiceAccountRefFlags picks one service account.
+type OrgServiceAccountRefFlags struct {
 	ID   string `flag:"id" desc:"Service account ID." oneof:"service-account-ref"`
 	Name string `flag:"name" desc:"Service account name." oneof:"service-account-ref"`
 }
 
-// ServiceAccountPermissionFlags set a service account's access.
-type ServiceAccountPermissionFlags struct {
+// OrgServiceAccountPermissionFlags set a service account's access.
+type OrgServiceAccountPermissionFlags struct {
 	ModelIDs      []string `flag:"model-id" desc:"Restrict the account to a model. May be repeated. Only valid with --type workspace-invoke or workspace-export-metrics."`
 	Environments  []string `flag:"environment" desc:"With --type workspace-invoke, an environment the account may call; with workspace-manage-all, a restricted environment it may also manage. May be repeated."`
 	ModelAPISlugs []string `flag:"model-api-slug" desc:"Restrict the account to a Model API. May be repeated. Only valid with --type workspace-invoke-model-apis."`
@@ -196,7 +160,7 @@ type ServiceAccountPermissionFlags struct {
 
 type OrgServiceAccountCreateFlags struct {
 	CommandFlags
-	ServiceAccountPermissionFlags
+	OrgServiceAccountPermissionFlags
 
 	Name        string `flag:"name" desc:"Name, unique in the organization." required:"true"`
 	Type        string `flag:"type" desc:"What the account may do." required:"true" enum:"workspace-export-metrics,workspace-invoke,workspace-invoke-model-apis,workspace-manage-all,workspace-manage-api-keys"`
@@ -213,30 +177,21 @@ type OrgServiceAccountListFlags struct {
 
 type OrgServiceAccountDescribeFlags struct {
 	CommandFlags
-	ServiceAccountRefFlags
+	OrgServiceAccountRefFlags
 }
 
 type OrgServiceAccountUpdateFlags struct {
 	CommandFlags
-	ServiceAccountRefFlags
-	ServiceAccountPermissionFlags
+	OrgServiceAccountRefFlags
+	OrgServiceAccountPermissionFlags
 
 	NewName     string               `flag:"new-name" desc:"New name, unique in the organization."`
 	Description OptionalFlag[string] `flag:"description" desc:"New description. Pass an empty string to clear it."`
 	Type        string               `flag:"type" desc:"New access type. Required with --model-id, --environment or --model-api-slug." enum:"workspace-export-metrics,workspace-invoke,workspace-invoke-model-apis,workspace-manage-all,workspace-manage-api-keys"`
-}
-
-type OrgServiceAccountDisableFlags struct {
-	CommandFlags
-	ServiceAccountRefFlags
-}
-
-type OrgServiceAccountEnableFlags struct {
-	CommandFlags
-	ServiceAccountRefFlags
+	Disabled    OptionalFlag[bool]   `flag:"disabled" desc:"Disable (true) the account so no token can be exchanged for it, or enable it again (false). Access tokens already issued keep working until they expire."`
 }
 
 type OrgServiceAccountDeleteFlags struct {
 	CommandFlags
-	ServiceAccountRefFlags
+	OrgServiceAccountRefFlags
 }

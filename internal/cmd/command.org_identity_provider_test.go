@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func githubActionsProviderFixture() map[string]any {
+func orgGitHubActionsProviderFixture() map[string]any {
 	return map[string]any{
 		"id":   "idp1",
 		"name": "GitHub Actions",
@@ -19,7 +19,7 @@ func githubActionsProviderFixture() map[string]any {
 	}
 }
 
-func eksProviderFixture() map[string]any {
+func orgEKSProviderFixture() map[string]any {
 	return map[string]any{
 		"id":   "idp2",
 		"name": "prod-eks",
@@ -33,12 +33,12 @@ func eksProviderFixture() map[string]any {
 	}
 }
 
-// identityProviderRoutes serves a GitHub Actions and an Amazon EKS provider.
-func identityProviderRoutes(h *CommandHarness) {
+// orgIdentityProviderRoutes serves a GitHub Actions and an Amazon EKS provider.
+func orgIdentityProviderRoutes(h *CommandHarness) {
 	m := h.MockManagementAPI()
-	setFilteredListRoute(m, "/v1/access/identity_providers", githubActionsProviderFixture(), eksProviderFixture())
-	m.SetRoute("GET", "/v1/access/identity_providers/idp1", 200, githubActionsProviderFixture())
-	m.SetRoute("GET", "/v1/access/identity_providers/idp2", 200, eksProviderFixture())
+	orgSetFilteredListRoute(m, "/v1/access/identity_providers", orgGitHubActionsProviderFixture(), orgEKSProviderFixture())
+	m.SetRoute("GET", "/v1/access/identity_providers/idp1", 200, orgGitHubActionsProviderFixture())
+	m.SetRoute("GET", "/v1/access/identity_providers/idp2", 200, orgEKSProviderFixture())
 }
 
 func Test_Org_IdentityProvider_ListPredefined(t *testing.T) {
@@ -62,7 +62,7 @@ func Test_Org_IdentityProvider_ListPredefined(t *testing.T) {
 func Test_Org_IdentityProvider_Create(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/access/identity_providers", 200, githubActionsProviderFixture())
+	m.SetRoute("POST", "/v1/access/identity_providers", 200, orgGitHubActionsProviderFixture())
 
 	h.Require.NoError(h.Execute("org", "identity-provider", "create", "--kind", "github-actions"))
 	h.Require.Equal(map[string]any{"predefined": map[string]any{"kind": "GITHUB_ACTIONS"}},
@@ -74,7 +74,7 @@ func Test_Org_IdentityProvider_Create(t *testing.T) {
 func Test_Org_IdentityProvider_Create_WithIssuer(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/access/identity_providers", 200, eksProviderFixture())
+	m.SetRoute("POST", "/v1/access/identity_providers", 200, orgEKSProviderFixture())
 
 	h.Require.NoError(h.Execute("org", "identity-provider", "create", "--kind", "aws-eks", "--name", "prod-eks",
 		"--issuer-url", "https://oidc.eks.us-west-2.amazonaws.com/id/EXAMPLE", "--description", "EKS"))
@@ -110,7 +110,7 @@ func Test_Org_IdentityProvider_Create_FlagValidation(t *testing.T) {
 
 func Test_Org_IdentityProvider_List(t *testing.T) {
 	h := NewCommandHarness(t)
-	identityProviderRoutes(h)
+	orgIdentityProviderRoutes(h)
 
 	h.Require.NoError(h.Execute("org", "identity-provider", "list", "--kind", "aws-eks"))
 	out := h.Stdout.String()
@@ -122,7 +122,7 @@ func Test_Org_IdentityProvider_List(t *testing.T) {
 
 func Test_Org_IdentityProvider_List_JQ(t *testing.T) {
 	h := NewCommandHarness(t)
-	identityProviderRoutes(h)
+	orgIdentityProviderRoutes(h)
 
 	h.Require.NoError(h.Execute("org", "identity-provider", "list", "--jq", ".items[].name"))
 	h.Require.Equal("\"GitHub Actions\"\n\"prod-eks\"\n", h.Stdout.String())
@@ -130,7 +130,7 @@ func Test_Org_IdentityProvider_List_JQ(t *testing.T) {
 
 func Test_Org_IdentityProvider_Describe_ByKind(t *testing.T) {
 	h := NewCommandHarness(t)
-	identityProviderRoutes(h)
+	orgIdentityProviderRoutes(h)
 
 	h.Require.NoError(h.Execute("org", "identity-provider", "describe", "--name", "github-actions"))
 	out := h.Stdout.String()
@@ -141,9 +141,9 @@ func Test_Org_IdentityProvider_Describe_ByKind(t *testing.T) {
 
 func Test_Org_IdentityProvider_Update(t *testing.T) {
 	h := NewCommandHarness(t)
-	identityProviderRoutes(h)
+	orgIdentityProviderRoutes(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("PATCH", "/v1/access/identity_providers/idp2", 200, eksProviderFixture())
+	m.SetRoute("PATCH", "/v1/access/identity_providers/idp2", 200, orgEKSProviderFixture())
 
 	h.Require.NoError(h.Execute("org", "identity-provider", "update", "--name", "prod-eks", "--new-name", "eks"))
 	h.Require.Equal(map[string]any{"name": "eks"}, m.FindCall("PATCH", "/v1/access/identity_providers/idp2").BodyJSON(t))
@@ -151,9 +151,9 @@ func Test_Org_IdentityProvider_Update(t *testing.T) {
 
 func Test_Org_IdentityProvider_Update_ClearDescription(t *testing.T) {
 	h := NewCommandHarness(t)
-	identityProviderRoutes(h)
+	orgIdentityProviderRoutes(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("PATCH", "/v1/access/identity_providers/idp2", 200, eksProviderFixture())
+	m.SetRoute("PATCH", "/v1/access/identity_providers/idp2", 200, orgEKSProviderFixture())
 
 	h.Require.NoError(h.Execute("org", "identity-provider", "update", "--name", "prod-eks", "--description", ""))
 	h.Require.Equal(map[string]any{"description": ""}, m.FindCall("PATCH", "/v1/access/identity_providers/idp2").BodyJSON(t))
@@ -161,13 +161,13 @@ func Test_Org_IdentityProvider_Update_ClearDescription(t *testing.T) {
 
 func Test_Org_IdentityProvider_Describe_ByKind_MultipleMatches(t *testing.T) {
 	h := NewCommandHarness(t)
-	other := eksProviderFixture()
+	other := orgEKSProviderFixture()
 	other["id"] = "idp3"
 	other["name"] = "staging-eks"
-	setFilteredListRoute(h.MockManagementAPI(), "/v1/access/identity_providers", eksProviderFixture(), other)
+	orgSetFilteredListRoute(h.MockManagementAPI(), "/v1/access/identity_providers", orgEKSProviderFixture(), other)
 
 	err := h.Execute("org", "identity-provider", "describe", "--name", "aws-eks")
-	h.Require.ErrorContains(err, `multiple identity providers match "aws-eks"`)
+	h.Require.ErrorContains(err, `multiple identity providers of kind "aws-eks"`)
 }
 
 func Test_Org_IdentityProvider_Delete_ByID(t *testing.T) {

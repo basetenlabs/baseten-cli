@@ -18,49 +18,74 @@ func init() {
 }
 
 func commandOrgTrustRuleCreate(ctx *CommandContext, flags *cmd.OrgTrustRuleCreateFlags) error {
+	req := managementapi.CreateAccessTrustRuleRequest{
+		Name:               flags.Name,
+		IdentityProviderId: flags.IdentityProviderID,
+		ServiceAccountId:   flags.ServiceAccountID,
+		Condition:          flags.Condition,
+		Audience:           flags.Audience,
+	}
+	if flags.Description != "" {
+		req.Description = &flags.Description
+	}
+	if flags.MaxAccessTokenLifetime != 0 {
+		seconds := int(flags.MaxAccessTokenLifetime / time.Second)
+		req.MaxAccessTokenLifetimeSeconds = &seconds
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	providerID, err := resolveIdentityProvider(ctx, cl.API(), flags.IdentityProvider)
-	if err != nil {
-		return err
+	if flags.IdentityProviderName != "" {
+		if req.IdentityProviderId, err = orgIdentityProviderIDByName(ctx, cl.API(), flags.IdentityProviderName); err != nil {
+			return err
+		}
 	}
-	accountID, err := resolveServiceAccount(ctx, cl.API(), flags.ServiceAccount)
-	if err != nil {
-		return err
+	if flags.ServiceAccountName != "" {
+		if req.ServiceAccountId, err = orgServiceAccountIDByName(ctx, cl.API(), flags.ServiceAccountName); err != nil {
+			return err
+		}
 	}
-	rule, err := cl.API().PostAccessTrustRules(ctx, managementapi.CreateAccessTrustRuleRequest{
-		Name:                          flags.Name,
-		Description:                   nonEmpty(flags.Description),
-		IdentityProviderId:            providerID,
-		ServiceAccountId:              accountID,
-		Condition:                     flags.Condition,
-		Audience:                      flags.Audience,
-		MaxAccessTokenLifetimeSeconds: flags.MaxAccessTokenLifetimeSeconds.Pointer(),
-	})
+	rule, err := cl.API().PostAccessTrustRules(ctx, req)
 	if err != nil {
 		return fmt.Errorf("creating trust rule: %w", err)
 	}
-	outputCreated(ctx, rule, "trust rule", rule.Name, rule.Id)
+	if ctx.JSON {
+		ctx.OutputJSON(rule)
+		return nil
+	}
+	ctx.Logf("Created trust rule %s\n", rule.Name)
+	ctx.OutputLine(rule.Id)
 	return nil
 }
 
 func commandOrgTrustRuleList(ctx *CommandContext, flags *cmd.OrgTrustRuleListFlags) error {
+	if flags.IdentityProviderID != "" && flags.IdentityProviderName != "" {
+		return cmd.NewErrUsagef("pass --identity-provider-id or --identity-provider-name, not both")
+	}
+	if flags.ServiceAccountID != "" && flags.ServiceAccountName != "" {
+		return cmd.NewErrUsagef("pass --service-account-id or --service-account-name, not both")
+	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
 	var params managementapi.GetV1AccessTrustRulesParams
-	if flags.IdentityProvider != "" {
-		id, err := resolveIdentityProvider(ctx, cl.API(), flags.IdentityProvider)
+	if flags.IdentityProviderID != "" {
+		params.IdentityProviderId = &flags.IdentityProviderID
+	}
+	if flags.IdentityProviderName != "" {
+		id, err := orgIdentityProviderIDByName(ctx, cl.API(), flags.IdentityProviderName)
 		if err != nil {
 			return err
 		}
 		params.IdentityProviderId = &id
 	}
-	if flags.ServiceAccount != "" {
-		id, err := resolveServiceAccount(ctx, cl.API(), flags.ServiceAccount)
+	if flags.ServiceAccountID != "" {
+		params.ServiceAccountId = &flags.ServiceAccountID
+	}
+	if flags.ServiceAccountName != "" {
+		id, err := orgServiceAccountIDByName(ctx, cl.API(), flags.ServiceAccountName)
 		if err != nil {
 			return err
 		}
@@ -73,12 +98,20 @@ func commandOrgTrustRuleList(ctx *CommandContext, flags *cmd.OrgTrustRuleListFla
 		}
 		params.TeamId = &id
 	}
-	rules, err := listTrustRules(ctx, cl.API(), params)
-	if err != nil {
-		return err
+	var rules []managementapi.AccessTrustRule
+	for {
+		page, err := cl.API().GetAccessTrustRules(ctx, params)
+		if err != nil {
+			return fmt.Errorf("listing trust rules: %w", err)
+		}
+		rules = append(rules, page.Items...)
+		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
+			break
+		}
+		params.Cursor = page.Pagination.Cursor
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.TrustRuleList{Items: normalizeJSONSlice(rules)})
+		ctx.OutputJSON(cmd.OrgTrustRuleList{Items: normalizeJSONSlice(rules)})
 		return nil
 	}
 	if len(rules) == 0 {
@@ -87,9 +120,12 @@ func commandOrgTrustRuleList(ctx *CommandContext, flags *cmd.OrgTrustRuleListFla
 	}
 	rows := make([][]string, 0, len(rules))
 	for _, r := range rules {
+		lastUsed := "-"
+		if r.LastUsedAt != nil {
+			lastUsed = r.LastUsedAt.UTC().Format(time.RFC3339)
+		}
 		rows = append(rows, []string{
-			r.Id, r.Name, r.IdentityProviderName, r.ServiceAccountName,
-			r.CreatedAt.UTC().Format(time.RFC3339), timeOrDash(r.LastUsedAt),
+			r.Id, r.Name, r.IdentityProviderName, r.ServiceAccountName, r.CreatedAt.UTC().Format(time.RFC3339), lastUsed,
 		})
 	}
 	ctx.OutputTable(TableOutput{
@@ -99,23 +135,8 @@ func commandOrgTrustRuleList(ctx *CommandContext, flags *cmd.OrgTrustRuleListFla
 	return nil
 }
 
-func listTrustRules(ctx context.Context, api *managementapi.Client, params managementapi.GetV1AccessTrustRulesParams) ([]managementapi.AccessTrustRule, error) {
-	rules, err := listAllPages(func(cursor *string) ([]managementapi.AccessTrustRule, managementapi.PaginationResponse, error) {
-		params.Cursor = cursor
-		page, err := api.GetAccessTrustRules(ctx, params)
-		if err != nil {
-			return nil, managementapi.PaginationResponse{}, err
-		}
-		return page.Items, page.Pagination, nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("listing trust rules: %w", err)
-	}
-	return rules, nil
-}
-
-// resolveTrustRuleRef resolves --id or --name to a trust rule ID.
-func resolveTrustRuleRef(ctx context.Context, api *managementapi.Client, ref cmd.TrustRuleRefFlags) (string, error) {
+// resolveOrgTrustRuleRef resolves --id or --name to a trust rule ID.
+func resolveOrgTrustRuleRef(ctx context.Context, api *managementapi.Client, ref cmd.OrgTrustRuleRefFlags) (string, error) {
 	if ref.ID != "" {
 		return ref.ID, nil
 	}
@@ -123,14 +144,11 @@ func resolveTrustRuleRef(ctx context.Context, api *managementapi.Client, ref cmd
 	if err != nil {
 		return "", fmt.Errorf("looking up trust rule %q: %w", ref.Name, err)
 	}
-	rule, err := onlyMatch("trust rule", ref.Name, page.Items)
-	if err != nil {
-		return "", err
-	}
-	if rule == nil {
+	// Names are unique in the organization, so the filter matches at most one.
+	if len(page.Items) == 0 {
 		return "", cmd.NewErrNotFound(fmt.Errorf("no trust rule named %q", ref.Name))
 	}
-	return rule.Id, nil
+	return page.Items[0].Id, nil
 }
 
 func commandOrgTrustRuleDescribe(ctx *CommandContext, flags *cmd.OrgTrustRuleDescribeFlags) error {
@@ -138,7 +156,7 @@ func commandOrgTrustRuleDescribe(ctx *CommandContext, flags *cmd.OrgTrustRuleDes
 	if err != nil {
 		return err
 	}
-	id, err := resolveTrustRuleRef(ctx, cl.API(), flags.TrustRuleRefFlags)
+	id, err := resolveOrgTrustRuleRef(ctx, cl.API(), flags.OrgTrustRuleRefFlags)
 	if err != nil {
 		return err
 	}
@@ -150,48 +168,64 @@ func commandOrgTrustRuleDescribe(ctx *CommandContext, flags *cmd.OrgTrustRuleDes
 		ctx.OutputJSON(r)
 		return nil
 	}
+	lastUsed := "-"
+	if r.LastUsedAt != nil {
+		lastUsed = r.LastUsedAt.UTC().Format(time.RFC3339)
+	}
 	ctx.Outputf("ID:                 %s\n", r.Id)
 	ctx.Outputf("Name:               %s\n", r.Name)
-	ctx.Outputf("Description:        %s\n", valueOrDash(r.Description))
+	ctx.Outputf("Description:        %s\n", deref(r.Description))
 	ctx.Outputf("Identity Provider:  %s (%s)\n", r.IdentityProviderName, r.IdentityProviderId)
 	ctx.Outputf("Service Account:    %s (%s)\n", r.ServiceAccountName, r.ServiceAccountId)
-	ctx.Outputf("Team:               %s\n", valueOrDash(r.TeamName))
+	ctx.Outputf("Team:               %s\n", deref(r.TeamName))
 	ctx.Outputf("Condition:          %s\n", r.Condition)
 	ctx.Outputf("Audience:           %s\n", r.Audience)
-	ctx.Outputf("Max Token Lifetime: %ds\n", r.MaxAccessTokenLifetimeSeconds)
+	ctx.Outputf("Max Token Lifetime: %s\n", time.Duration(r.MaxAccessTokenLifetimeSeconds)*time.Second)
 	ctx.Outputf("Created:            %s\n", r.CreatedAt.UTC().Format(time.RFC3339))
-	ctx.Outputf("Last Used:          %s\n", timeOrDash(r.LastUsedAt))
+	ctx.Outputf("Last Used:          %s\n", lastUsed)
 	return nil
 }
 
 func commandOrgTrustRuleUpdate(ctx *CommandContext, flags *cmd.OrgTrustRuleUpdateFlags) error {
-	req := managementapi.UpdateAccessTrustRuleRequest{
-		Name:                          nonEmpty(flags.NewName),
-		Description:                   optionalFromFlag(flags.Description),
-		Condition:                     nonEmpty(flags.Condition),
-		Audience:                      nonEmpty(flags.Audience),
-		MaxAccessTokenLifetimeSeconds: flags.MaxAccessTokenLifetimeSeconds.Pointer(),
+	if flags.ServiceAccountID != "" && flags.ServiceAccountName != "" {
+		return cmd.NewErrUsagef("pass --service-account-id or --service-account-name, not both")
 	}
-	if req == (managementapi.UpdateAccessTrustRuleRequest{}) && flags.ServiceAccount == "" {
-		return cmd.NewErrUsagef("nothing to update; pass --new-name, --description, --service-account, --condition, --audience or --max-access-token-lifetime-seconds")
+	req := managementapi.UpdateAccessTrustRuleRequest{Description: flags.Description.APIOptional()}
+	if flags.NewName != "" {
+		req.Name = &flags.NewName
+	}
+	if flags.ServiceAccountID != "" {
+		req.ServiceAccountId = &flags.ServiceAccountID
+	}
+	if flags.Condition != "" {
+		req.Condition = &flags.Condition
+	}
+	if flags.Audience != "" {
+		req.Audience = &flags.Audience
+	}
+	if flags.MaxAccessTokenLifetime != 0 {
+		seconds := int(flags.MaxAccessTokenLifetime / time.Second)
+		req.MaxAccessTokenLifetimeSeconds = &seconds
+	}
+	if req == (managementapi.UpdateAccessTrustRuleRequest{}) && flags.ServiceAccountName == "" {
+		return cmd.NewErrUsagef("nothing to update; pass --new-name, --description, --service-account-id, --service-account-name, --condition, --audience or --max-access-token-lifetime")
 	}
 
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	id, err := resolveTrustRuleRef(ctx, cl.API(), flags.TrustRuleRefFlags)
+	id, err := resolveOrgTrustRuleRef(ctx, cl.API(), flags.OrgTrustRuleRefFlags)
 	if err != nil {
 		return err
 	}
-	if flags.ServiceAccount != "" {
-		accountID, err := resolveServiceAccount(ctx, cl.API(), flags.ServiceAccount)
+	if flags.ServiceAccountName != "" {
+		accountID, err := orgServiceAccountIDByName(ctx, cl.API(), flags.ServiceAccountName)
 		if err != nil {
 			return err
 		}
 		req.ServiceAccountId = &accountID
 	}
-
 	rule, err := cl.API().PatchAccessTrustRules(ctx, id, req)
 	if err != nil {
 		return fmt.Errorf("updating trust rule %s: %w", id, err)
@@ -209,7 +243,7 @@ func commandOrgTrustRuleDelete(ctx *CommandContext, flags *cmd.OrgTrustRuleDelet
 	if err != nil {
 		return err
 	}
-	id, err := resolveTrustRuleRef(ctx, cl.API(), flags.TrustRuleRefFlags)
+	id, err := resolveOrgTrustRuleRef(ctx, cl.API(), flags.OrgTrustRuleRefFlags)
 	if err != nil {
 		return err
 	}
@@ -217,6 +251,10 @@ func commandOrgTrustRuleDelete(ctx *CommandContext, flags *cmd.OrgTrustRuleDelet
 	if err != nil {
 		return fmt.Errorf("deleting trust rule %s: %w", id, err)
 	}
-	outputDeleted(ctx, tomb, "trust rule", tomb.Id)
+	if ctx.JSON {
+		ctx.OutputJSON(tomb)
+		return nil
+	}
+	ctx.Logf("Deleted trust rule %s\n", tomb.Id)
 	return nil
 }

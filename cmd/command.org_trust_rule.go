@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"time"
+
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -26,7 +28,7 @@ var commandOrgTrustRule = Command{
 						Description: "Let pushes to main in one GitHub repository act as a service account.",
 						CommandLines: []string{
 							"baseten org trust-rule create --name models-main-deploy",
-							"--identity-provider github-actions --service-account ci-deployer",
+							"--identity-provider-name github-actions --service-account-name ci-deployer",
 							"--condition \"claims.repository_owner_id == '12345' &&",
 							"claims.sub == 'repo:acme/models:ref:refs/heads/main'\"",
 							"--audience https://api.baseten.co",
@@ -36,8 +38,8 @@ var commandOrgTrustRule = Command{
 				JQExample: CommandExample{
 					Description: "Print just the new rule's ID.",
 					CommandLines: []string{
-						"baseten org trust-rule create --name deploy --identity-provider gcp",
-						"--service-account ci-deployer --condition \"claims.sub == '1234567890'\"",
+						"baseten org trust-rule create --name deploy --identity-provider-name gcp",
+						"--service-account-name ci-deployer --condition \"claims.sub == '1234567890'\"",
 						"--audience https://api.baseten.co --jq '.id'",
 					},
 				},
@@ -48,7 +50,7 @@ var commandOrgTrustRule = Command{
 			Summary:     "List trust rules",
 			Description: "List the trust rules you can administer.",
 			Flags:       OrgTrustRuleListFlags{},
-			Output: &CommandOutput[TrustRuleList]{
+			Output: &CommandOutput[OrgTrustRuleList]{
 				TextDescription: "Table with columns: ID, NAME, IDENTITY PROVIDER, SERVICE ACCOUNT " +
 					"(names), CREATED, LAST USED. When none exist, prints \"No trust rules found.\" " +
 					"to stderr.",
@@ -59,7 +61,7 @@ var commandOrgTrustRule = Command{
 					},
 					{
 						Description: "List one service account's rules.",
-						Command:     "baseten org trust-rule list --service-account ci-deployer",
+						Command:     "baseten org trust-rule list --service-account-name ci-deployer",
 					},
 				},
 				JQExample: CommandExample{
@@ -98,7 +100,7 @@ var commandOrgTrustRule = Command{
 				Examples: []CommandExample{
 					{
 						Description: "Point a rule at another service account.",
-						Command:     "baseten org trust-rule update --name models-main-deploy --service-account ci-v2",
+						Command:     "baseten org trust-rule update --name models-main-deploy --service-account-name ci-v2",
 					},
 					{
 						Description: "Accept another Google Cloud service account instead.",
@@ -136,14 +138,14 @@ var commandOrgTrustRule = Command{
 	},
 }
 
-// TrustRuleList is the JSON output of `baseten org trust-rule list`: the rules
+// OrgTrustRuleList is the JSON output of `baseten org trust-rule list`: the rules
 // aggregated across all pages.
-type TrustRuleList struct {
+type OrgTrustRuleList struct {
 	Items []managementapi.AccessTrustRule `json:"items"`
 }
 
-// TrustRuleRefFlags picks one trust rule.
-type TrustRuleRefFlags struct {
+// OrgTrustRuleRefFlags picks one trust rule.
+type OrgTrustRuleRefFlags struct {
 	ID   string `flag:"id" desc:"Trust rule ID." oneof:"trust-rule-ref"`
 	Name string `flag:"name" desc:"Trust rule name." oneof:"trust-rule-ref"`
 }
@@ -151,43 +153,48 @@ type TrustRuleRefFlags struct {
 type OrgTrustRuleCreateFlags struct {
 	CommandFlags
 
-	Name             string `flag:"name" desc:"Name, unique in the organization." required:"true"`
-	IdentityProvider string `flag:"identity-provider" desc:"Name or ID of the identity provider whose tokens the rule accepts, or a predefined provider's value such as github-actions. Can't be changed." required:"true"`
-	ServiceAccount   string `flag:"service-account" desc:"Name or ID of the service account the tokens act as." required:"true"`
-	Description      string `flag:"description" desc:"Optional description."`
-	Condition        string `flag:"condition" desc:"A CEL expression over the token's claims, available as claims, that must evaluate to true. It must pin a specific claims.sub in a top-level && clause." required:"true"`
-	Audience         string `flag:"audience" desc:"Value the token's aud claim must equal, or contain when aud is a list." required:"true"`
+	Name                 string `flag:"name" desc:"Name, unique in the organization." required:"true"`
+	IdentityProviderID   string `flag:"identity-provider-id" desc:"ID of the identity provider whose tokens the rule accepts. Can't be changed." oneof:"identity-provider"`
+	IdentityProviderName string `flag:"identity-provider-name" desc:"Name of the identity provider whose tokens the rule accepts, or a predefined provider's value such as github-actions. Can't be changed." oneof:"identity-provider"`
+	ServiceAccountID     string `flag:"service-account-id" desc:"ID of the service account the tokens act as." oneof:"service-account"`
+	ServiceAccountName   string `flag:"service-account-name" desc:"Name of the service account the tokens act as." oneof:"service-account"`
+	Description          string `flag:"description" desc:"Optional description."`
+	Condition            string `flag:"condition" desc:"A CEL expression over the token's claims, available as claims, that must evaluate to true. It must pin a specific claims.sub in a top-level && clause." required:"true"`
+	Audience             string `flag:"audience" desc:"Value the token's aud claim must equal, or contain when aud is a list." required:"true"`
 
-	MaxAccessTokenLifetimeSeconds OptionalFlag[int] `flag:"max-access-token-lifetime-seconds" desc:"Longest lifetime of an access token the rule issues, 60 to 3600 seconds. The server defaults it to 3600."`
+	MaxAccessTokenLifetime time.Duration `flag:"max-access-token-lifetime" desc:"Longest lifetime of an access token the rule issues, from 1m to 1h (e.g. '15m'). Defaults to 1h."`
 }
 
 type OrgTrustRuleListFlags struct {
 	CommandFlags
 
-	IdentityProvider string `flag:"identity-provider" desc:"Only list this identity provider's rules, by name or ID."`
-	ServiceAccount   string `flag:"service-account" desc:"Only list rules for this service account, by name or ID."`
-	Team             string `flag:"team" desc:"Only list rules for this team's service accounts, by team name or ID."`
+	IdentityProviderID   string `flag:"identity-provider-id" desc:"Only list rules for the identity provider with this ID. Mutually exclusive with --identity-provider-name."`
+	IdentityProviderName string `flag:"identity-provider-name" desc:"Only list rules for the identity provider with this name, or of this predefined kind such as github-actions."`
+	ServiceAccountID     string `flag:"service-account-id" desc:"Only list rules for the service account with this ID. Mutually exclusive with --service-account-name."`
+	ServiceAccountName   string `flag:"service-account-name" desc:"Only list rules for the service account with this name."`
+	Team                 string `flag:"team" desc:"Only list rules for this team's service accounts, by team name or ID."`
 }
 
 type OrgTrustRuleDescribeFlags struct {
 	CommandFlags
-	TrustRuleRefFlags
+	OrgTrustRuleRefFlags
 }
 
 type OrgTrustRuleUpdateFlags struct {
 	CommandFlags
-	TrustRuleRefFlags
+	OrgTrustRuleRefFlags
 
-	NewName        string               `flag:"new-name" desc:"New name, unique in the organization."`
-	Description    OptionalFlag[string] `flag:"description" desc:"New description. Pass an empty string to clear it."`
-	ServiceAccount string               `flag:"service-account" desc:"Name or ID of the service account the tokens act as from now on. Access tokens already issued keep the old account until they expire."`
-	Condition      string               `flag:"condition" desc:"New CEL expression over the token's claims. It must pin a specific claims.sub in a top-level && clause."`
-	Audience       string               `flag:"audience" desc:"New value the token's aud claim must equal, or contain when aud is a list."`
+	NewName            string               `flag:"new-name" desc:"New name, unique in the organization."`
+	Description        OptionalFlag[string] `flag:"description" desc:"New description. Pass an empty string to clear it."`
+	ServiceAccountID   string               `flag:"service-account-id" desc:"ID of the service account the tokens act as from now on. Access tokens already issued keep the old account until they expire. Mutually exclusive with --service-account-name."`
+	ServiceAccountName string               `flag:"service-account-name" desc:"Name of the service account the tokens act as from now on."`
+	Condition          string               `flag:"condition" desc:"New CEL expression over the token's claims. It must pin a specific claims.sub in a top-level && clause."`
+	Audience           string               `flag:"audience" desc:"New value the token's aud claim must equal, or contain when aud is a list."`
 
-	MaxAccessTokenLifetimeSeconds OptionalFlag[int] `flag:"max-access-token-lifetime-seconds" desc:"New longest lifetime of an access token the rule issues, 60 to 3600 seconds."`
+	MaxAccessTokenLifetime time.Duration `flag:"max-access-token-lifetime" desc:"New longest lifetime of an access token the rule issues, from 1m to 1h (e.g. '15m')."`
 }
 
 type OrgTrustRuleDeleteFlags struct {
 	CommandFlags
-	TrustRuleRefFlags
+	OrgTrustRuleRefFlags
 }

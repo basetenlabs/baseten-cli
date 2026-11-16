@@ -566,8 +566,8 @@ func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error 
 	if info.Name != nil && *info.Name != "" {
 		ctx.Outputf("Name:                 %s\n", *info.Name)
 	}
-	ctx.Outputf("Personal API Keys:    %s\n", allowedOrBlocked(info.AllowPersonalApiKeys))
-	ctx.Outputf("Service Account Keys: %s\n", allowedOrBlocked(info.AllowServiceAccountApiKeys))
+	ctx.Outputf("Personal API Keys:    %s\n", orgAPIKeySettingText(info.AllowPersonalApiKeys))
+	ctx.Outputf("Service Account Keys: %s\n", orgAPIKeySettingText(info.AllowServiceAccountApiKeys))
 	if info.AwsAssumeRole != nil {
 		ctx.Outputf("AWS AssumeRole:\n")
 		ctx.Outputf("  Baseten Role ARN:     %s\n", info.AwsAssumeRole.BasetenRoleArn)
@@ -576,8 +576,8 @@ func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error 
 	return nil
 }
 
-// allowedOrBlocked renders an org setting that gates creating new API keys.
-func allowedOrBlocked(allowed bool) string {
+// orgAPIKeySettingText renders an org setting that gates creating new API keys.
+func orgAPIKeySettingText(allowed bool) string {
 	if allowed {
 		return "allowed"
 	}

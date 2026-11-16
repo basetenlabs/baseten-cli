@@ -161,7 +161,6 @@ var commandOrg = Command{
 				},
 			},
 		},
-		commandOrgIdentityProvider,
 		{
 			Name:    "regions",
 			Summary: "List available deployment regions",
@@ -265,7 +264,6 @@ var commandOrg = Command{
 				},
 			},
 		},
-		commandOrgServiceAccount,
 		{
 			Name:        "team",
 			Summary:     "View teams",
@@ -312,7 +310,6 @@ var commandOrg = Command{
 				},
 			},
 		},
-		commandOrgTrustRule,
 		{
 			Name:    "update",
 			Summary: "Update organization settings",
@@ -413,6 +410,9 @@ var commandOrg = Command{
 				},
 			},
 		},
+		commandOrgIdentityProvider,
+		commandOrgServiceAccount,
+		commandOrgTrustRule,
 	},
 }
 

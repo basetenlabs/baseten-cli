@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func serviceAccountFixture(id, name, presetType string) map[string]any {
+func orgServiceAccountFixture(id, name, presetType string) map[string]any {
 	return map[string]any{
 		"id":                 id,
 		"name":               name,
@@ -18,14 +18,14 @@ func serviceAccountFixture(id, name, presetType string) map[string]any {
 	}
 }
 
-func serviceAccountPage(items ...any) map[string]any {
+func orgServiceAccountPage(items ...any) map[string]any {
 	return map[string]any{"items": items, "pagination": map[string]any{"has_more": false}}
 }
 
-// setFilteredListRoute serves items at path the way the server filters a list:
+// orgSetFilteredListRoute serves items at path the way the server filters a list:
 // name keeps the item with that name, ignoring case, and predefined_kind keeps
 // identity providers of that kind.
-func setFilteredListRoute(m *MockManagementAPI, path string, items ...map[string]any) {
+func orgSetFilteredListRoute(m *MockManagementAPI, path string, items ...map[string]any) {
 	m.SetRouteFunc("GET", path, func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		matched := []any{}
@@ -45,12 +45,12 @@ func setFilteredListRoute(m *MockManagementAPI, path string, items ...map[string
 	})
 }
 
-// serviceAccountRoutes serves one team account, ci-deployer, for name lookups.
-func serviceAccountRoutes(h *CommandHarness) {
-	account := serviceAccountFixture("sa1", "ci-deployer", "WORKSPACE_MANAGE_ALL")
+// orgServiceAccountRoutes serves one team account, ci-deployer, for name lookups.
+func orgServiceAccountRoutes(h *CommandHarness) {
+	account := orgServiceAccountFixture("sa1", "ci-deployer", "WORKSPACE_MANAGE_ALL")
 	account["team_id"] = "t123456"
 	m := h.MockManagementAPI()
-	setFilteredListRoute(m, "/v1/service_accounts", account)
+	orgSetFilteredListRoute(m, "/v1/service_accounts", account)
 	m.SetRoute("GET", "/v1/service_accounts/sa1", 200, account)
 	m.SetRoute("PATCH", "/v1/service_accounts/sa1", 200, account)
 }
@@ -59,7 +59,7 @@ func Test_Org_ServiceAccount_Create_TeamAccount(t *testing.T) {
 	h := NewCommandHarness(t)
 	gridRouteTeams(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/service_accounts", 200, serviceAccountFixture("sa1", "ci-deployer", "WORKSPACE_MANAGE_ALL"))
+	m.SetRoute("POST", "/v1/service_accounts", 200, orgServiceAccountFixture("sa1", "ci-deployer", "WORKSPACE_MANAGE_ALL"))
 
 	h.Require.NoError(h.Execute("org", "service-account", "create", "--name", "ci-deployer", "--team", "Engineering",
 		"--type", "workspace-manage-all", "--environment", "production", "--description", "CI"))
@@ -76,7 +76,7 @@ func Test_Org_ServiceAccount_Create_TeamAccount(t *testing.T) {
 func Test_Org_ServiceAccount_Create_OrgAccountWithModels(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/service_accounts", 200, serviceAccountFixture("sa1", "invoker", "WORKSPACE_INVOKE"))
+	m.SetRoute("POST", "/v1/service_accounts", 200, orgServiceAccountFixture("sa1", "invoker", "WORKSPACE_INVOKE"))
 
 	h.Require.NoError(h.Execute("org", "service-account", "create", "--name", "invoker", "--type", "workspace-invoke",
 		"--model-id", "m1", "--model-id", "m2", "--jq", ".id"))
@@ -87,30 +87,20 @@ func Test_Org_ServiceAccount_Create_OrgAccountWithModels(t *testing.T) {
 	h.Require.Equal("\"sa1\"\n", h.Stdout.String())
 }
 
-func Test_Org_ServiceAccount_Create_RejectsFlagOutsideType(t *testing.T) {
-	h := NewCommandHarness(t)
-	h.MockManagementAPI().SetHandlerFallback(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Fatalf("server should not be hit on usage error")
-	})
-
-	err := h.Execute("org", "service-account", "create", "--name", "x", "--type", "workspace-manage-api-keys", "--model-id", "m1")
-	h.Require.ErrorContains(err, "--model-id can't be used with --type workspace-manage-api-keys")
-}
-
 func Test_Org_ServiceAccount_List_Rows(t *testing.T) {
 	h := NewCommandHarness(t)
-	disabled := serviceAccountFixture("sa2", "old", "WORKSPACE_INVOKE_MODEL_APIS")
+	disabled := orgServiceAccountFixture("sa2", "old", "WORKSPACE_INVOKE_MODEL_APIS")
 	disabled["disabled"] = true
 	disabled["last_used_at"] = "2026-11-02T00:00:00Z"
 	m := h.MockManagementAPI()
 	// Two pages, to check the list follows the cursor.
-	first := serviceAccountPage(serviceAccountFixture("sa1", "ci-deployer", "WORKSPACE_MANAGE_ALL"))
+	first := orgServiceAccountPage(orgServiceAccountFixture("sa1", "ci-deployer", "WORKSPACE_MANAGE_ALL"))
 	first["items"].([]any)[0].(map[string]any)["team_id"] = "t123456"
 	first["pagination"] = map[string]any{"has_more": true, "cursor": "next"}
 	m.SetRouteFunc("GET", "/v1/service_accounts", func(w http.ResponseWriter, r *http.Request) {
 		page := first
 		if r.URL.Query().Get("cursor") == "next" {
-			page = serviceAccountPage(disabled)
+			page = orgServiceAccountPage(disabled)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(page)
@@ -128,7 +118,7 @@ func Test_Org_ServiceAccount_List_Filters(t *testing.T) {
 	h := NewCommandHarness(t)
 	gridRouteTeams(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/service_accounts", 200, serviceAccountPage())
+	m.SetRoute("GET", "/v1/service_accounts", 200, orgServiceAccountPage())
 
 	h.Require.NoError(h.Execute("org", "service-account", "list", "--team", "Engineering", "--disabled", "true"))
 	h.Require.Contains(h.Stderr.String(), "No service accounts found.")
@@ -139,7 +129,7 @@ func Test_Org_ServiceAccount_List_Filters(t *testing.T) {
 
 func Test_Org_ServiceAccount_List_EmptyJSON(t *testing.T) {
 	h := NewCommandHarness(t)
-	h.MockManagementAPI().SetRoute("GET", "/v1/service_accounts", 200, serviceAccountPage())
+	h.MockManagementAPI().SetRoute("GET", "/v1/service_accounts", 200, orgServiceAccountPage())
 
 	h.Require.NoError(h.Execute("org", "service-account", "list", "--output", "json"))
 	h.Require.JSONEq(`{"items":[]}`, h.Stdout.String())
@@ -147,20 +137,20 @@ func Test_Org_ServiceAccount_List_EmptyJSON(t *testing.T) {
 
 func Test_Org_ServiceAccount_Describe_ByName(t *testing.T) {
 	h := NewCommandHarness(t)
-	serviceAccountRoutes(h)
+	orgServiceAccountRoutes(h)
 
 	h.Require.NoError(h.Execute("org", "service-account", "describe", "--name", "ci-deployer"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "ID:               sa1")
 	h.Require.Contains(out, "Type:             workspace-manage-all")
-	h.Require.Contains(out, "Environments:     all")
+	h.Require.NotContains(out, "Environments:")
 	h.Require.NotContains(out, "Models:")
 	h.Require.NotContains(out, "Model APIs:")
 }
 
 func Test_Org_ServiceAccount_Describe_ByName_NoMatch(t *testing.T) {
 	h := NewCommandHarness(t)
-	serviceAccountRoutes(h)
+	orgServiceAccountRoutes(h)
 
 	err := h.Execute("org", "service-account", "describe", "--name", "missing")
 	h.Require.ErrorContains(err, `no service account named "missing"`)
@@ -168,7 +158,7 @@ func Test_Org_ServiceAccount_Describe_ByName_NoMatch(t *testing.T) {
 
 func Test_Org_ServiceAccount_Describe_ByID_SkipsLookup(t *testing.T) {
 	h := NewCommandHarness(t)
-	serviceAccountRoutes(h)
+	orgServiceAccountRoutes(h)
 
 	h.Require.NoError(h.Execute("org", "service-account", "describe", "--id", "sa1", "--jq", ".preset_permissions.type"))
 	h.Require.Equal("\"WORKSPACE_MANAGE_ALL\"\n", h.Stdout.String())
@@ -182,7 +172,7 @@ func Test_Org_ServiceAccount_Describe_RequiresRef(t *testing.T) {
 
 func Test_Org_ServiceAccount_Update_ReplacesAccess(t *testing.T) {
 	h := NewCommandHarness(t)
-	serviceAccountRoutes(h)
+	orgServiceAccountRoutes(h)
 
 	h.Require.NoError(h.Execute("org", "service-account", "update", "--name", "ci-deployer", "--new-name", "ci",
 		"--description", "", "--type", "workspace-invoke", "--environment", "production"))
@@ -206,30 +196,19 @@ func Test_Org_ServiceAccount_Update_NothingToUpdate(t *testing.T) {
 	h.Require.ErrorContains(err, "nothing to update")
 }
 
-func Test_Org_ServiceAccount_DisableEnable(t *testing.T) {
-	for _, tc := range []struct {
-		command  string
-		disabled bool
-		message  string
-	}{
-		{"disable", true, "Disabled service account ci-deployer"},
-		{"enable", false, "Enabled service account ci-deployer"},
-	} {
-		t.Run(tc.command, func(t *testing.T) {
-			h := NewCommandHarness(t)
-			serviceAccountRoutes(h)
+func Test_Org_ServiceAccount_Update_Disable(t *testing.T) {
+	h := NewCommandHarness(t)
+	orgServiceAccountRoutes(h)
 
-			h.Require.NoError(h.Execute("org", "service-account", tc.command, "--name", "ci-deployer"))
-			h.Require.Equal(map[string]any{"disabled": tc.disabled},
-				h.MockManagementAPI().FindCall("PATCH", "/v1/service_accounts/sa1").BodyJSON(t))
-			h.Require.Contains(h.Stderr.String(), tc.message)
-		})
-	}
+	h.Require.NoError(h.Execute("org", "service-account", "update", "--name", "ci-deployer", "--disabled", "true"))
+	h.Require.Equal(map[string]any{"disabled": true},
+		h.MockManagementAPI().FindCall("PATCH", "/v1/service_accounts/sa1").BodyJSON(t))
+	h.Require.Contains(h.Stderr.String(), "Updated service account ci-deployer")
 }
 
 func Test_Org_ServiceAccount_Delete_ByName(t *testing.T) {
 	h := NewCommandHarness(t)
-	serviceAccountRoutes(h)
+	orgServiceAccountRoutes(h)
 	m := h.MockManagementAPI()
 	m.SetRoute("DELETE", "/v1/service_accounts/sa1", 200, map[string]any{"id": "sa1", "deleted": true})
 

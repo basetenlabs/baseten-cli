@@ -1653,8 +1653,8 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 		body.HarnessDefaults = managementapi.NewOptional[managementapi.UpdateGridHarnessDefaults](nil)
 	} else if roles {
 		defaults := managementapi.UpdateGridHarnessDefaults{}
-		primary := managementapi.UpdateGridHarnessModels{Primary: optionalFromFlag(f.PrimaryRouteID)}
-		background := managementapi.UpdateGridHarnessModels{Primary: optionalFromFlag(f.PrimaryRouteID), Background: optionalFromFlag(f.BackgroundRouteID)}
+		primary := managementapi.UpdateGridHarnessModels{Primary: f.PrimaryRouteID.APIOptional()}
+		background := managementapi.UpdateGridHarnessModels{Primary: f.PrimaryRouteID.APIOptional(), Background: f.BackgroundRouteID.APIOptional()}
 		switch f.Harness {
 		case harness.Claude:
 			// The API still names the harness claude_code.
@@ -1679,8 +1679,8 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 		body.SpendLimit = managementapi.NewOptional[managementapi.UpdateGridTeamSpendLimitSetting](nil)
 	} else if f.PerMemberMonthlyLimitUSD.IsSet() || f.TeamWideMonthlyLimitUSD.IsSet() {
 		body.SpendLimit = managementapi.NewOptional(&managementapi.UpdateGridTeamSpendLimitSetting{
-			PerMemberMonthlyLimitUsd: optionalFromFlag(f.PerMemberMonthlyLimitUSD),
-			TeamWideMonthlyLimitUsd:  optionalFromFlag(f.TeamWideMonthlyLimitUSD),
+			PerMemberMonthlyLimitUsd: f.PerMemberMonthlyLimitUSD.APIOptional(),
+			TeamWideMonthlyLimitUsd:  f.TeamWideMonthlyLimitUSD.APIOptional(),
 		})
 	}
 	return body, nil
@@ -1814,7 +1814,7 @@ func commandGridUserSettingsUpdate(ctx *CommandContext, f *cmd.GridUserSettingsU
 	settings, err := cl.API().PatchGridTeamSettingsUsers(ctx, f.User, managementapi.UpdateGridUserSettingsRequest{
 		TeamId: team,
 		SpendLimit: managementapi.NewOptional(&managementapi.UpdateGridSpendLimitSetting{
-			UserMonthlyLimitUsd: optionalFromFlag(f.UserMonthlyLimitUSD), MonthOverrideUsd: optionalFromFlag(f.MonthOverrideUSD),
+			UserMonthlyLimitUsd: f.UserMonthlyLimitUSD.APIOptional(), MonthOverrideUsd: f.MonthOverrideUSD.APIOptional(),
 		}),
 	})
 	if err != nil {

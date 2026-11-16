@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"slices"
+	"strings"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -15,63 +15,37 @@ func init() {
 	Register("org service-account list", commandOrgServiceAccountList)
 	Register("org service-account describe", commandOrgServiceAccountDescribe)
 	Register("org service-account update", commandOrgServiceAccountUpdate)
-	Register("org service-account disable", commandOrgServiceAccountDisable)
-	Register("org service-account enable", commandOrgServiceAccountEnable)
 	Register("org service-account delete", commandOrgServiceAccountDelete)
 }
 
-// serviceAccountPermissionFlags lists, per access type, the permission flags it
-// accepts, mirroring the server's check so a mistake fails before any request.
-var serviceAccountPermissionFlags = map[string][]string{
-	"workspace-export-metrics":    {"model-id"},
-	"workspace-invoke":            {"model-id", "environment"},
-	"workspace-invoke-model-apis": {"model-api-slug"},
-	"workspace-manage-all":        {"environment"},
-	"workspace-manage-api-keys":   {},
-}
-
-// serviceAccountPermissions builds the access to send for --type and the
+// orgServiceAccountPermissions builds the access to send for --type and the
 // permission flags. An unset list is omitted, which the server reads as no
-// restriction.
-func serviceAccountPermissions(presetType string, flags cmd.ServiceAccountPermissionFlags) (managementapi.ServiceAccountPresetPermissionsRequest, error) {
-	allowed, ok := serviceAccountPermissionFlags[presetType]
-	if !ok {
-		return managementapi.ServiceAccountPresetPermissionsRequest{}, fmt.Errorf("unhandled service account type %q", presetType)
-	}
+// restriction; the server rejects a list the type doesn't take.
+func orgServiceAccountPermissions(presetType string, flags cmd.OrgServiceAccountPermissionFlags) managementapi.ServiceAccountPresetPermissionsRequest {
 	req := managementapi.ServiceAccountPresetPermissionsRequest{
 		Type: managementapi.ServiceAccountPresetType(enumToAPIValue(presetType)),
 	}
-	for _, f := range []struct {
-		name   string
-		values []string
-		field  **[]string
-	}{
-		{"model-id", flags.ModelIDs, &req.ModelIds},
-		{"environment", flags.Environments, &req.EnvironmentNames},
-		{"model-api-slug", flags.ModelAPISlugs, &req.ModelApiSlugs},
-	} {
-		if len(f.values) == 0 {
-			continue
-		}
-		if !slices.Contains(allowed, f.name) {
-			return req, cmd.NewErrUsagef("--%s can't be used with --type %s", f.name, presetType)
-		}
-		values := append([]string(nil), f.values...)
-		*f.field = &values
+	if len(flags.ModelIDs) > 0 {
+		req.ModelIds = &flags.ModelIDs
 	}
-	return req, nil
+	if len(flags.Environments) > 0 {
+		req.EnvironmentNames = &flags.Environments
+	}
+	if len(flags.ModelAPISlugs) > 0 {
+		req.ModelApiSlugs = &flags.ModelAPISlugs
+	}
+	return req
 }
 
 func commandOrgServiceAccountCreate(ctx *CommandContext, flags *cmd.OrgServiceAccountCreateFlags) error {
-	permissions, err := serviceAccountPermissions(flags.Type, flags.ServiceAccountPermissionFlags)
-	if err != nil {
-		return err
-	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	req := managementapi.CreateServiceAccountRequest{Name: flags.Name, PresetPermissions: permissions}
+	req := managementapi.CreateServiceAccountRequest{
+		Name:              flags.Name,
+		PresetPermissions: orgServiceAccountPermissions(flags.Type, flags.OrgServiceAccountPermissionFlags),
+	}
 	if flags.Team != "" {
 		teamID, err := ResolveTeam(ctx, cl.API(), flags.Team)
 		if err != nil {
@@ -86,7 +60,12 @@ func commandOrgServiceAccountCreate(ctx *CommandContext, flags *cmd.OrgServiceAc
 	if err != nil {
 		return fmt.Errorf("creating service account: %w", err)
 	}
-	outputCreated(ctx, account, "service account", account.Name, account.Id)
+	if ctx.JSON {
+		ctx.OutputJSON(account)
+		return nil
+	}
+	ctx.Logf("Created service account %s\n", account.Name)
+	ctx.OutputLine(account.Id)
 	return nil
 }
 
@@ -103,12 +82,20 @@ func commandOrgServiceAccountList(ctx *CommandContext, flags *cmd.OrgServiceAcco
 		}
 		params.TeamId = &teamID
 	}
-	accounts, err := listServiceAccounts(ctx, cl.API(), params)
-	if err != nil {
-		return err
+	var accounts []managementapi.ServiceAccount
+	for {
+		page, err := cl.API().GetServiceAccounts(ctx, params)
+		if err != nil {
+			return fmt.Errorf("listing service accounts: %w", err)
+		}
+		accounts = append(accounts, page.Items...)
+		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
+			break
+		}
+		params.Cursor = page.Pagination.Cursor
 	}
 	if ctx.JSON {
-		ctx.OutputJSON(cmd.ServiceAccountList{Items: normalizeJSONSlice(accounts)})
+		ctx.OutputJSON(cmd.OrgServiceAccountList{Items: normalizeJSONSlice(accounts)})
 		return nil
 	}
 	if len(accounts) == 0 {
@@ -117,9 +104,13 @@ func commandOrgServiceAccountList(ctx *CommandContext, flags *cmd.OrgServiceAcco
 	}
 	rows := make([][]string, 0, len(accounts))
 	for _, a := range accounts {
+		lastUsed := "-"
+		if a.LastUsedAt != nil {
+			lastUsed = a.LastUsedAt.UTC().Format(time.RFC3339)
+		}
 		rows = append(rows, []string{
-			a.Id, a.Name, enumFromAPIValue(string(a.PresetPermissions.Type)), valueOrDash(a.TeamId),
-			fmt.Sprint(a.Disabled), a.CreatedAt.UTC().Format(time.RFC3339), timeOrDash(a.LastUsedAt),
+			a.Id, a.Name, enumFromAPIValue(string(a.PresetPermissions.Type)), deref(a.TeamId),
+			fmt.Sprint(a.Disabled), a.CreatedAt.UTC().Format(time.RFC3339), lastUsed,
 		})
 	}
 	ctx.OutputTable(TableOutput{
@@ -129,54 +120,26 @@ func commandOrgServiceAccountList(ctx *CommandContext, flags *cmd.OrgServiceAcco
 	return nil
 }
 
-func listServiceAccounts(ctx context.Context, api *managementapi.Client, params managementapi.GetV1ServiceAccountsParams) ([]managementapi.ServiceAccount, error) {
-	accounts, err := listAllPages(func(cursor *string) ([]managementapi.ServiceAccount, managementapi.PaginationResponse, error) {
-		params.Cursor = cursor
-		page, err := api.GetServiceAccounts(ctx, params)
-		if err != nil {
-			return nil, managementapi.PaginationResponse{}, err
-		}
-		return page.Items, page.Pagination, nil
-	})
+// orgServiceAccountIDByName looks up the ID of the service account with this
+// name.
+func orgServiceAccountIDByName(ctx context.Context, api *managementapi.Client, name string) (string, error) {
+	page, err := api.GetServiceAccounts(ctx, managementapi.GetV1ServiceAccountsParams{Name: &name})
 	if err != nil {
-		return nil, fmt.Errorf("listing service accounts: %w", err)
+		return "", fmt.Errorf("looking up service account %q: %w", name, err)
 	}
-	return accounts, nil
+	// Names are unique in the organization, so the filter matches at most one.
+	if len(page.Items) == 0 {
+		return "", cmd.NewErrNotFound(fmt.Errorf("no service account named %q", name))
+	}
+	return page.Items[0].Id, nil
 }
 
-// resolveServiceAccountRef resolves --id or --name to a service account ID.
-// Mutations then address the account by its stable ID.
-func resolveServiceAccountRef(ctx context.Context, api *managementapi.Client, ref cmd.ServiceAccountRefFlags) (string, error) {
+// resolveOrgServiceAccountRef resolves --id or --name to a service account ID.
+func resolveOrgServiceAccountRef(ctx context.Context, api *managementapi.Client, ref cmd.OrgServiceAccountRefFlags) (string, error) {
 	if ref.ID != "" {
 		return ref.ID, nil
 	}
-	account, err := findServiceAccountByName(ctx, api, ref.Name)
-	if err != nil {
-		return "", err
-	}
-	if account == nil {
-		return "", cmd.NewErrNotFound(fmt.Errorf("no service account named %q", ref.Name))
-	}
-	return account.Id, nil
-}
-
-// resolveServiceAccount resolves a flag that takes a service account name or
-// ID. Input that names no account is taken as an ID, which the server checks.
-func resolveServiceAccount(ctx context.Context, api *managementapi.Client, input string) (string, error) {
-	account, err := findServiceAccountByName(ctx, api, input)
-	if err != nil || account == nil {
-		return input, err
-	}
-	return account.Id, nil
-}
-
-// findServiceAccountByName returns the account with this name, or nil.
-func findServiceAccountByName(ctx context.Context, api *managementapi.Client, name string) (*managementapi.ServiceAccount, error) {
-	page, err := api.GetServiceAccounts(ctx, managementapi.GetV1ServiceAccountsParams{Name: &name})
-	if err != nil {
-		return nil, fmt.Errorf("looking up service account %q: %w", name, err)
-	}
-	return onlyMatch("service account", name, page.Items)
+	return orgServiceAccountIDByName(ctx, api, ref.Name)
 }
 
 func commandOrgServiceAccountDescribe(ctx *CommandContext, flags *cmd.OrgServiceAccountDescribeFlags) error {
@@ -184,7 +147,7 @@ func commandOrgServiceAccountDescribe(ctx *CommandContext, flags *cmd.OrgService
 	if err != nil {
 		return err
 	}
-	id, err := resolveServiceAccountRef(ctx, cl.API(), flags.ServiceAccountRefFlags)
+	id, err := resolveOrgServiceAccountRef(ctx, cl.API(), flags.OrgServiceAccountRefFlags)
 	if err != nil {
 		return err
 	}
@@ -196,73 +159,58 @@ func commandOrgServiceAccountDescribe(ctx *CommandContext, flags *cmd.OrgService
 		ctx.OutputJSON(a)
 		return nil
 	}
+	lastUsed := "-"
+	if a.LastUsedAt != nil {
+		lastUsed = a.LastUsedAt.UTC().Format(time.RFC3339)
+	}
 	p := a.PresetPermissions
 	ctx.Outputf("ID:               %s\n", a.Id)
 	ctx.Outputf("Name:             %s\n", a.Name)
-	ctx.Outputf("Description:      %s\n", valueOrDash(a.Description))
-	ctx.Outputf("Team:             %s\n", valueOrDash(a.TeamId))
+	ctx.Outputf("Description:      %s\n", deref(a.Description))
+	ctx.Outputf("Team:             %s\n", deref(a.TeamId))
 	ctx.Outputf("Type:             %s\n", enumFromAPIValue(string(p.Type)))
-	allowed := serviceAccountPermissionFlags[enumFromAPIValue(string(p.Type))]
-	for _, r := range []struct {
-		flag, label string
-		values      *[]string
-	}{
-		{"model-id", "Models:           ", p.ModelIds},
-		{"environment", "Environments:     ", p.EnvironmentNames},
-		{"model-api-slug", "Model APIs:       ", p.ModelApiSlugs},
-	} {
-		if slices.Contains(allowed, r.flag) {
-			ctx.Outputf("%s%s\n", r.label, listOrAll(r.values))
-		}
+	// A list is present only when it restricts the account.
+	if p.ModelIds != nil {
+		ctx.Outputf("Models:           %s\n", strings.Join(*p.ModelIds, ", "))
+	}
+	if p.EnvironmentNames != nil {
+		ctx.Outputf("Environments:     %s\n", strings.Join(*p.EnvironmentNames, ", "))
+	}
+	if p.ModelApiSlugs != nil {
+		ctx.Outputf("Model APIs:       %s\n", strings.Join(*p.ModelApiSlugs, ", "))
 	}
 	ctx.Outputf("Disabled:         %t\n", a.Disabled)
 	ctx.Outputf("Created:          %s\n", a.CreatedAt.UTC().Format(time.RFC3339))
-	ctx.Outputf("Last Used:        %s\n", timeOrDash(a.LastUsedAt))
+	ctx.Outputf("Last Used:        %s\n", lastUsed)
 	return nil
 }
 
 func commandOrgServiceAccountUpdate(ctx *CommandContext, flags *cmd.OrgServiceAccountUpdateFlags) error {
-	var req managementapi.UpdateServiceAccountRequest
-	p := flags.ServiceAccountPermissionFlags
+	p := flags.OrgServiceAccountPermissionFlags
 	// Access is replaced as a whole, so inferring the type from the current
 	// account could silently drop a restriction the caller meant to keep.
 	if flags.Type == "" && (len(p.ModelIDs) > 0 || len(p.Environments) > 0 || len(p.ModelAPISlugs) > 0) {
 		return cmd.NewErrUsagef("--model-id, --environment and --model-api-slug replace the account's access; pass --type too")
 	}
+	req := managementapi.UpdateServiceAccountRequest{
+		Description: flags.Description.APIOptional(),
+		Disabled:    flags.Disabled.Pointer(),
+	}
 	if flags.Type != "" {
-		permissions, err := serviceAccountPermissions(flags.Type, p)
-		if err != nil {
-			return err
-		}
+		permissions := orgServiceAccountPermissions(flags.Type, p)
 		req.PresetPermissions = &permissions
 	}
 	if flags.NewName != "" {
 		req.Name = &flags.NewName
 	}
-	req.Description = optionalFromFlag(flags.Description)
 	if req == (managementapi.UpdateServiceAccountRequest{}) {
-		return cmd.NewErrUsagef("nothing to update; pass --new-name, --description or --type")
+		return cmd.NewErrUsagef("nothing to update; pass --new-name, --description, --type or --disabled")
 	}
-	return updateServiceAccount(ctx, flags.ServiceAccountRefFlags, req, "Updated")
-}
-
-func commandOrgServiceAccountDisable(ctx *CommandContext, flags *cmd.OrgServiceAccountDisableFlags) error {
-	disabled := true
-	return updateServiceAccount(ctx, flags.ServiceAccountRefFlags, managementapi.UpdateServiceAccountRequest{Disabled: &disabled}, "Disabled")
-}
-
-func commandOrgServiceAccountEnable(ctx *CommandContext, flags *cmd.OrgServiceAccountEnableFlags) error {
-	disabled := false
-	return updateServiceAccount(ctx, flags.ServiceAccountRefFlags, managementapi.UpdateServiceAccountRequest{Disabled: &disabled}, "Enabled")
-}
-
-// updateServiceAccount patches the referenced account and reports it with verb.
-func updateServiceAccount(ctx *CommandContext, ref cmd.ServiceAccountRefFlags, req managementapi.UpdateServiceAccountRequest, verb string) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	id, err := resolveServiceAccountRef(ctx, cl.API(), ref)
+	id, err := resolveOrgServiceAccountRef(ctx, cl.API(), flags.OrgServiceAccountRefFlags)
 	if err != nil {
 		return err
 	}
@@ -274,7 +222,7 @@ func updateServiceAccount(ctx *CommandContext, ref cmd.ServiceAccountRefFlags, r
 		ctx.OutputJSON(account)
 		return nil
 	}
-	ctx.Logf("%s service account %s\n", verb, account.Name)
+	ctx.Logf("Updated service account %s\n", account.Name)
 	return nil
 }
 
@@ -283,7 +231,7 @@ func commandOrgServiceAccountDelete(ctx *CommandContext, flags *cmd.OrgServiceAc
 	if err != nil {
 		return err
 	}
-	id, err := resolveServiceAccountRef(ctx, cl.API(), flags.ServiceAccountRefFlags)
+	id, err := resolveOrgServiceAccountRef(ctx, cl.API(), flags.OrgServiceAccountRefFlags)
 	if err != nil {
 		return err
 	}
@@ -291,6 +239,10 @@ func commandOrgServiceAccountDelete(ctx *CommandContext, flags *cmd.OrgServiceAc
 	if err != nil {
 		return fmt.Errorf("deleting service account %s: %w", id, err)
 	}
-	outputDeleted(ctx, tomb, "service account", tomb.Id)
+	if ctx.JSON {
+		ctx.OutputJSON(tomb)
+		return nil
+	}
+	ctx.Logf("Deleted service account %s\n", tomb.Id)
 	return nil
 }
