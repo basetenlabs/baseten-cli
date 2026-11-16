@@ -1531,9 +1531,9 @@ func gridEnsureHarnessToken(ctx *CommandContext, api *managementapi.Client, team
 		Name: &name,
 	}
 	created, err := api.PostTeamsApiKeys(ctx, team.Id, req)
-	// Concurrent setups (the parallel e2e cells each run setup) can deadlock
-	// key creation in the server's database; retry 5xx briefly until the
-	// server-side fix lands.
+	// TODO: remove once the server-side fix lands. Concurrent setups (the
+	// parallel e2e cells each run setup) can deadlock key creation in the
+	// server's database, so retry 5xx briefly.
 	var re *managementapi.ResponseError
 	for retry := 1; errors.As(err, &re) && re.StatusCode >= http.StatusInternalServerError && retry < 3; retry++ {
 		if err := ctx.Sleep(gridKeyCreateRetryDelay * time.Duration(retry)); err != nil {
