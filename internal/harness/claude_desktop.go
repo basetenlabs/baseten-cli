@@ -55,8 +55,6 @@ const claudeDesktopConfigID = "b45e7e00-c0de-4000-8000-000000000001"
 // by a bare name on PATH.
 const linuxDesktopClaude = "/usr/bin/claude-desktop"
 
-const linuxDesktopRPMClaude = "/usr/lib/claude-desktop/claude-desktop"
-
 func claudeDesktopBinaries() []string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -77,7 +75,7 @@ func claudeDesktopVersion(ctx context.Context, execer Execer, binary string) str
 }
 
 func claudeDesktopLinuxVersion(ctx context.Context, execer Execer, binary string) string {
-	if version := commandVersion(ctx, execer, "rpm", "-qf", "--qf", "%{VERSION}-%{RELEASE}", linuxDesktopRPMClaude); version != "" {
+	if version := commandVersion(ctx, execer, "rpm", "-qf", "--qf", "%{VERSION}-%{RELEASE}", binary); version != "" {
 		return claudeDesktopPackageVersion(version)
 	}
 	owner := commandVersion(ctx, execer, "dpkg-query", "-S", binary)

@@ -1436,7 +1436,7 @@ func TestClaudeDesktopVersion(t *testing.T) {
 }
 
 func TestClaudeDesktopLinuxVersion(t *testing.T) {
-	rpm := claudeDesktopPackageCommand("rpm", "-qf", "--qf", "%{VERSION}-%{RELEASE}", linuxDesktopRPMClaude)
+	rpm := claudeDesktopPackageCommand("rpm", "-qf", "--qf", "%{VERSION}-%{RELEASE}", linuxDesktopClaude)
 	dpkgOwner := claudeDesktopPackageCommand("dpkg-query", "-S", linuxDesktopClaude)
 	dpkgStatus := claudeDesktopPackageCommand("dpkg-query", "-W", "-f=${db:Status-Status} ${Version}", "claude-desktop")
 	pacman := claudeDesktopPackageCommand("pacman", "-Qo", linuxDesktopClaude)
