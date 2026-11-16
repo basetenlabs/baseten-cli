@@ -289,6 +289,6 @@ func commandModelRename(ctx *CommandContext, flags *cmd.ModelRenameFlags) error 
 		ctx.OutputJSON(model)
 	}
 	ctx.Logf("Renamed model %s to %s\n", ref.ID, model.Name)
-	ctx.LogLine("warning: update model_name in config.yaml, or pushes that still use the old name will create another model")
+	ctx.Warn("update model_name in config.yaml, or pushes that still use the old name will create another model")
 	return nil
 }
