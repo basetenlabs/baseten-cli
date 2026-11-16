@@ -137,7 +137,7 @@ func gridAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAP
 		teamID, teamName := gridRouteTeam(r)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"items":      []any{map[string]any{"id": "route-primary", "name": "acme/primary", "team_id": teamID, "team_name": teamName, "display_name": "Primary", "invoke_url": invokeURL, "metadata": harnessRouteMetadata}},
+			"items":      []any{map[string]any{"id": "route-primary", "name": "acme/primary", "team_id": teamID, "team_name": teamName, "display_name": "Primary", "invoke_url": invokeURL, "metadata": harnessRouteMetadata, "aliases": []any{map[string]any{"name": "claude-desktop-explicit-primary", "kind": "CLAUDE_DESKTOP"}}}},
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
@@ -386,7 +386,7 @@ func Test_Grid_Setup_Status_Teardown_ClaudeDesktop(t *testing.T) {
 	settings := readHarnessSettings(t, "claude", configs[0])
 	h.Require.Equal("gateway", settings["inferenceProvider"])
 	h.Require.Equal(map[string]any{"X-Baseten-Grid-Client": "claude-code"}, settings["inferenceCustomHeaders"])
-	h.Require.Equal([]any{map[string]any{"name": "claude-desktop-route-primary", "labelOverride": "Primary", "anthropicFamilyTier": "sonnet"}}, settings["inferenceModels"])
+	h.Require.Equal([]any{map[string]any{"name": "claude-desktop-explicit-primary", "labelOverride": "Primary", "anthropicFamilyTier": "sonnet"}}, settings["inferenceModels"])
 	h.Require.Equal(true, settings["autoModeEnabled"])
 	h.Require.Equal(true, settings["toolSearchEnabled"])
 	h.Require.Equal([]any{"grid", "token", "--harness", "claude", "--profile", "alice"}, settings["inferenceCredentialHelperArgs"])

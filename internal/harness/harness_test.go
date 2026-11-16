@@ -25,7 +25,7 @@ var chatCompletionsFormats = []managementapi.GridRouteMetadataApiFormats{managem
 
 func testRoute(name, displayName string) Route {
 	return Route{
-		ID: name, Name: name, DisplayName: displayName,
+		Name: name, DisplayName: displayName, ClaudeDesktopAlias: "claude-desktop-" + name,
 		ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, Responses: true,
 		TargetAPI: TargetAPIChatCompletions,
 	}

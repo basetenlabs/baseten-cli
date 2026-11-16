@@ -168,13 +168,21 @@ var targetAPIsByFormat = map[managementapi.GridRouteMetadataApiFormats]TargetAPI
 	managementapi.GridRouteMetadataApiFormats_chat_completions: TargetAPIChatCompletions,
 }
 
+type RouteAliasKind string
+
+const RouteAliasKindClaudeDesktop RouteAliasKind = "CLAUDE_DESKTOP"
+
+type RouteAlias struct {
+	Name string         `json:"name"`
+	Kind RouteAliasKind `json:"kind"`
+}
+
 // Route is a Baseten route as shown in a harness's model picker, with the model
 // capabilities supplied by the route's own metadata.
 type Route struct {
-	// ID is the route's stable ID, which Claude Desktop's model IDs carry.
-	ID          string
-	Name        string
-	DisplayName string
+	Name               string
+	DisplayName        string
+	ClaudeDesktopAlias string
 	// Provider is the route's upstream provider, such as ProviderAnthropic.
 	// It is "" when unknown, as for an intelligent route that picks a model per request.
 	Provider         string
@@ -221,8 +229,14 @@ func NewProviders(connections []managementapi.GridConnection) Providers {
 // NewRoute converts a route from the routes API, resolving the provider of a
 // route that reaches one through a team connection. It fails if the route's
 // model metadata is missing or is not enough to configure a harness.
-func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
-	r := Route{ID: api.Id, Name: api.Name, DisplayName: api.DisplayName, IntelligentRoute: routeIsIntelligentRoute(api)}
+func NewRoute(api managementapi.GridRoute, providers Providers, aliases ...RouteAlias) (Route, error) {
+	r := Route{Name: api.Name, DisplayName: api.DisplayName, IntelligentRoute: routeIsIntelligentRoute(api)}
+	for _, alias := range aliases {
+		if alias.Kind == RouteAliasKindClaudeDesktop {
+			r.ClaudeDesktopAlias = alias.Name
+			break
+		}
+	}
 	r.Provider, r.UpstreamModel = routeTarget(api, providers)
 	m := api.Metadata
 	if m == nil {

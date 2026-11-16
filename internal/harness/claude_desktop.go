@@ -3,6 +3,7 @@ package harness
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,8 +17,6 @@ import (
 // file. The claude harness writes them beside Claude Code's settings when the
 // app is installed.
 
-// claudeDesktopModelPrefix makes route model IDs Claude-shaped, since Claude
-// Desktop lists no others. Baseten resolves claude-desktop-<route id> to the route.
 const claudeDesktopModelPrefix = "claude-desktop-"
 
 // claudeDesktopDenied is Claude Desktop's own model ID denylist, which it
@@ -126,12 +125,8 @@ func claudeDesktopDeniedID(name string) bool {
 	return claudeDesktopDenied.MatchString(strings.ToLower(name))
 }
 
-// claudeDesktopModel is one picker entry. The app knows nothing about an
-// alias: behavesAs gives it the Claude model's limits and effort levels, the
-// 1M keys its real window (else the app assumes 200k), and the sonnet tier
-// makes it the model Auto mode's checks go to.
 func claudeDesktopModel(r Route, sonnetTier bool) map[string]any {
-	model := map[string]any{"name": claudeDesktopModelPrefix + r.ID, "labelOverride": cmp.Or(r.DisplayName, r.Name)}
+	model := map[string]any{"name": r.ClaudeDesktopAlias, "labelOverride": cmp.Or(r.DisplayName, r.Name)}
 	if r.Provider == ProviderAnthropic && r.UpstreamModel != "" {
 		model["behavesAs"] = r.UpstreamModel
 	}
@@ -152,8 +147,13 @@ func claudeDesktopPrepare(path string, routes []Route, selection Selection, endp
 	if err != nil {
 		return nil, err
 	}
+	for _, r := range routes {
+		if r.ClaudeDesktopAlias == "" {
+			return nil, fmt.Errorf("route %q has no Claude Desktop alias", r.Name)
+		}
+	}
 	listed := slices.DeleteFunc(slices.Clone(routes), func(r Route) bool {
-		return claudeDesktopDeniedID(claudeDesktopModelPrefix + r.ID)
+		return claudeDesktopDeniedID(r.ClaudeDesktopAlias)
 	})
 	if len(listed) == 0 {
 		return nil, errors.New("Claude Desktop can list none of the routes: their model IDs match the app's denylist")
