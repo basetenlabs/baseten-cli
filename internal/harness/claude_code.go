@@ -126,8 +126,11 @@ func (h claudeHarness) Detect(ctx context.Context, execer Execer, dir string) (D
 	for _, binary := range claudeDesktopBinaries() {
 		if bin, err := execer.LookPath(binary); err == nil {
 			install := Install{Kind: InstallDesktop, Binary: bin}
-			if runtime.GOOS == "darwin" {
+			switch runtime.GOOS {
+			case "darwin":
 				install.Version = claudeDesktopVersion(ctx, execer, bin)
+			case "linux":
+				install.Version = claudeDesktopLinuxVersion(ctx, execer, bin)
 			}
 			d.Installs = append(d.Installs, install)
 		}

@@ -55,6 +55,8 @@ const claudeDesktopConfigID = "b45e7e00-c0de-4000-8000-000000000001"
 // by a bare name on PATH.
 const linuxDesktopClaude = "/usr/bin/claude-desktop"
 
+const linuxDesktopRPMClaude = "/usr/lib/claude-desktop/claude-desktop"
+
 func claudeDesktopBinaries() []string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -72,6 +74,39 @@ func claudeDesktopBinaries() []string {
 func claudeDesktopVersion(ctx context.Context, execer Execer, binary string) string {
 	plist := filepath.Join(filepath.Dir(filepath.Dir(binary)), "Info.plist")
 	return commandVersion(ctx, execer, "/usr/bin/plutil", "-extract", "CFBundleShortVersionString", "raw", plist)
+}
+
+func claudeDesktopLinuxVersion(ctx context.Context, execer Execer, binary string) string {
+	if version := commandVersion(ctx, execer, "rpm", "-qf", "--qf", "%{VERSION}-%{RELEASE}", linuxDesktopRPMClaude); version != "" {
+		return claudeDesktopPackageVersion(version)
+	}
+	owner := commandVersion(ctx, execer, "dpkg-query", "-S", binary)
+	pkg, _, owned := strings.Cut(owner, ":")
+	if pkg = strings.TrimSpace(pkg); owned && pkg != "" {
+		status := commandVersion(ctx, execer, "dpkg-query", "-W", "-f=${db:Status-Status} ${Version}", pkg)
+		state, version, installed := strings.Cut(status, " ")
+		if installed && state == "installed" {
+			if version = claudeDesktopPackageVersion(version); version != "" {
+				return version
+			}
+		}
+	}
+	owner = commandVersion(ctx, execer, "pacman", "-Qo", binary)
+	_, owner, owned = strings.Cut(owner, " is owned by ")
+	if fields := strings.Fields(owner); owned && len(fields) == 2 {
+		return claudeDesktopPackageVersion(fields[1])
+	}
+	return ""
+}
+
+func claudeDesktopPackageVersion(version string) string {
+	if _, withoutEpoch, ok := strings.Cut(version, ":"); ok {
+		version = withoutEpoch
+	}
+	if revision := strings.LastIndex(version, "-"); revision >= 0 {
+		version = version[:revision]
+	}
+	return version
 }
 
 // ClaudeDesktopLocations names where Detect looks for the app, for error messages.
