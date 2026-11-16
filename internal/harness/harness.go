@@ -414,9 +414,8 @@ type Detection struct {
 // Install is one copy of a harness executable.
 type Install struct {
 	// Kind is how the harness was installed: InstallCLI or InstallDesktop.
-	Kind   string
-	Binary string
-	// Version is the executable's --version output, which is informational only.
+	Kind    string
+	Binary  string
 	Version string
 }
 
@@ -479,10 +478,14 @@ func detect(ctx context.Context, execer Execer, name string, candidates []candid
 }
 
 func version(ctx context.Context, execer Execer, bin string) string {
+	return commandVersion(ctx, execer, bin, "--version")
+}
+
+func commandVersion(ctx context.Context, execer Execer, name string, args ...string) string {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	var out bytes.Buffer
-	command := exec.CommandContext(ctx, bin, "--version")
+	command := exec.CommandContext(ctx, name, args...)
 	command.Stdout = &out
 	if execer.Exec(command) != nil {
 		return ""

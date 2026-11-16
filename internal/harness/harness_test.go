@@ -1407,6 +1407,13 @@ func TestLoadRecordsRenamesClaudeCode(t *testing.T) {
 	require.Equal(t, map[string]Record{Claude: {TeamID: "team-a"}}, file.Harnesses)
 }
 
+func TestClaudeDesktopVersion(t *testing.T) {
+	execer := &detectionExecer{binaries: map[string]any{"/usr/bin/plutil": "5.11492.5"}}
+	binary := "/Applications/Claude.app/Contents/MacOS/Claude"
+	require.Equal(t, "5.11492.5", claudeDesktopVersion(t.Context(), execer, binary))
+	require.Equal(t, []string{"/usr/bin/plutil"}, execer.executed)
+}
+
 func TestClaudeDesktopConfigFollowsClaudeCodeSettings(t *testing.T) {
 	// The app's files are in its own library when the settings are in Claude
 	// Code's default directory, else under the settings directory, so that

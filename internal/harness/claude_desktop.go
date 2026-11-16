@@ -2,6 +2,7 @@ package harness
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -66,6 +67,11 @@ func claudeDesktopBinaries() []string {
 		return []string{linuxDesktopClaude}
 	}
 	return nil
+}
+
+func claudeDesktopVersion(ctx context.Context, execer Execer, binary string) string {
+	plist := filepath.Join(filepath.Dir(filepath.Dir(binary)), "Info.plist")
+	return commandVersion(ctx, execer, "/usr/bin/plutil", "-extract", "CFBundleShortVersionString", "raw", plist)
 }
 
 // ClaudeDesktopLocations names where Detect looks for the app, for error messages.
