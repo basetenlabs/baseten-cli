@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -125,7 +126,14 @@ func (h claudeHarness) Detect(ctx context.Context, execer Execer, dir string) (D
 	}
 	for _, binary := range claudeDesktopBinaries() {
 		if bin, err := execer.LookPath(binary); err == nil {
-			d.Installs = append(d.Installs, Install{Kind: InstallDesktop, Binary: bin})
+			install := Install{Kind: InstallDesktop, Binary: bin}
+			switch runtime.GOOS {
+			case "darwin":
+				install.Version = claudeDesktopVersion(ctx, execer, bin)
+			case "linux":
+				install.Version = claudeDesktopLinuxVersion(ctx, execer, bin)
+			}
+			d.Installs = append(d.Installs, install)
 		}
 	}
 	d.Installed = len(d.Installs) > 0

@@ -1409,6 +1409,83 @@ func TestLoadRecordsRenamesClaudeCode(t *testing.T) {
 	require.Equal(t, map[string]Record{Claude: {TeamID: "team-a"}}, file.Harnesses)
 }
 
+type claudeDesktopPackageExecer struct {
+	fakeExecer
+	outputs  map[string]string
+	executed []string
+}
+
+func claudeDesktopPackageCommand(args ...string) string {
+	return strings.Join(args, " ")
+}
+
+func (e *claudeDesktopPackageExecer) Exec(command *exec.Cmd) error {
+	key := claudeDesktopPackageCommand(command.Args...)
+	e.executed = append(e.executed, key)
+	output, ok := e.outputs[key]
+	if !ok {
+		return exec.ErrNotFound
+	}
+	_, err := fmt.Fprint(command.Stdout, output)
+	return err
+}
+
+func TestClaudeDesktopVersion(t *testing.T) {
+	execer := &detectionExecer{binaries: map[string]any{"/usr/bin/plutil": "5.11492.5"}}
+	binary := "/Applications/Claude.app/Contents/MacOS/Claude"
+	require.Equal(t, "5.11492.5", claudeDesktopVersion(t.Context(), execer, binary))
+	require.Equal(t, []string{"/usr/bin/plutil"}, execer.executed)
+}
+
+func TestClaudeDesktopLinuxVersion(t *testing.T) {
+	rpm := claudeDesktopPackageCommand("rpm", "-qf", "--qf", "%{VERSION}-%{RELEASE}", linuxDesktopClaude)
+	dpkgOwner := claudeDesktopPackageCommand("dpkg-query", "-S", linuxDesktopClaude)
+	dpkgStatus := claudeDesktopPackageCommand("dpkg-query", "-W", "-f=${db:Status-Status} ${Version}", "claude-desktop")
+	pacman := claudeDesktopPackageCommand("pacman", "-Qo", linuxDesktopClaude)
+	for _, tc := range []struct {
+		name     string
+		outputs  map[string]string
+		want     string
+		executed []string
+	}{
+		{
+			name:     "rpm",
+			outputs:  map[string]string{rpm: "5.11492.5-1.fc43\n"},
+			want:     "5.11492.5",
+			executed: []string{rpm},
+		},
+		{
+			name: "dpkg",
+			outputs: map[string]string{
+				dpkgOwner:  "claude-desktop: /usr/bin/claude-desktop\n",
+				dpkgStatus: "installed 5.11492.5-3.3.17\n",
+			},
+			want:     "5.11492.5",
+			executed: []string{rpm, dpkgOwner, dpkgStatus},
+		},
+		{
+			name: "pacman after uninstalled dpkg package",
+			outputs: map[string]string{
+				dpkgOwner:  "claude-desktop: /usr/bin/claude-desktop\n",
+				dpkgStatus: "config-files 5.11492.5-1\n",
+				pacman:     "/usr/bin/claude-desktop is owned by claude-desktop 1:5.11492.5-2\n",
+			},
+			want:     "5.11492.5",
+			executed: []string{rpm, dpkgOwner, dpkgStatus, pacman},
+		},
+		{
+			name:     "unknown install",
+			executed: []string{rpm, dpkgOwner, pacman},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			execer := &claudeDesktopPackageExecer{outputs: tc.outputs}
+			require.Equal(t, tc.want, claudeDesktopLinuxVersion(t.Context(), execer, linuxDesktopClaude))
+			require.Equal(t, tc.executed, execer.executed)
+		})
+	}
+}
+
 func TestClaudeDesktopConfigFollowsClaudeCodeSettings(t *testing.T) {
 	// The app's files are in its own library when the settings are in Claude
 	// Code's default directory, else under the settings directory, so that
