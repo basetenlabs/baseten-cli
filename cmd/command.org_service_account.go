@@ -7,13 +7,13 @@ import (
 // commandOrgServiceAccount groups the `baseten org service-account` subcommands.
 var commandOrgServiceAccount = Command{
 	Name:    "service-account",
-	Summary: "Manage service accounts",
+	Summary: "Manage service accounts (PRE-RELEASE)",
 	Description: "Manage service accounts, the identities that workload identity federation " +
 		"tokens act as. Trust rules map a workload's tokens to a service account.",
 	Children: []Command{
 		{
 			Name:    "create",
-			Summary: "Create a service account",
+			Summary: "Create a service account (PRE-RELEASE)",
 			Description: "Create a service account. Omit --team for an organization account. " +
 				"--type takes the same access types as 'baseten org api-key create', plus " +
 				"workspace-invoke-model-apis. --model-id, --model-api-slug and, with workspace-invoke, " +
@@ -45,7 +45,7 @@ var commandOrgServiceAccount = Command{
 		},
 		{
 			Name:        "list",
-			Summary:     "List service accounts",
+			Summary:     "List service accounts (PRE-RELEASE)",
 			Description: "List the service accounts you can administer.",
 			Flags:       OrgServiceAccountListFlags{},
 			Output: &CommandOutput[OrgServiceAccountList]{
@@ -70,7 +70,7 @@ var commandOrgServiceAccount = Command{
 		},
 		{
 			Name:        "describe",
-			Summary:     "Describe a service account",
+			Summary:     "Describe a service account (PRE-RELEASE)",
 			Description: "Describe a service account by name or ID.",
 			Flags:       OrgServiceAccountDescribeFlags{},
 			Output: &CommandOutput[managementapi.ServiceAccount]{
@@ -89,7 +89,7 @@ var commandOrgServiceAccount = Command{
 		},
 		{
 			Name:    "update",
-			Summary: "Update a service account",
+			Summary: "Update a service account (PRE-RELEASE)",
 			Description: "Update a service account's name, description, access or whether it's disabled. Access is " +
 				"replaced as a whole: to change it, pass --type together with every --model-id, " +
 				"--environment and --model-api-slug the account should keep. The owning team " +
@@ -119,7 +119,7 @@ var commandOrgServiceAccount = Command{
 		},
 		{
 			Name:        "delete",
-			Summary:     "Delete a service account",
+			Summary:     "Delete a service account (PRE-RELEASE)",
 			Description: "Delete a service account by name or ID.",
 			Flags:       OrgServiceAccountDeleteFlags{},
 			Output: &CommandOutput[managementapi.DeletedServiceAccount]{

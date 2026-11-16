@@ -8,13 +8,13 @@ import (
 // subcommands.
 var commandOrgIdentityProvider = Command{
 	Name:    "identity-provider",
-	Summary: "Manage identity providers",
+	Summary: "Manage identity providers (PRE-RELEASE)",
 	Description: "Manage the OIDC identity providers whose tokens the organization accepts " +
 		"for workload identity federation.",
 	Children: []Command{
 		{
 			Name:    "list-predefined",
-			Summary: "List predefined identity providers",
+			Summary: "List predefined identity providers (PRE-RELEASE)",
 			Description: "List the identity providers Baseten supports. Pass a value from the " +
 				"KIND column to 'baseten org identity-provider create --kind'.",
 			Flags: OrgIdentityProviderListPredefinedFlags{},
@@ -36,7 +36,7 @@ var commandOrgIdentityProvider = Command{
 		},
 		{
 			Name:    "create",
-			Summary: "Add an identity provider",
+			Summary: "Add an identity provider (PRE-RELEASE)",
 			Description: "Add one of the identity providers Baseten supports. AWS IAM, Amazon EKS, " +
 				"Azure managed identity, and Azure Kubernetes Service also take your --issuer-url, " +
 				"in the format 'baseten org identity-provider list-predefined' shows.",
@@ -65,7 +65,7 @@ var commandOrgIdentityProvider = Command{
 		},
 		{
 			Name:        "list",
-			Summary:     "List identity providers",
+			Summary:     "List identity providers (PRE-RELEASE)",
 			Description: "List the organization's identity providers.",
 			Flags:       OrgIdentityProviderListFlags{},
 			Output: &CommandOutput[OrgIdentityProviderList]{
@@ -89,7 +89,7 @@ var commandOrgIdentityProvider = Command{
 		},
 		{
 			Name:    "describe",
-			Summary: "Describe an identity provider",
+			Summary: "Describe an identity provider (PRE-RELEASE)",
 			Description: "Describe an identity provider by name or ID. --name also accepts a " +
 				"predefined provider's value, such as github-actions.",
 			Flags: OrgIdentityProviderDescribeFlags{},
@@ -109,7 +109,7 @@ var commandOrgIdentityProvider = Command{
 		},
 		{
 			Name:        "update",
-			Summary:     "Update an identity provider",
+			Summary:     "Update an identity provider (PRE-RELEASE)",
 			Description: "Update an identity provider's name or description.",
 			Flags:       OrgIdentityProviderUpdateFlags{},
 			Output: &CommandOutput[managementapi.IdentityProvider]{
@@ -128,7 +128,7 @@ var commandOrgIdentityProvider = Command{
 		},
 		{
 			Name:        "delete",
-			Summary:     "Delete an identity provider",
+			Summary:     "Delete an identity provider (PRE-RELEASE)",
 			Description: "Delete an identity provider by name or ID.",
 			Flags:       OrgIdentityProviderDeleteFlags{},
 			Output: &CommandOutput[managementapi.DeletedIdentityProvider]{

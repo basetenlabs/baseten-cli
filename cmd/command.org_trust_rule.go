@@ -9,13 +9,13 @@ import (
 // commandOrgTrustRule groups the `baseten org trust-rule` subcommands.
 var commandOrgTrustRule = Command{
 	Name:    "trust-rule",
-	Summary: "Manage trust rules",
+	Summary: "Manage trust rules (PRE-RELEASE)",
 	Description: "Manage trust rules, which let an identity provider's tokens act as a " +
 		"service account when the token's audience matches and the rule's CEL condition holds.",
 	Children: []Command{
 		{
 			Name:    "create",
-			Summary: "Create a trust rule",
+			Summary: "Create a trust rule (PRE-RELEASE)",
 			Description: "Create a trust rule. A workload passes the rule's ID when it exchanges " +
 				"a token. The condition must pin a specific claims.sub in a top-level && clause; a " +
 				"GitHub Actions condition must also pin claims.repository_owner_id.",
@@ -47,7 +47,7 @@ var commandOrgTrustRule = Command{
 		},
 		{
 			Name:        "list",
-			Summary:     "List trust rules",
+			Summary:     "List trust rules (PRE-RELEASE)",
 			Description: "List the trust rules you can administer.",
 			Flags:       OrgTrustRuleListFlags{},
 			Output: &CommandOutput[OrgTrustRuleList]{
@@ -72,7 +72,7 @@ var commandOrgTrustRule = Command{
 		},
 		{
 			Name:        "describe",
-			Summary:     "Describe a trust rule",
+			Summary:     "Describe a trust rule (PRE-RELEASE)",
 			Description: "Describe a trust rule by name or ID.",
 			Flags:       OrgTrustRuleDescribeFlags{},
 			Output: &CommandOutput[managementapi.AccessTrustRule]{
@@ -91,7 +91,7 @@ var commandOrgTrustRule = Command{
 		},
 		{
 			Name:    "update",
-			Summary: "Update a trust rule",
+			Summary: "Update a trust rule (PRE-RELEASE)",
 			Description: "Update a trust rule. Only the fields passed change. The identity " +
 				"provider can't change.",
 			Flags: OrgTrustRuleUpdateFlags{},
@@ -118,7 +118,7 @@ var commandOrgTrustRule = Command{
 		},
 		{
 			Name:        "delete",
-			Summary:     "Delete a trust rule",
+			Summary:     "Delete a trust rule (PRE-RELEASE)",
 			Description: "Delete a trust rule by name or ID.",
 			Flags:       OrgTrustRuleDeleteFlags{},
 			Output: &CommandOutput[managementapi.DeletedAccessTrustRule]{

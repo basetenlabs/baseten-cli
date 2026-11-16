@@ -312,7 +312,7 @@ var commandOrg = Command{
 		},
 		{
 			Name:    "update",
-			Summary: "Update organization settings",
+			Summary: "Update organization settings (PRE-RELEASE)",
 			Description: "Update the organization's API key settings. Turning a setting off only " +
 				"stops new keys from being created; existing keys keep working.",
 			Flags: OrgUpdateFlags{},
