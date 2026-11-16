@@ -594,6 +594,7 @@ func (claudeHarness) Inspect(d Detection) (Status, error) {
 	}
 	if r.State == StateNotConfigured {
 		r.State, r.DefaultRoute, r.Routes = desktop.State, desktop.DefaultRoute, desktop.Routes
+		r.NameColumnOverride = desktop.NameColumnOverride
 	}
 	r.Managed = append(r.Managed, desktop.Managed...)
 	return r, nil
