@@ -25,6 +25,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/internal/auth"
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/harness"
+	"github.com/creack/pty"
 	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 )
