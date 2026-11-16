@@ -535,9 +535,12 @@ type Plan struct {
 	Path     string
 	Keys     []string
 	Replaced []string
-	Notes    []string
-	Managed  bool
-	Changed  bool
+	// Changes lists each setting the plan adds, updates or removes, without values.
+	// It is empty for plans that write a whole file.
+	Changes []Change
+	Notes   []string
+	Managed bool
+	Changed bool
 
 	file           *configFile
 	data           []byte
@@ -548,6 +551,23 @@ type Plan struct {
 	teardown   bool
 	remove     bool
 	files      []ownedFile
+	// paths are the settings Changes is computed over.
+	paths [][]string
+}
+
+// ChangeOp says what a plan does to one setting.
+type ChangeOp string
+
+const (
+	ChangeAdd    ChangeOp = "add"
+	ChangeUpdate ChangeOp = "update"
+	ChangeRemove ChangeOp = "remove"
+)
+
+// Change is one setting a plan adds, updates or removes.
+type Change struct {
+	Op  ChangeOp
+	Key string
 }
 
 type ownedFile struct {
@@ -686,7 +706,10 @@ func prepareSettings(path string, credentialPath []string, build func(map[string
 		if err := put(d, v.Path, v.Installed); err != nil {
 			return nil, err
 		}
-		p.Keys = append(p.Keys, pathKey(v.Path))
+		p.addKey(v.Path)
+	}
+	if len(credentialPath) > 0 && !slices.ContainsFunc(p.paths, func(k []string) bool { return slices.Equal(k, credentialPath) }) {
+		p.paths = append(p.paths, credentialPath)
 	}
 	// Keep the file's credential until ApplyPlans inserts the real one, so a
 	// preview only reports real changes.
@@ -719,7 +742,7 @@ func prepareTeardown(path string, scope func(map[string]any) [][]string) (*Plan,
 		if err := put(d, key, value{}); err != nil {
 			return nil, err
 		}
-		p.Keys = append(p.Keys, pathKey(key))
+		p.addKey(key)
 	}
 	p.Managed = len(p.Keys) > 0
 	return p, p.encode()
@@ -740,7 +763,13 @@ func prepareFiles(dir string, files []ownedFile) *Plan {
 	for _, f := range files {
 		p.Keys = append(p.Keys, f.name)
 		current, err := os.ReadFile(filepath.Join(dir, f.name))
-		p.Changed = p.Changed || err != nil || !bytes.Equal(current, f.data)
+		switch {
+		case err != nil:
+			p.Changes = append(p.Changes, Change{Op: ChangeAdd, Key: f.name})
+		case !bytes.Equal(current, f.data):
+			p.Changes = append(p.Changes, Change{Op: ChangeUpdate, Key: f.name})
+		}
+		p.Changed = len(p.Changes) > 0
 	}
 	return p
 }
@@ -750,6 +779,7 @@ func prepareFilesRemoval(dir string, files []ownedFile) *Plan {
 	for _, f := range files {
 		if _, err := os.Lstat(filepath.Join(dir, f.name)); err == nil {
 			p.Keys = append(p.Keys, f.name)
+			p.Changes = append(p.Changes, Change{Op: ChangeRemove, Key: f.name})
 			p.files = append(p.files, f)
 		}
 	}
@@ -798,7 +828,25 @@ func (p *Plan) encode() error {
 		}
 	}
 	p.Changed = !bytes.Equal(p.data, p.file.data)
+	p.Changes = nil
+	for _, path := range p.paths {
+		before, after := get(original, path), get(p.config, path)
+		switch {
+		case same(before, after):
+		case !before.Exists:
+			p.Changes = append(p.Changes, Change{Op: ChangeAdd, Key: pathKey(path)})
+		case !after.Exists:
+			p.Changes = append(p.Changes, Change{Op: ChangeRemove, Key: pathKey(path)})
+		default:
+			p.Changes = append(p.Changes, Change{Op: ChangeUpdate, Key: pathKey(path)})
+		}
+	}
 	return nil
+}
+
+func (p *Plan) addKey(path []string) {
+	p.Keys = append(p.Keys, pathKey(path))
+	p.paths = append(p.paths, path)
 }
 
 func (p *Plan) setCredential(token string) error {
