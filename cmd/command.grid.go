@@ -27,7 +27,7 @@ var commandGrid = Command{
 				"Setup sets Grid as the gateway in each harness's settings, replacing the model and endpoint settings it manages; 'baseten grid teardown' removes them but does not restore previous values. Running setup again refreshes them. Use --dry-run to see each change first. " +
 				"The Grid API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
-				"For Codex, setup also signs Codex out of ChatGPT and turns off ChatGPT login while Grid is set up, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
+				"For Codex, setup also signs Codex out of ChatGPT and turns off ChatGPT login while Grid is set up, unless you answer No or pass --keep-chatgpt-login, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those. " +
 				"For Claude Desktop, setup adds a config to the app's third-party config library and switches the app to third-party mode; quit and reopen the app to load it.\n\n" +
 				"Setup also adds a served-model indicator for intelligent routes in Claude Code, Pi, and OpenCode 2. " +
@@ -652,6 +652,7 @@ type GridSetupFlags struct {
 	FallbackRouteID      string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
 	HideServedModel      bool   `flag:"hide-served-model-indicator" desc:"Hide which model served each response on intelligent routes in the selected harnesses (a status line or Stop hook in Claude Code, an extension in Pi, a plugin in OpenCode 2), and remove it if setup added it before. When omitted, setup shows it, asking first when interactive."`
 	GitContext           bool   `flag:"git-context" desc:"Add the git origin URL, branch, and commit to each Claude Code, OpenCode, and Pi session's context, through a SessionStart hook, plugin, or extension. Without it, setup removes them if it added them before."`
+	KeepChatGPTLogin     bool   `flag:"keep-chatgpt-login" desc:"Keep Codex signed in to ChatGPT and its ChatGPT login enabled. A ChatGPT workspace can then switch new Codex threads off Grid's model. When omitted, setup signs Codex out, asking first when interactive and signed in."`
 	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
 	DryRun               bool   `flag:"dry-run" desc:"Show the changes without applying them or creating an API key."`
 	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`

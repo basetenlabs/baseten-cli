@@ -367,7 +367,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
 		noOpenCodeServedModel := target.record.NoOpenCodeServedModel || !harness.HasOpenCode2(target.detection)
-		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, Installs: target.detection.Installs, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel, GitContext: target.record.GitContext})
+		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, Installs: target.detection.Installs, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel, GitContext: target.record.GitContext, KeepChatGPTLogin: target.record.KeepChatGPTLogin})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -449,6 +449,14 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 		}
 	}
 	noServedModel := func(name string) bool { return !servedModel && (passed || slices.Contains(offered, name)) }
+	keepChatGPT := f.KeepChatGPTLogin
+	if i := slices.IndexFunc(selected, func(s gridSelectedHarness) bool { return s.Name() == harness.Codex }); i >= 0 &&
+		!ctx.Command.Flags().Changed("keep-chatgpt-login") && !f.Yes && !f.DryRun && ctx.IsInteractive() &&
+		harness.CodexLoggedIn(ctx, ctx.Execer(), filepath.Dir(selected[i].detection.Path)) {
+		if keepChatGPT, err = gridAskKeepChatGPT(ctx); err != nil {
+			return err
+		}
+	}
 	targets := make([]gridHarnessTarget, len(selected))
 	for i := range selected {
 		record := harness.Record{
@@ -459,6 +467,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 			NoPiServedModel:       noServedModel(harness.Pi),
 			NoOpenCodeServedModel: noServedModel(harness.OpenCode),
 			GitContext:            f.GitContext,
+			KeepChatGPTLogin:      keepChatGPT && selected[i].Name() == harness.Codex,
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
 			// A harness that cannot run the helper keeps a key.
@@ -555,8 +564,8 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	}
 	replaced = slices.DeleteFunc(replaced, func(key string) bool { return key == token })
 	for i := range targets {
-		if targets[i].Name() == harness.Codex {
-			gridHarnessLogoutCodex(ctx, filepath.Dir(targets[i].detection.Path), f.Yes)
+		if targets[i].Name() == harness.Codex && !targets[i].record.KeepChatGPTLogin {
+			gridHarnessLogoutCodex(ctx, filepath.Dir(targets[i].detection.Path))
 		}
 	}
 	if err := harness.ApplyPlans(plans, token); err != nil {
@@ -829,9 +838,9 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 				return err
 			}
 		}
-		for j := range run.targets {
-			if run.targets[j].Name() == harness.Codex {
-				gridHarnessLogoutCodex(ctx, filepath.Dir(run.targets[j].detection.Path), f.Yes)
+		for _, t := range run.targets {
+			if t.Name() == harness.Codex && !t.record.KeepChatGPTLogin {
+				gridHarnessLogoutCodex(ctx, filepath.Dir(t.detection.Path))
 			}
 		}
 		if err := harness.ApplyPlans(run.plans, token); err != nil {
@@ -974,16 +983,13 @@ func gridHarnessSetupNotice(ctx *CommandContext, plans []*harness.Plan) {
 
 const gridDryRunNotice = "Dry run: nothing was changed."
 
-func gridHarnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
+// gridHarnessLogoutCodex signs Codex out of ChatGPT now, rather than at its next
+// start once forced_login_method takes effect.
+func gridHarnessLogoutCodex(ctx *CommandContext, dir string) {
 	if !harness.CodexLoggedIn(ctx, ctx.Execer(), dir) {
 		return
 	}
-	hint := "Run `codex logout` and delete `" + gridHarnessDisplayPath(harness.CodexCloudConfigPath(dir)) + "` to stop the workspace default model from overriding the Baseten route."
-	ctx.LogLine("Signing codex out of OpenAI/ChatGPT and disabling ChatGPT login while the Baseten harness is configured.")
-	if !yes && ctx.ConfirmYesNo("Sign codex out of OpenAI/ChatGPT now?") != nil {
-		ctx.LogLine(hint)
-		return
-	}
+	hint := "Run `codex logout` and delete `" + gridHarnessDisplayPath(harness.CodexCloudConfigPath(dir)) + "` to stop the workspace default model from overriding Grid's model."
 	if err := harness.CodexLogout(ctx, ctx.Execer(), dir); err != nil {
 		auth := filepath.Join(dir, "auth.json")
 		if os.Remove(auth) != nil {
@@ -998,7 +1004,18 @@ func gridHarnessLogoutCodex(ctx *CommandContext, dir string, yes bool) {
 		ctx.LogLine(hint)
 		return
 	}
-	ctx.LogLine("Signed codex out of OpenAI/ChatGPT and cleared the cached workspace policy.")
+	ctx.LogLine("Signed Codex out of ChatGPT.")
+}
+
+// gridAskKeepChatGPT asks whether to leave Codex signed in to ChatGPT.
+func gridAskKeepChatGPT(ctx *CommandContext) (bool, error) {
+	signOut := true
+	err := ctx.RunPrompt(huh.NewSelect[bool]().
+		Title("Sign Codex out of ChatGPT?").
+		Description("A ChatGPT workspace can switch new Codex threads off Grid's model.").
+		Options(huh.NewOption("Yes", true), huh.NewOption("No, keep ChatGPT", false)).
+		Value(&signOut))
+	return !signOut, err
 }
 
 const gridHarnessCodexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done so Codex loads the changes."
@@ -1299,7 +1316,11 @@ func commandGridTeardown(ctx *CommandContext, f *cmd.GridTeardownFlags) error {
 	for _, choice := range selected {
 		if choice.Name() == harness.Codex && slices.Contains(names, harness.Codex) {
 			gridHarnessRestartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)
-			ctx.LogLine("To use ChatGPT in Codex again, run `codex login`.")
+			if slices.ContainsFunc(plans, func(p *harness.Plan) bool {
+				return p.Harness == harness.Codex && slices.Contains(p.Keys, "forced_login_method")
+			}) {
+				ctx.LogLine("To use ChatGPT in Codex again, run `codex login`.")
+			}
 		}
 	}
 	if ctx.JSON {

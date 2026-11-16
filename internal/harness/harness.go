@@ -120,6 +120,7 @@ type PrepareOptions struct {
 	NoPiServedModel       bool
 	NoOpenCodeServedModel bool
 	GitContext            bool
+	KeepChatGPTLogin      bool
 }
 
 // Helper is the credential command a harness runs instead of storing a key:
