@@ -437,10 +437,10 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	passed := ctx.Command.Flags().Changed("hide-served-model-indicator")
 	servedModel := !f.HideServedModel
 	var offered, labels []string
-	for _, h := range []struct{ name, label string }{{harness.Claude, "Claude Code"}, {harness.Pi, "Pi"}, {harness.OpenCode, "OpenCode"}} {
-		if gridOffersServedModel(selected, listed, h.name) {
-			offered = append(offered, h.name)
-			labels = append(labels, h.label)
+	for _, name := range []string{harness.Claude, harness.Pi, harness.OpenCode} {
+		if gridOffersServedModel(selected, listed, name) {
+			offered = append(offered, name)
+			labels = append(labels, gridHarnessLabel(name))
 		}
 	}
 	if len(labels) > 0 && !passed && !f.Yes && !f.DryRun && ctx.IsInteractive() {
@@ -567,11 +567,11 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if err := harness.ApplyPlans(plans, token); err != nil {
 		return err
 	}
-	names := make([]string, len(targets))
+	setUp := make([]gridSelectedHarness, len(targets))
 	for i, t := range targets {
-		names[i] = t.Name()
+		setUp[i] = t.gridSelectedHarness
 	}
-	gridHarnessRestartNotice(ctx, "Grid is set up for "+strings.Join(names, ", ")+".", targets)
+	gridHarnessRestartNotice(ctx, "Grid is set up.", setUp)
 	for i := range targets {
 		t := &targets[i]
 		if t.Name() == harness.Codex && !gridHarnessRestartCodexDaemon(ctx, filepath.Dir(t.detection.Path), f.Yes) {
@@ -601,19 +601,45 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	return nil
 }
 
-// gridHarnessRestartNotice follows summary with what to restart. Claude Desktop
-// reads its config only at launch, so it needs a full quit.
-func gridHarnessRestartNotice(ctx *CommandContext, summary string, targets []gridHarnessTarget) {
-	if ctx.JSON {
+// gridHarnessRestartNotice follows summary with the apps to restart, naming
+// Claude Desktop separately since the claude harness configures it too.
+func gridHarnessRestartNotice(ctx *CommandContext, summary string, harnesses []gridSelectedHarness) {
+	if ctx.JSON || len(harnesses) == 0 {
 		return
 	}
-	restart := "Restart the harnesses to load the changes"
-	if slices.ContainsFunc(targets, func(t gridHarnessTarget) bool {
-		return t.Name() == harness.Claude && harness.HasClaudeDesktop(t.detection.Installs)
-	}) {
-		restart += "; quit and reopen Claude Desktop"
+	var apps []string
+	for _, h := range harnesses {
+		apps = append(apps, gridHarnessLabel(h.Name()))
+		if h.Name() == harness.Claude && harness.HasClaudeDesktop(h.detection.Installs) {
+			apps = append(apps, "Claude Desktop")
+		}
 	}
-	ctx.LogLine(summary + " " + restart + ".")
+	ctx.LogLine(summary + " Restart " + gridJoinAnd(apps) + " to load the changes.")
+}
+
+// gridHarnessLabel is the product name of a harness, for prose.
+func gridHarnessLabel(name string) string {
+	switch name {
+	case harness.Claude:
+		return "Claude Code"
+	case harness.Codex:
+		return "Codex"
+	case harness.OpenCode:
+		return "OpenCode"
+	case harness.Pi:
+		return "Pi"
+	default:
+		panic("unknown harness " + name)
+	}
+}
+
+// gridJoinAnd joins items as "a", "a and b", or "a, b and c".
+func gridJoinAnd(items []string) string {
+	if len(items) < 2 {
+		return strings.Join(items, "")
+	}
+	last := len(items) - 1
+	return strings.Join(items[:last], ", ") + " and " + items[last]
 }
 
 func gridRequireGit(ctx *CommandContext, gitContext bool) error {
@@ -643,11 +669,7 @@ func gridOffersServedModel(selected []gridSelectedHarness, listed []managementap
 }
 
 func gridAskServedModel(ctx *CommandContext, harnessLabels []string) (bool, error) {
-	last := len(harnessLabels) - 1
-	harnessLabel := harnessLabels[last]
-	if last > 0 {
-		harnessLabel = strings.Join(harnessLabels[:last], ", ") + " and " + harnessLabel
-	}
+	harnessLabel := gridJoinAnd(harnessLabels)
 	show := true
 	err := ctx.RunPrompt(huh.NewSelect[bool]().
 		Title("Show which model served each response on intelligent routes in "+harnessLabel+"?").
@@ -825,7 +847,13 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 			return err
 		}
 	}
-	gridHarnessRestartNotice(ctx, "Harness settings updated.", targets)
+	var updated []gridSelectedHarness
+	for _, t := range targets {
+		if slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Harness == t.Name() && p.Changed }) {
+			updated = append(updated, t.gridSelectedHarness)
+		}
+	}
+	gridHarnessRestartNotice(ctx, "Harness settings updated.", updated)
 	for i := range targets {
 		name := targets[i].Name()
 		plansChanged := slices.ContainsFunc(plans, func(p *harness.Plan) bool { return p.Harness == name && p.Changed })
@@ -991,7 +1019,7 @@ func gridHarnessLogoutCodex(ctx *CommandContext, dir string) {
 		ctx.LogLine(hint)
 		return
 	}
-	ctx.LogLine("Signed Codex out of ChatGPT; ChatGPT login stays off until baseten grid teardown.")
+	ctx.VerboseLogLine("Signed Codex out of ChatGPT.")
 }
 
 const gridHarnessCodexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done so Codex loads the changes."
@@ -1286,9 +1314,9 @@ func commandGridTeardown(ctx *CommandContext, f *cmd.GridTeardownFlags) error {
 	if err := gridForgetHarnessRecords(names); err != nil {
 		return err
 	}
-	if !ctx.JSON {
-		ctx.LogLine("Grid is removed from " + list + ". Restart the harnesses to load the changes.")
-	}
+	gridHarnessRestartNotice(ctx, "Grid is removed.", slices.DeleteFunc(slices.Clone(selected), func(h gridSelectedHarness) bool {
+		return !slices.Contains(names, h.Name())
+	}))
 	for _, choice := range selected {
 		if choice.Name() == harness.Codex && slices.Contains(names, harness.Codex) {
 			gridHarnessRestartCodexDaemon(ctx, filepath.Dir(choice.detection.Path), f.Yes)

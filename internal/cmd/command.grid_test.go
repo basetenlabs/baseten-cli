@@ -379,7 +379,7 @@ func Test_Grid_Setup_Status_Teardown_ClaudeDesktop(t *testing.T) {
 	library := filepath.Join(dir, "Claude-3p", "configLibrary")
 	appConfig := filepath.Join(dir, "Claude-3p", "claude_desktop_config.json")
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
-	h.Require.Contains(h.Stderr.String(), "Grid is set up for claude. Restart the harnesses to load the changes; quit and reopen Claude Desktop.\n")
+	h.Require.Contains(h.Stderr.String(), "Grid is set up. Restart Claude Code and Claude Desktop to load the changes.\n")
 	configs, err := filepath.Glob(filepath.Join(library, "*-*.json"))
 	h.Require.NoError(err)
 	h.Require.Len(configs, 1, "one Baseten config in the library")
@@ -417,7 +417,7 @@ func Test_Grid_Setup_TextSummary(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
 	h.Require.Empty(h.Stdout.String())
 	h.Require.Contains(h.Stderr.String(), "not the baseten on your PATH ("+filepath.Join(bin, "baseten")+")")
-	h.Require.Contains(h.Stderr.String(), "Grid is set up for claude. Restart the harnesses to load the changes.\n")
+	h.Require.Contains(h.Stderr.String(), "Grid is set up. Restart Claude Code to load the changes.\n")
 	h.Require.Contains(h.Stderr.String(), "Undo with: baseten grid teardown --harness claude --config-dir '"+dir+"'", "a custom --config-dir needs its own teardown command")
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes", "--verbose"))
 	for _, want := range []string{"Team: Engineering", "Primary route     acme/primary", "Background route  deepseek-ai/DeepSeek-V4.1-Flash", "Already configured"} {
@@ -3532,7 +3532,7 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
 			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--yes", "--verbose"))
 			h.Require.Equal(tc.restarts, tc.execer.restarts)
-			h.Require.Contains(h.Stderr.String(), "Grid is set up for codex. Restart the harnesses to load the changes.")
+			h.Require.Contains(h.Stderr.String(), "Grid is set up. Restart Codex to load the changes.\n")
 			for _, want := range tc.stderr {
 				h.Require.Contains(h.Stderr.String(), want)
 			}
@@ -3545,7 +3545,7 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 
 func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 	skipUnlessSupported(t)
-	signedOut := "Signed Codex out of ChatGPT; ChatGPT login stays off until baseten grid teardown."
+	signedOut := "Signed Codex out of ChatGPT."
 	notice := "Signs Codex out of ChatGPT while Grid is set up."
 	hint := "Run `codex logout` and delete `"
 	for name, tc := range map[string]struct {
@@ -3572,7 +3572,7 @@ func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 					h.Require.NoError(os.WriteFile(path, []byte("{}"), 0o600))
 				}
 			}
-			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--yes"))
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--yes", "--verbose"))
 			h.Require.Equal(tc.logouts, tc.execer.logouts)
 			h.Require.Equal(1, tc.execer.probes)
 			h.Require.False(tc.execer.forcedAtProbe, "login status must be probed before forced_login_method is written")
@@ -3621,7 +3621,7 @@ func Test_Grid_Teardown_RestartsCodexDaemon(t *testing.T) {
 			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
 			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "codex", "--config-dir", dir, "--yes", "--verbose"))
 			h.Require.Equal(tc.restarts, tc.execer.restarts)
-			h.Require.Contains(h.Stderr.String(), "Grid is removed from codex.")
+			h.Require.Contains(h.Stderr.String(), "Grid is removed. Restart Codex to load the changes.\n")
 			h.Require.Contains(h.Stderr.String(), signBackIn)
 			for _, want := range tc.stderr {
 				h.Require.Contains(h.Stderr.String(), want)
