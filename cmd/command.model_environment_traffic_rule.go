@@ -173,7 +173,7 @@ type ModelEnvironmentTrafficRuleCreateFlags struct {
 	TargetDeploymentID          string             `flag:"target-deployment-id" desc:"ID of the target deployment." oneof:"target"`
 	PercentTraffic              int                `flag:"percent-traffic" desc:"Percentage of the environment's traffic to shadow." required:"true"`
 	ExpiresAt                   time.Time          `flag:"expires-at" desc:"When the rule stops, ISO 8601 (for example 2026-10-08T18:00), at most 7 days out. Values without a timezone designator are read in the local timezone." required:"true"`
-	SamplingMode                string             `flag:"sampling-mode" desc:"How requests are picked for shadowing. random picks each request independently. user-session keeps a whole session together." enum:"random,user-session" required:"true"`
+	SamplingMode                string             `flag:"sampling-mode" desc:"How requests are picked for shadowing. random picks each request independently. user-session keeps a whole session together." enum:"random,user-session" default:"user-session"`
 	PropagateClientCancellation OptionalFlag[bool] `flag:"propagate-client-cancellation" desc:"Whether a shadow request is cancelled when the original client disconnects." required:"true"`
 }
 

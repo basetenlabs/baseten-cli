@@ -112,14 +112,14 @@ func Test_Model_Environment_TrafficRule_Create_TargetDeployment(t *testing.T) {
 	h.Require.NoError(h.Execute("model", "environment", "traffic-rule", "create",
 		"--model-id", "m-1", "--environment", "production",
 		"--type", "shadow", "--target-deployment-id", "d-2", "--percent-traffic", "10",
-		"--expires-at", "2026-10-08T18:00:00Z", "--sampling-mode", "random",
+		"--expires-at", "2026-10-08T18:00:00Z",
 		"--propagate-client-cancellation", "false"))
 	h.Require.Contains(h.Stderr.String(), "Created traffic rule")
 
 	body := h.MockManagementAPI().FindCall("PATCH", "/v1/models/m-1/environments/production").BodyJSON(h.T)
 	rule := body["traffic_routing_settings"].(map[string]any)["rules"].([]any)[0].(map[string]any)
 	h.Require.Equal([]any{map[string]any{"deployment_id": "d-2"}}, rule["targets"])
-	h.Require.Equal("RANDOM", rule["sampling_mode"])
+	h.Require.Equal("USER_SESSION", rule["sampling_mode"])
 	h.Require.Equal(false, rule["propagate_client_cancellation"])
 }
 
