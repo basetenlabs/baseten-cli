@@ -3554,8 +3554,7 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 
 func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 	skipUnlessSupported(t)
-	signingOut := "Signing codex out of OpenAI/ChatGPT"
-	signedOut := "Signed codex out of OpenAI/ChatGPT and cleared the cached workspace policy."
+	signedOut := "Signed Codex out of ChatGPT."
 	hint := "Run `codex logout` and delete `"
 	for name, tc := range map[string]struct {
 		execer                             *codexDaemonHarnessExecer
@@ -3564,11 +3563,11 @@ func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 		stderr                             []string
 		absent                             []string
 	}{
-		"not logged in":        {&codexDaemonHarnessExecer{}, true, true, true, true, 0, nil, []string{signingOut, "codex logout"}},
-		"api key login":        {&codexDaemonHarnessExecer{apiKey: true}, true, true, true, false, 1, []string{signingOut, signedOut}, []string{"warning"}},
-		"logged in":            {&codexDaemonHarnessExecer{loggedIn: true}, true, true, false, false, 1, []string{signingOut, signedOut}, []string{"warning"}},
-		"logout fails":         {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, true, false, true, false, 1, []string{signingOut, "codex logout failed", "removed", signedOut}, []string{hint}},
-		"logout fails no file": {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, false, false, true, true, 1, []string{"codex logout failed", hint, "cloud-config-bundle-cache.json` to stop the workspace default model from overriding the Baseten route."}, []string{"removed", signedOut}},
+		"not logged in":        {&codexDaemonHarnessExecer{}, true, true, true, true, 0, nil, []string{signedOut, "codex logout"}},
+		"api key login":        {&codexDaemonHarnessExecer{apiKey: true}, true, true, true, false, 1, []string{signedOut}, []string{"warning"}},
+		"logged in":            {&codexDaemonHarnessExecer{loggedIn: true}, true, true, false, false, 1, []string{signedOut}, []string{"warning"}},
+		"logout fails":         {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, true, false, true, false, 1, []string{"codex logout failed", "removed", signedOut}, []string{hint}},
+		"logout fails no file": {&codexDaemonHarnessExecer{loggedIn: true, logoutFails: true}, false, false, true, true, 1, []string{"codex logout failed", hint, "cloud-config-bundle-cache.json` to stop the workspace default model from overriding Grid's model."}, []string{"removed", signedOut}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _ := gridAPI(t, "")
@@ -3598,6 +3597,46 @@ func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_Grid_Setup_KeepChatGPTLogin(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := gridAPI(t, "")
+	execer := &codexDaemonHarnessExecer{loggedIn: true}
+	h.Context = internalcmd.WithExecer(h.Context, execer)
+	base := h.Context
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config.toml")
+	setup := []string{"grid", "setup", "--harness", "codex", "--config-dir", dir}
+	forced := func() any { return readHarnessSettings(t, "codex", config)["forced_login_method"] }
+	kept := func() bool { return harnessRecordFile(t).Harnesses["codex"].KeepChatGPTLogin }
+
+	h.Context = internalcmd.WithPromptAnswers(base, "2", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Contains(h.Stderr.String(), "Sign Codex out of ChatGPT?")
+	h.Require.Equal(0, execer.logouts, "answering no keeps ChatGPT signed in")
+	h.Require.Nil(forced(), "and leaves ChatGPT login enabled")
+	h.Require.True(kept())
+
+	h.Context = base
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Equal(0, execer.logouts, "sync replays the choice")
+	h.Require.Nil(forced())
+
+	h.Context = internalcmd.WithPromptAnswers(base, "1", "1")
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal(1, execer.logouts)
+	h.Require.Equal("api", forced())
+	h.Require.False(kept())
+
+	h.Context = base
+	h.Require.NoError(h.Execute(append(setup, "--yes", "--keep-chatgpt-login")...))
+	h.Require.NotContains(h.Stderr.String(), "Sign Codex out of ChatGPT?", "the flag answers the question")
+	h.Require.Equal(1, execer.logouts)
+	h.Require.Nil(forced(), "keeping ChatGPT removes the login restriction setup added before")
+
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "codex", "--config-dir", dir, "--yes"))
+	h.Require.NotContains(h.Stderr.String(), "codex login", "ChatGPT was never turned off")
 }
 
 func Test_Grid_Teardown_RestartsCodexDaemon(t *testing.T) {
