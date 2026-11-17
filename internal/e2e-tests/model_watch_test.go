@@ -167,9 +167,11 @@ func newWatchTest(t *testing.T) *watchTest {
 	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
 	require.NotEmpty(t, remoteURL, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
 
-	t.Setenv("BASETEN_API_KEY", apiKey)
-	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
-	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
+	setTestEnv(t, map[string]string{
+		"BASETEN_API_KEY":    apiKey,
+		"BASETEN_REMOTE_URL": remoteURL,
+		"BASETEN_CONFIG_DIR": t.TempDir(),
+	})
 
 	w := &watchTest{
 		t:         t,
@@ -285,6 +287,7 @@ func (w *watchTest) startWatch(args ...string) *bgWatch {
 	go func() {
 		done <- cliRun(ctx, cliRunOptions{
 			Args: args,
+			Env:  testEnvOverlay(),
 			// Tee to the real streams so the watch's progress is visible live
 			// (e.g. piped to a logfile) while stderr is still scannable for the
 			// ready marker.

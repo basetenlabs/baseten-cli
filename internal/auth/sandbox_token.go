@@ -45,10 +45,13 @@ type SandboxToken struct {
 // returned: a cache that cannot be read is a miss.
 func (s *Store) GetSandboxToken(ctx context.Context, scope SandboxTokenScope) (*SandboxToken, error) {
 	var secret string
-	keyringErr := keyringDo(ctx, func() (err error) {
-		secret, err = keyring.Get(sandboxTokenService, scope.account())
-		return err
-	})
+	keyringErr := errKeyringSkipped
+	if !s.insecureStorage {
+		keyringErr = keyringDo(ctx, func() (err error) {
+			secret, err = keyring.Get(sandboxTokenService, scope.account())
+			return err
+		})
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
@@ -99,7 +102,9 @@ func (s *Store) ClearSandboxToken(ctx context.Context, scope SandboxTokenScope) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_ = keyringDo(ctx, func() error { return keyring.Delete(sandboxTokenService, scope.account()) })
+	if !s.insecureStorage {
+		_ = keyringDo(ctx, func() error { return keyring.Delete(sandboxTokenService, scope.account()) })
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}

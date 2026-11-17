@@ -686,6 +686,57 @@ func Test_Grid_Setup_KeyCreationFailureCanBeRetried(t *testing.T) {
 	h.Require.FileExists(harnessSettingsFile("opencode", dir))
 }
 
+func Test_Grid_Setup_RetriesKeyCreationOnServerError(t *testing.T) {
+	skipUnlessSupported(t)
+	for _, tc := range []struct {
+		name       string
+		failures   int
+		wantPosts  int
+		wantDelays []time.Duration
+		wantErr    bool
+	}{
+		{name: "succeeds on the second post", failures: 1, wantPosts: 2, wantDelays: []time.Duration{1500 * time.Millisecond}},
+		{name: "succeeds on the third post", failures: 2, wantPosts: 3, wantDelays: []time.Duration{1500 * time.Millisecond, 3 * time.Second}},
+		{name: "fails on the third post", failures: 3, wantPosts: 3, wantDelays: []time.Duration{1500 * time.Millisecond, 3 * time.Second}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, api := fakeGridAPI(t)
+			var delays []time.Duration
+			h.Context = internalcmd.WithSleep(h.Context, func(_ context.Context, d time.Duration) error {
+				delays = append(delays, d)
+				return nil
+			})
+			posts := 0
+			api.SetRouteFunc("POST", "/v1/teams/team-a/api_keys", func(w http.ResponseWriter, _ *http.Request) {
+				posts++
+				status := http.StatusInternalServerError
+				payload := map[string]string{"message": "deadlock detected"}
+				if posts > tc.failures {
+					status = http.StatusOK
+					payload = map[string]string{"api_key": "secret-team-a"}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(payload)
+			})
+			dir := t.TempDir()
+			err := h.Execute("grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes")
+			h.Require.Equal(tc.wantPosts, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+			h.Require.Equal(tc.wantDelays, delays)
+			if tc.wantErr {
+				h.Require.Error(err)
+				h.Require.Contains(h.Stderr.String(), "creating Grid API key")
+				h.Require.NoFileExists(harnessSettingsFile("opencode", dir))
+				return
+			}
+			h.Require.NoError(err)
+			settings, err := os.ReadFile(harnessSettingsFile("opencode", dir))
+			h.Require.NoError(err)
+			h.Require.Contains(string(settings), "secret-team-a")
+		})
+	}
+}
+
 func Test_Grid_Setup_KeyringUnavailableStoresPlaintext(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
@@ -4418,10 +4469,10 @@ func Test_Grid_Sync_UseSessionCredential(t *testing.T) {
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude", dir)
-	// An ephemeral session installs its own key without the flag.
+	// An ephemeral session installs its own key with the flag.
 	t.Setenv("BASETEN_API_KEY", "test-key")
 	h.Require.NoError(configDirStore(t).RemoveProfile(t.Context(), "alice"))
-	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--use-session-credential", "--yes"))
 	h.Require.Equal(harness.CredentialSourceSession, harnessRecordFile(t).Harnesses["claude"].CredentialSource)
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 
@@ -4442,6 +4493,13 @@ func Test_Grid_Sync_UseSessionCredential(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "set BASETEN_API_KEY or use an API-key profile")
 	h.Require.Contains(h.Stderr.String(), "--use-session-credential")
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+
+	// Without the flag an ephemeral session creates a grid key instead.
+	t.Setenv("BASETEN_API_KEY", "test-key")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
+	h.Require.Equal(harness.CredentialSourceGridKey, harnessRecordFile(t).Harnesses["claude"].CredentialSource)
+	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	h.Require.Equal("secret-team-a", readHarnessSettings(t, "claude", path)["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
 }
 
 func Test_Grid_Sync_MixedCredentialSources(t *testing.T) {

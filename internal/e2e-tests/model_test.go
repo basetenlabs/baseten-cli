@@ -69,9 +69,11 @@ func newLifecycle(t *testing.T) *lifecycle {
 	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
 	require.NotEmpty(t, remoteURL, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
 
-	t.Setenv("BASETEN_API_KEY", apiKey)
-	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
-	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
+	setTestEnv(t, map[string]string{
+		"BASETEN_API_KEY":    apiKey,
+		"BASETEN_REMOTE_URL": remoteURL,
+		"BASETEN_CONFIG_DIR": t.TempDir(),
+	})
 
 	l := &lifecycle{
 		modelName: fmt.Sprintf("cli-e2e-%s", randomSuffix(t)),
@@ -736,22 +738,16 @@ func (l *lifecycle) SSH(t *testing.T) {
 		t.Skip("ssh client not available")
 	}
 
-	// The generated config invokes `baseten ssh sign|proxy` via the ssh client,
-	// so the in-process harness cannot serve it: build a real binary from the
-	// current source and point the config's baked command at it via
-	// BASETEN_SSH_BINARY_OVERRIDE.
-	binPath := filepath.Join(t.TempDir(), "baseten")
-	build := exec.Command("go", "build", "-o", binPath, "./cmd/baseten")
-	build.Dir = repoRoot(t)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building baseten binary: %v\n%s", err, out)
-	}
+	binPath, err := cliBinary()
+	require.NoError(t, err)
 
 	// Isolate the keypair/cert/JWT cache and the ssh config in temp locations.
 	configPath := filepath.Join(t.TempDir(), "config")
-	t.Setenv("BASETEN_SSH_DIR", t.TempDir())
-	t.Setenv("BASETEN_SSH_CONFIG_PATH", configPath)
-	t.Setenv("BASETEN_SSH_BINARY_OVERRIDE", binPath)
+	setTestEnv(t, map[string]string{
+		"BASETEN_SSH_DIR":             t.TempDir(),
+		"BASETEN_SSH_CONFIG_PATH":     configPath,
+		"BASETEN_SSH_BINARY_OVERRIDE": binPath,
+	})
 
 	mustCLI(t, "ssh", "setup")
 
@@ -764,6 +760,7 @@ func (l *lifecycle) SSH(t *testing.T) {
 		c := exec.CommandContext(ctx, "ssh", "-F", configPath,
 			"-o", "BatchMode=yes", "-o", "ConnectTimeout=30",
 			host, "cat", "/app/model/model.py")
+		c.Env = environWith(testEnvOverlay())
 		c.Stdout, c.Stderr = &stdout, &stderr
 		if err := c.Run(); err != nil {
 			return "", fmt.Errorf("%w\nstderr: %s", err, stderr.String())

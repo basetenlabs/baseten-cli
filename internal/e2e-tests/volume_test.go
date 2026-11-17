@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -69,9 +70,11 @@ func testE2EVolumeTags(t *testing.T) {
 	require.NotEmpty(t, remoteURL,
 		"BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
 
-	t.Setenv("BASETEN_API_KEY", apiKey)
-	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
-	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
+	setTestEnv(t, map[string]string{
+		"BASETEN_API_KEY":    apiKey,
+		"BASETEN_REMOTE_URL": remoteURL,
+		"BASETEN_CONFIG_DIR": t.TempDir(),
+	})
 
 	suffix := randomSuffix(t)
 	v := &volumeTagsLifecycle{
@@ -314,9 +317,11 @@ func newVolumeSyncLifecycle(t *testing.T) *volumeSyncLifecycle {
 	require.NotEmpty(t, remoteURL,
 		"BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
 
-	t.Setenv("BASETEN_API_KEY", apiKey)
-	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
-	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
+	setTestEnv(t, map[string]string{
+		"BASETEN_API_KEY":    apiKey,
+		"BASETEN_REMOTE_URL": remoteURL,
+		"BASETEN_CONFIG_DIR": t.TempDir(),
+	})
 
 	suffix := randomSuffix(t)
 	s := &volumeSyncLifecycle{
@@ -553,6 +558,9 @@ type volumeEntryList struct {
 }
 
 func newVolumeLifecycle(t *testing.T) *volumeLifecycle {
+	if runtime.GOOS == "windows" {
+		t.Skip("volume token exchange misses its deadline on windows runners")
+	}
 	apiKey := os.Getenv("BASETEN_E2E_TEST_API_KEY")
 	if apiKey == "" {
 		t.Skip("BASETEN_E2E_TEST_API_KEY not set")
@@ -560,9 +568,11 @@ func newVolumeLifecycle(t *testing.T) *volumeLifecycle {
 	remoteURL := os.Getenv("BASETEN_E2E_TEST_REMOTE_URL")
 	require.NotEmpty(t, remoteURL, "BASETEN_E2E_TEST_API_KEY is set but BASETEN_E2E_TEST_REMOTE_URL is missing")
 
-	t.Setenv("BASETEN_API_KEY", apiKey)
-	t.Setenv("BASETEN_REMOTE_URL", remoteURL)
-	t.Setenv("BASETEN_CONFIG_DIR", t.TempDir())
+	setTestEnv(t, map[string]string{
+		"BASETEN_API_KEY":    apiKey,
+		"BASETEN_REMOTE_URL": remoteURL,
+		"BASETEN_CONFIG_DIR": t.TempDir(),
+	})
 
 	suffix := randomSuffix(t)
 	v := &volumeLifecycle{
