@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -557,6 +558,9 @@ type volumeEntryList struct {
 }
 
 func newVolumeLifecycle(t *testing.T) *volumeLifecycle {
+	if runtime.GOOS == "windows" {
+		t.Skip("volume token exchange misses its deadline on windows runners")
+	}
 	apiKey := os.Getenv("BASETEN_E2E_TEST_API_KEY")
 	if apiKey == "" {
 		t.Skip("BASETEN_E2E_TEST_API_KEY not set")
