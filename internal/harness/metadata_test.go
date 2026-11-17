@@ -3,8 +3,6 @@ package harness
 import (
 	"encoding/json"
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 
@@ -39,8 +37,6 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	mid := testRoute("acme/mid", "Mid")
 	mid.ContextWindow = 200000
 	path := settingsPath(t, claudeHarness{})
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	require.NoError(t, os.WriteFile(path, []byte(`{"env": {"ANTHROPIC_DEFAULT_OPUS_MODEL": "acme/old", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "acme/old"}}`), 0o600))
 	setup(t, claudeHarness{}, path, []Route{huge, mid}, Selection{})
 	d := load(t, path)
 	require.Equal(t, "acme/huge[1m]", d["model"])

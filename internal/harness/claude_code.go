@@ -105,9 +105,7 @@ var claudePaths = [][]string{
 	{"modelOverrides"}, {"modelSettings"}, claudeHelperPath,
 	{"env", claudeMarker}, {"env", "ANTHROPIC_BASE_URL"},
 	{"env", "ANTHROPIC_AUTH_TOKEN"}, {"env", "ANTHROPIC_MODEL"},
-	{"env", "ANTHROPIC_DEFAULT_SONNET_MODEL"},
-	{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}, {"env", "ANTHROPIC_DEFAULT_FABLE_MODEL"},
-	{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}, {"env", "ANTHROPIC_SMALL_FAST_MODEL"},
+	{"env", "ANTHROPIC_SMALL_FAST_MODEL"},
 	{"env", "CLAUDE_CODE_AUTO_MODE_MODEL"},
 	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"}, {"env", "ANTHROPIC_CUSTOM_HEADERS"},
 	{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}, {"env", "ENABLE_TOOL_SEARCH"},
@@ -238,8 +236,8 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
 	// Claude Code's built-in tier aliases keep their own model IDs; the gateway maps them to routes.
-	for _, key := range claudeTierModelKeys {
-		values = append(values, setting{Path: []string{"env", key}})
+	for _, path := range claudeOwnedTierPaths(current) {
+		values = append(values, setting{Path: path})
 	}
 	if helper != nil {
 		// Removed, not blanked: a static token overrides the helper.
@@ -515,11 +513,30 @@ func claudeRoutes(data map[string]any) map[string]string {
 	return labels
 }
 
+// claudeOwnedTierPaths returns the tier alias keys an earlier setup pinned to
+// one of its routes; a value naming anything else is the user's.
+func claudeOwnedTierPaths(data map[string]any) [][]string {
+	if get(data, []string{"env", claudeMarker}).Data != "1" {
+		return nil
+	}
+	routes := claudeRoutes(data)
+	var paths [][]string
+	for _, key := range claudeTierModelKeys {
+		path := []string{"env", key}
+		if name, _ := get(data, path).Data.(string); name != "" {
+			if _, ok := routes[name]; ok {
+				paths = append(paths, path)
+			}
+		}
+	}
+	return paths
+}
+
 func claudeTeardownPaths(data map[string]any) [][]string {
 	if get(data, []string{"env", claudeMarker}).Data != "1" {
 		return nil
 	}
-	paths := slices.Clone(claudePaths)
+	paths := append(slices.Clone(claudePaths), claudeOwnedTierPaths(data)...)
 	// A subagent setting is only Baseten's while it names a configured route.
 	subagent, _ := get(data, claudeSubagentPath).Data.(string)
 	if _, ok := claudeRoutes(data)[subagent]; ok {

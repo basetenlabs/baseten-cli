@@ -618,6 +618,38 @@ func TestOptionalSubagentCleanup(t *testing.T) {
 	}
 }
 
+func TestClaudeTierAliasesRemovedOnlyWhenOwned(t *testing.T) {
+	opus, haiku := []string{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}
+	routes := testRoutes()
+	for _, tc := range []struct {
+		name         string
+		env          string
+		wantOpus     any
+		wantTeardown any
+	}{
+		// Earlier setups pinned every tier alias to a configured route.
+		{"setup's pins", `"BASETEN_HARNESS": "1", "ANTHROPIC_DEFAULT_OPUS_MODEL": "` + routes[0].Name + `"`, nil, nil},
+		{"user's value while managed", `"BASETEN_HARNESS": "1", "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7"`, "claude-opus-4-7", "claude-opus-4-7"},
+		// Once setup has run, a user value naming a configured route reads as setup's.
+		{"user's value before first setup", `"ANTHROPIC_DEFAULT_OPUS_MODEL": "` + routes[0].Name + `"`, routes[0].Name, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := settingsPath(t, claudeHarness{})
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+			options := `[{"model": "` + routes[0].Name + `"}]`
+			require.NoError(t, os.WriteFile(path, []byte(`{"modelPicker": {"options": `+options+`}, "env": {`+tc.env+`, "ANTHROPIC_DEFAULT_HAIKU_MODEL": "user/haiku"}}`), 0o600))
+			setup(t, claudeHarness{}, path, routes, Selection{})
+			d := load(t, path)
+			require.Equal(t, tc.wantOpus, get(d, opus).Data)
+			require.Equal(t, "user/haiku", get(d, haiku).Data)
+			teardown(t, claudeHarness{}, path)
+			d = load(t, path)
+			require.Equal(t, tc.wantTeardown, get(d, opus).Data)
+			require.Equal(t, "user/haiku", get(d, haiku).Data)
+		})
+	}
+}
+
 func TestBackgroundRouteDefaultAndOverride(t *testing.T) {
 	for _, background := range []string{"", "acme/background"} {
 		want := background
