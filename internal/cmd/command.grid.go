@@ -201,13 +201,12 @@ type gridHarnessTarget struct {
 	record harness.Record
 }
 
-func gridLoadHarnessSetupRoutes(ctx *CommandContext, api *managementapi.Client, selectedTeam string) (*managementapi.Team, []managementapi.GridRoute, error) {
+func gridLoadHarnessSetupRoutes(ctx *CommandContext, api *managementapi.Client, selectedTeam string) (*managementapi.Team, []gridHarnessRoute, error) {
 	teamID, err := gridTeamID(ctx, api, selectedTeam)
 	if err != nil {
 		return nil, nil, err
 	}
-	forHarnesses := true
-	listed, err := listGridRoutes(ctx, api, managementapi.GetV1GridRoutesParams{TeamId: teamID, ForHarnesses: &forHarnesses})
+	listed, err := listGridHarnessRoutes(ctx, api, teamID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -258,7 +257,7 @@ func gridHelperPath() (helper, warning string, err error) {
 // behavior differs slightly on ineligible Route selection:
 //  1. If in `setup`, we emit a validation error.
 //  2. If in `sync`, we emit a warning, and clobber with the new server default.
-func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, listed []managementapi.GridRoute, targets []gridHarnessTarget, forSync bool) ([]*harness.Plan, error) {
+func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *managementapi.Team, listed []gridHarnessRoute, targets []gridHarnessTarget, forSync bool) ([]*harness.Plan, error) {
 	// Routes reach external providers through team connections, which resolve
 	// each connection route's upstream provider and model.
 	connections, err := listGridConnections(ctx, api, managementapi.GetV1GridConnectionsParams{TeamId: &team.Id})
@@ -269,7 +268,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 	var routes []harness.Route
 	var skipped []string
 	for _, l := range listed {
-		r, err := harness.NewRoute(l, providers)
+		r, err := harness.NewRoute(l.GridRoute, providers, l.Aliases...)
 		switch {
 		case err == nil:
 			routes = append(routes, r)
@@ -483,7 +482,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 			if selection.id == "" {
 				continue
 			}
-			index := slices.IndexFunc(listed, func(r managementapi.GridRoute) bool { return r.Id == selection.id })
+			index := slices.IndexFunc(listed, func(r gridHarnessRoute) bool { return r.Id == selection.id })
 			if index < 0 {
 				return cmd.NewErrUsagef("%s: no route with ID %q in team %s; run 'baseten grid route list --team %s' to see route IDs", selection.flag, selection.id, team.Name, team.Id)
 			}
@@ -612,7 +611,7 @@ func gridRequireGit(ctx *CommandContext, gitContext bool) error {
 	return nil
 }
 
-func gridOffersServedModel(selected []gridSelectedHarness, listed []managementapi.GridRoute, name string) bool {
+func gridOffersServedModel(selected []gridSelectedHarness, listed []gridHarnessRoute, name string) bool {
 	i := slices.IndexFunc(selected, func(s gridSelectedHarness) bool {
 		return s.Name() == name && (name != harness.OpenCode || harness.HasOpenCode2(s.detection))
 	})
@@ -621,7 +620,7 @@ func gridOffersServedModel(selected []gridSelectedHarness, listed []managementap
 	}
 	var routes []harness.Route
 	for _, l := range listed {
-		if r, err := harness.NewRoute(l, nil); err == nil {
+		if r, err := harness.NewRoute(l.GridRoute, nil, l.Aliases...); err == nil {
 			routes = append(routes, r)
 		}
 	}
@@ -1131,15 +1130,16 @@ func commandGridStatus(ctx *CommandContext, f *cmd.GridStatusFlags) error {
 			routes = append(routes, cmd.GridHarnessRoute{Name: route.Name, DisplayName: route.DisplayName})
 		}
 		results = append(results, cmd.GridHarnessStatus{
-			Harness:         r.Name,
-			Config:          r.Path,
-			Installed:       r.Installed,
-			Installs:        gridHarnessInstalls(r.Detection),
-			State:           r.State,
-			DefaultRoute:    r.DefaultRoute,
-			BackgroundRoute: r.BackgroundRoute,
-			Routes:          routes,
-			ManagedSettings: r.Managed,
+			Harness:            r.Name,
+			Config:             r.Path,
+			Installed:          r.Installed,
+			Installs:           gridHarnessInstalls(r.Detection),
+			State:              r.State,
+			DefaultRoute:       r.DefaultRoute,
+			BackgroundRoute:    r.BackgroundRoute,
+			Routes:             routes,
+			ManagedSettings:    r.Managed,
+			NameColumnOverride: r.NameColumnOverride,
 		})
 	}
 	if ctx.JSON {
@@ -1165,7 +1165,11 @@ func commandGridStatus(ctx *CommandContext, f *cmd.GridStatusFlags) error {
 		for _, route := range r.Routes {
 			rows = append(rows, harness.Route{Name: route.Name, DisplayName: route.DisplayName})
 		}
-		gridHarnessRouteTable(ctx, "Configured routes", rows)
+		nameColumn := "NAME"
+		if r.NameColumnOverride != nil {
+			nameColumn = *r.NameColumnOverride
+		}
+		gridHarnessRouteTable(ctx, "Configured routes", nameColumn, rows)
 		ctx.OutputLine("")
 		ctx.VerboseLogf("%s settings: %s\n", r.Harness, strings.Join(r.ManagedSettings, ", "))
 	}
@@ -1307,7 +1311,7 @@ func gridHarnessDisplayPath(path string) string {
 	return path
 }
 
-func gridHarnessRouteTable(ctx *CommandContext, title string, routes []harness.Route) {
+func gridHarnessRouteTable(ctx *CommandContext, title, nameColumn string, routes []harness.Route) {
 	ctx.Outputf("%s: %d\n", title, len(routes))
 	if len(routes) == 0 {
 		return
@@ -1316,7 +1320,7 @@ func gridHarnessRouteTable(ctx *CommandContext, title string, routes []harness.R
 	for _, route := range routes {
 		rows = append(rows, []string{route.Name, route.DisplayName})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "DISPLAY NAME"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{nameColumn, "DISPLAY NAME"}, Rows: rows})
 }
 
 func gridHarnessVerboseSetupSummary(ctx *CommandContext, team *managementapi.Team, selected []gridHarnessTarget, plans []*harness.Plan) {

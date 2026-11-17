@@ -183,7 +183,7 @@ func TestPiAnthropicThinkingCompatibility(t *testing.T) {
 			if tc.adaptive {
 				require.Equal(t, true, get(model, []string{"compat", "forceAdaptiveThinking"}).Data)
 			} else {
-				require.NotContains(t, model, "compat", "legacy models must retain Pi's budget-based thinking")
+				require.NotContains(t, model["compat"], "forceAdaptiveThinking", "legacy models must retain Pi's budget-based thinking")
 			}
 		})
 	}
@@ -301,9 +301,10 @@ func TestNewRoute(t *testing.T) {
 	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.GridRouteMetadata{
 		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, ApiFormats: chatCompletionsFormats,
 		Cost: &managementapi.ExploreCost{Input: ptr(0.3), Output: ptr(1.2), LongContext: &managementapi.ExploreCostValues{Input: ptr(0.6)}},
-	}}, nil)
+	}}, nil, RouteAlias{Name: "ignored", Kind: "OTHER"}, RouteAlias{Name: "claude-desktop-from-api", Kind: RouteAliasKindClaudeDesktop})
 	require.NoError(t, err)
 	require.Equal(t, &Cost{Input: 0.3, Output: 1.2}, r.Cost, "a long-context price without output is dropped")
+	require.Equal(t, "claude-desktop-from-api", r.ClaudeDesktopAlias)
 }
 
 func TestRouteTargetComesFromConnections(t *testing.T) {

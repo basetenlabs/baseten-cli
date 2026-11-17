@@ -2,10 +2,15 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/harness"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
@@ -312,5 +317,73 @@ func listGridRoutes(ctx context.Context, api *managementapi.Client, params manag
 			return routes, nil
 		}
 		params.Cursor = resp.Pagination.Cursor
+	}
+}
+
+type gridHarnessRoute struct {
+	managementapi.GridRoute
+	Aliases []harness.RouteAlias `json:"aliases"`
+}
+
+type gridHarnessRoutesPage struct {
+	Items      []gridHarnessRoute               `json:"items"`
+	Pagination managementapi.PaginationResponse `json:"pagination"`
+}
+
+func getGridHarnessRoutesPage(ctx context.Context, api *managementapi.Client, teamID, cursor *string) (*gridHarnessRoutesPage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api.BaseURL+"/v1/grid/routes", nil)
+	if err != nil {
+		return nil, err
+	}
+	query := req.URL.Query()
+	query.Set("for_harnesses", "true")
+	if teamID != nil {
+		query.Set("team_id", *teamID)
+	}
+	if cursor != nil {
+		query.Set("cursor", *cursor)
+	}
+	req.URL.RawQuery = query.Encode()
+	for key, values := range api.Headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	resp, err := api.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return nil, &managementapi.ResponseError{StatusCode: resp.StatusCode, Body: string(body)}
+	}
+	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
+		return nil, fmt.Errorf("unexpected content type %q, expected application/json", contentType)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var page gridHarnessRoutesPage
+	if err := json.Unmarshal(body, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
+func listGridHarnessRoutes(ctx context.Context, api *managementapi.Client, teamID *string) ([]gridHarnessRoute, error) {
+	var routes []gridHarnessRoute
+	var cursor *string
+	for {
+		page, err := getGridHarnessRoutesPage(ctx, api, teamID, cursor)
+		if err != nil {
+			return nil, fmt.Errorf("list routes: %w", err)
+		}
+		routes = append(routes, page.Items...)
+		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
+			return routes, nil
+		}
+		cursor = page.Pagination.Cursor
 	}
 }

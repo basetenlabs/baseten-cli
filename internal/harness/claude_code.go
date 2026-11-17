@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -105,6 +106,7 @@ var claudePaths = [][]string{
 	{"env", "CLAUDE_CODE_AUTO_MODE_MODEL"},
 	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"}, {"env", "ANTHROPIC_CUSTOM_HEADERS"},
 	{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}, {"env", "ENABLE_TOOL_SEARCH"},
+	{"env", "CLAUDE_CODE_TETHER_LIVE"},
 	{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"},
 }
 
@@ -124,7 +126,14 @@ func (h claudeHarness) Detect(ctx context.Context, execer Execer, dir string) (D
 	}
 	for _, binary := range claudeDesktopBinaries() {
 		if bin, err := execer.LookPath(binary); err == nil {
-			d.Installs = append(d.Installs, Install{Kind: InstallDesktop, Binary: bin})
+			install := Install{Kind: InstallDesktop, Binary: bin}
+			switch runtime.GOOS {
+			case "darwin":
+				install.Version = claudeDesktopVersion(ctx, execer, bin)
+			case "linux":
+				install.Version = claudeDesktopLinuxVersion(ctx, execer, bin)
+			}
+			d.Installs = append(d.Installs, install)
 		}
 	}
 	d.Installed = len(d.Installs) > 0
@@ -223,6 +232,7 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{"ANTHROPIC_CUSTOM_HEADERS", clientHeader + ": " + ClaudeCode},
 		{"CLAUDE_CODE_GATEWAY_HINT_HEADERS", "1"},
 		{"ENABLE_TOOL_SEARCH", "true"},
+		{"CLAUDE_CODE_TETHER_LIVE", "0"},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
@@ -594,6 +604,7 @@ func (claudeHarness) Inspect(d Detection) (Status, error) {
 	}
 	if r.State == StateNotConfigured {
 		r.State, r.DefaultRoute, r.Routes = desktop.State, desktop.DefaultRoute, desktop.Routes
+		r.NameColumnOverride = desktop.NameColumnOverride
 	}
 	r.Managed = append(r.Managed, desktop.Managed...)
 	return r, nil
