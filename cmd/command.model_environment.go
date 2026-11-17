@@ -7,6 +7,7 @@ var commandModelEnvironment = Command{
 	Name:    "environment",
 	Summary: "Manage environments of a model",
 	Children: []Command{
+		commandModelEnvironmentReplica,
 		{
 			Name:    "activate",
 			Summary: "Activate the environment's active deployment",
