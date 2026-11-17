@@ -27,22 +27,6 @@ jobs:
           go -C internal/e2e-tests fmt ./...
           git diff --exit-code
 
-      # The harness tests run the installed Claude Code, Codex, OpenCode, and Pi
-      # CLIs against a local gateway, and skip any that are missing. Harness
-      # setup is only supported on macOS and Linux so far. OpenCode 1 and 2
-      # both install `opencode`, so OpenCode 2 goes in its own prefix.
-      - uses: actions/setup-node@v4
-        if: matrix.os != 'windows-latest'
-        with:
-          node-version: 22
-
-      - name: Install harnesses
-        if: matrix.os != 'windows-latest'
-        run: |
-          npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai @earendil-works/pi-coding-agent
-          npm install -g --prefix "$RUNNER_TEMP/opencode2" @opencode/cli
-          echo "BASETEN_TEST_OPENCODE2=$RUNNER_TEMP/opencode2/bin/opencode" >> "$GITHUB_ENV"
-
       - name: Test
         run: go test ./...
 
@@ -57,14 +41,28 @@ jobs:
             exit 1
           fi
 
+      # The harness tests run the installed Claude Code, Codex, OpenCode, and Pi
+      # CLIs against a local gateway, and skip any that are missing. Harness
+      # setup is only supported on macOS and Linux so far. OpenCode 1 and 2
+      # both install `opencode`, so OpenCode 2 goes in its own prefix.
+      - uses: actions/setup-node@v4
+        if: matrix.os != 'windows-latest'
+        with:
+          node-version: 22
+
+      - name: Install harnesses for E2E tests
+        if: matrix.os != 'windows-latest'
+        run: |
+          npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai @earendil-works/pi-coding-agent
+          npm install -g --prefix "$RUNNER_TEMP/opencode2" @opencode/cli
+          echo "BASETEN_TEST_OPENCODE2=$RUNNER_TEMP/opencode2/bin/opencode" >> "$GITHUB_ENV"
+
       # The train e2e test pushes through truss, which the CLI runs with
       # `uv tool run`.
-      - name: Install uv
-        if: matrix.os != 'windows-latest'
+      - name: Install uv for E2E tests
         uses: astral-sh/setup-uv@v5
 
       - name: E2E test
-        if: matrix.os != 'windows-latest'
         env:
           # Forks won't have these secrets so e2e tests skip, but pushes
           # to main will run them.
