@@ -309,7 +309,7 @@ func writePredictStreamingResponse(ctx *CommandContext, body io.Reader, isSSE bo
 		return nil
 	}
 	if !ctx.JSONLines {
-		ctx.LogLine("warning: streaming response cannot be emitted as a single JSON document; output will be JSONL")
+		ctx.Warn("streaming response cannot be emitted as a single JSON document; output will be JSONL")
 		// Force compact, line-delimited records for the rest of this command.
 		ctx.JSONCompact = true
 	}
