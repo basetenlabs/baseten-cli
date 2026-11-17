@@ -146,8 +146,9 @@ func buildBlock(keyPath, profile string) string {
 			fmt.Sprintf("Match host %s exec \"%s %%n\"", pattern, sign),
 			fmt.Sprintf("    ProxyCommand %s %%n", proxy),
 			"    User " + user,
-			"    IdentityFile " + keyPath,
-			"    CertificateFile " + cert,
+			// Quoted, since ssh splits values on spaces.
+			"    IdentityFile \"" + keyPath + "\"",
+			"    CertificateFile \"" + cert + "\"",
 			"    StrictHostKeyChecking no",
 			"    UserKnownHostsFile /dev/null",
 			"",

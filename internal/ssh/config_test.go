@@ -30,8 +30,17 @@ func TestWriteConfig_FreshAppendBakesProfile(t *testing.T) {
 	require.Contains(t, content, "Match host *.model-*.ssh.baseten.co")
 	require.Contains(t, content, "baseten ssh sign --default-profile=prod")
 	require.Contains(t, content, "baseten ssh proxy --default-profile=prod")
-	require.Contains(t, content, "IdentityFile /keys/id_ed25519")
-	require.Contains(t, content, "CertificateFile /keys/id_ed25519-cert.pub")
+	require.Contains(t, content, `IdentityFile "/keys/id_ed25519"`)
+	require.Contains(t, content, `CertificateFile "/keys/id_ed25519-cert.pub"`)
+}
+
+func TestWriteConfig_QuotesKeyPathsWithSpaces(t *testing.T) {
+	path := configPathEnv(t)
+	require.NoError(t, WriteConfig("/Users/Jane Doe/.ssh/baseten/id_ed25519", ""))
+
+	content := readFile(t, path)
+	require.Contains(t, content, `IdentityFile "/Users/Jane Doe/.ssh/baseten/id_ed25519"`)
+	require.Contains(t, content, `CertificateFile "/Users/Jane Doe/.ssh/baseten/id_ed25519-cert.pub"`)
 }
 
 func TestWriteConfig_NoProfileOmitsDefaultProfile(t *testing.T) {
