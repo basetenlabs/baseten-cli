@@ -4469,10 +4469,10 @@ func Test_Grid_Sync_UseSessionCredential(t *testing.T) {
 	h.Context = internalcmd.WithExecer(h.Context, fakeHarnessExecer{})
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude", dir)
-	// An ephemeral session installs its own key without the flag.
+	// An ephemeral session installs its own key with the flag.
 	t.Setenv("BASETEN_API_KEY", "test-key")
 	h.Require.NoError(configDirStore(t).RemoveProfile(t.Context(), "alice"))
-	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--use-session-credential", "--yes"))
 	h.Require.Equal(harness.CredentialSourceSession, harnessRecordFile(t).Harnesses["claude"].CredentialSource)
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 
@@ -4493,6 +4493,13 @@ func Test_Grid_Sync_UseSessionCredential(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "set BASETEN_API_KEY or use an API-key profile")
 	h.Require.Contains(h.Stderr.String(), "--use-session-credential")
 	h.Require.Equal(0, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+
+	// Without the flag an ephemeral session creates a grid key instead.
+	t.Setenv("BASETEN_API_KEY", "test-key")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
+	h.Require.Equal(harness.CredentialSourceGridKey, harnessRecordFile(t).Harnesses["claude"].CredentialSource)
+	h.Require.Equal(1, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
+	h.Require.Equal("secret-team-a", readHarnessSettings(t, "claude", path)["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"])
 }
 
 func Test_Grid_Sync_MixedCredentialSources(t *testing.T) {
