@@ -3,6 +3,8 @@ package harness
 import (
 	"encoding/json"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -37,6 +39,8 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	mid := testRoute("acme/mid", "Mid")
 	mid.ContextWindow = 200000
 	path := settingsPath(t, claudeHarness{})
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(`{"env": {"ANTHROPIC_DEFAULT_OPUS_MODEL": "acme/old", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "acme/old"}}`), 0o600))
 	setup(t, claudeHarness{}, path, []Route{huge, mid}, Selection{})
 	d := load(t, path)
 	require.Equal(t, "acme/huge[1m]", d["model"])
@@ -49,7 +53,9 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	require.Equal(t, map[string]any{
 		"acme/huge[1m]": map[string]any{"maxEffortLevel": "xhigh"},
 	}, d["modelSettings"])
-	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}).Data)
+	for _, key := range claudeTierModelKeys {
+		require.False(t, get(d, []string{"env", key}).Exists, key)
+	}
 	require.Equal(t, "4096", get(d, []string{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}).Data)
 	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)

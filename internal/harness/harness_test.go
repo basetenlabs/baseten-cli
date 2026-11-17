@@ -628,7 +628,6 @@ func TestBackgroundRouteDefaultAndOverride(t *testing.T) {
 			path := settingsPath(t, claudeHarness{})
 			setup(t, claudeHarness{}, path, testRoutes(), Selection{Background: background})
 			d := load(t, path)
-			require.Equal(t, want, get(d, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data)
 			require.Equal(t, want, get(d, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data)
 			require.Contains(t, d["availableModels"], want)
 		})

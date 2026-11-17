@@ -94,6 +94,11 @@ const claudeTranscriptWindow = 64 << 10
 // 1M, via a [1m] model ID suffix. Smaller windows get its 200K default.
 const extendedContextWindow = 500000
 
+var claudeTierModelKeys = []string{
+	"ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+}
+
 var claudePaths = [][]string{
 	{"model"}, {"fallbackModel"}, {"modelPicker", "options"},
 	{"modelPicker", "replaceBuiltInOptions"}, {"availableModels"},
@@ -222,10 +227,6 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{claudeMarker, "1"},
 		{"ANTHROPIC_BASE_URL", endpoint},
 		{"ANTHROPIC_MODEL", modelID(s.Primary)},
-		{"ANTHROPIC_DEFAULT_SONNET_MODEL", modelID(s.Primary)},
-		{"ANTHROPIC_DEFAULT_OPUS_MODEL", modelID(s.Primary)},
-		{"ANTHROPIC_DEFAULT_FABLE_MODEL", modelID(s.Primary)},
-		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", modelID(background)},
 		{"CLAUDE_CODE_AUTO_MODE_MODEL", modelID(background)},
 		{"ANTHROPIC_SMALL_FAST_MODEL", modelID(background)},
 		{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"},
@@ -235,6 +236,10 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{"CLAUDE_CODE_TETHER_LIVE", "0"},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
+	}
+	// Claude Code's built-in tier aliases keep their own model IDs; the gateway maps them to routes.
+	for _, key := range claudeTierModelKeys {
+		values = append(values, setting{Path: []string{"env", key}})
 	}
 	if helper != nil {
 		// Removed, not blanked: a static token overrides the helper.
@@ -593,7 +598,7 @@ func (claudeHarness) Inspect(d Detection) (Status, error) {
 		if _, ok := claudeHooksSetting(claudeSessionStartHooksPath, claudeSessionStartOwned, data, nil); ok {
 			r.Managed = append(r.Managed, pathKey(claudeSessionStartHooksPath))
 		}
-		r.BackgroundRoute, _ = get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string)
+		r.BackgroundRoute, _ = get(data, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data.(string)
 		r.addRoutes(claudeRoutes(data))
 	}
 	// Claude Desktop's files belong to the same harness; they describe it when
