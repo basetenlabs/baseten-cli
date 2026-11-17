@@ -1952,3 +1952,10 @@ func Test_Volume_LiveBandwidthDropsDuringStall(t *testing.T) {
 		})
 	}
 }
+
+func Test_Volume_Push_RejectsNegativeTransferFlag(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("volume", "push", t.TempDir(), "bdn:ns/vol", "--file-jobs", "-1")
+	h.Require.ErrorContains(err, "--file-jobs must not be negative")
+	h.Require.Equal(2, h.ExitCode)
+}
