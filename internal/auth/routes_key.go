@@ -35,10 +35,13 @@ func (s RoutesKeyScope) account() string {
 // field.
 func (s *Store) GetRoutesKey(ctx context.Context, scope RoutesKeyScope) (string, error) {
 	var key string
-	keyringErr := keyringDo(ctx, func() (err error) {
-		key, err = keyring.Get(routesKeyService, scope.account())
-		return err
-	})
+	keyringErr := errKeyringSkipped
+	if !s.insecureStorage {
+		keyringErr = keyringDo(ctx, func() (err error) {
+			key, err = keyring.Get(routesKeyService, scope.account())
+			return err
+		})
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return "", ctxErr
 	}

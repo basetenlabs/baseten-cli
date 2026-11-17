@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -148,6 +149,8 @@ func (s *Store) saveLocked(af *AuthFile) error {
 	return nil
 }
 
+var errKeyringSkipped = errors.New("insecure storage skips the system keyring")
+
 // keyringDo runs fn, a system keyring operation, returning ctx's error if ctx
 // is done first.
 func keyringDo(ctx context.Context, fn func() error) error {
@@ -247,10 +250,13 @@ func (s *Store) SetAPIKeyProfile(ctx context.Context, profileName, remoteURL, ap
 // keyring first, then falling back to the auth.json plaintext field.
 func (s *Store) GetOAuthCredential(ctx context.Context, profileName string) (*OAuthCredential, error) {
 	var secret string
-	keyringErr := keyringDo(ctx, func() (err error) {
-		secret, err = keyring.Get(keyringServiceName, profileName)
-		return err
-	})
+	keyringErr := errKeyringSkipped
+	if !s.insecureStorage {
+		keyringErr = keyringDo(ctx, func() (err error) {
+			secret, err = keyring.Get(keyringServiceName, profileName)
+			return err
+		})
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
@@ -280,10 +286,13 @@ func (s *Store) GetOAuthCredential(ctx context.Context, profileName string) (*OA
 // falling back to the auth.json plaintext field.
 func (s *Store) GetAPIKey(ctx context.Context, profileName string) (string, error) {
 	var secret string
-	keyringErr := keyringDo(ctx, func() (err error) {
-		secret, err = keyring.Get(keyringServiceName, profileName)
-		return err
-	})
+	keyringErr := errKeyringSkipped
+	if !s.insecureStorage {
+		keyringErr = keyringDo(ctx, func() (err error) {
+			secret, err = keyring.Get(keyringServiceName, profileName)
+			return err
+		})
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return "", ctxErr
 	}
@@ -311,7 +320,9 @@ func (s *Store) RemoveProfile(ctx context.Context, profileName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_ = keyringDo(ctx, func() error { return keyring.Delete(keyringServiceName, profileName) })
+	if !s.insecureStorage {
+		_ = keyringDo(ctx, func() error { return keyring.Delete(keyringServiceName, profileName) })
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
