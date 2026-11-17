@@ -168,13 +168,21 @@ var targetAPIsByFormat = map[managementapi.GridRouteMetadataApiFormats]TargetAPI
 	managementapi.GridRouteMetadataApiFormats_chat_completions: TargetAPIChatCompletions,
 }
 
+type RouteAliasKind string
+
+const RouteAliasKindClaudeDesktop RouteAliasKind = "CLAUDE_DESKTOP"
+
+type RouteAlias struct {
+	Name string         `json:"name"`
+	Kind RouteAliasKind `json:"kind"`
+}
+
 // Route is a Baseten route as shown in a harness's model picker, with the model
 // capabilities supplied by the route's own metadata.
 type Route struct {
-	// ID is the route's stable ID, which Claude Desktop's model IDs carry.
-	ID          string
-	Name        string
-	DisplayName string
+	Name               string
+	DisplayName        string
+	ClaudeDesktopAlias string
 	// Provider is the route's upstream provider, such as ProviderAnthropic.
 	// It is "" when unknown, as for an intelligent route that picks a model per request.
 	Provider         string
@@ -221,8 +229,14 @@ func NewProviders(connections []managementapi.GridConnection) Providers {
 // NewRoute converts a route from the routes API, resolving the provider of a
 // route that reaches one through a team connection. It fails if the route's
 // model metadata is missing or is not enough to configure a harness.
-func NewRoute(api managementapi.GridRoute, providers Providers) (Route, error) {
-	r := Route{ID: api.Id, Name: api.Name, DisplayName: api.DisplayName, IntelligentRoute: routeIsIntelligentRoute(api)}
+func NewRoute(api managementapi.GridRoute, providers Providers, aliases ...RouteAlias) (Route, error) {
+	r := Route{Name: api.Name, DisplayName: api.DisplayName, IntelligentRoute: routeIsIntelligentRoute(api)}
+	for _, alias := range aliases {
+		if alias.Kind == RouteAliasKindClaudeDesktop {
+			r.ClaudeDesktopAlias = alias.Name
+			break
+		}
+	}
 	r.Provider, r.UpstreamModel = routeTarget(api, providers)
 	m := api.Metadata
 	if m == nil {
@@ -400,9 +414,8 @@ type Detection struct {
 // Install is one copy of a harness executable.
 type Install struct {
 	// Kind is how the harness was installed: InstallCLI or InstallDesktop.
-	Kind   string
-	Binary string
-	// Version is the executable's --version output, which is informational only.
+	Kind    string
+	Binary  string
 	Version string
 }
 
@@ -465,10 +478,14 @@ func detect(ctx context.Context, execer Execer, name string, candidates []candid
 }
 
 func version(ctx context.Context, execer Execer, bin string) string {
+	return commandVersion(ctx, execer, bin, "--version")
+}
+
+func commandVersion(ctx context.Context, execer Execer, name string, args ...string) string {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	var out bytes.Buffer
-	command := exec.CommandContext(ctx, bin, "--version")
+	command := exec.CommandContext(ctx, name, args...)
 	command.Stdout = &out
 	if execer.Exec(command) != nil {
 		return ""
@@ -498,6 +515,8 @@ type Status struct {
 	Routes          []Route
 	// Managed lists the integration settings present in the file.
 	Managed []string
+	// NB(nikhil): Claude desktop requres 'Aliases' instead of the traditional `Name`
+	NameColumnOverride *string
 }
 
 func inspectConfig(d Detection) (Status, map[string]any, error) {
@@ -535,7 +554,11 @@ type Plan struct {
 	Path     string
 	Keys     []string
 	Replaced []string
-	Notes    []string
+	// Changes lists each setting the plan adds, updates or removes, without values.
+	// It is empty for plans that write a whole file.
+	Changes []Change
+	// Warnings are notes about something setup could not do as asked.
+	Warnings []string
 	Managed  bool
 	Changed  bool
 
@@ -548,6 +571,23 @@ type Plan struct {
 	teardown   bool
 	remove     bool
 	files      []ownedFile
+	// paths are the settings Changes is computed over.
+	paths [][]string
+}
+
+// ChangeOp says what a plan does to one setting.
+type ChangeOp string
+
+const (
+	ChangeAdd    ChangeOp = "add"
+	ChangeUpdate ChangeOp = "update"
+	ChangeRemove ChangeOp = "remove"
+)
+
+// Change is one setting a plan adds, updates or removes.
+type Change struct {
+	Op  ChangeOp
+	Key string
 }
 
 type ownedFile struct {
@@ -686,7 +726,10 @@ func prepareSettings(path string, credentialPath []string, build func(map[string
 		if err := put(d, v.Path, v.Installed); err != nil {
 			return nil, err
 		}
-		p.Keys = append(p.Keys, pathKey(v.Path))
+		p.addKey(v.Path)
+	}
+	if len(credentialPath) > 0 && !slices.ContainsFunc(p.paths, func(k []string) bool { return slices.Equal(k, credentialPath) }) {
+		p.paths = append(p.paths, credentialPath)
 	}
 	// Keep the file's credential until ApplyPlans inserts the real one, so a
 	// preview only reports real changes.
@@ -719,7 +762,7 @@ func prepareTeardown(path string, scope func(map[string]any) [][]string) (*Plan,
 		if err := put(d, key, value{}); err != nil {
 			return nil, err
 		}
-		p.Keys = append(p.Keys, pathKey(key))
+		p.addKey(key)
 	}
 	p.Managed = len(p.Keys) > 0
 	return p, p.encode()
@@ -740,7 +783,13 @@ func prepareFiles(dir string, files []ownedFile) *Plan {
 	for _, f := range files {
 		p.Keys = append(p.Keys, f.name)
 		current, err := os.ReadFile(filepath.Join(dir, f.name))
-		p.Changed = p.Changed || err != nil || !bytes.Equal(current, f.data)
+		switch {
+		case err != nil:
+			p.Changes = append(p.Changes, Change{Op: ChangeAdd, Key: f.name})
+		case !bytes.Equal(current, f.data):
+			p.Changes = append(p.Changes, Change{Op: ChangeUpdate, Key: f.name})
+		}
+		p.Changed = len(p.Changes) > 0
 	}
 	return p
 }
@@ -750,6 +799,7 @@ func prepareFilesRemoval(dir string, files []ownedFile) *Plan {
 	for _, f := range files {
 		if _, err := os.Lstat(filepath.Join(dir, f.name)); err == nil {
 			p.Keys = append(p.Keys, f.name)
+			p.Changes = append(p.Changes, Change{Op: ChangeRemove, Key: f.name})
 			p.files = append(p.files, f)
 		}
 	}
@@ -763,7 +813,7 @@ func prepareSealedFile(path string, body []byte, missing string) ([]*Plan, error
 		return nil, err
 	}
 	if f.exists && !gridSetupSealed(f.data) {
-		return []*Plan{{Path: path, Notes: []string{"warning: existing " + path + " left unchanged; " + missing}, file: f, data: f.data}}, nil
+		return []*Plan{{Path: path, Warnings: []string{"existing " + path + " left unchanged; " + missing}, file: f, data: f.data}}, nil
 	}
 	data := append(slices.Clone(body), gridSetupSeal(body)...)
 	return []*Plan{{Path: path, Managed: true, Changed: !bytes.Equal(data, f.data), file: f, data: data}}, nil
@@ -798,7 +848,25 @@ func (p *Plan) encode() error {
 		}
 	}
 	p.Changed = !bytes.Equal(p.data, p.file.data)
+	p.Changes = nil
+	for _, path := range p.paths {
+		before, after := get(original, path), get(p.config, path)
+		switch {
+		case same(before, after):
+		case !before.Exists:
+			p.Changes = append(p.Changes, Change{Op: ChangeAdd, Key: pathKey(path)})
+		case !after.Exists:
+			p.Changes = append(p.Changes, Change{Op: ChangeRemove, Key: pathKey(path)})
+		default:
+			p.Changes = append(p.Changes, Change{Op: ChangeUpdate, Key: pathKey(path)})
+		}
+	}
 	return nil
+}
+
+func (p *Plan) addKey(path []string) {
+	p.Keys = append(p.Keys, pathKey(path))
+	p.paths = append(p.paths, path)
 }
 
 func (p *Plan) setCredential(token string) error {

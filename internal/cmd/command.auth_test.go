@@ -723,7 +723,8 @@ func Test_Auth_Token_WorkloadIdentityInvalidGrant(t *testing.T) {
 	h.Require.Error(h.Execute("auth", "token"))
 	h.Require.Equal(int(cmd.ExitAuth), h.ExitCode)
 	h.Require.Empty(h.Stdout.String())
-	h.Require.Contains(h.Stderr.String(), "workload identity token exchange refused; check that trust rule rule-1")
+	h.Require.Contains(h.Stderr.String(), "workload identity (BASETEN_TRUST_RULE_ID=rule-1, BASETEN_IDENTITY_TOKEN_FILE=")
+	h.Require.Contains(h.Stderr.String(), "refused for trust rule rule-1")
 }
 
 func Test_Auth_Token_OAuthProfile(t *testing.T) {

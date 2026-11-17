@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
-	"github.com/basetenlabs/baseten-go/client"
+	"github.com/basetenlabs/baseten-cli/internal/auth"
 	"github.com/basetenlabs/baseten-go/client/inferenceapi"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"github.com/basetenlabs/baseten-go/client/sandboxapi"
@@ -37,11 +37,12 @@ func normalizeError(err error) cmd.CommandError {
 	if errors.As(err, &ce) {
 		return ce
 	}
+	// Checked before the status: the exchange refuses with 400, not 401.
+	if auth.IsTokenExchangeRefused(err) {
+		return cmd.NewErrAuth(err)
+	}
 	if status, ok := knownHTTPStatus(err); ok {
 		return cmd.WrapHTTPStatus(status, err)
-	}
-	if errors.Is(err, client.ErrInvalidGrant) {
-		return cmd.NewErrAuth(err)
 	}
 	return cmd.NewErrGeneric(err)
 }

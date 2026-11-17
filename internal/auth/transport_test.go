@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/basetenlabs/baseten-cli/internal/auth"
-	"github.com/basetenlabs/baseten-go/client"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
@@ -416,8 +415,8 @@ func TestTransport_WorkloadIdentityInvalidGrant(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = (&auth.Transport{Session: session, WorkloadIdentity: creds}).Credential(t.Context())
-	require.ErrorIs(t, err, client.ErrInvalidGrant)
-	require.ErrorContains(t, err, "workload identity token exchange refused; check that trust rule rule-1")
+	require.True(t, auth.IsTokenExchangeRefused(err))
+	require.ErrorContains(t, err, "workload identity (BASETEN_TRUST_RULE_ID=rule-1, BASETEN_IDENTITY_TOKEN_FILE=")
 	require.ErrorContains(t, err, file)
 }
 

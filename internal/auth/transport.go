@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 
 	"github.com/basetenlabs/baseten-go/client"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"golang.org/x/oauth2"
 )
 
@@ -271,7 +273,7 @@ type Transport struct {
 
 	// WorkloadIdentity exchanges and caches access tokens for a workload
 	// identity session. Required when the session uses workload identity.
-	WorkloadIdentity client.AccessTokenSource
+	WorkloadIdentity client.Credentials
 
 	Base http.RoundTripper
 }
@@ -330,11 +332,11 @@ func (t *Transport) AccessToken(ctx context.Context) (client.AccessToken, error)
 		if t.WorkloadIdentity == nil {
 			return client.AccessToken{}, errors.New("workload identity session requires WorkloadIdentity to be set on Transport")
 		}
-		token, err := t.WorkloadIdentity.AccessToken(ctx)
-		if errors.Is(err, client.ErrInvalidGrant) {
-			return client.AccessToken{}, fmt.Errorf("workload identity token exchange refused; check that trust rule %s (%s) "+
-				"exists and matches the identity token in %s (%s): %w",
-				wi.TrustRuleID, TrustRuleIDEnv, wi.IdentityTokenFile, IdentityTokenFileEnv, err)
+		token, err := t.WorkloadIdentity.AccessToken(ctx, client.AccessTokenOptions{})
+		if IsTokenExchangeRefused(err) {
+			// The SDK's hint names the trust rule; this adds where it came from.
+			return client.AccessToken{}, fmt.Errorf("workload identity (%s=%s, %s=%s): %w",
+				TrustRuleIDEnv, wi.TrustRuleID, IdentityTokenFileEnv, wi.IdentityTokenFile, err)
 		}
 		return token, err
 	}
@@ -391,4 +393,18 @@ func (t *Transport) AccessToken(ctx context.Context) (client.AccessToken, error)
 	default:
 		return client.AccessToken{}, fmt.Errorf("unknown auth type %q", profile.AuthType)
 	}
+}
+
+// IsTokenExchangeRefused reports whether err carries the token exchange's
+// OAuth invalid_grant answer, which Baseten sends for every refused identity
+// token.
+func IsTokenExchangeRefused(err error) bool {
+	var re *managementapi.ResponseError
+	if !errors.As(err, &re) {
+		return false
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal([]byte(re.Body), &body) == nil && body.Error == "invalid_grant"
 }

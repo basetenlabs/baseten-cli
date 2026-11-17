@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
@@ -253,6 +254,18 @@ func (c *CommandContext) Logf(format string, args ...any) {
 	panicOnOutputError(fmt.Fprintf(c.Stderr, format, args...))
 }
 
+// Warn writes msg to stderr as one warning line, with a "warning:" prefix
+// colored when stderr is a terminal.
+func (c *CommandContext) Warn(msg string) {
+	prefix := lipgloss.NewRenderer(c.Stderr).NewStyle().Inherit(warningStyle).Render("warning:")
+	panicOnOutputError(fmt.Fprintln(c.Stderr, prefix, strings.TrimSuffix(msg, "\n")))
+}
+
+// Warnf formats a message and writes it with [CommandContext.Warn].
+func (c *CommandContext) Warnf(format string, args ...any) {
+	c.Warn(fmt.Sprintf(format, args...))
+}
+
 // VerboseLog writes to stderr if verbose mode is enabled.
 func (c *CommandContext) VerboseLog(v string) {
 	if c.verbose {
@@ -438,7 +451,13 @@ func (c *CommandContext) ConfirmYesNo(title string) error {
 // RunPrompt runs a single interactive prompt field, aborting it when the
 // command context is cancelled.
 func (c *CommandContext) RunPrompt(field huh.Field) error {
-	// Equivalent to the field's own Run, which ignores the context and so
+	return c.RunPromptForm(huh.NewForm(huh.NewGroup(field)))
+}
+
+// RunPromptForm runs form with the CLI's prompt theme and I/O, aborting it
+// when the command context is cancelled.
+func (c *CommandContext) RunPromptForm(form *huh.Form) error {
+	// Equivalent to the form's own Run, which ignores the context and so
 	// leaves the prompt running when the command is cancelled by a SIGTERM or
 	// an externally sent SIGINT. Ctrl-C at the prompt is a keypress, not a
 	// signal, which huh handles itself by returning huh.ErrUserAborted. I/O is
@@ -448,7 +467,7 @@ func (c *CommandContext) RunPrompt(field huh.Field) error {
 	// huh's base theme leaves titles and options in the terminal's default
 	// foreground. Its default Charm theme colors them for one background,
 	// drawing options near-white on a light terminal.
-	form := huh.NewForm(huh.NewGroup(field)).WithTheme(huh.ThemeFunc(huh.ThemeBase)).WithShowHelp(false).WithInput(c.Stdin).WithOutput(c.Stderr)
+	form = form.WithTheme(huh.ThemeFunc(promptTheme)).WithShowHelp(false).WithInput(c.Stdin).WithOutput(c.Stderr)
 	if answers, ok := c.promptAnswers(); ok {
 		if len(*answers) == 0 {
 			return errors.New("no answer for the prompt")
@@ -458,6 +477,25 @@ func (c *CommandContext) RunPrompt(field huh.Field) error {
 		form = form.WithAccessible(true).WithInput(strings.NewReader(answer + "\n"))
 	}
 	return form.RunWithContext(c)
+}
+
+// promptArrowExit makes an arrow key leave a prompt field for its neighbor
+// when the field's own cursor has nowhere further to go.
+type promptArrowExit struct {
+	huh.Field
+	arrow  string
+	atEdge func() bool
+	// exit is the key the field itself moves to the neighbor on.
+	exit tea.KeyPressMsg
+}
+
+func (f *promptArrowExit) Update(msg tea.Msg) (huh.Model, tea.Cmd) {
+	if press, ok := msg.(tea.KeyPressMsg); ok && press.String() == f.arrow && f.atEdge() {
+		msg = f.exit
+	}
+	field, cmd := f.Field.Update(msg)
+	f.Field = field.(huh.Field)
+	return f, cmd
 }
 
 // OAuthConfig returns the OAuth2 configuration for the given host.
@@ -635,7 +673,7 @@ func (c *CommandContext) httpClient() *http.Client {
 	if cl, ok := c.Value(httpClientKey{}).(*http.Client); ok {
 		return cl
 	}
-	return http.DefaultClient
+	return client.NewDefaultHTTPClient()
 }
 
 type httpClientKey struct{}

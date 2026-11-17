@@ -137,7 +137,7 @@ func gridAPI(t *testing.T, invokeURL string) (*CommandHarness, *MockManagementAP
 		teamID, teamName := gridRouteTeam(r)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"items":      []any{map[string]any{"id": "route-primary", "name": "acme/primary", "team_id": teamID, "team_name": teamName, "display_name": "Primary", "invoke_url": invokeURL, "metadata": harnessRouteMetadata}},
+			"items":      []any{map[string]any{"id": "route-primary", "name": "acme/primary", "team_id": teamID, "team_name": teamName, "display_name": "Primary", "invoke_url": invokeURL, "metadata": harnessRouteMetadata, "aliases": []any{map[string]any{"name": "claude-desktop-explicit-primary", "kind": "CLAUDE_DESKTOP"}}}},
 			"pagination": map[string]any{"has_more": false},
 		})
 	})
@@ -386,20 +386,29 @@ func Test_Grid_Setup_Status_Teardown_ClaudeDesktop(t *testing.T) {
 	settings := readHarnessSettings(t, "claude", configs[0])
 	h.Require.Equal("gateway", settings["inferenceProvider"])
 	h.Require.Equal(map[string]any{"X-Baseten-Grid-Client": "claude-code"}, settings["inferenceCustomHeaders"])
-	h.Require.Equal([]any{map[string]any{"name": "claude-desktop-route-primary", "labelOverride": "Primary", "anthropicFamilyTier": "sonnet"}}, settings["inferenceModels"])
+	h.Require.Equal([]any{map[string]any{"name": "claude-desktop-explicit-primary", "labelOverride": "Primary", "anthropicFamilyTier": "sonnet"}}, settings["inferenceModels"])
 	h.Require.Equal(true, settings["autoModeEnabled"])
 	h.Require.Equal(true, settings["toolSearchEnabled"])
 	h.Require.Equal([]any{"grid", "token", "--harness", "claude", "--profile", "alice"}, settings["inferenceCredentialHelperArgs"])
 	h.Require.Equal(strings.TrimSuffix(filepath.Base(configs[0]), ".json"), readHarnessSettings(t, "claude", filepath.Join(library, "_meta.json"))["appliedId"])
 	h.Require.Equal("3p", readHarnessSettings(t, "claude", appConfig)["deploymentMode"])
-	h.Require.FileExists(filepath.Join(dir, "settings.json"), "Claude Code's settings are written for the app's engine too")
+	codePath := filepath.Join(dir, "settings.json")
+	h.Require.FileExists(codePath, "Claude Code's settings are written for the app's engine too")
+	codeSettings, err := os.ReadFile(codePath)
+	h.Require.NoError(err)
+	h.Require.NoError(os.Remove(codePath))
+	h.Require.NoError(h.Execute("grid", "status", "--harness", "claude", "--config-dir", dir))
+	h.Require.Regexp(`ALIAS\s+DISPLAY NAME`, h.Stdout.String())
 	h.Require.NoError(h.Execute("grid", "status", "--harness", "claude", "--config-dir", dir, "--output", "json"))
 	var statuses public.GridStatusList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &statuses))
 	h.Require.Len(statuses.Items, 1)
 	h.Require.True(statuses.Items[0].Installed)
 	h.Require.Equal("configured", statuses.Items[0].State)
+	h.Require.Equal("claude-desktop-explicit-primary", statuses.Items[0].DefaultRoute)
+	h.Require.Equal([]public.GridHarnessRoute{{Name: "claude-desktop-explicit-primary", DisplayName: "Primary"}}, statuses.Items[0].Routes)
 	h.Require.Contains(statuses.Items[0].ManagedSettings, "inferenceModels")
+	h.Require.NoError(os.WriteFile(codePath, codeSettings, 0o600))
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
 	h.Require.Equal("1p", readHarnessSettings(t, "claude", appConfig)["deploymentMode"])
 	h.Require.NotContains(readHarnessSettings(t, "claude", filepath.Join(library, "_meta.json")), "appliedId")
@@ -919,6 +928,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	skipUnlessSupported(t)
 	h, _ := fakeGridAPI(t)
+	base := h.Context
 	dir := t.TempDir()
 	path := harnessSettingsFile("claude", dir)
 	h.Require.NoError(os.WriteFile(path, []byte(`{"model":"previous","theme":"dark","modelPicker":{"options":[{"model":"my/model","label":"Custom"}]}}`), 0o600))
@@ -929,10 +939,31 @@ func Test_Grid_Setup_ReplacesSettingsAndPicker(t *testing.T) {
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "model")
 	h.Require.Contains(preview.Items[0].ReplacedSettings, "modelPicker.options")
 	h.Require.NoError(h.Execute(append(args, "--dry-run")...))
-	h.Require.Contains(h.Stdout.String(), "Existing integration settings will be overwritten")
+	for _, want := range []string{"(values hidden):\n", "    update  model\n", "    update  modelPicker.options\n", "    add     env.ANTHROPIC_BASE_URL\n"} {
+		h.Require.Contains(h.Stdout.String(), want)
+	}
+	h.Require.NotContains(h.Stdout.String(), "theme", "untouched settings are not listed")
 
 	h.Require.NoError(h.Execute(append(args, "--yes")...))
-	h.Require.Contains(h.Stderr.String(), "existing integration settings in claude will be overwritten")
+	h.Require.Contains(h.Stderr.String(), "Modifies harness settings to set Grid as the gateway with your configured models.\nTo remove Grid, run baseten grid teardown.\n")
+	h.Require.NotContains(h.Stderr.String(), "warning")
+	h.Context = internalcmd.WithPromptAnswers(base, "2")
+	h.Require.Error(h.Execute(args...), "declining applies nothing")
+	h.Require.Contains(h.Stderr.String(), "Set up Grid?")
+	h.Context = base
+	// Sync is routine, so it applies changes without the notice.
+	edited := readHarnessSettings(t, "claude", path)
+	edited["model"] = "edited/model"
+	raw, err := json.Marshal(edited)
+	h.Require.NoError(err)
+	h.Require.NoError(os.WriteFile(path, raw, 0o600))
+	h.Context = internalcmd.WithPromptAnswers(base, "2")
+	h.Require.Error(h.Execute("grid", "sync"), "declining applies nothing")
+	h.Require.Contains(h.Stderr.String(), "Update harness settings?")
+	h.Context = base
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Equal("acme/primary", readHarnessSettings(t, "claude", path)["model"])
+	h.Require.NotContains(h.Stderr.String(), "Modifies harness settings")
 	picker := readHarnessSettings(t, "claude", path)["modelPicker"].(map[string]any)
 	h.Require.Equal([]any{map[string]any{"model": "acme/primary", "label": "Primary"}}, picker["options"])
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--yes"))
@@ -1277,7 +1308,7 @@ func serveServedModelRoutes(api *MockManagementAPI, intelligentRoutes ...string)
 			display = name
 		}
 		items = append(items, map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-" + name, "name": "acme/" + name, "display_name": display, "invoke_url": api.URL, "metadata": wide,
-			"target": map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "name": "General"}, "tradeoff": "balanced"}})
+			"target": map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "display_name": "General"}, "tradeoff": "balanced"}})
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{"items": items, "pagination": map[string]any{"has_more": false}})
 }
@@ -1346,7 +1377,7 @@ func Test_Grid_Setup_ServedModelStopHook(t *testing.T) {
 
 	for range 2 {
 		h.Require.NoError(h.Execute(setup...))
-		h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
+		h.Require.NotContains(h.Stderr.String(), "Existing statusLine")
 		h.Require.NotContains(h.Stderr.String(), "will be overwritten")
 		settings := readHarnessSettings(t, "claude", path)
 		h.Require.Equal(original["statusLine"], settings["statusLine"])
@@ -1433,7 +1464,6 @@ func Test_Grid_Setup_ServedModelForeignStatusLine(t *testing.T) {
 			h.Require.NoError(os.WriteFile(path, raw, 0o600))
 
 			h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
-			h.Require.Contains(h.Stderr.String(), "Existing statusLine in "+path+" left unchanged; for auto routes, the serving model will be shown after each response through a Stop hook instead.")
 			settings := readHarnessSettings(t, "claude", path)
 			h.Require.Equal(user["statusLine"], settings["statusLine"])
 			h.Require.Equal([]any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "'" + cli + "' grid claude-served-model --intelligent-route 'acme/auto=auto' --hook"}}}},
@@ -1867,7 +1897,7 @@ func Test_Grid_ClaudeServedModel_RealClaudeCode(t *testing.T) {
 	wide["context_window"] = 1000000
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": "route-auto", "name": "acme/auto", "display_name": "Auto", "invoke_url": gateway.URL, "metadata": wide,
-			"target": map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "name": "General"}, "tradeoff": "balanced"}}},
+			"target": map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "display_name": "General"}, "tradeoff": "balanced"}}},
 		"pagination": map[string]any{"has_more": false},
 	})
 	root := t.TempDir()
@@ -2302,7 +2332,7 @@ func Test_Grid_PiServedModel_RealPi(t *testing.T) {
 	route := func(id, name, display string, metadata, target map[string]any) map[string]any {
 		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": metadata, "target": target}
 	}
-	router := map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "name": "General"}, "tradeoff": "balanced"}
+	router := map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "display_name": "General"}, "tradeoff": "balanced"}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
 			route("route-primary", "acme/primary", "Primary", harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
@@ -2843,6 +2873,48 @@ func Test_Grid_Setup_ServedModelSelectedHarnesses(t *testing.T) {
 	h.Require.Equal(before["opencode"], after["opencode"])
 }
 
+func Test_Grid_Setup_HarnessPicker(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := fakeGridAPI(t)
+	// Types keys at the picker as a person would: the prompt discards input
+	// sent before it starts, and handles a key only after the one before it.
+	run := func(keys ...string) error {
+		t.Helper()
+		control, terminal, err := pty.Open()
+		h.Require.NoError(err)
+		defer control.Close()
+		defer terminal.Close()
+		go func() {
+			time.Sleep(time.Second)
+			for _, k := range keys {
+				_, _ = control.WriteString(k)
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+		h.StdinReader = terminal
+		return h.Execute("grid", "setup", "--dry-run")
+	}
+	const up, down, enter = "\x1b[A", "\x1b[B", "\r"
+
+	// Enter picks claude, Space picks codex, Enter unpicks it, Enter picks
+	// opencode. Down from pi, the last harness, reaches the Continue button,
+	// the only thing that confirms.
+	h.Require.NoError(run(enter, down, " ", enter, down, enter, down, down, enter))
+	h.Require.Contains(h.Stdout.String(), "\nclaude\n")
+	h.Require.Contains(h.Stdout.String(), "\nopencode\n")
+	h.Require.NotContains(h.Stdout.String(), "\ncodex\n")
+
+	// Leaving the list with nothing picked stays on it until a harness is chosen.
+	h.Require.NoError(run(down, down, down, down, up, up, enter, down, down, down, enter))
+	h.Require.Contains(h.Stdout.String(), "\ncodex\n")
+	h.Require.NotContains(h.Stdout.String(), "\nclaude\n")
+
+	// Up from the buttons returns to the list.
+	h.Require.NoError(run(enter, down, down, down, down, up, enter, down, enter))
+	h.Require.Contains(h.Stdout.String(), "\nclaude\n")
+	h.Require.Contains(h.Stdout.String(), "\npi\n")
+}
+
 func Test_Grid_Setup_PromptUsesTerminalForeground(t *testing.T) {
 	skipUnlessSupported(t)
 	h, api := fakeGridAPI(t)
@@ -2942,7 +3014,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", messagesFirstRouteMetadata, map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "name": "General"}, "tradeoff": "balanced"}),
+			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", messagesFirstRouteMetadata, map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "display_name": "General"}, "tradeoff": "balanced"}),
 			route("route-primary", "acme/primary", "Primary", harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
 		},
 		"pagination": map[string]any{"has_more": false},
@@ -4578,7 +4650,7 @@ func Test_Grid_Setup_RejectsEmptyOrInvalidTeamScope(t *testing.T) {
 
 func routeClassifierFixture(id, name string) map[string]any {
 	return map[string]any{
-		"id": id, "name": name, "supported_tradeoffs": []any{},
+		"id": id, "display_name": name, "supported_tradeoffs": []any{},
 		"decidable_models": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
 	}
 }
