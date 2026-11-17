@@ -1,4 +1,4 @@
-//go:build e2e && (linux || darwin)
+//go:build e2e
 
 package e2etests
 
@@ -11,9 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -139,6 +139,9 @@ func newOpenCodeHarnessTest(t *testing.T, variant harnessOpenCodeVariant) *harne
 
 func newHarnessVariantTest(t *testing.T, name string, variant harnessVariant) *harnessTest {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("harnesses are not exercised on windows yet")
+	}
 	apiKey := os.Getenv("BASETEN_E2E_TEST_API_KEY")
 	if apiKey == "" {
 		t.Skip("BASETEN_E2E_TEST_API_KEY not set")
@@ -512,11 +515,9 @@ func (h *harnessTest) runWithTimeout(t *testing.T, dir string, timeout time.Dura
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	command.WaitDelay = 5 * time.Second
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	harnessProcessGroupSetup(command)
 	err := command.Run()
-	if command.Process != nil {
-		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-	}
+	harnessProcessGroupKill(command)
 	if err != nil {
 		t.Fatalf("%s %s failed after %s: %v\nstdout:\n%s\nstderr:\n%s",
 			h.binary, strings.Join(args, " "), timeout, err, stdout.String(), stderr.String())
