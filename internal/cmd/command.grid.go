@@ -1569,7 +1569,7 @@ func commandGridRouteClassifierList(ctx *CommandContext, f *cmd.GridRouteClassif
 	for _, routeClassifier := range items {
 		rows = append(rows, []string{
 			routeClassifier.Id,
-			routeClassifier.Name,
+			routeClassifier.DisplayName,
 			gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs),
 			strings.Join(routeClassifier.DecidableModels, ", "),
 		})
@@ -1595,7 +1595,7 @@ func commandGridRouteClassifierDescribe(ctx *CommandContext, f *cmd.GridRouteCla
 		return nil
 	}
 	ctx.Outputf("ID:               %s\n", routeClassifier.Id)
-	ctx.Outputf("Name:             %s\n", routeClassifier.Name)
+	ctx.Outputf("Name:             %s\n", routeClassifier.DisplayName)
 	ctx.Outputf("Tradeoffs:        %s\n", gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs))
 	ctx.Outputf("Decidable Models: %s\n", strings.Join(routeClassifier.DecidableModels, ", "))
 	return nil

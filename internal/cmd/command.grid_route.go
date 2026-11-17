@@ -280,7 +280,7 @@ func gridRouteTargetFields(value any) (gridRouteTargetInfo, error) {
 	case managementapi.GridRouteTargetIntelligent:
 		return gridRouteTargetInfo{
 			kind:            t.Type,
-			routeClassifier: fmt.Sprintf("%s (%s)", t.RouteClassifier.Name, t.RouteClassifier.Id),
+			routeClassifier: fmt.Sprintf("%s (%s)", t.RouteClassifier.DisplayName, t.RouteClassifier.Id),
 			tradeoff:        string(t.Tradeoff),
 		}, nil
 	default:
