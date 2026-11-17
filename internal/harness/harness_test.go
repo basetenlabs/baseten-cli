@@ -25,7 +25,7 @@ var chatCompletionsFormats = []managementapi.GridRouteMetadataApiFormats{managem
 
 func testRoute(name, displayName string) Route {
 	return Route{
-		ID: name, Name: name, DisplayName: displayName,
+		Name: name, DisplayName: displayName, ClaudeDesktopAlias: "claude-desktop-" + name,
 		ContextWindow: 128000, OutputLimit: 4096, InputModalities: []string{"text"}, Tools: true, Responses: true,
 		TargetAPI: TargetAPIChatCompletions,
 	}
@@ -766,7 +766,7 @@ func TestOpenCodeGitContextPluginKeepsUserFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(plugin, []byte("export default {}\n"), 0o600))
 	plans := setupGitContext(t, h, path)
 	require.True(t, slices.ContainsFunc(plans, func(p *Plan) bool {
-		return slices.ContainsFunc(p.Notes, func(note string) bool { return strings.Contains(note, plugin+" left unchanged") })
+		return slices.ContainsFunc(p.Warnings, func(warning string) bool { return strings.Contains(warning, "left "+plugin+" unchanged") })
 	}))
 	teardown(t, h, path)
 	written, err := os.ReadFile(plugin)
@@ -1215,9 +1215,9 @@ func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	}
 	require.Equal(t, "anthropic-messages", models["acme/primary"]["api"])
 	require.Equal(t, testEndpoint, models["acme/primary"]["baseUrl"], "Pi's Anthropic client appends /v1")
-	require.Equal(t, true, get(models["acme/primary"], []string{"compat", "forceAdaptiveThinking"}).Data)
-	require.NotContains(t, models["acme/primary"]["compat"], "sendSessionAffinityHeaders")
-	require.Equal(t, map[string]any{"forceAdaptiveThinking": true, "sendSessionAffinityHeaders": true}, models["acme/fallback"]["compat"])
+	for _, id := range []string{"acme/primary", "acme/fallback"} {
+		require.Equal(t, map[string]any{"forceAdaptiveThinking": true, "sendSessionAffinityHeaders": true}, models[id]["compat"], "every Messages route sends the session id, intelligent or not")
+	}
 	require.Equal(t, "openai-responses", models["acme/background"]["api"])
 	require.NotContains(t, models["acme/background"], "baseUrl")
 	require.NotContains(t, models["acme/background"], "compat")
@@ -1288,7 +1288,7 @@ func TestPiGitContextExtensionKeepsUserFile(t *testing.T) {
 	user := "export default function () {}\n"
 	require.NoError(t, os.WriteFile(target, []byte(user), 0o600))
 	plans := setupGitContext(t, h, path)
-	require.Contains(t, plans[len(plans)-1].Notes, "warning: existing "+target+" left unchanged; Pi sessions will not include the git repository, branch, and commit")
+	require.Contains(t, plans[len(plans)-1].Warnings, "left "+target+" unchanged because Grid didn't create it; Pi sessions will not include the git repository, branch, and commit")
 	teardown(t, h, path)
 	raw, err := os.ReadFile(target)
 	require.NoError(t, err)
@@ -1334,9 +1334,11 @@ func TestClientHeaderNamesHarness(t *testing.T) {
 			if h.Name() == Claude {
 				require.Equal(t, "1", get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Data)
 				require.Equal(t, "true", get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Data)
+				require.Equal(t, "0", get(load(t, path), []string{"env", "CLAUDE_CODE_TETHER_LIVE"}).Data)
 				teardown(t, h, path)
 				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Exists, "teardown removes the gateway hint key")
 				require.False(t, get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Exists, "teardown removes the tool search key")
+				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_TETHER_LIVE"}).Exists, "teardown removes the tether key")
 			}
 		})
 	}
@@ -1405,6 +1407,83 @@ func TestLoadRecordsRenamesClaudeCode(t *testing.T) {
 	file, err := LoadRecords(dir)
 	require.NoError(t, err)
 	require.Equal(t, map[string]Record{Claude: {TeamID: "team-a"}}, file.Harnesses)
+}
+
+type claudeDesktopPackageExecer struct {
+	fakeExecer
+	outputs  map[string]string
+	executed []string
+}
+
+func claudeDesktopPackageCommand(args ...string) string {
+	return strings.Join(args, " ")
+}
+
+func (e *claudeDesktopPackageExecer) Exec(command *exec.Cmd) error {
+	key := claudeDesktopPackageCommand(command.Args...)
+	e.executed = append(e.executed, key)
+	output, ok := e.outputs[key]
+	if !ok {
+		return exec.ErrNotFound
+	}
+	_, err := fmt.Fprint(command.Stdout, output)
+	return err
+}
+
+func TestClaudeDesktopVersion(t *testing.T) {
+	execer := &detectionExecer{binaries: map[string]any{"/usr/bin/plutil": "5.11492.5"}}
+	binary := "/Applications/Claude.app/Contents/MacOS/Claude"
+	require.Equal(t, "5.11492.5", claudeDesktopVersion(t.Context(), execer, binary))
+	require.Equal(t, []string{"/usr/bin/plutil"}, execer.executed)
+}
+
+func TestClaudeDesktopLinuxVersion(t *testing.T) {
+	rpm := claudeDesktopPackageCommand("rpm", "-qf", "--qf", "%{VERSION}-%{RELEASE}", linuxDesktopClaude)
+	dpkgOwner := claudeDesktopPackageCommand("dpkg-query", "-S", linuxDesktopClaude)
+	dpkgStatus := claudeDesktopPackageCommand("dpkg-query", "-W", "-f=${db:Status-Status} ${Version}", "claude-desktop")
+	pacman := claudeDesktopPackageCommand("pacman", "-Qo", linuxDesktopClaude)
+	for _, tc := range []struct {
+		name     string
+		outputs  map[string]string
+		want     string
+		executed []string
+	}{
+		{
+			name:     "rpm",
+			outputs:  map[string]string{rpm: "5.11492.5-1.fc43\n"},
+			want:     "5.11492.5",
+			executed: []string{rpm},
+		},
+		{
+			name: "dpkg",
+			outputs: map[string]string{
+				dpkgOwner:  "claude-desktop: /usr/bin/claude-desktop\n",
+				dpkgStatus: "installed 5.11492.5-3.3.17\n",
+			},
+			want:     "5.11492.5",
+			executed: []string{rpm, dpkgOwner, dpkgStatus},
+		},
+		{
+			name: "pacman after uninstalled dpkg package",
+			outputs: map[string]string{
+				dpkgOwner:  "claude-desktop: /usr/bin/claude-desktop\n",
+				dpkgStatus: "config-files 5.11492.5-1\n",
+				pacman:     "/usr/bin/claude-desktop is owned by claude-desktop 1:5.11492.5-2\n",
+			},
+			want:     "5.11492.5",
+			executed: []string{rpm, dpkgOwner, dpkgStatus, pacman},
+		},
+		{
+			name:     "unknown install",
+			executed: []string{rpm, dpkgOwner, pacman},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			execer := &claudeDesktopPackageExecer{outputs: tc.outputs}
+			require.Equal(t, tc.want, claudeDesktopLinuxVersion(t.Context(), execer, linuxDesktopClaude))
+			require.Equal(t, tc.executed, execer.executed)
+		})
+	}
 }
 
 func TestClaudeDesktopConfigFollowsClaudeCodeSettings(t *testing.T) {

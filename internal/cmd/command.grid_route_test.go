@@ -43,7 +43,7 @@ func gridRouteCases() []gridRouteCase {
 			target: map[string]any{"type": "INTELLIGENT", "route_classifier_id": "general-v1", "tradeoff": "balanced"},
 			responseTarget: map[string]any{
 				"type":             "INTELLIGENT",
-				"route_classifier": map[string]any{"id": "general-v1", "name": "General"},
+				"route_classifier": map[string]any{"id": "general-v1", "display_name": "General"},
 				"tradeoff":         "balanced",
 			},
 		},
@@ -603,7 +603,7 @@ func Test_Grid_Route_Describe_IntelligentTarget(t *testing.T) {
 	target := map[string]any{
 		"type": "INTELLIGENT",
 		"route_classifier": map[string]any{
-			"id": "general-v1", "name": "General", "supported_tradeoffs": []any{},
+			"id": "general-v1", "display_name": "General", "supported_tradeoffs": []any{},
 			"decidable_models": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
 		},
 		"tradeoff": "balanced",
