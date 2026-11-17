@@ -32,7 +32,7 @@ var commandGrid = Command{
 				"For Claude Desktop, setup adds a config to the app's third-party config library and switches the app to third-party mode; quit and reopen the app to load it.\n\n" +
 				"Setup also adds a served-model indicator for intelligent routes in Claude Code, Pi, and OpenCode 2. " +
 				"To turn it off, set BASETEN_CLAUDE_SERVED_MODEL, BASETEN_PI_SERVED_MODEL, or BASETEN_OPENCODE_SERVED_MODEL to 0.\n\n" +
-				"With --git-context, setup makes each harness add the git origin URL, branch, and commit to the session context when a session starts inside a git repository. This is used for training an improved custom router.",
+				"With --git-context, setup makes each harness add the git origin URL, branch, and commit to the session context when a session starts inside a git repository. Baseten uses this context to train custom routers for teams that opt in to trace recording.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "Which harnesses were set up and what to restart. --dry-run lists each setting setup will add, update or remove and stops; --verbose lists the same changes before asking to apply.",
