@@ -157,7 +157,11 @@ func buildCLIBinary() error {
 			cliBinaryErr = err
 			return
 		}
-		path := filepath.Join(dir, "baseten-cli-test")
+		binary := "baseten-cli-test"
+		if runtime.GOOS == "windows" {
+			binary += ".exe"
+		}
+		path := filepath.Join(dir, binary)
 		build := exec.Command(goTool, "build", "-o", path, "./cmd/baseten")
 		build.Dir = repoRoot()
 		if out, err := build.CombinedOutput(); err != nil {
