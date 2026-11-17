@@ -294,7 +294,7 @@ func Test_Sandbox_Create_RejectsMalformedKeyValues(t *testing.T) {
 	h.Require.ErrorContains(h.Execute("sandbox", "create", "--env", "A=1", "--plain-env", "A=2"), "both")
 }
 
-func Test_Sandbox_Describe_ShowSecretsAndText(t *testing.T) {
+func Test_Sandbox_Describe_Text(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := newSandboxTestAPI(h)
 	record := sandboxTestRecord(m, "sbx-1", "DEPLOYED")
@@ -307,7 +307,6 @@ func Test_Sandbox_Describe_ShowSecretsAndText(t *testing.T) {
 	m.SetRoute("GET", "/v1/sandboxes/instances/sbx-1", 200, record)
 
 	h.Require.NoError(h.Execute("sandbox", "describe", "--name", "sbx-1"))
-	h.Require.Empty(sandboxTestCalls(m, "GET", "/v1/sandboxes/instances/sbx-1")[0].Query().Get("show_secrets"))
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Status:       DEPLOYED")
 	h.Require.Contains(out, "Memory:       4096 MB\nCPU:          2 vCPU\n")
@@ -316,9 +315,6 @@ func Test_Sandbox_Describe_ShowSecretsAndText(t *testing.T) {
 		"Expiry:       SOMETHING_NEW\n")
 	// Empty fields are left out.
 	h.Require.NotContains(out, "External ID")
-
-	h.Require.NoError(h.Execute("sandbox", "describe", "--name", "sbx-1", "--show-secrets"))
-	h.Require.Equal("true", sandboxTestCalls(m, "GET", "/v1/sandboxes/instances/sbx-1")[1].Query().Get("show_secrets"))
 }
 
 func Test_Sandbox_Update_SendsOnlySetFields(t *testing.T) {

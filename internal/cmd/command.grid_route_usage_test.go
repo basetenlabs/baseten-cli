@@ -139,7 +139,8 @@ func Test_Grid_Route_Usage_TeamAndIntelligentRouteDimensions(t *testing.T) {
 	row := gridUsageModel("test-model-api", "0.25", 100, 50, 20)
 	row["team_id"] = "team-a"
 	row["team_name"] = "Engineering"
-	row["intelligent_route"] = "acme/router"
+	row["intelligent_route_id"] = "r123456"
+	row["intelligent_route_display_name"] = "acme/router"
 	body := gridUsageBody(gridUsageBucket("2026-09-24", row))
 	for _, output := range []string{"text", "json", "jsonl"} {
 		t.Run(output, func(t *testing.T) {

@@ -30,14 +30,14 @@ func commandSSHSetup(ctx *CommandContext, flags *cmd.SSHSetupFlags) error {
 	if err == nil {
 		profile = session.ProfileName()
 	} else if errors.As(err, &required) {
-		ctx.LogLine("warning: no profile selected to pin; pass --profile to pin one. Connections will use BASETEN_PROFILE.")
+		ctx.Warn("no profile selected to pin; pass --profile to pin one. Connections will use BASETEN_PROFILE.")
 	} else if errors.Is(err, huh.ErrUserAborted) {
 		return err
 	}
 	// Only pin names safe to embed bare in the config's shell command lines.
 	if profile != "" && !ssh.SafeProfileName(profile) {
-		ctx.Logf("warning: profile %q has characters unsafe to embed in SSH config; not pinning it. "+
-			"Connections will use BASETEN_PROFILE or the current profile.\n", profile)
+		ctx.Warnf("profile %q has characters unsafe to embed in SSH config; not pinning it. "+
+			"Connections will use BASETEN_PROFILE or the current profile.", profile)
 		profile = ""
 	}
 
@@ -48,7 +48,7 @@ func commandSSHSetup(ctx *CommandContext, flags *cmd.SSHSetupFlags) error {
 	// The generated config invokes `baseten`; warn if it is not on the PATH,
 	// since the SSH connection will run it at connect time.
 	if _, err := ctx.Execer().LookPath("baseten"); err != nil {
-		ctx.LogLine("warning: `baseten` was not found on your PATH; SSH connections will fail until it is.")
+		ctx.Warn("`baseten` was not found on your PATH; SSH connections will fail until it is.")
 	}
 
 	if ctx.JSON {
