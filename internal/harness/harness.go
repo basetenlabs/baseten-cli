@@ -813,7 +813,7 @@ func prepareSealedFile(path string, body []byte, missing string) ([]*Plan, error
 		return nil, err
 	}
 	if f.exists && !gridSetupSealed(f.data) {
-		return []*Plan{{Path: path, Warnings: []string{"existing " + path + " left unchanged; " + missing}, file: f, data: f.data}}, nil
+		return []*Plan{{Path: path, Warnings: []string{"left " + path + " unchanged because Grid didn't create it; " + missing}, file: f, data: f.data}}, nil
 	}
 	data := append(slices.Clone(body), gridSetupSeal(body)...)
 	return []*Plan{{Path: path, Managed: true, Changed: !bytes.Equal(data, f.data), file: f, data: data}}, nil

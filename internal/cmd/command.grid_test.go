@@ -321,8 +321,8 @@ func Test_Grid_Setup_Lifecycle(t *testing.T) {
 			h.Require.NotContains(h.Stdout.String(), "secret-team-a")
 
 			h.Require.NoError(h.Execute("grid", "teardown", "--harness", name, "--config-dir", dir, "--dry-run"))
-			h.Require.Contains(h.Stdout.String(), "Remove Baseten settings from "+name)
-			h.Require.Equal(keys > 0, strings.Contains(h.Stdout.String(), "Also delete the Grid API key"))
+			h.Require.Contains(h.Stdout.String(), "Removes Grid from "+name)
+			h.Require.Equal(keys > 0, strings.Contains(h.Stdout.String(), "Also deletes the Grid API key"))
 			h.Require.Equal(calls, len(api.Calls()), "status and teardown previews are local")
 			unchanged, err := os.ReadFile(path)
 			h.Require.NoError(err)
@@ -379,7 +379,7 @@ func Test_Grid_Setup_Status_Teardown_ClaudeDesktop(t *testing.T) {
 	library := filepath.Join(dir, "Claude-3p", "configLibrary")
 	appConfig := filepath.Join(dir, "Claude-3p", "claude_desktop_config.json")
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
-	h.Require.Contains(h.Stderr.String(), "Quit and reopen Claude Desktop")
+	h.Require.Contains(h.Stderr.String(), "Grid is set up. Restart Claude Code and Claude Desktop to load the changes.\n")
 	configs, err := filepath.Glob(filepath.Join(library, "*-*.json"))
 	h.Require.NoError(err)
 	h.Require.Len(configs, 1, "one Baseten config in the library")
@@ -425,9 +425,9 @@ func Test_Grid_Setup_TextSummary(t *testing.T) {
 	t.Setenv("PATH", bin)
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
 	h.Require.Empty(h.Stdout.String())
-	h.Require.Contains(h.Stderr.String(), "but baseten on your PATH is "+filepath.Join(bin, "baseten")+"; harnesses will run the former")
-	h.Require.Contains(h.Stderr.String(), "Configuration saved.")
-	h.Require.Contains(h.Stderr.String(), "Undo with: baseten grid teardown --harness claude --config-dir '"+dir+"'")
+	h.Require.Contains(h.Stderr.String(), "not the baseten on your PATH ("+filepath.Join(bin, "baseten")+")")
+	h.Require.Contains(h.Stderr.String(), "Grid is set up. Restart Claude Code to load the changes.\n")
+	h.Require.Contains(h.Stderr.String(), "Undo with: baseten grid teardown --harness claude --config-dir '"+dir+"'", "a custom --config-dir needs its own teardown command")
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes", "--verbose"))
 	for _, want := range []string{"Team: Engineering", "Primary route     acme/primary", "Background route  deepseek-ai/DeepSeek-V4.1-Flash", "Already configured"} {
 		h.Require.Contains(h.Stdout.String(), want)
@@ -464,7 +464,7 @@ func Test_Grid_Setup_SignsInWithoutCurrentProfile(t *testing.T) {
 	h.Require.NoError(err)
 	h.Require.True(ok)
 	h.Require.Contains(name, "user@example.com")
-	h.Require.Contains(h.Stderr.String(), "Logged in as user@example.com (my-workspace) as profile "+name+"\n")
+	h.Require.Contains(h.Stderr.String(), "Logged in as user@example.com (my-workspace), profile "+name+"\n")
 	// Setup's result is the only document on stdout.
 	var result map[string]any
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &result))
@@ -1016,7 +1016,7 @@ func Test_Grid_Setup_Status_Teardown_DefaultDiscovery(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "warning: keeping the Grid API key")
 	h.Require.Equal(0, countCalls(api, "DELETE", "/v1/api_keys/secret-team-a"))
 	h.Require.NoError(h.Execute("grid", "status"))
-	h.Require.Contains(h.Stderr.String(), "No configured Baseten harnesses found.")
+	h.Require.Contains(h.Stderr.String(), "Grid isn't set up for any harness. Run baseten grid setup.")
 	h.Require.NoError(h.Execute("grid", "teardown", "--output", "json"))
 	h.Require.JSONEq(`{"items":[]}`, h.Stdout.String())
 }
@@ -1520,7 +1520,7 @@ func Test_Grid_Setup_ServedModelSessionCredential(t *testing.T) {
 	exe, err := os.Executable()
 	h.Require.NoError(err)
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--use-session-credential", "--yes"))
-	h.Require.Contains(h.Stderr.String(), "but baseten on your PATH is "+filepath.Join(bin, "baseten")+"; harnesses will run the former")
+	h.Require.Contains(h.Stderr.String(), "not the baseten on your PATH ("+filepath.Join(bin, "baseten")+")")
 	settings := readHarnessSettings(t, "claude", harnessSettingsFile("claude", dir))
 	h.Require.NotContains(settings, "apiKeyHelper")
 	h.Require.Equal("'"+exe+"' grid claude-served-model --intelligent-route 'acme/auto=auto'", settings["statusLine"].(map[string]any)["command"])
@@ -2031,7 +2031,7 @@ func Test_Grid_Setup_PiServedModel(t *testing.T) {
 	h.Require.True(plans.Items[2].Changed)
 	h.Require.Empty(plans.Items[2].ReplacedSettings)
 	h.Require.Equal(map[string]string{"acme/auto": "Auto (Baseten Internal Dogfooding)"}, piServedModelIntelligentRoutes(t, extension))
-	h.Require.NotContains(h.Stderr.String(), "left unchanged")
+	h.Require.NotContains(h.Stderr.String(), "unchanged because Grid didn't create it")
 	settings := readHarnessSettings(t, "pi", settingsPath)
 	h.Require.Equal("dark", settings["theme"])
 	h.Require.Equal(userSettings["extensions"], settings["extensions"], "setup needs no extensions setting and leaves the user's alone")
@@ -2090,7 +2090,7 @@ func Test_Grid_Setup_PiServedModelUserFile(t *testing.T) {
 
 			serveServedModelRoutes(api, "auto", "code")
 			h.Require.NoError(h.Execute(setup...))
-			h.Require.Contains(h.Stderr.String(), "warning: existing "+extension+" left unchanged; Pi will not show which model served auto-route responses")
+			h.Require.Contains(h.Stderr.String(), "warning: left "+extension+" unchanged because Grid didn't create it; Pi will not show which model served auto-route responses")
 			untouched("setup")
 			h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 			untouched("sync")
@@ -2641,7 +2641,7 @@ func Test_Grid_Setup_OpenCodeServedModelForeignPlugin(t *testing.T) {
 			setup := []string{"grid", "setup", "--harness", "opencode", "--config-dir", dir, "--yes"}
 
 			h.Require.NoError(h.Execute(setup...))
-			h.Require.Contains(h.Stderr.String(), "warning: "+openCodePluginDir(dir)+" already exists and was not written by baseten grid setup; leaving it unchanged")
+			h.Require.Contains(h.Stderr.String(), "warning: left "+openCodePluginDir(dir)+" unchanged because Grid didn't create it; OpenCode won't show the serving model for auto routes")
 			h.Require.Equal("baseten-harness/acme/primary", readHarnessSettings(t, "opencode", harnessSettingsFile("opencode", dir))["model"])
 			unchanged()
 			h.Require.NoError(h.Execute(append(setup, "--hide-served-model-indicator")...))
@@ -3388,7 +3388,9 @@ func Test_Grid_Setup_RouteMetadata(t *testing.T) {
 	})
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes"))
-	h.Require.Contains(h.Stderr.String(), "warning: skipping routes without usable model metadata: acme/bare")
+	h.Require.NotContains(h.Stderr.String(), "usable model metadata", "a route the user can't fix is only reported with --verbose")
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--yes", "--verbose"))
+	h.Require.Contains(h.Stderr.String(), "Skipping routes without usable model metadata: acme/bare")
 	h.Require.NotContains(fmt.Sprint(readHarnessSettings(t, "claude", harnessSettingsFile("claude", dir))["availableModels"]), "acme/bare")
 
 	h.Stderr.Reset()
@@ -3431,14 +3433,14 @@ func Test_Grid_Setup_RoutesByAPIFormat(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
-	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--harness", "codex", "--yes"))
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--harness", "codex", "--yes", "--verbose"))
 
 	claude := readHarnessSettings(t, "claude", filepath.Join(root, "claude", "settings.json"))
 	h.Require.Equal("acme/claude", claude["model"])
 	h.Require.Equal([]any{"acme/claude", "acme/open", "deepseek-ai/DeepSeek-V4.1-Flash"}, claude["availableModels"])
 	h.Require.Equal("acme/gpt", readHarnessSettings(t, "codex", filepath.Join(root, "codex", "config.toml"))["model"])
 	h.Require.Equal([]string{"acme/gpt", "acme/open"}, catalogSlugs(t, filepath.Join(root, "codex", "baseten-models.json")))
-	h.Require.Contains(h.Stderr.String(), "warning: skipping routes without usable model metadata: acme/new, acme/future")
+	h.Require.Contains(h.Stderr.String(), "Skipping routes without usable model metadata: acme/new, acme/future")
 
 	h.Require.Error(h.Execute("grid", "setup", "--harness", "claude", "--primary-route-id", "route-gpt", "--yes"))
 	h.Require.Contains(h.Stderr.String(), `route "acme/gpt" is not one of the team's routes this harness can call`)
@@ -3530,16 +3532,16 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 	}{
 		"no daemon":        {&codexDaemonHarnessExecer{}, 0, nil, []string{"codex app-server daemon"}},
 		"no sessions":      {&codexDaemonHarnessExecer{socket: socket, lsof: listener}, 1, []string{"Restarted codex app-server daemon (pid 4242) so the new model catalog takes effect."}, []string{"warning"}},
-		"sessions":         {&codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\nf15\nn" + socket + " type=STREAM\n"}, 1, []string{"will disconnect 2 running codex session(s)", "Restarted codex app-server daemon (pid 4242)"}, nil},
-		"sessions unknown": {&codexDaemonHarnessExecer{socket: socket, noLsof: true}, 1, []string{"could not check for running codex sessions", "Restarted codex app-server daemon (pid 4242)"}, nil},
-		"restart fails":    {&codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}, 1, []string{"could not restart the codex app-server daemon", "Run `codex app-server daemon restart` when you're done to pick up the new models."}, []string{"Restarted"}},
+		"sessions":         {&codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\nf15\nn" + socket + " type=STREAM\n"}, 1, []string{"2 Codex session(s) are running; restarting Codex interrupts their current turn", "Restarted codex app-server daemon (pid 4242)"}, nil},
+		"sessions unknown": {&codexDaemonHarnessExecer{socket: socket, noLsof: true}, 1, []string{"couldn't check for running Codex sessions", "Restarted codex app-server daemon (pid 4242)"}, nil},
+		"restart fails":    {&codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}, 1, []string{"could not restart the codex app-server daemon", "Run `codex app-server daemon restart` when you're done so Codex loads the changes."}, []string{"Restarted"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _ := gridAPI(t, "")
 			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
-			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--yes"))
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--yes", "--verbose"))
 			h.Require.Equal(tc.restarts, tc.execer.restarts)
-			h.Require.Contains(h.Stderr.String(), "Configuration saved.")
+			h.Require.Contains(h.Stderr.String(), "Grid is set up. Restart Codex to load the changes.\n")
 			for _, want := range tc.stderr {
 				h.Require.Contains(h.Stderr.String(), want)
 			}
@@ -3609,7 +3611,7 @@ func Test_Grid_Teardown_RestartsCodexDaemon(t *testing.T) {
 		t.Fatal(err)
 	}
 	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
-	signBackIn := "Teardown removed the ChatGPT login restriction. Run `codex login` to sign back in; your workspace defaults re-apply on the next launch."
+	signBackIn := "To use ChatGPT in Codex again, run `codex login`."
 	for name, tc := range map[string]struct {
 		execer   *codexDaemonHarnessExecer
 		restarts int
@@ -3617,8 +3619,8 @@ func Test_Grid_Teardown_RestartsCodexDaemon(t *testing.T) {
 		absent   []string
 	}{
 		"no daemon":     {&codexDaemonHarnessExecer{}, 0, nil, []string{"app-server daemon"}},
-		"sessions":      {&codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\nf15\nn" + socket + " type=STREAM\n"}, 1, []string{"will disconnect 2 running codex session(s)", "Restarted codex app-server daemon (pid 4242)"}, nil},
-		"restart fails": {&codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}, 1, []string{"could not restart the codex app-server daemon", "Run `codex app-server daemon restart` when you're done to pick up the new models."}, []string{"Restarted"}},
+		"sessions":      {&codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\nf15\nn" + socket + " type=STREAM\n"}, 1, []string{"2 Codex session(s) are running; restarting Codex interrupts their current turn", "Restarted codex app-server daemon (pid 4242)"}, nil},
+		"restart fails": {&codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}, 1, []string{"could not restart the codex app-server daemon", "Run `codex app-server daemon restart` when you're done so Codex loads the changes."}, []string{"Restarted"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _ := gridAPI(t, "")
@@ -3626,9 +3628,9 @@ func Test_Grid_Teardown_RestartsCodexDaemon(t *testing.T) {
 			dir := t.TempDir()
 			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--yes"))
 			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
-			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "codex", "--config-dir", dir, "--yes"))
+			h.Require.NoError(h.Execute("grid", "teardown", "--harness", "codex", "--config-dir", dir, "--yes", "--verbose"))
 			h.Require.Equal(tc.restarts, tc.execer.restarts)
-			h.Require.Contains(h.Stderr.String(), "Baseten settings removed.")
+			h.Require.Contains(h.Stderr.String(), "Grid is removed. Restart Codex to load the changes.\n")
 			h.Require.Contains(h.Stderr.String(), signBackIn)
 			for _, want := range tc.stderr {
 				h.Require.Contains(h.Stderr.String(), want)
@@ -3987,7 +3989,7 @@ func Test_Grid_Setup_RecordsSyncOptions(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--dry-run"))
 	h.Require.Contains(harnessRecordFile(t).Harnesses, "claude")
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir))
-	h.Require.Contains(h.Stderr.String(), "No Baseten settings to remove.")
+	h.Require.Contains(h.Stderr.String(), "Grid isn't set up in the selected harnesses.")
 	h.Require.NotContains(harnessRecordFile(t).Harnesses, "claude")
 }
 
@@ -4190,9 +4192,9 @@ func Test_Grid_Sync_RestartsCodexDaemon(t *testing.T) {
 	// despite attached sessions, as setup does.
 	busy := &codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\n"}
 	h.Context = internalcmd.WithExecer(h.Context, busy)
-	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.NoError(h.Execute("grid", "sync", "--yes", "--verbose"))
 	h.Require.Equal(1, busy.restarts)
-	h.Require.Contains(h.Stderr.String(), "will disconnect 1 running codex session(s)")
+	h.Require.Contains(h.Stderr.String(), "1 Codex session(s) are running")
 	h.Require.Contains(h.Stderr.String(), "Restarted codex app-server daemon (pid 4242)")
 	h.Require.False(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
 
@@ -4487,8 +4489,11 @@ func Test_Grid_Teardown_KeepsSessionCredential(t *testing.T) {
 
 	// The settings are removed, but the key is never offered for deletion.
 	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--dry-run"))
+	h.Require.NotContains(h.Stderr.String(), "Keeping the API key")
+	h.Require.Contains(h.Stderr.String(), "Dry run: nothing was changed.\n")
+	h.Require.NoError(h.Execute("grid", "teardown", "--harness", "claude", "--config-dir", dir, "--dry-run", "--verbose"))
 	h.Require.Contains(h.Stderr.String(), "Keeping the API key installed with --use-session-credential")
-	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also delete the Grid API key")
+	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also deletes the Grid API key")
 	h.Require.NoError(h.Execute(teardown...))
 	raw, err := os.ReadFile(path)
 	h.Require.NoError(err)
@@ -4500,7 +4505,7 @@ func Test_Grid_Teardown_KeepsSessionCredential(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	h.Require.NoError(os.Remove(filepath.Join(recordDir(t), "harness.json")))
 	h.Require.NoError(h.Execute(teardown...))
-	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also delete the Grid API key")
+	h.Require.NotContains(h.Stdout.String()+h.Stderr.String(), "Also deletes the Grid API key")
 	raw, err = os.ReadFile(path)
 	h.Require.NoError(err)
 	h.Require.NotContains(string(raw), "test-key", "the settings were removed")
@@ -4778,7 +4783,7 @@ func Test_Grid_Setup_ReplacesDeletedKey(t *testing.T) {
 	// The key was deleted on another machine.
 	api.SetRoute("GET", "/v1/api_keys", 200, map[string]any{"keys": []any{}})
 	api.SetRoute("POST", "/v1/teams/team-a/api_keys", 200, map[string]string{"api_key": "secret-team-a-2"})
-	h.Require.NoError(h.Execute(args...))
+	h.Require.NoError(h.Execute(append(args, "--verbose")...))
 	h.Require.Contains(h.Stderr.String(), "Created Grid API key")
 	h.Require.Equal(2, countCalls(api, "POST", "/v1/teams/team-a/api_keys"))
 	settings, err := os.ReadFile(harnessSettingsFile("opencode", dir))
