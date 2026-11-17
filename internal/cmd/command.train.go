@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -996,7 +997,10 @@ func commandTrainPush(ctx *CommandContext, flags *cmd.TrainPushFlags) error {
 	args = trussArg(args, "accelerator", flags.Accelerator)
 	args = trussIntArg(args, "node-count", flags.NodeCount)
 	args = trussArg(args, "entrypoint", flags.Entrypoint)
-	args = trussIntArg(args, "priority", flags.Priority)
+	// 0 is a valid priority, so forward it whenever it was passed.
+	if ctx.Command.Flags().Changed("priority") {
+		args = append(args, "--priority", strconv.Itoa(flags.Priority))
+	}
 	args = trussBoolArg(args, "spot", flags.Spot)
 	// Interactive triggers are hyphenated in this CLI and underscored downstream,
 	// like every other multi-word value.

@@ -1087,6 +1087,17 @@ func Test_Train_Push_RejectsSubMinuteInteractiveTimeout(t *testing.T) {
 	h.Require.Empty(fake.calls)
 }
 
+func Test_Train_Push_ForwardsZeroPriority(t *testing.T) {
+	h, fake := newTrussHarness(t)
+
+	// 0 is a valid priority, so an explicit --priority 0 must override the config's.
+	h.Require.NoError(h.Execute("train", "push", "--config", "./train.py", "--priority", "0"))
+
+	h.Require.Equal([]string{
+		"uv", "tool", "run", "truss@latest", "train", "push", "./train.py", "--priority", "0",
+	}, fake.only(t).Args)
+}
+
 func Test_Train_Push_OmitsUnsetFlags(t *testing.T) {
 	h, fake := newTrussHarness(t)
 
