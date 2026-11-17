@@ -755,7 +755,7 @@ func Test_Grid_Setup_RouteFlags(t *testing.T) {
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--background-route-id", "route-primary", "--yes"))
 	env := readHarnessSettings(t, "claude", harnessSettingsFile("claude", dir))["env"].(map[string]any)
-	h.Require.Equal("acme/primary", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	h.Require.Equal("acme/primary", env["ANTHROPIC_SMALL_FAST_MODEL"])
 }
 
 func Test_Grid_Setup_SubagentRouteUnsupportedHarnessWarns(t *testing.T) {
@@ -947,7 +947,7 @@ func Test_Grid_Setup_ServerDefaults(t *testing.T) {
 			h.Require.Equal(tc.wantPrimary, settings["model"])
 			if tc.harnessName == "claude" {
 				env := settings["env"].(map[string]any)
-				h.Require.Equal(tc.wantBackground, env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+				h.Require.Equal(tc.wantBackground, env["ANTHROPIC_SMALL_FAST_MODEL"])
 				h.Require.Equal(settings["model"], env["ANTHROPIC_MODEL"])
 			}
 			call := api.FindCall("GET", "/v1/grid/team_settings")
@@ -1313,7 +1313,7 @@ func Test_Grid_Setup_IntelligentRouteInPickers(t *testing.T) {
 	claude := readHarnessSettings(t, "claude", filepath.Join(root, "claude", "settings.json"))
 	h.Require.Equal("acme/auto", claude["model"])
 	h.Require.Contains(claude["modelPicker"].(map[string]any)["options"], map[string]any{"model": "acme/auto", "label": "Auto"})
-	h.Require.Equal("acme/auto", claude["env"].(map[string]any)["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	h.Require.Equal("acme/auto", claude["env"].(map[string]any)["ANTHROPIC_SMALL_FAST_MODEL"])
 
 	opencode := readHarnessSettings(t, "opencode", filepath.Join(root, "opencode", "opencode.json"))
 	h.Require.Equal("baseten-harness/acme/auto", opencode["model"])
@@ -3768,7 +3768,7 @@ func harnessSetupRoutes(t *testing.T, root string) map[string][2]string {
 	t.Helper()
 	claude := readHarnessSettings(t, "claude", filepath.Join(root, "claude", "settings.json"))
 	env := claude["env"].(map[string]any)
-	h := map[string][2]string{"claude": {claude["model"].(string), env["ANTHROPIC_DEFAULT_HAIKU_MODEL"].(string)}}
+	h := map[string][2]string{"claude": {claude["model"].(string), env["ANTHROPIC_SMALL_FAST_MODEL"].(string)}}
 	if path := filepath.Join(root, "opencode", "opencode.json"); fileExists(path) {
 		openCode := readHarnessSettings(t, "opencode", path)
 		h["opencode"] = [2]string{
@@ -4118,14 +4118,14 @@ func Test_Grid_Sync_FallsBackWhenRouteVanishes(t *testing.T) {
 	dir := t.TempDir()
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--config-dir", dir, "--background-route-id", "route-bg", "--yes"))
 	settings := readHarnessSettings(t, "claude", harnessSettingsFile("claude", dir))
-	h.Require.Equal("acme/bg", settings["env"].(map[string]any)["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	h.Require.Equal("acme/bg", settings["env"].(map[string]any)["ANTHROPIC_SMALL_FAST_MODEL"])
 
 	// The team removes acme/bg; sync falls back to the default and records it.
 	setHarnessRoutes(api, "acme/primary")
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 	h.Require.Contains(h.Stderr.String(), `warning: claude: background route "acme/bg" no longer exists; using "deepseek-ai/DeepSeek-V4.1-Flash"`)
 	settings = readHarnessSettings(t, "claude", harnessSettingsFile("claude", dir))
-	h.Require.Equal("deepseek-ai/DeepSeek-V4.1-Flash", settings["env"].(map[string]any)["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	h.Require.Equal("deepseek-ai/DeepSeek-V4.1-Flash", settings["env"].(map[string]any)["ANTHROPIC_SMALL_FAST_MODEL"])
 	h.Require.Empty(harnessRecordFile(t).Harnesses["claude"].BackgroundRoute, "the fallback is recorded for the next sync")
 
 	// The next sync is up to date and does not warn again.
@@ -5230,7 +5230,7 @@ func Test_Grid_Setup_RouteIDsConfigureNamesAndSync(t *testing.T) {
 	settings := readHarnessSettings(t, "claude", harnessSettingsFile("claude", dir))
 	env := settings["env"].(map[string]any)
 	h.Require.Equal("acme/primary", settings["model"])
-	h.Require.Equal("acme/background", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	h.Require.Equal("acme/background", env["ANTHROPIC_SMALL_FAST_MODEL"])
 	h.Require.Equal("acme/subagent", env["CLAUDE_CODE_SUBAGENT_MODEL"])
 	h.Require.Equal([]any{"acme/fallback"}, settings["fallbackModel"])
 	record := harnessRecordFile(t).Harnesses["claude"]
