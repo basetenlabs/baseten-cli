@@ -86,7 +86,7 @@ type StoreOptions struct {
 
 // NewStore creates a Store from the given options.
 func NewStore(opts StoreOptions) *Store {
-	return &Store{dir: opts.Dir, insecureStorage: opts.InsecureStorage}
+	return &Store{dir: opts.Dir, insecureStorage: opts.InsecureStorage || os.Getenv("BASETEN_INSECURE_STORAGE") == "1"}
 }
 
 // DefaultConfigDir returns the config directory:
@@ -148,27 +148,22 @@ func (s *Store) saveLocked(af *AuthFile) error {
 	return nil
 }
 
-var keyringOpTimeout = 5 * time.Second
-
 // keyringDo runs fn, a system keyring operation, returning ctx's error if ctx
 // is done first.
 func keyringDo(ctx context.Context, fn func() error) error {
 	// Keyring operations take no context and can block indefinitely on an OS
-	// prompt, such as a macOS keychain access dialog, so they are bounded by
-	// keyringOpTimeout. On cancellation or timeout fn is abandoned rather than
-	// awaited.
+	// prompt, such as a macOS keychain access dialog. On cancellation fn is
+	// abandoned rather than awaited, since the process exits shortly after.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	bounded, cancel := context.WithTimeout(ctx, keyringOpTimeout)
-	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- fn() }()
 	select {
 	case err := <-done:
 		return err
-	case <-bounded.Done():
-		return bounded.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

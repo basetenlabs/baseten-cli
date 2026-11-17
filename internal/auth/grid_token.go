@@ -34,25 +34,27 @@ type GridToken struct {
 }
 
 // gridTokens reads the tokens cached for scope, by team.
-func gridTokens(ctx context.Context, scope GridTokenScope) (map[string]GridToken, error) {
-	var secret string
-	keyringErr := keyringDo(ctx, func() (err error) {
-		secret, err = keyring.Get(gridTokenService, scope.account())
-		return err
-	})
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
-	}
+func (s *Store) gridTokens(ctx context.Context, scope GridTokenScope) (map[string]GridToken, error) {
 	tokens := map[string]GridToken{}
-	if keyringErr == nil {
-		_ = json.Unmarshal([]byte(secret), &tokens)
+	if !s.insecureStorage {
+		var secret string
+		keyringErr := keyringDo(ctx, func() (err error) {
+			secret, err = keyring.Get(gridTokenService, scope.account())
+			return err
+		})
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if keyringErr == nil {
+			_ = json.Unmarshal([]byte(secret), &tokens)
+		}
 	}
 	return tokens, nil
 }
 
 // GetGridToken returns the token cached for scope and teamID, or nil.
 func (s *Store) GetGridToken(ctx context.Context, scope GridTokenScope, teamID string) (*GridToken, error) {
-	tokens, err := gridTokens(ctx, scope)
+	tokens, err := s.gridTokens(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -69,24 +71,28 @@ func (s *Store) SetGridToken(ctx context.Context, scope GridTokenScope, teamID s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	tokens, err := gridTokens(ctx, scope)
+	tokens, err := s.gridTokens(ctx, scope)
 	if err != nil {
 		return err
 	}
 	tokens[teamID] = token
-	secret, _ := json.Marshal(tokens)
-	keyringErr := keyringDo(ctx, func() error { return keyring.Set(gridTokenService, scope.account(), string(secret)) })
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
-	}
-	if keyringErr != nil && warnWriter != nil {
-		warnWriter(fmt.Sprintf("could not cache the Grid token in the system keyring: %v", keyringErr))
+	if !s.insecureStorage {
+		secret, _ := json.Marshal(tokens)
+		keyringErr := keyringDo(ctx, func() error { return keyring.Set(gridTokenService, scope.account(), string(secret)) })
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if keyringErr != nil && warnWriter != nil {
+			warnWriter(fmt.Sprintf("could not cache the Grid token in the system keyring: %v", keyringErr))
+		}
 	}
 	return nil
 }
 
 // ClearGridTokens forgets every token cached for scope.
 func (s *Store) ClearGridTokens(ctx context.Context, scope GridTokenScope) error {
-	_ = keyringDo(ctx, func() error { return keyring.Delete(gridTokenService, scope.account()) })
+	if !s.insecureStorage {
+		_ = keyringDo(ctx, func() error { return keyring.Delete(gridTokenService, scope.account()) })
+	}
 	return ctx.Err()
 }

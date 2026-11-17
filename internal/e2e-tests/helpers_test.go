@@ -178,7 +178,7 @@ func cliBinary() (string, error) {
 
 var (
 	cliEnvMu sync.Mutex
-	cliEnv   = map[string]string{}
+	cliEnv   = map[string]string{"BASETEN_INSECURE_STORAGE": "1"}
 )
 
 func setTestEnv(t *testing.T, env map[string]string) {

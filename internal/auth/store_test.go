@@ -2,6 +2,8 @@ package auth_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -353,4 +355,20 @@ func TestErrExplicitProfileRequired_Error(t *testing.T) {
 	err = &auth.ErrExplicitProfileRequired{}
 	require.Contains(t, err.Error(), "no profiles are stored")
 	require.Contains(t, err.Error(), "baseten auth login --profile <profile>")
+}
+
+func TestStore_InsecureStorageEnvVar(t *testing.T) {
+	t.Setenv("BASETEN_INSECURE_STORAGE", "1")
+	keyring.MockInit()
+	s := auth.NewStore(auth.StoreOptions{Dir: t.TempDir()})
+	scope := auth.RoutesKeyScope{ManagementURL: "https://api.example.com", UserID: "u", TeamID: "t"}
+	require.NoError(t, s.SetRoutesKey(t.Context(), scope, "file-secret", nil))
+	data, err := json.Marshal(scope)
+	require.NoError(t, err)
+	sum := sha256.Sum256(data)
+	_, err = keyring.Get("baseten-harness-routes", hex.EncodeToString(sum[:]))
+	require.Error(t, err, "BASETEN_INSECURE_STORAGE=1 must skip the keyring")
+	key, err := s.GetRoutesKey(t.Context(), scope)
+	require.NoError(t, err)
+	require.Equal(t, "file-secret", key)
 }
