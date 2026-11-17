@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
 // Flag group defaults and pflag annotation keys.
@@ -232,4 +234,13 @@ func (o OptionalFlag[T]) Pointer() *T {
 	}
 	value := o.value
 	return &value
+}
+
+// APIOptional returns the flag as an API request field: omitted when the flag
+// was, and sent, even empty or null, when it was passed.
+func (o OptionalFlag[T]) APIOptional() managementapi.Optional[T] {
+	if !o.set {
+		return managementapi.Optional[T]{}
+	}
+	return managementapi.NewOptional(o.Pointer())
 }

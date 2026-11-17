@@ -339,7 +339,7 @@ func gridUsageDimensionCell(d managementapi.GridRouteUsageDimension, r managemen
 	case managementapi.GridRouteUsageDimension_TEAM:
 		v = cmp.Or(deref(r.TeamName), deref(r.TeamId))
 	case managementapi.GridRouteUsageDimension_INTELLIGENT_ROUTE:
-		v = deref(r.IntelligentRoute)
+		v = cmp.Or(deref(r.IntelligentRouteDisplayName), deref(r.IntelligentRouteId))
 	case managementapi.GridRouteUsageDimension_MODEL:
 		v = deref(r.Model)
 	case managementapi.GridRouteUsageDimension_PROVIDER:

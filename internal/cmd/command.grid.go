@@ -1569,7 +1569,7 @@ func commandGridRouteClassifierList(ctx *CommandContext, f *cmd.GridRouteClassif
 	for _, routeClassifier := range items {
 		rows = append(rows, []string{
 			routeClassifier.Id,
-			routeClassifier.Name,
+			routeClassifier.DisplayName,
 			gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs),
 			strings.Join(routeClassifier.DecidableModels, ", "),
 		})
@@ -1595,7 +1595,7 @@ func commandGridRouteClassifierDescribe(ctx *CommandContext, f *cmd.GridRouteCla
 		return nil
 	}
 	ctx.Outputf("ID:               %s\n", routeClassifier.Id)
-	ctx.Outputf("Name:             %s\n", routeClassifier.Name)
+	ctx.Outputf("Name:             %s\n", routeClassifier.DisplayName)
 	ctx.Outputf("Tradeoffs:        %s\n", gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs))
 	ctx.Outputf("Decidable Models: %s\n", strings.Join(routeClassifier.DecidableModels, ", "))
 	return nil
@@ -1638,13 +1638,6 @@ func commandGridTeamSettingsDescribe(ctx *CommandContext, f *cmd.GridTeamSetting
 	return nil
 }
 
-func gridOptional[T any](flag cmd.OptionalFlag[T]) managementapi.Optional[T] {
-	if !flag.IsSet() {
-		return managementapi.Optional[T]{}
-	}
-	return managementapi.NewOptional(flag.Pointer())
-}
-
 func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.UpdateGridTeamSettingsRequest, error) {
 	body := managementapi.UpdateGridTeamSettingsRequest{}
 	roles := f.PrimaryRouteID.IsSet() || f.BackgroundRouteID.IsSet()
@@ -1664,8 +1657,8 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 		body.HarnessDefaults = managementapi.NewOptional[managementapi.UpdateGridHarnessDefaults](nil)
 	} else if roles {
 		defaults := managementapi.UpdateGridHarnessDefaults{}
-		primary := managementapi.UpdateGridHarnessModels{Primary: gridOptional(f.PrimaryRouteID)}
-		background := managementapi.UpdateGridHarnessModels{Primary: gridOptional(f.PrimaryRouteID), Background: gridOptional(f.BackgroundRouteID)}
+		primary := managementapi.UpdateGridHarnessModels{Primary: f.PrimaryRouteID.APIOptional()}
+		background := managementapi.UpdateGridHarnessModels{Primary: f.PrimaryRouteID.APIOptional(), Background: f.BackgroundRouteID.APIOptional()}
 		switch f.Harness {
 		case harness.Claude:
 			// The API still names the harness claude_code.
@@ -1690,8 +1683,8 @@ func gridTeamSettingsUpdate(f *cmd.GridTeamSettingsUpdateFlags) (managementapi.U
 		body.SpendLimit = managementapi.NewOptional[managementapi.UpdateGridTeamSpendLimitSetting](nil)
 	} else if f.PerMemberMonthlyLimitUSD.IsSet() || f.TeamWideMonthlyLimitUSD.IsSet() {
 		body.SpendLimit = managementapi.NewOptional(&managementapi.UpdateGridTeamSpendLimitSetting{
-			PerMemberMonthlyLimitUsd: gridOptional(f.PerMemberMonthlyLimitUSD),
-			TeamWideMonthlyLimitUsd:  gridOptional(f.TeamWideMonthlyLimitUSD),
+			PerMemberMonthlyLimitUsd: f.PerMemberMonthlyLimitUSD.APIOptional(),
+			TeamWideMonthlyLimitUsd:  f.TeamWideMonthlyLimitUSD.APIOptional(),
 		})
 	}
 	return body, nil
@@ -1825,7 +1818,7 @@ func commandGridUserSettingsUpdate(ctx *CommandContext, f *cmd.GridUserSettingsU
 	settings, err := cl.API().PatchGridTeamSettingsUsers(ctx, f.User, managementapi.UpdateGridUserSettingsRequest{
 		TeamId: team,
 		SpendLimit: managementapi.NewOptional(&managementapi.UpdateGridSpendLimitSetting{
-			UserMonthlyLimitUsd: gridOptional(f.UserMonthlyLimitUSD), MonthOverrideUsd: gridOptional(f.MonthOverrideUSD),
+			UserMonthlyLimitUsd: f.UserMonthlyLimitUSD.APIOptional(), MonthOverrideUsd: f.MonthOverrideUSD.APIOptional(),
 		}),
 	})
 	if err != nil {

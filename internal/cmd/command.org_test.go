@@ -223,6 +223,9 @@ func orgInfoFixture(assumeRole any) map[string]any {
 		"name":            "my-org",
 		"created_at":      "2026-01-01T00:00:00Z",
 		"aws_assume_role": assumeRole,
+
+		"allow_personal_api_keys":        true,
+		"allow_service_account_api_keys": false,
 	}
 }
 
@@ -242,6 +245,8 @@ func Test_Org_Describe_Text(t *testing.T) {
 	out := h.Stdout.String()
 	h.Require.Contains(out, "Org ID:               abcd1234")
 	h.Require.Contains(out, "Name:                 my-org")
+	h.Require.Contains(out, "Personal API Keys:    allowed")
+	h.Require.Contains(out, "Service Account Keys: blocked for new keys")
 	h.Require.NotContains(out, "Teams")
 	h.Require.NotContains(out, "OIDC")
 	h.Require.Contains(out, "AWS AssumeRole:\n  Baseten Role ARN:     arn:aws:iam::337139236424:role/baseten-customer-access")
@@ -277,4 +282,32 @@ func Test_Org_Describe_JQ_AssumeRoleNotEnabled(t *testing.T) {
 
 	h.Require.NoError(h.Execute("org", "describe", "--jq", ".aws_assume_role.external_id"))
 	h.Require.Equal("null\n", h.Stdout.String())
+}
+
+func Test_Org_Update_SendsOnlyGivenSettings(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", "/v1/organizations/me", 200, orgInfoFixture(nil))
+
+	h.Require.NoError(h.Execute("org", "update", "--allow-service-account-api-keys", "false"))
+	h.Require.Equal(map[string]any{"allow_service_account_api_keys": false}, m.FindCall("PATCH", "/v1/organizations/me").BodyJSON(t))
+	h.Require.Contains(h.Stderr.String(), "Updated organization")
+	h.Require.Equal("", h.Stdout.String())
+}
+
+func Test_Org_Update_JQ(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("PATCH", "/v1/organizations/me", 200, orgInfoFixture(nil))
+
+	h.Require.NoError(h.Execute("org", "update", "--allow-personal-api-keys", "true",
+		"--allow-service-account-api-keys", "false", "--jq", ".allow_personal_api_keys"))
+	h.Require.Equal(map[string]any{"allow_personal_api_keys": true, "allow_service_account_api_keys": false},
+		m.FindCall("PATCH", "/v1/organizations/me").BodyJSON(t))
+	h.Require.Equal("true\n", h.Stdout.String())
+}
+
+func Test_Org_Update_NothingToUpdate(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.Require.ErrorContains(h.Execute("org", "update"), "nothing to update")
 }
