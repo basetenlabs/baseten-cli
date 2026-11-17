@@ -8,6 +8,8 @@ var commandModelDeploymentReplica = Command{
 	Name:    "replica",
 	Summary: "Manage replicas of a deployment",
 	Children: []Command{
+		modelReplicaListCommand("deployment"),
+		modelReplicaDescribeCommand("deployment"),
 		{
 			Name:    "terminate",
 			Summary: "Terminate a specific replica",
