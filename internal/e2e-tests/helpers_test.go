@@ -323,7 +323,9 @@ func cliRun(ctx context.Context, options cliRunOptions) cliResult {
 	}
 	var stdout, stderr bytes.Buffer
 	command := exec.CommandContext(ctx, binary, options.Args...)
-	command.Env = environWith(options.Env)
+	env := testEnvOverlay()
+	maps.Copy(env, options.Env)
+	command.Env = environWith(env)
 	command.Stdout, command.Stderr = &stdout, &stderr
 	if options.Stdout != nil {
 		command.Stdout = options.Stdout
