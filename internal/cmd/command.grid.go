@@ -202,11 +202,12 @@ type gridHarnessTarget struct {
 }
 
 func gridLoadHarnessSetupRoutes(ctx *CommandContext, api *managementapi.Client, selectedTeam string) (*managementapi.Team, []gridHarnessRoute, error) {
-	teamID, err := gridTeamID(ctx, api, selectedTeam)
-	if err != nil {
-		return nil, nil, err
-	}
-	listed, err := listGridHarnessRoutes(ctx, api, teamID)
+	// teamID is the team last sent, which after a pick is the chosen one.
+	var teamID *string
+	listed, err := CallWithTeam(ctx, api, selectedTeam, func(id *string) ([]gridHarnessRoute, error) {
+		teamID = id
+		return listGridHarnessRoutes(ctx, api, id)
+	})
 	if err != nil {
 		return nil, nil, err
 	}
