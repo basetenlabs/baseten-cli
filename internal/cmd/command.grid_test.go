@@ -3489,6 +3489,8 @@ type codexDaemonHarnessExecer struct {
 	noLsof        bool
 	restartFails  bool
 	restarts      int
+	settingsPath  string
+	restartedWith []byte
 	loggedIn      bool
 	apiKey        bool
 	logoutFails   bool
@@ -3514,6 +3516,7 @@ func (e *codexDaemonHarnessExecer) Exec(command *exec.Cmd) error {
 		return err
 	case "app-server daemon restart":
 		e.restarts++
+		e.restartedWith, _ = os.ReadFile(e.settingsPath)
 		if e.restartFails {
 			return errors.New("exit status 1")
 		}
@@ -3560,6 +3563,7 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 		t.Fatal(err)
 	}
 	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	settings := "{\n  \"shutdownGraceSeconds\": 60\n}\n"
 	for name, tc := range map[string]struct {
 		execer   *codexDaemonHarnessExecer
 		restarts int
@@ -3575,8 +3579,18 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _ := gridAPI(t, "")
 			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
-			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--yes", "--verbose"))
+			dir := t.TempDir()
+			tc.execer.settingsPath = filepath.Join(dir, "app-server-daemon", "settings.json")
+			h.Require.NoError(os.Mkdir(filepath.Dir(tc.execer.settingsPath), 0o700))
+			h.Require.NoError(os.WriteFile(tc.execer.settingsPath, []byte(settings), 0o600))
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--yes", "--verbose"))
 			h.Require.Equal(tc.restarts, tc.execer.restarts)
+			if tc.restarts > 0 {
+				h.Require.JSONEq(`{"shutdownGraceSeconds":0}`, string(tc.execer.restartedWith))
+			}
+			restored, err := os.ReadFile(tc.execer.settingsPath)
+			h.Require.NoError(err)
+			h.Require.Equal(settings, string(restored))
 			h.Require.Contains(h.Stderr.String(), "Grid is set up. Restart Codex to load the changes.\n")
 			for _, want := range tc.stderr {
 				h.Require.Contains(h.Stderr.String(), want)

@@ -1710,3 +1710,58 @@ func TestCodexClearCloudConfig(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(cache, "child"), 0o700))
 	require.Error(t, CodexClearCloudConfig(dir))
 }
+
+func TestCodexSkipShutdownGrace(t *testing.T) {
+	settings := func(t *testing.T) (string, string) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "app-server-daemon", "settings.json")
+		require.NoError(t, os.Mkdir(filepath.Dir(path), 0o700))
+		return dir, path
+	}
+	t.Run("missing", func(t *testing.T) {
+		dir, path := settings(t)
+		restore, err := CodexSkipShutdownGrace(dir)
+		require.NoError(t, err)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"shutdownGraceSeconds":0}`, string(data))
+		require.NoError(t, restore())
+		require.NoFileExists(t, path)
+		require.NoError(t, restore())
+	})
+	t.Run("existing", func(t *testing.T) {
+		dir, path := settings(t)
+		original := "{\n  \"shutdownGraceSeconds\": 30,\n  \"remoteControlEnabled\": true,\n  \"extra\": {\"ports\": [1, 2]}\n}\n"
+		require.NoError(t, os.WriteFile(path, []byte(original), 0o600))
+		restore, err := CodexSkipShutdownGrace(dir)
+		require.NoError(t, err)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"shutdownGraceSeconds":0,"remoteControlEnabled":true,"extra":{"ports":[1,2]}}`, string(data))
+		require.NoError(t, restore())
+		data, err = os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, original, string(data))
+	})
+	for name, original := range map[string]string{
+		"malformed": `{"shutdownGraceSeconds":`,
+		"array":     `[]`,
+		"null":      `null`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, path := settings(t)
+			require.NoError(t, os.WriteFile(path, []byte(original), 0o600))
+			_, err := CodexSkipShutdownGrace(dir)
+			require.ErrorContains(t, err, "is not a JSON object")
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, original, string(data))
+		})
+	}
+	t.Run("no daemon directory", func(t *testing.T) {
+		dir := t.TempDir()
+		_, err := CodexSkipShutdownGrace(dir)
+		require.ErrorIs(t, err, os.ErrNotExist)
+		require.NoDirExists(t, filepath.Join(dir, "app-server-daemon"))
+	})
+}

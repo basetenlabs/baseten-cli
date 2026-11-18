@@ -1041,7 +1041,16 @@ func gridHarnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) bo
 			return false
 		}
 	}
+	restore, err := harness.CodexSkipShutdownGrace(dir)
+	if err != nil {
+		ctx.Warnf("could not skip the codex app-server daemon's shutdown grace: %v", err)
+	}
 	pid, err := harness.RestartCodexDaemon(ctx, ctx.Execer(), dir)
+	if restore != nil {
+		if err := restore(); err != nil {
+			ctx.Warnf("could not restore the codex app-server daemon's settings: %v", err)
+		}
+	}
 	if err != nil {
 		ctx.Warnf("could not restart the codex app-server daemon: %v", err)
 		ctx.LogLine(gridHarnessCodexDaemonRestartHint)
