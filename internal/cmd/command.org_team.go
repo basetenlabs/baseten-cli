@@ -59,7 +59,7 @@ func commandOrgTeamDescribe(ctx *CommandContext, flags *cmd.OrgTeamDescribeFlags
 			return fmt.Errorf("describe team %q: %w", flags.TeamName, err)
 		}
 		if len(resp.Teams) == 0 {
-			return fmt.Errorf("no team named %q", flags.TeamName)
+			return cmd.NewErrNotFound(fmt.Errorf("no team named %q", flags.TeamName))
 		} else if len(resp.Teams) > 1 {
 			return fmt.Errorf("multiple teams named %q; pass --team-id instead", flags.TeamName)
 		}

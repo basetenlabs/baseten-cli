@@ -67,7 +67,7 @@ func ResolveTeamOrOnly(ctx context.Context, api *managementapi.Client, input str
 	if found != nil {
 		return found, nil
 	}
-	return nil, fmt.Errorf("no team matched %q", input)
+	return nil, cmd.NewErrNotFound(fmt.Errorf("no team matched %q", input))
 }
 
 // CallWithTeam runs call for the team a --team flag names, or with nil when the
