@@ -1020,8 +1020,10 @@ func gridAskKeepChatGPT(ctx *CommandContext) (bool, error) {
 
 const gridHarnessCodexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done so Codex loads the changes."
 
+const gridHarnessCodexDaemonRestartNotice = "Changes are applied on the next daemon restart."
+
 // gridHarnessRestartCodexDaemon restarts the codex app-server daemon after setup,
-// asking first when sessions are attached. It reports false when a restart is
+// asking first when the run is interactive. It reports false when a restart is
 // still needed: the prompt was declined or the restart failed.
 func gridHarnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) bool {
 	socket := harness.CodexDaemonSocket(ctx, ctx.Execer(), dir)
@@ -1035,13 +1037,22 @@ func gridHarnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) bo
 	case clients > 0:
 		ctx.Warnf("%d Codex session(s) are running; restarting Codex interrupts their current turn (resume with `codex resume`)", clients)
 	}
-	if (err != nil || clients > 0) && !yes {
-		if ctx.ConfirmYesNo("Restart Codex now?") != nil {
-			ctx.LogLine(gridHarnessCodexDaemonRestartHint)
+	if !yes && ctx.IsInteractive() {
+		if ctx.ConfirmYesNo("Restart Codex now? This closes all open Codex sessions and stops any running turns.") != nil {
+			ctx.LogLine(gridHarnessCodexDaemonRestartNotice)
 			return false
 		}
 	}
+	restore, err := harness.CodexSkipShutdownGrace(dir)
+	if err != nil {
+		ctx.Warnf("could not skip the codex app-server daemon's shutdown grace: %v", err)
+	}
 	pid, err := harness.RestartCodexDaemon(ctx, ctx.Execer(), dir)
+	if restore != nil {
+		if err := restore(); err != nil {
+			ctx.Warnf("could not restore the codex app-server daemon's settings: %v", err)
+		}
+	}
 	if err != nil {
 		ctx.Warnf("could not restart the codex app-server daemon: %v", err)
 		ctx.LogLine(gridHarnessCodexDaemonRestartHint)
