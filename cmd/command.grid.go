@@ -448,7 +448,7 @@ var commandGrid = Command{
 						}},
 						JQExample: CommandExample{
 							Description: "Print the models the route classifier picks from.",
-							Command:     "baseten grid route-classifier describe --id <id> --jq '.decidable_models[]'",
+							Command:     "baseten grid route-classifier describe --id <id> --jq '.decidable_canonical_model_ids[]'",
 						},
 					},
 				},
