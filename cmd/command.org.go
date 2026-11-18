@@ -410,6 +410,7 @@ var commandOrg = Command{
 				},
 			},
 		},
+		commandOrgAccess,
 		commandOrgIdentityProvider,
 		commandOrgServiceAccount,
 		commandOrgTrustRule,
