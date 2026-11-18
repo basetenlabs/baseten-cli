@@ -3602,6 +3602,57 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 	}
 }
 
+func Test_Grid_Setup_AsksBeforeRestartingCodexDaemon(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	settings := "{\n  \"shutdownGraceSeconds\": 60\n}\n"
+	notice := "Changes are applied on the next daemon restart."
+	for name, tc := range map[string]struct {
+		answer   string
+		restarts int
+		pending  bool
+		stderr   []string
+		absent   []string
+	}{
+		"yes": {"1", 1, false, []string{"Restarted codex app-server daemon (pid 4242)"}, []string{notice}},
+		"no":  {"2", 0, true, []string{notice}, []string{"Restarted", "Run `codex app-server daemon restart`"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := gridAPI(t, "")
+			execer := &codexDaemonHarnessExecer{socket: socket, lsof: listener}
+			dir := t.TempDir()
+			execer.settingsPath = filepath.Join(dir, "app-server-daemon", "settings.json")
+			h.Require.NoError(os.Mkdir(filepath.Dir(execer.settingsPath), 0o700))
+			h.Require.NoError(os.WriteFile(execer.settingsPath, []byte(settings), 0o600))
+			h.Context = internalcmd.WithPromptAnswers(internalcmd.WithExecer(h.Context, execer), "1", tc.answer)
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--verbose"))
+			h.Require.Contains(h.Stderr.String(), "Restart Codex now? This closes all open Codex sessions and stops any running turns.")
+			h.Require.Equal(tc.restarts, execer.restarts)
+			if tc.restarts > 0 {
+				h.Require.JSONEq(`{"shutdownGraceSeconds":0}`, string(execer.restartedWith))
+			}
+			restored, err := os.ReadFile(execer.settingsPath)
+			h.Require.NoError(err)
+			h.Require.Equal(settings, string(restored))
+			h.Require.Equal(tc.pending, harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+			for _, want := range tc.stderr {
+				h.Require.Contains(h.Stderr.String(), want)
+			}
+			for _, unwanted := range tc.absent {
+				h.Require.NotContains(h.Stderr.String(), unwanted)
+			}
+		})
+	}
+}
+
 func Test_Grid_Setup_SignsOutCodex(t *testing.T) {
 	skipUnlessSupported(t)
 	signedOut := "Signed Codex out of ChatGPT."
@@ -4290,6 +4341,37 @@ func Test_Grid_Sync_RestartsCodexDaemon(t *testing.T) {
 	// An unchanged sync without a pending restart leaves the daemon alone.
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 	h.Require.Equal(1, busy.restarts)
+}
+
+func Test_Grid_Sync_RestartsCodexDaemonWithoutTerminal(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	h, api := gridAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	base := h.Context
+	failing := &codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}
+	h.Context = internalcmd.WithExecer(base, failing)
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--yes"))
+	h.Require.Equal(1, failing.restarts)
+	h.Require.True(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+
+	busy := &codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\n"}
+	h.Context = internalcmd.WithExecer(base, busy)
+	h.Require.NoError(h.Execute("grid", "sync", "--verbose"))
+	h.Require.Equal(1, busy.restarts)
+	h.Require.Contains(h.Stderr.String(), "1 Codex session(s) are running")
+	h.Require.Contains(h.Stderr.String(), "Restarted codex app-server daemon (pid 4242)")
+	h.Require.NotContains(h.Stderr.String(), "Restart Codex now?")
+	h.Require.False(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
 }
 
 func gridSyncHarnessRoot(t *testing.T) string {
