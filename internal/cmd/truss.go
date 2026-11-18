@@ -3,10 +3,13 @@ package cmd
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/auth"
 )
 
 const (
@@ -63,7 +66,8 @@ func trussCommand(ctx *CommandContext, inv trussInvocation) (*exec.Cmd, error) {
 		if os.Getenv(name) != "" {
 			return nil, cmd.NewErrUsagef(
 				"%s is set, which would point truss at a remote this CLI knows nothing about; "+
-					"unset it and use BASETEN_API_KEY, plus BASETEN_REMOTE_URL for a non-default remote, "+
+					"unset it and use BASETEN_API_KEY, or BASETEN_IDENTITY_TOKEN_FILE and BASETEN_TRUST_RULE_ID, "+
+					"plus BASETEN_REMOTE_URL for a non-default remote, "+
 					"which are forwarded to truss for you", name)
 		}
 	}
@@ -107,22 +111,17 @@ func trussCommand(ctx *CommandContext, inv trussInvocation) (*exec.Cmd, error) {
 	env := append(os.Environ(), "TRUSS_NO_UPDATE_CHECK=1")
 	env = append(env, inv.Env...)
 	if inv.ForwardAuth {
-		transport, remote, err := ctx.AuthTransport()
+		forwarded, err := trussAuthEnv(ctx)
 		if err != nil {
 			return nil, err
 		}
-		// Forwarded over the environment rather than written to a trussrc, and
-		// as a bearer token so the same variable carries an API key or an OAuth
-		// access token. The child cannot refresh an access token, so delegated
-		// invocations are kept short rather than tailing through truss.
-		token, err := transport.Credential(ctx)
-		if err != nil {
-			return nil, err
-		}
-		env = append(env,
-			trussAuthRemoteURLEnv+"="+remote.RemoteURL(),
-			trussAuthAPIKeyEnv+"="+token,
-		)
+		// Truss also reads the workload identity variables, so a session
+		// resolved to something else (--profile, BASETEN_API_KEY) drops them,
+		// leaving the forwarded credential the only one truss sees.
+		env = slices.DeleteFunc(env, func(kv string) bool {
+			return strings.HasPrefix(kv, auth.IdentityTokenFileEnv+"=") || strings.HasPrefix(kv, auth.TrustRuleIDEnv+"=")
+		})
+		env = append(env, forwarded...)
 	}
 	c.Env = env
 
@@ -130,6 +129,49 @@ func trussCommand(ctx *CommandContext, inv trussInvocation) (*exec.Cmd, error) {
 	c.Stdout = ctx.Stdout
 	c.Stderr = ctx.Stderr
 	return c, nil
+}
+
+// trussAuthEnv returns the variables that hand the CLI's resolved credential to
+// truss, forwarded over the environment rather than written to a trussrc.
+//
+// A workload identity session forwards its configuration, not an access token,
+// so truss exchanges and refreshes tokens itself through a long push. Any
+// other session forwards a bearer token, so the same variable carries an API
+// key or an OAuth access token; the child cannot refresh an OAuth access token,
+// so delegated invocations are kept short rather than tailing through truss.
+func trussAuthEnv(ctx *CommandContext) ([]string, error) {
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return nil, err
+	}
+	if wi := session.WorkloadIdentity(); wi != nil {
+		remote, err := ctx.authInfo.Remote()
+		if err != nil {
+			return nil, err
+		}
+		// Absolute because some commands run truss in another directory.
+		tokenFile, err := filepath.Abs(wi.IdentityTokenFile)
+		if err != nil {
+			return nil, err
+		}
+		return []string{
+			trussAuthRemoteURLEnv + "=" + remote.RemoteURL(),
+			auth.IdentityTokenFileEnv + "=" + tokenFile,
+			auth.TrustRuleIDEnv + "=" + wi.TrustRuleID,
+		}, nil
+	}
+	transport, remote, err := ctx.AuthTransport()
+	if err != nil {
+		return nil, err
+	}
+	token, err := transport.Credential(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		trussAuthRemoteURLEnv + "=" + remote.RemoteURL(),
+		trussAuthAPIKeyEnv + "=" + token,
+	}, nil
 }
 
 // trussRun builds and runs a truss invocation, propagating truss's exit code

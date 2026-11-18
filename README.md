@@ -58,6 +58,10 @@ Then move `baseten.exe` to a directory on your `PATH`.
 
 Authenticate via `baseten auth login`, or set `BASETEN_API_KEY` in the environment.
 
+Workloads with an OIDC identity token (CI jobs, Kubernetes pods) can instead set `BASETEN_IDENTITY_TOKEN_FILE` and
+`BASETEN_TRUST_RULE_ID` to exchange it for short-lived access tokens. `baseten auth status` shows which credential is in
+use, and `baseten auth token` prints an access token for scripts.
+
 Run `baseten --help` (or `baseten <command> --help`) for the full command tree.
 
 ### Deploying Models
