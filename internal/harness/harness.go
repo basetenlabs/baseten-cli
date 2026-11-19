@@ -115,13 +115,13 @@ type PrepareOptions struct {
 	CLI       string
 	// Installs are the copies of the harness Detect found, for a harness that
 	// configures each kind of install in its own files.
-	Installs              []Install
-	NoClaudeServedModel   bool
-	NoPiServedModel       bool
-	NoOpenCodeServedModel bool
-	GitContext            bool
-	ExtendedPromptCache   bool
-	KeepChatGPTLogin      bool
+	Installs                  []Install
+	NoClaudeServedModel       bool
+	NoPiServedModel           bool
+	NoOpenCodeServedModel     bool
+	GitContext                bool
+	ClaudeExtendedPromptCache bool
+	KeepChatGPTLogin          bool
 }
 
 // Helper is the credential command a harness runs instead of storing a key:

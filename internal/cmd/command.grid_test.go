@@ -3304,7 +3304,7 @@ func claudePromptCacheTTLs(t *testing.T, root string) []any {
 	return []any{env["CLAUDE_CODE_PROMPT_CACHE_TTL"], env["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"]}
 }
 
-func Test_Grid_Setup_ExtendedPromptCache(t *testing.T) {
+func Test_Grid_Setup_ClaudeExtendedPromptCache(t *testing.T) {
 	skipUnlessSupported(t)
 	h, _ := fakeGridAPI(t)
 	root := gridSyncHarnessRoot(t)
@@ -3312,19 +3312,19 @@ func Test_Grid_Setup_ExtendedPromptCache(t *testing.T) {
 
 	h.Require.NoError(h.Execute(setup...))
 	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root))
-	h.Require.NotContains(harnessRecordJSON(t), "extended_prompt_cache")
+	h.Require.NotContains(harnessRecordJSON(t), "claude_extended_prompt_cache")
 
-	h.Require.NoError(h.Execute(append(setup, "--extended-prompt-cache")...))
+	h.Require.NoError(h.Execute(append(setup, "--claude-extended-prompt-cache")...))
 	h.Require.Equal([]any{"1h", "5m"}, claudePromptCacheTTLs(t, root))
-	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"extended_prompt_cache": true`))
-	h.Require.True(harnessRecordFile(t).Harnesses["claude"].ExtendedPromptCache)
+	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"claude_extended_prompt_cache": true`))
+	h.Require.True(harnessRecordFile(t).Harnesses["claude"].ClaudeExtendedPromptCache)
 
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 	h.Require.Equal([]any{"1h", "5m"}, claudePromptCacheTTLs(t, root), "sync replays the recorded opt-in")
 
 	h.Require.NoError(h.Execute(setup...))
 	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root), "setup without the flag removes them")
-	h.Require.NotContains(harnessRecordJSON(t), "extended_prompt_cache")
+	h.Require.NotContains(harnessRecordJSON(t), "claude_extended_prompt_cache")
 }
 
 func Test_Grid_PiGitContext_RealPi(t *testing.T) {
@@ -4457,34 +4457,34 @@ func Test_Grid_Sync_GitContext(t *testing.T) {
 	h.Require.Equal([]bool{false, false, false}, installed(), "sync replays the recorded opt-out")
 }
 
-func Test_Grid_Sync_ExtendedPromptCache(t *testing.T) {
+func Test_Grid_Sync_ClaudeExtendedPromptCache(t *testing.T) {
 	skipUnlessSupported(t)
 	h, _ := fakeGridAPI(t)
 	root := gridSyncHarnessRoot(t)
 	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--harness", "pi", "--yes"))
 	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root))
 
-	h.Require.NoError(h.Execute("grid", "sync", "--extended-prompt-cache", "--dry-run", "--output", "json"))
+	h.Require.NoError(h.Execute("grid", "sync", "--claude-extended-prompt-cache", "--dry-run", "--output", "json"))
 	var preview public.GridPlanList
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &preview))
 	h.Require.True(slices.ContainsFunc(preview.Items, func(p public.GridPlan) bool { return p.Changed }), "the preview applies the flag")
 	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root), "a dry run changes no files")
-	h.Require.NotContains(harnessRecordJSON(t), "extended_prompt_cache", "a dry run changes no records")
+	h.Require.NotContains(harnessRecordJSON(t), "claude_extended_prompt_cache", "a dry run changes no records")
 
-	h.Require.NoError(h.Execute("grid", "sync", "--extended-prompt-cache", "--yes"))
+	h.Require.NoError(h.Execute("grid", "sync", "--claude-extended-prompt-cache", "--yes"))
 	h.Require.Equal([]any{"1h", "5m"}, claudePromptCacheTTLs(t, root))
-	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"extended_prompt_cache": true`))
-	h.Require.True(harnessRecordFile(t).Harnesses["claude"].ExtendedPromptCache)
+	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"claude_extended_prompt_cache": true`))
+	h.Require.True(harnessRecordFile(t).Harnesses["claude"].ClaudeExtendedPromptCache)
 
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
 	h.Require.Equal([]any{"1h", "5m"}, claudePromptCacheTTLs(t, root), "sync replays the recorded opt-in")
-	h.Require.NoError(h.Execute("grid", "sync", "--extended-prompt-cache", "--yes"))
+	h.Require.NoError(h.Execute("grid", "sync", "--claude-extended-prompt-cache", "--yes"))
 	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.", "a flag matching the record changes nothing")
 
-	h.Require.NoError(h.Execute("grid", "sync", "--extended-prompt-cache=false", "--yes"))
+	h.Require.NoError(h.Execute("grid", "sync", "--claude-extended-prompt-cache=false", "--yes"))
 	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root))
-	h.Require.NotContains(harnessRecordJSON(t), "extended_prompt_cache")
+	h.Require.NotContains(harnessRecordJSON(t), "claude_extended_prompt_cache")
 
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")

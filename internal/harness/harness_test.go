@@ -579,14 +579,14 @@ func TestTeardownPreservesUserCacheTTLs(t *testing.T) {
 	})
 }
 
-func TestClaudeExtendedPromptCacheIsOptIn(t *testing.T) {
+func TestClaudeClaudeExtendedPromptCacheIsOptIn(t *testing.T) {
 	h := claudeHarness{}
 	path := settingsPath(t, h)
 	ttls := func() []value {
 		d := load(t, path)
 		return []value{get(d, []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}), get(d, []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"})}
 	}
-	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, ExtendedPromptCache: true})
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, ClaudeExtendedPromptCache: true})
 	require.NoError(t, err)
 	require.NoError(t, ApplyPlans(plans, testToken))
 	require.Equal(t, []value{{Exists: true, Data: "1h"}, {Exists: true, Data: "5m"}}, ttls())
