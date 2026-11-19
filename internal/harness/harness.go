@@ -120,6 +120,7 @@ type PrepareOptions struct {
 	NoPiServedModel       bool
 	NoOpenCodeServedModel bool
 	GitContext            bool
+	ExtendedPromptCache   bool
 	KeepChatGPTLogin      bool
 }
 

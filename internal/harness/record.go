@@ -44,6 +44,7 @@ type Record struct {
 	NoPiServedModel       bool `json:"no_pi_served_model,omitempty"`
 	NoOpenCodeServedModel bool `json:"no_opencode_served_model,omitempty"`
 	GitContext            bool `json:"git_context,omitempty"`
+	ExtendedPromptCache   bool `json:"extended_prompt_cache,omitempty"`
 	// KeepChatGPTLogin leaves Codex signed in to ChatGPT and its ChatGPT login enabled.
 	KeepChatGPTLogin bool `json:"keep_chatgpt_login,omitempty"`
 }

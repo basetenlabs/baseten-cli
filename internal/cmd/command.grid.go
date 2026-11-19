@@ -367,7 +367,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
 		noOpenCodeServedModel := target.record.NoOpenCodeServedModel || !harness.HasOpenCode2(target.detection)
-		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, Installs: target.detection.Installs, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel, GitContext: target.record.GitContext, KeepChatGPTLogin: target.record.KeepChatGPTLogin})
+		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, Installs: target.detection.Installs, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel, GitContext: target.record.GitContext, ExtendedPromptCache: target.record.ExtendedPromptCache, KeepChatGPTLogin: target.record.KeepChatGPTLogin})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -467,6 +467,7 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 			NoPiServedModel:       noServedModel(harness.Pi),
 			NoOpenCodeServedModel: noServedModel(harness.OpenCode),
 			GitContext:            f.GitContext,
+			ExtendedPromptCache:   f.ExtendedPromptCache && selected[i].Name() == harness.Claude,
 			KeepChatGPTLogin:      keepChatGPT && selected[i].Name() == harness.Codex,
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
@@ -694,6 +695,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		{"hide-served-model-indicator", harness.Pi, func(r *harness.Record) { r.NoPiServedModel = f.HideServedModel }},
 		{"hide-served-model-indicator", harness.OpenCode, func(r *harness.Record) { r.NoOpenCodeServedModel = f.HideServedModel }},
 		{"git-context", "", func(r *harness.Record) { r.GitContext = f.GitContext }},
+		{"extended-prompt-cache", harness.Claude, func(r *harness.Record) { r.ExtendedPromptCache = f.ExtendedPromptCache }},
 	}
 	if err := gridRequireGit(ctx, f.GitContext); err != nil {
 		return err

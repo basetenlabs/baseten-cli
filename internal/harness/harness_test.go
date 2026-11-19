@@ -579,6 +579,30 @@ func TestTeardownPreservesUserCacheTTLs(t *testing.T) {
 	})
 }
 
+func TestClaudeExtendedPromptCacheIsOptIn(t *testing.T) {
+	h := claudeHarness{}
+	path := settingsPath(t, h)
+	ttls := func() []value {
+		d := load(t, path)
+		return []value{get(d, []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}), get(d, []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"})}
+	}
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, ExtendedPromptCache: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	require.Equal(t, []value{{Exists: true, Data: "1h"}, {Exists: true, Data: "5m"}}, ttls())
+
+	setup(t, h, path, testRoutes(), Selection{})
+	require.Equal(t, []value{{}, {}}, ttls(), "a refresh without the option removes Grid's values")
+
+	d := load(t, path)
+	env := d["env"].(map[string]any)
+	env["CLAUDE_CODE_PROMPT_CACHE_TTL"] = "5m"
+	env["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"] = "1h"
+	save(t, path, d)
+	setup(t, h, path, testRoutes(), Selection{})
+	require.Equal(t, []value{{Exists: true, Data: "5m"}, {Exists: true, Data: "1h"}}, ttls(), "a refresh without the option keeps the user's values")
+}
+
 func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 	for _, h := range []Harness{codexHarness{}, openCodeHarness{}} {
 		t.Run(h.Name(), func(t *testing.T) {
@@ -1362,14 +1386,12 @@ func TestClientHeaderNamesHarness(t *testing.T) {
 				require.Equal(t, "1", get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Data)
 				require.Equal(t, "true", get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Data)
 				require.Equal(t, "0", get(load(t, path), []string{"env", "CLAUDE_CODE_TETHER_LIVE"}).Data)
-				require.Equal(t, "1h", get(load(t, path), []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}).Data)
-				require.Equal(t, "5m", get(load(t, path), []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"}).Data)
+				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}).Exists, "setup leaves the prompt cache TTL key unset by default")
+				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"}).Exists, "setup leaves the subagent prompt cache TTL key unset by default")
 				teardown(t, h, path)
 				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Exists, "teardown removes the gateway hint key")
 				require.False(t, get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Exists, "teardown removes the tool search key")
 				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_TETHER_LIVE"}).Exists, "teardown removes the tether key")
-				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}).Exists, "teardown removes the prompt cache TTL key")
-				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"}).Exists, "teardown removes the subagent prompt cache TTL key")
 			}
 		})
 	}

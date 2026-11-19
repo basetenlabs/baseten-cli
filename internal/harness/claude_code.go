@@ -167,7 +167,7 @@ func (h claudeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 		credentialPath = nil
 	}
 	p, err := prepareSettings(path, credentialPath, func(data map[string]any) ([]setting, error) {
-		return claudeSettings(routes, s, endpoint, data, helper, cli, opts.NoClaudeServedModel, opts.GitContext)
+		return claudeSettings(routes, s, endpoint, data, helper, cli, opts.NoClaudeServedModel, opts.GitContext, opts.ExtendedPromptCache)
 	})
 	if err != nil {
 		return nil, err
@@ -186,7 +186,7 @@ func (h claudeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 	return plans, nil
 }
 
-func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string, noServedModel, gitContext bool) ([]setting, error) {
+func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string, noServedModel, gitContext, extendedPromptCache bool) ([]setting, error) {
 	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
@@ -243,7 +243,11 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
 	for _, kv := range claudeCacheTTLs {
-		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
+		if extendedPromptCache {
+			values = append(values, desired([]string{"env", kv[0]}, kv[1]))
+		} else if get(current, []string{"env", kv[0]}).Data == kv[1] {
+			values = append(values, setting{Path: []string{"env", kv[0]}})
+		}
 	}
 	// Claude Code's built-in tier aliases keep their own model IDs; the gateway maps them to routes.
 	for _, key := range claudeTierModelKeys {
