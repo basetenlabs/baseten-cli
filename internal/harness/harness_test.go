@@ -551,6 +551,34 @@ func TestTeardownUnconfiguredIsNoop(t *testing.T) {
 	}
 }
 
+func TestTeardownPreservesUserCacheTTLs(t *testing.T) {
+	h := claudeHarness{}
+	t.Run("preserves user values", func(t *testing.T) {
+		path := settingsPath(t, h)
+		save(t, path, map[string]any{"env": map[string]any{
+			claudeMarker:                            "1",
+			"CLAUDE_CODE_PROMPT_CACHE_TTL":          "5m",
+			"CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "1h",
+		}})
+		teardown(t, h, path)
+		d := load(t, path)
+		require.Equal(t, "5m", get(d, []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}).Data)
+		require.Equal(t, "1h", get(d, []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"}).Data)
+	})
+	t.Run("removes grid values", func(t *testing.T) {
+		path := settingsPath(t, h)
+		save(t, path, map[string]any{"env": map[string]any{
+			claudeMarker:                            "1",
+			"CLAUDE_CODE_PROMPT_CACHE_TTL":          "1h",
+			"CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "5m",
+		}})
+		teardown(t, h, path)
+		d := load(t, path)
+		require.False(t, get(d, []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}).Exists)
+		require.False(t, get(d, []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"}).Exists)
+	})
+}
+
 func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 	for _, h := range []Harness{codexHarness{}, openCodeHarness{}} {
 		t.Run(h.Name(), func(t *testing.T) {

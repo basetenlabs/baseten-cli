@@ -99,6 +99,11 @@ var claudeTierModelKeys = []string{
 	"ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 }
 
+var claudeCacheTTLs = [][2]string{
+	{"CLAUDE_CODE_PROMPT_CACHE_TTL", "1h"},
+	{"CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL", "5m"},
+}
+
 var claudePaths = [][]string{
 	{"model"}, {"fallbackModel"}, {"modelPicker", "options"},
 	{"modelPicker", "replaceBuiltInOptions"}, {"availableModels"},
@@ -112,7 +117,6 @@ var claudePaths = [][]string{
 	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"}, {"env", "ANTHROPIC_CUSTOM_HEADERS"},
 	{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}, {"env", "ENABLE_TOOL_SEARCH"},
 	{"env", "CLAUDE_CODE_TETHER_LIVE"},
-	{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}, {"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"},
 	{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"},
 }
 
@@ -235,9 +239,10 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{"CLAUDE_CODE_GATEWAY_HINT_HEADERS", "1"},
 		{"ENABLE_TOOL_SEARCH", "true"},
 		{"CLAUDE_CODE_TETHER_LIVE", "0"},
-		{"CLAUDE_CODE_PROMPT_CACHE_TTL", "1h"},
-		{"CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL", "5m"},
 	} {
+		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
+	}
+	for _, kv := range claudeCacheTTLs {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
 	// Claude Code's built-in tier aliases keep their own model IDs; the gateway maps them to routes.
@@ -530,6 +535,11 @@ func claudeTeardownPaths(data map[string]any) [][]string {
 	}
 	if claudeServedModelOwned(get(data, claudeStatusLinePath).Data) {
 		paths = append(paths, claudeStatusLinePath)
+	}
+	for _, kv := range claudeCacheTTLs {
+		if get(data, []string{"env", kv[0]}).Data == kv[1] {
+			paths = append(paths, []string{"env", kv[0]})
+		}
 	}
 	return paths
 }
