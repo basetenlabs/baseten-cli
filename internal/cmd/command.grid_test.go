@@ -4827,7 +4827,7 @@ func Test_Grid_Setup_RejectsEmptyOrInvalidTeamScope(t *testing.T) {
 func routeClassifierFixture(id, name string) map[string]any {
 	return map[string]any{
 		"id": id, "display_name": name, "supported_tradeoffs": []any{},
-		"decidable_models": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
+		"decidable_canonical_model_ids": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
 	}
 }
 
