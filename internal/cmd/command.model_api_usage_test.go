@@ -325,12 +325,17 @@ func Test_ModelApi_Usage_Filters(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/model_apis/usage", 200, modelAPIUsageTwoDays())
+	m.SetRoute("GET", "/v1/teams", 200, map[string]any{
+		"teams": []any{teamFixture("t1", "Engineering", true), teamFixture("t2", "Research", false)},
+	})
 
 	h.Require.NoError(h.Execute("model-api", "usage",
 		"--api-key-prefix", "bsnt_abc",
 		"--api-key-prefix", "bsnt_def",
 		"--user-id", "usr_1",
 		"--model", "llama-3",
+		"--team", "Engineering",
+		"--team", "t2",
 	))
 
 	call := m.FindCall("GET", "/v1/model_apis/usage")
@@ -339,6 +344,31 @@ func Test_ModelApi_Usage_Filters(t *testing.T) {
 	h.Require.Equal([]string{"bsnt_abc", "bsnt_def"}, q["api_keys"])
 	h.Require.Equal([]string{"usr_1"}, q["user_ids"])
 	h.Require.Equal([]string{"llama-3"}, q["models"])
+	// Team names and IDs both resolve to IDs.
+	h.Require.Equal([]string{"t1", "t2"}, q["team_ids"])
+}
+
+func Test_ModelApi_Usage_GroupByTeam(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/model_apis/usage", 200, modelAPIUsageBody(
+		modelAPIUsageBucket("2026-08-20T00:00:00Z",
+			modelAPIUsageResult(map[string]any{"team_id": "t1"}, 2, 200, 0, 20),
+		),
+		modelAPIUsageBucket("2026-08-21T00:00:00Z",
+			modelAPIUsageResult(map[string]any{"team_id": nil}, 5, 500, 0, 50),
+		),
+	))
+
+	h.Require.NoError(h.Execute("model-api", "usage", "--group-by", "team"))
+
+	call := m.FindCall("GET", "/v1/model_apis/usage")
+	h.Require.NotNil(call)
+	h.Require.Equal([]string{"team"}, call.Query()["group_by"])
+	out := h.Stdout.String()
+	h.Require.Contains(out, "TEAM")
+	h.Require.Equal("t1", modelAPIUsageCell(h, out, "200", 1))
+	h.Require.Equal("-", modelAPIUsageCell(h, out, "500", 1))
 }
 
 func Test_ModelApi_Usage_DefaultWindowPerBucketWidth(t *testing.T) {

@@ -321,3 +321,77 @@ func Test_ModelApi_Describe_NilPricingJSON(t *testing.T) {
 	h.Require.Contains(got, "cost_per_million_input_tokens")
 	h.Require.Nil(got["cost_per_million_input_tokens"])
 }
+
+const modelAPIMetricsPath = "/v1/model_apis/llama-3/metrics"
+
+func Test_ModelApi_Metrics_ParamsSent(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/teams", 200, map[string]any{
+		"teams": []any{teamFixture("t1", "Engineering", true), teamFixture("t2", "Research", false)},
+	})
+	m.SetRoute("GET", modelAPIMetricsPath, 200, metricsResponse("SUMMARY", 0, 3600000, []any{}, []any{}))
+
+	h.Require.NoError(h.Execute("model-api", "metrics", "--model", "llama-3",
+		"--team", "Engineering", "--team", "t2",
+		"--mode", "summary", "--since", "1h", "--metric", "baseten_model_api_tokens_total"))
+
+	call := m.FindCall("GET", modelAPIMetricsPath)
+	h.Require.NotNil(call)
+	q := call.Query()
+	h.Require.Equal("SUMMARY", q.Get("mode"))
+	h.Require.Equal([]string{"baseten_model_api_tokens_total"}, q["metrics"])
+	// Names and IDs both resolve to IDs, from a single team listing.
+	h.Require.Equal([]string{"t1", "t2"}, q["team_ids"])
+	teamCalls := 0
+	for _, c := range m.Calls() {
+		if c.Path == "/v1/teams" {
+			teamCalls++
+		}
+	}
+	h.Require.Equal(1, teamCalls)
+}
+
+func Test_ModelApi_Metrics_NoTeamSkipsTeamLookup(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", modelAPIMetricsPath, 200, metricsResponse("CURRENT", 0, 0, []any{}, []any{}))
+
+	h.Require.NoError(h.Execute("model-api", "metrics", "--model", "llama-3"))
+	h.Require.Nil(m.FindCall("GET", "/v1/teams"))
+	call := m.FindCall("GET", modelAPIMetricsPath)
+	h.Require.NotNil(call)
+	h.Require.NotContains(call.Query(), "team_ids")
+}
+
+func Test_ModelApi_Metrics_UnknownTeam(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/teams", 200, map[string]any{
+		"teams": []any{teamFixture("t1", "Engineering", true)},
+	})
+
+	err := h.Execute("model-api", "metrics", "--model", "llama-3", "--team", "Nope")
+	h.Require.Error(err)
+	h.Require.Contains(err.Error(), `no team matched "Nope"`)
+	h.Require.Nil(m.FindCall("GET", modelAPIMetricsPath))
+}
+
+func Test_ModelApi_Metrics_CurrentSnapshotTable(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", modelAPIMetricsPath, 200, metricsResponse("CURRENT", 0, 0,
+		[]any{
+			metricsDescriptor("baseten_model_api_tokens_total", "COUNTER", "COUNT",
+				map[string]string{"service_tier": "default", "token_type": "output"},
+				map[string]string{"service_tier": "default", "token_type": "uncached_input"}),
+		},
+		[]any{metricsValueSet(0, []any{1500, 42})},
+	))
+
+	h.Require.NoError(h.Execute("model-api", "metrics", "--model", "llama-3"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "SERVICE_TIER")
+	h.Require.Contains(out, "TOKEN_TYPE")
+	h.Require.Contains(out, "uncached_input")
+	h.Require.Contains(out, "1.5k")
+}

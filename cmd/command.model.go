@@ -365,8 +365,9 @@ type LogFlags struct {
 }
 
 // MetricsFlags is the shared metric-query flag set for `baseten model deployment
-// metrics` and `baseten model environment metrics`. Both commands accept the
-// same mode, window, and metric-selection flags; only the metric source differs.
+// metrics`, `baseten model environment metrics`, and `baseten model-api metrics`.
+// All accept the same mode, window, and metric-selection flags; only the metric
+// source differs.
 type MetricsFlags struct {
 	Mode string `flag:"mode" desc:"Aggregation mode. 'current' returns an instantaneous snapshot at now; 'summary' aggregates the whole window into one value per metric; 'series' returns evenly-spaced points across the window. --start/--end/--since are only meaningful for summary and series." enum:"current,summary,series" default:"current"`
 
