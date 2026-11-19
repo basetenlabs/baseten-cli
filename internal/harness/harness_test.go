@@ -1334,10 +1334,14 @@ func TestClientHeaderNamesHarness(t *testing.T) {
 				require.Equal(t, "1", get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Data)
 				require.Equal(t, "true", get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Data)
 				require.Equal(t, "0", get(load(t, path), []string{"env", "CLAUDE_CODE_TETHER_LIVE"}).Data)
+				require.Equal(t, "1h", get(load(t, path), []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}).Data)
+				require.Equal(t, "5m", get(load(t, path), []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"}).Data)
 				teardown(t, h, path)
 				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Exists, "teardown removes the gateway hint key")
 				require.False(t, get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Exists, "teardown removes the tool search key")
 				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_TETHER_LIVE"}).Exists, "teardown removes the tether key")
+				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}).Exists, "teardown removes the prompt cache TTL key")
+				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"}).Exists, "teardown removes the subagent prompt cache TTL key")
 			}
 		})
 	}

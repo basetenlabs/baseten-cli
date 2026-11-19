@@ -112,6 +112,7 @@ var claudePaths = [][]string{
 	{"env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"}, {"env", "ANTHROPIC_CUSTOM_HEADERS"},
 	{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}, {"env", "ENABLE_TOOL_SEARCH"},
 	{"env", "CLAUDE_CODE_TETHER_LIVE"},
+	{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}, {"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"},
 	{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"},
 }
 
@@ -234,6 +235,8 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{"CLAUDE_CODE_GATEWAY_HINT_HEADERS", "1"},
 		{"ENABLE_TOOL_SEARCH", "true"},
 		{"CLAUDE_CODE_TETHER_LIVE", "0"},
+		{"CLAUDE_CODE_PROMPT_CACHE_TTL", "1h"},
+		{"CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL", "5m"},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
 	}
