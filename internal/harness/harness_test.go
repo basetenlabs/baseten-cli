@@ -579,7 +579,7 @@ func TestTeardownPreservesUserCacheTTLs(t *testing.T) {
 	})
 }
 
-func TestClaudeClaudeExtendedPromptCacheIsOptIn(t *testing.T) {
+func TestClaudeExtendedPromptCacheIsOptIn(t *testing.T) {
 	h := claudeHarness{}
 	path := settingsPath(t, h)
 	ttls := func() []value {

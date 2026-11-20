@@ -33,7 +33,7 @@ var commandGrid = Command{
 				"Setup also adds a served-model indicator for intelligent routes in Claude Code, Pi, and OpenCode 2. " +
 				"To turn it off, set BASETEN_CLAUDE_SERVED_MODEL, BASETEN_PI_SERVED_MODEL, or BASETEN_OPENCODE_SERVED_MODEL to 0.\n\n" +
 				"With --git-context, setup makes each harness add the git origin URL, branch, and commit to the session context when a session starts inside a git repository. This is used for training an improved custom router.\n\n" +
-				"With --claude-claude-extended-prompt-cache, setup gives Claude Code's main conversation a 1-hour prompt cache, while subagents and background requests keep 5 minutes. One-hour cache writes cost more than five-minute ones.",
+				"With --claude-extended-prompt-cache, setup gives Claude Code's main conversation a 1-hour prompt cache, while subagents and background requests keep 5 minutes. One-hour cache writes cost more than five-minute ones.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "Which harnesses were set up and what to restart. --dry-run lists each setting setup will add, update or remove and stops; --verbose lists the same changes before asking to apply.",
@@ -76,7 +76,7 @@ var commandGrid = Command{
 				"Stored routes the team has removed fall back to their defaults with a warning. Only harnesses whose record matches the current profile are synced, " +
 				"and a machine with no record needs 'grid setup' first. Harnesses set up with --use-session-credential re-resolve the session's API key; " +
 				"when it is unavailable, sync errors instead of creating a replacement.\n\n" +
-				"Using --hide-served-model-indicator, --git-context, and --claude-claude-extended-prompt-cache overrides the flags set in previous harness configurations.\n" +
+				"Using --hide-served-model-indicator, --git-context, and --claude-extended-prompt-cache overrides the flags set in previous harness configurations.\n" +
 				"When nothing changes, sync does nothing and exits 0, so it is safe to run from a schedule; pass --yes to skip the prompt when changes are found. " +
 				"For Codex, sync restarts the app-server daemon like setup does, asking first when sessions are attached unless --yes is passed; an in-progress turn is interrupted, " +
 				"and thread history is preserved. A declined or failed restart is retried on the next sync.",
