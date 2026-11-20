@@ -57,6 +57,39 @@ var commandModelAPI = Command{
 			},
 		},
 		{
+			Name:    "metrics",
+			Summary: "Fetch metrics for a Model API",
+			Description: "Fetch the workspace's metrics for a single Model API.\n\n" +
+				"--mode selects what you get back: a current snapshot, a windowed " +
+				"summary, or a series; see its flag help for details. Scope the window " +
+				"with --start/--end or --since (max 7 days), which only apply to " +
+				"summary and series.\n\n" +
+				"Metrics cover every team you can manage unless --team narrows them.",
+			Flags: ModelAPIMetricsFlags{},
+			Output: &CommandOutput[managementapi.GetMetricsResponse]{
+				TextDescription: "For current/summary, a table with columns METRIC, one column per " +
+					"label dimension, and VALUE; summary COUNTER values show \"total (rate/s)\". " +
+					"For series, a sparkline per metric label set with its min-max range and end " +
+					"value, or a per-step table under --no-chart.",
+				JSONDescription: "The metrics response: metric_descriptors, index-mapped metric_values, " +
+					"the resolved mode, and the returned window.",
+				Examples: []CommandExample{
+					{
+						Description: "Show a current snapshot of the default metrics for a Model API.",
+						Command:     "baseten model-api metrics --model <name>",
+					},
+					{
+						Description: "Plot a series over the last 6 hours for one team.",
+						Command:     "baseten model-api metrics --model <name> --team <team> --mode series --since 6h",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the metric names returned.",
+					Command:     "baseten model-api metrics --model <name> --jq '.metric_descriptors[].name'",
+				},
+			},
+		},
+		{
 			Name:    "predict",
 			Summary: "Run an inference request against a Model API",
 			Description: "POST an inference request to a Model API and write the response to " +
@@ -108,6 +141,8 @@ var commandModelAPI = Command{
 				"Usage is attributed to a user when the request was authenticated with a personal " +
 				"API key or an OAuth credential. Usage from workspace or other non-user-scoped " +
 				"credentials has no user.\n\n" +
+				"Usage covers every team you can manage unless --team narrows it. Grouping by " +
+				"team shows team IDs; run 'baseten org team list' to map them to names.\n\n" +
 				"For machine-readable streaming, prefer --output jsonl over --output json.",
 			Flags: ModelAPIUsageFlags{},
 			Output: &CommandOutput[managementapi.ModelApisUsageBucket]{
@@ -171,11 +206,12 @@ type ModelAPIUsageFlags struct {
 	Since time.Duration `flag:"since" desc:"Window from a relative time ago until now (e.g. '30m', '3d'). Mutually exclusive with --start and --end."`
 
 	BucketWidth string   `flag:"bucket-width" desc:"Width of each time bucket. Also sets the default window: 7d for 1d, 24h for 1h, 60m for 1m." enum:"1m,1h,1d" default:"1d"`
-	GroupBy     []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated. One of: api-key, user, model. Defaults to model."`
+	GroupBy     []string `flag:"group-by" desc:"Dimension to break usage down by. May be repeated. One of: api-key, user, model, team. Defaults to model."`
 
 	APIKeyPrefixes []string `flag:"api-key-prefix" desc:"Only return usage for these API key prefixes. May be repeated."`
 	UserIDs        []string `flag:"user-id" desc:"Only return usage attributed to these user IDs. May be repeated."`
 	Models         []string `flag:"model" desc:"Only return usage for these models. May be repeated."`
+	Teams          []string `flag:"team" desc:"Only return usage for these teams, by name or ID. May be repeated. Defaults to all teams you can manage. Run 'baseten org team list' to see teams."`
 
 	Limit int `flag:"limit" desc:"Maximum number of time buckets, paging as needed. Rows per bucket depend on --group-by. 0 for no limit."`
 
@@ -183,6 +219,15 @@ type ModelAPIUsageFlags struct {
 	// tests can force multiple pages without a full page of buckets. Zero uses
 	// the backend's maximum for the bucket width.
 	PageSize int `flag:"page-size" hidden:"true" desc:"Time buckets fetched per backend request while paging."`
+}
+
+// ModelAPIMetricsFlags configures `baseten model-api metrics`.
+type ModelAPIMetricsFlags struct {
+	CommandFlags
+	MetricsFlags
+
+	Model string   `flag:"model" desc:"Name of the Model API to fetch metrics for." required:"true"`
+	Teams []string `flag:"team" desc:"Only return metrics for these teams, by name or ID. May be repeated. Defaults to all teams you can manage. Run 'baseten org team list' to see teams."`
 }
 
 // ModelAPIPredictFlags configures `baseten model-api predict`.

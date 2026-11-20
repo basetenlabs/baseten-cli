@@ -17,7 +17,7 @@ func init() {
 
 // modelAPIUsageDimensions are the allowed lowercase-kebab --group-by values,
 // mapped to the snake_case backend enum by swapping '-' for '_'.
-var modelAPIUsageDimensions = []string{"api-key", "user", "model"}
+var modelAPIUsageDimensions = []string{"api-key", "user", "model", "team"}
 
 // modelAPIUsageDefaultDimension is pinned client-side so the column set stays
 // stable if the backend changes which dimension it defaults to.
@@ -67,6 +67,9 @@ func commandModelAPIUsage(ctx *CommandContext, flags *cmd.ModelAPIUsageFlags) er
 	}
 	if len(flags.Models) > 0 {
 		params.Models = &flags.Models
+	}
+	if params.TeamIds, err = ResolveTeams(ctx, api.API(), flags.Teams); err != nil {
+		return err
 	}
 
 	var jw *JSONArrayWriter
@@ -319,6 +322,8 @@ func (t *modelAPIUsageTable) dimensionCell(d managementapi.UsageDimension, r man
 		return cell
 	case managementapi.UsageDimension_model:
 		return modelAPIUsageCell(r.Model)
+	case managementapi.UsageDimension_team:
+		return modelAPIUsageCell(r.TeamId)
 	default:
 		return "-"
 	}

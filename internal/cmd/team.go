@@ -51,9 +51,36 @@ func ResolveTeamOrOnly(ctx context.Context, api *managementapi.Client, input str
 		}
 		return nil, cmd.NewErrUsagef("there are %d teams; pass --team with one of %s", len(resp.Teams), strings.Join(names, ", "))
 	}
+	return matchTeam(resp.Teams, input)
+}
+
+// ResolveTeams resolves repeated --team flag values (team names or IDs) into
+// team IDs, listing teams once for all of them. Returns nil when none are given
+// so the filter is omitted.
+func ResolveTeams(ctx context.Context, api *managementapi.Client, inputs []string) (*[]string, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+	resp, err := api.GetTeams(ctx, managementapi.GetV1TeamsParams{})
+	if err != nil {
+		return nil, fmt.Errorf("list teams: %w", err)
+	}
+	ids := make([]string, len(inputs))
+	for i, input := range inputs {
+		team, err := matchTeam(resp.Teams, input)
+		if err != nil {
+			return nil, err
+		}
+		ids[i] = team.Id
+	}
+	return &ids, nil
+}
+
+// matchTeam picks the team a name or ID refers to, preferring an exact ID match.
+func matchTeam(teams []managementapi.Team, input string) (*managementapi.Team, error) {
 	var found *managementapi.Team
-	for i := range resp.Teams {
-		t := &resp.Teams[i]
+	for i := range teams {
+		t := &teams[i]
 		switch {
 		case t.Id == input:
 			return t, nil
