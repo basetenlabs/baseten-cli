@@ -4,6 +4,11 @@ import "time"
 
 const orgAccessUnavailable = "Organizations without custom roles get not found from every command."
 
+// resourceSetUsage explains the --resource-set syntax shared by assignment create and check.
+const resourceSetUsage = "A resource set is TYPE:ID entries joined by commas, at most one resource and at most one " +
+	"environment, such as model:<model-id>,environment:production. An environment entry names the " +
+	"environment, such as staging."
+
 // commandOrgAccess groups the `baseten org access` subcommands.
 var commandOrgAccess = Command{
 	Name:    "access",
@@ -21,19 +26,20 @@ var commandOrgAccess = Command{
 					Name:    "create",
 					Summary: "Assign a role (PRE-RELEASE)",
 					Description: "Give a role to a user, service account or directory group. An organization " +
-						"role applies across the organization; a team role needs --team. Pass --model-id or " +
-						"--model-name to limit the role to those models, and --environment-id to limit it to " +
-						"those environments.",
+						"role applies across the organization; a team role needs --team. Pass --resource-set " +
+						"to limit the role to what any of the sets selects; omit it for every resource where " +
+						"the role applies. " + resourceSetUsage,
 					Flags: OrgAccessAssignmentCreateFlags{},
 					Output: &CommandOutput[AccessAssignment]{
 						TextDescription: "Prints the new assignment's ID on stdout, and \"Assigned role " +
-							"<role ID>\" on stderr.",
+							"<role name>\" on stderr.",
 						Examples: []CommandExample{
 							{
-								Description: "Let a service account push deployments of one model.",
+								Description: "Let a service account push one model's deployments in staging, and every model's in production.",
 								CommandLines: []string{
 									"baseten org access assignment create --role-name deployer",
-									"--service-account-name ci-deployer --team <team> --model-name <model>",
+									"--service-account-name ci-deployer --team <team>",
+									"--resource-set model:<model-id>,environment:staging --resource-set environment:production",
 								},
 							},
 							{
@@ -45,7 +51,7 @@ var commandOrgAccess = Command{
 							Description: "Print where the role applies.",
 							CommandLines: []string{
 								"baseten org access assignment create --role-id <role> --user-id <user>",
-								"--team <team> --jq '.scope'",
+								"--team <team> --jq '.resource_sets'",
 							},
 						},
 					},
@@ -84,7 +90,7 @@ var commandOrgAccess = Command{
 						},
 						JQExample: CommandExample{
 							Description: "Print who holds the role.",
-							Command:     "baseten org access assignment describe --id <assignment> --jq '.subject'",
+							Command:     "baseten org access assignment describe --id <assignment> --jq '.subject_name'",
 						},
 					},
 				},
@@ -96,8 +102,8 @@ var commandOrgAccess = Command{
 						"'baseten org access describe' shows them.",
 					Flags: OrgAccessAssignmentListFlags{},
 					Output: &CommandOutput[AccessAssignmentList]{
-						TextDescription: "Table with columns: ID, ROLE, HOLDER, TEAM, RESOURCES, ENVIRONMENTS, " +
-							"CREATED. When none match, prints \"No role assignments found.\" to stderr.",
+						TextDescription: "Table with columns: ID, ROLE, HOLDER, TEAM, RESOURCE SETS, CREATED. " +
+							"When none match, prints \"No role assignments found.\" to stderr.",
 						Examples: []CommandExample{
 							{
 								Description: "List a team's assignments.",
@@ -109,8 +115,8 @@ var commandOrgAccess = Command{
 							},
 						},
 						JQExample: CommandExample{
-							Description: "Print the IDs of the roles assigned.",
-							Command:     "baseten org access assignment list --jq '.items[].role_id'",
+							Description: "Print the names of the roles assigned.",
+							Command:     "baseten org access assignment list --jq '.items[].role_name'",
 						},
 					},
 				},
@@ -119,43 +125,44 @@ var commandOrgAccess = Command{
 		{
 			Name:    "check",
 			Summary: "Check whether you hold permissions (PRE-RELEASE)",
-			Description: "Check whether you hold each --permission: on --team, on the model --model-id, or " +
-				"across the organization when neither is given. To check whether you can create something " +
-				"in a team, check the permission on the team.",
+			Description: "Check whether you hold each --permission: in --team, where --resource-set selects, " +
+				"or across the organization when neither is given. To check whether you can create something " +
+				"in a team, check its write permission in the team. " + resourceSetUsage,
 			Flags: OrgAccessCheckFlags{},
 			Output: &CommandOutput[AccessCheckResults]{
-				TextDescription: "Table with columns: PERMISSION, ON, ALLOWED (yes or no).",
+				TextDescription: "Table with columns: PERMISSION, TEAM, RESOURCE SET, ALLOWED (yes or no).",
 				Examples: []CommandExample{
 					{
 						Description: "Check whether you can push deployments in a team.",
 						Command:     "baseten org access check --permission model.deployment.write --team <team>",
 					},
 					{
-						Description: "Check two permissions on one model.",
+						Description: "Check two permissions on one model in production.",
 						CommandLines: []string{
-							"baseten org access check --permission model.read",
-							"--permission model.delete --model-id <model>",
+							"baseten org access check --permission model.read --permission model.deployment.write",
+							"--resource-set model:<model-id>,environment:production",
 						},
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print whether the first check is allowed.",
-					Command:     "baseten org access check --permission access.role.write --jq '.results[0].allow'",
+					Command:     "baseten org access check --permission access.role.write --jq '.results[0].allowed'",
 				},
 			},
 		},
 		{
 			Name:    "describe",
 			Summary: "Describe a principal's roles and access (PRE-RELEASE)",
-			Description: "List every role a principal holds, through an assignment or through organization " +
-				"and team membership, and the permissions they grant. Without a flag, describes you.",
+			Description: "List every role a user or service account holds, through an assignment to it or to " +
+				"a directory group it's in, or through organization and team membership, and the permissions " +
+				"they grant. Without a flag, describes you.",
 			Flags: OrgAccessDescribeFlags{},
 			Output: &CommandOutput[Access]{
-				TextDescription: "The principal on the first line, then a table with columns: ROLE, HELD VIA, " +
-					"TEAM, RESOURCES, ENVIRONMENTS, ASSIGNMENT, then the permissions held across the " +
-					"organization, in each team, on each selected resource, and in each selected " +
-					"environment. Prints \"Effective permissions aren't available yet.\" to stderr when the " +
-					"organization's permissions can't be computed yet.",
+				TextDescription: "The principal on the first line, then a table of roles with columns: ROLE, " +
+					"HELD VIA, TEAM, RESOURCE SETS, ASSIGNMENT, then a table of permissions with columns: " +
+					"PERMISSION, TEAM, RESOURCE SET. Prints \"Effective permissions aren't available yet.\" to " +
+					"stderr instead of the permissions until fine-grained authorization decides the " +
+					"organization's requests.",
 				Examples: []CommandExample{
 					{
 						Description: "Describe your own access.",
@@ -167,8 +174,8 @@ var commandOrgAccess = Command{
 					},
 				},
 				JQExample: CommandExample{
-					Description: "Print the permissions you hold across the organization.",
-					Command:     "baseten org access describe --jq '.effective.org_wide'",
+					Description: "Print the permissions you hold.",
+					Command:     "baseten org access describe --jq '.permissions[].name'",
 				},
 			},
 		},
@@ -178,12 +185,13 @@ var commandOrgAccess = Command{
 			Children: []Command{
 				{
 					Name:    "list",
-					Summary: "List the permissions custom roles can hold (PRE-RELEASE)",
-					Description: "List the permissions available to custom roles. Permissions that aren't " +
-						"selectable are reserved for built-in admin roles.",
+					Summary: "List the permissions roles can grant (PRE-RELEASE)",
+					Description: "List the permissions roles can grant. A custom role can hold a permission " +
+						"only when it's assignable: available to the organization and not reserved for " +
+						"built-in admin roles.",
 					Flags: OrgAccessPermissionListFlags{},
 					Output: &CommandOutput[AccessPermissionCatalog]{
-						TextDescription: "Table with columns: NAME, LABEL, ROLE KINDS, SELECTABLE.",
+						TextDescription: "Table with columns: NAME, LABEL, ROLE KINDS, ASSIGNABLE.",
 						Examples: []CommandExample{
 							{
 								Description: "List the permissions.",
@@ -194,7 +202,7 @@ var commandOrgAccess = Command{
 							Description: "Print the permissions a team role can hold.",
 							CommandLines: []string{
 								"baseten org access permission list",
-								"--jq '.permissions[] | select(.role_kinds | index(\"team\")) | .name'",
+								"--jq '.permissions[] | select(.role_kinds | index(\"TEAM\")) | .name'",
 							},
 						},
 					},
@@ -301,18 +309,17 @@ var commandOrgAccess = Command{
 				{
 					Name:    "update",
 					Summary: "Update a custom role (PRE-RELEASE)",
-					Description: "Change a custom role's name, description, permissions or included " +
-						"built-in roles. --permission and --include each replace the whole list. Changes " +
-						"apply to every holder of the role.",
+					Description: "Change a custom role's name or description, add or remove permissions, " +
+						"and include or stop including built-in roles. Changes apply to every holder of the role.",
 					Flags: OrgAccessRoleUpdateFlags{},
 					Output: &CommandOutput[AccessRole]{
 						TextDescription: "Prints \"Updated role <name>\" to stderr; no stdout output.",
 						Examples: []CommandExample{
 							{
-								Description: "Replace a role's permissions.",
+								Description: "Let a role delete deployments, and stop it pushing them.",
 								CommandLines: []string{
 									"baseten org access role update --name deployer",
-									"--permission model.deployment.write --permission model.deployment.delete",
+									"--add-permission model.deployment.delete --remove-permission model.deployment.write",
 								},
 							},
 						},
@@ -332,7 +339,7 @@ var commandOrgAccess = Command{
 				{
 					Name:        "describe",
 					Summary:     "Show role settings (PRE-RELEASE)",
-					Description: "Show whether team admins can create, change and delete their team's roles.",
+					Description: "Show whether team admins can create, change and delete their team's custom roles.",
 					Flags:       OrgAccessSettingsDescribeFlags{},
 					Output: &CommandOutput[AccessSettings]{
 						TextDescription: "Field-per-line summary of the settings.",
@@ -351,8 +358,9 @@ var commandOrgAccess = Command{
 				{
 					Name:    "update",
 					Summary: "Change role settings (PRE-RELEASE)",
-					Description: "Change whether team admins can create, change and delete their team's " +
-						"roles. Either way, team admins can still assign roles in their team.",
+					Description: "Change whether team admins can create, change and delete their team's custom " +
+						"roles. Either way, team admins can still assign roles in their team. Needs " +
+						"access.role.write for the organization.",
 					Flags: OrgAccessSettingsUpdateFlags{},
 					Output: &CommandOutput[AccessSettings]{
 						TextDescription: "Prints \"Updated role settings\" to stderr; no stdout output.",
@@ -376,21 +384,24 @@ var commandOrgAccess = Command{
 	},
 }
 
-// AccessPermission is a permission a custom role can hold.
+// AccessPermission is a permission roles can grant.
 type AccessPermission struct {
 	Name        string   `json:"name"`
-	Label       string   `json:"label"`
+	Category    string   `json:"category"`
+	DisplayName string   `json:"display_name"`
 	Description string   `json:"description"`
 	RoleKinds   []string `json:"role_kinds"`
-	Selectable  bool     `json:"selectable"`
+	Reserved    bool     `json:"reserved"`
+	Available   bool     `json:"available"`
 }
 
 // AccessPermissionCategory groups related permissions.
 type AccessPermissionCategory struct {
-	ID           string  `json:"id"`
-	Label        string  `json:"label"`
-	Description  string  `json:"description"`
-	ResourceType *string `json:"resource_type"`
+	Name                 string   `json:"name"`
+	DisplayName          string   `json:"display_name"`
+	Description          string   `json:"description"`
+	ResourceTypes        []string `json:"resource_types"`
+	SupportsEnvironments bool     `json:"supports_environments"`
 }
 
 // AccessPermissionCatalog is the JSON output of `baseten org access permission list`.
@@ -401,14 +412,15 @@ type AccessPermissionCatalog struct {
 
 // AccessRole is a built-in or custom role.
 type AccessRole struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	BuiltIn     bool     `json:"built_in"`
-	Kind        *string  `json:"kind"`
-	TeamID      *string  `json:"team_id"`
-	Permissions []string `json:"permissions"`
-	Includes    []string `json:"includes"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Description    string   `json:"description"`
+	BuiltIn        bool     `json:"built_in"`
+	Kind           string   `json:"kind"`
+	TeamID         *string  `json:"team_id"`
+	TeamName       *string  `json:"team_name"`
+	Permissions    []string `json:"permissions"`
+	IncludeRoleIDs []string `json:"include_role_ids"`
 }
 
 // AccessRoleList is the JSON output of `baseten org access role list`: the
@@ -419,46 +431,30 @@ type AccessRoleList struct {
 
 // AccessDeleted is the JSON output of the access delete commands.
 type AccessDeleted struct {
-	ID      string `json:"id"`
-	Deleted bool   `json:"deleted"`
+	ID string `json:"id"`
 }
 
-// AccessSubject is who holds a role: a user (including a service account) or
-// a directory group.
-type AccessSubject struct {
-	Type string  `json:"type"`
-	ID   string  `json:"id"`
-	Name *string `json:"name,omitempty"`
+// AccessResourceSetEntry is a resource, or an environment by name.
+type AccessResourceSetEntry struct {
+	Type       string `json:"type"`
+	Identifier string `json:"identifier"`
 }
 
-// AccessResource names a resource by ID, or by name in requests only.
-type AccessResource struct {
-	Type string `json:"type"`
-	ID   string `json:"id,omitempty"`
-	Name string `json:"name,omitempty"`
-}
-
-// AccessResourceSelection is `all` resources in the scope, or `selected` ones.
-type AccessResourceSelection struct {
-	Mode      string           `json:"mode"`
-	Resources []AccessResource `json:"resources"`
-}
-
-// AccessAssignmentScope is where an assigned role applies.
-type AccessAssignmentScope struct {
-	TeamID               *string                 `json:"team_id"`
-	ResourceSelection    AccessResourceSelection `json:"resource_selection"`
-	EnvironmentSelection []string                `json:"environment_selection"`
-}
-
-// AccessAssignment is a role given to a subject.
+// AccessAssignment is a role held by a user, service account or directory
+// group: assigned (ID set), or through membership (ID null).
 type AccessAssignment struct {
-	ID        string                `json:"id"`
-	Subject   AccessSubject         `json:"subject"`
-	RoleID    string                `json:"role_id"`
-	Scope     AccessAssignmentScope `json:"scope"`
-	CreatedBy *string               `json:"created_by"`
-	CreatedAt time.Time             `json:"created_at"`
+	ID           *string                    `json:"id"`
+	GrantedVia   string                     `json:"granted_via"`
+	RoleID       string                     `json:"role_id"`
+	RoleName     string                     `json:"role_name"`
+	SubjectType  string                     `json:"subject_type"`
+	SubjectID    string                     `json:"subject_id"`
+	SubjectName  string                     `json:"subject_name"`
+	TeamID       *string                    `json:"team_id"`
+	TeamName     *string                    `json:"team_name"`
+	ResourceSets [][]AccessResourceSetEntry `json:"resource_sets"`
+	CreatedBy    *string                    `json:"created_by"`
+	CreatedAt    *time.Time                 `json:"created_at"`
 }
 
 // AccessAssignmentList is the JSON output of `baseten org access assignment
@@ -467,47 +463,45 @@ type AccessAssignmentList struct {
 	Items []AccessAssignment `json:"items"`
 }
 
-// AccessHeldRole is a role a principal holds: assigned (ID set) or through
-// organization or team membership (ID null).
-type AccessHeldRole struct {
-	ID      *string               `json:"id"`
-	Role    AccessRole            `json:"role"`
-	Scope   AccessAssignmentScope `json:"scope"`
-	Subject AccessSubject         `json:"subject"`
+// AccessGrant is where a permission is held: the organization, a team, or in
+// it what one resource set selects.
+type AccessGrant struct {
+	TeamID      *string                  `json:"team_id"`
+	TeamName    *string                  `json:"team_name"`
+	ResourceSet []AccessResourceSetEntry `json:"resource_set"`
 }
 
-// AccessEffective is what a principal's roles grant.
-type AccessEffective struct {
-	OrgWide      []string                       `json:"org_wide"`
-	Teams        map[string][]string            `json:"teams"`
-	Resources    map[string]map[string][]string `json:"resources"`
-	Environments map[string][]string            `json:"environments"`
-}
-
-// AccessPrincipal is whose access is described.
-type AccessPrincipal struct {
-	Type string `json:"type"`
-	ID   string `json:"id"`
+// AccessHeldPermission is a permission held, and where.
+type AccessHeldPermission struct {
+	Name        string        `json:"name"`
+	DisplayName string        `json:"display_name"`
+	Category    string        `json:"category"`
+	Grants      []AccessGrant `json:"grants"`
 }
 
 // Access is the JSON output of `baseten org access describe`.
 type Access struct {
-	Subject     AccessPrincipal  `json:"subject"`
-	Assignments []AccessHeldRole `json:"assignments"`
-	Effective   *AccessEffective `json:"effective"`
+	SubjectType string                 `json:"subject_type"`
+	SubjectID   string                 `json:"subject_id"`
+	SubjectName string                 `json:"subject_name"`
+	Assignments []AccessAssignment     `json:"assignments"`
+	Permissions []AccessHeldPermission `json:"permissions"`
 }
 
-// AccessCheck is one permission to check, on a team, a resource, or (without
-// a resource) the organization.
+// AccessCheck is one permission to check: for the organization, in a team, or
+// where a resource set selects.
 type AccessCheck struct {
-	Permission string          `json:"permission"`
-	Resource   *AccessResource `json:"resource"`
+	Permission  string                   `json:"permission"`
+	TeamID      *string                  `json:"team_id,omitempty"`
+	ResourceSet []AccessResourceSetEntry `json:"resource_set,omitempty"`
 }
 
 // AccessCheckResult answers one check.
 type AccessCheckResult struct {
-	Check AccessCheck `json:"check"`
-	Allow bool        `json:"allow"`
+	Permission  string                   `json:"permission"`
+	TeamID      *string                  `json:"team_id"`
+	ResourceSet []AccessResourceSetEntry `json:"resource_set"`
+	Allowed     bool                     `json:"allowed"`
 }
 
 // AccessCheckResults is the JSON output of `baseten org access check`.
@@ -542,12 +536,10 @@ type OrgAccessAssignmentCreateFlags struct {
 	CommandFlags
 	OrgAccessSubjectFlags
 
-	RoleID         string   `flag:"role-id" desc:"ID of the role to assign." oneof:"role-ref"`
-	RoleName       string   `flag:"role-name" desc:"Name of the role to assign." oneof:"role-ref"`
-	Team           string   `flag:"team" desc:"Team to assign a team role in, by name or ID. Omit for an organization role."`
-	ModelIDs       []string `flag:"model-id" desc:"Limit the role to this model, by ID. May be repeated. Needs --team."`
-	ModelNames     []string `flag:"model-name" desc:"Limit the role to this model, by name. May be repeated. Needs --team."`
-	EnvironmentIDs []string `flag:"environment-id" desc:"Limit the role to this environment, by ID. May be repeated."`
+	RoleID       string   `flag:"role-id" desc:"ID of the role to assign." oneof:"role-ref"`
+	RoleName     string   `flag:"role-name" desc:"Name of the role to assign." oneof:"role-ref"`
+	Team         string   `flag:"team" desc:"Team to assign a team role in, by name or ID. Omit for an organization role."`
+	ResourceSets []string `flag:"resource-set" desc:"Limit the role to what this set selects, such as model:<model-id>,environment:staging. May be repeated."`
 }
 
 type OrgAccessAssignmentListFlags struct {
@@ -570,8 +562,8 @@ type OrgAccessCheckFlags struct {
 	CommandFlags
 
 	Permissions []string `flag:"permission" desc:"Permission to check, such as model.deployment.write. May be repeated." required:"true"`
-	Team        string   `flag:"team" desc:"Check on this team, by name or ID. Mutually exclusive with --model-id."`
-	ModelID     string   `flag:"model-id" desc:"Check on this model, by ID."`
+	Team        string   `flag:"team" desc:"Check in this team, by name or ID."`
+	ResourceSet string   `flag:"resource-set" desc:"Check where this set selects, such as model:<model-id>,environment:production."`
 }
 
 type OrgAccessDescribeFlags struct {
@@ -585,8 +577,6 @@ type OrgAccessDescribeFlags struct {
 
 type OrgAccessPermissionListFlags struct {
 	CommandFlags
-
-	Team string `flag:"team" desc:"A team whose roles you manage, by name or ID. Needed only without organization-wide access to roles."`
 }
 
 // OrgAccessRoleRefFlags picks one role.
@@ -615,7 +605,7 @@ type OrgAccessRoleDescribeFlags struct {
 	CommandFlags
 	OrgAccessRoleRefFlags
 
-	Team string `flag:"team" desc:"For a team role any team can use, a team whose roles you manage, by name or ID. Needed only without organization-wide access to roles."`
+	Team string `flag:"team" desc:"Describe the role as this team's role list shows it, by name or ID. Needed only to manage a team's roles without organization-wide access to roles."`
 }
 
 type OrgAccessRoleListFlags struct {
@@ -628,10 +618,12 @@ type OrgAccessRoleUpdateFlags struct {
 	CommandFlags
 	OrgAccessRoleRefFlags
 
-	NewName     string               `flag:"new-name" desc:"New name, unique in the organization."`
-	Description OptionalFlag[string] `flag:"description" desc:"New description. Pass an empty string to clear it."`
-	Permissions []string             `flag:"permission" desc:"Permission the role grants from now on. May be repeated; replaces all of the role's own permissions."`
-	Includes    []string             `flag:"include" desc:"ID of a built-in role whose permissions the role grants from now on. May be repeated; replaces all included roles."`
+	NewName           string               `flag:"new-name" desc:"New name, unique in the organization."`
+	Description       OptionalFlag[string] `flag:"description" desc:"New description. Pass an empty string to clear it."`
+	AddPermissions    []string             `flag:"add-permission" desc:"Permission to add to the role. May be repeated."`
+	RemovePermissions []string             `flag:"remove-permission" desc:"Permission to remove from the role. May be repeated."`
+	AddIncludes       []string             `flag:"add-include" desc:"ID of a built-in role for the role to include. May be repeated."`
+	RemoveIncludes    []string             `flag:"remove-include" desc:"ID of a built-in role for the role to stop including. May be repeated."`
 }
 
 type OrgAccessSettingsDescribeFlags struct {
@@ -641,5 +633,5 @@ type OrgAccessSettingsDescribeFlags struct {
 type OrgAccessSettingsUpdateFlags struct {
 	CommandFlags
 
-	AllowTeamAdminsToManageRoles OptionalFlag[bool] `flag:"allow-team-admins-to-manage-roles" desc:"Whether team admins can create, change and delete their team's roles." required:"true"`
+	AllowTeamAdminsToManageRoles OptionalFlag[bool] `flag:"allow-team-admins-to-manage-roles" desc:"Whether team admins can create, change and delete their team's custom roles." required:"true"`
 }

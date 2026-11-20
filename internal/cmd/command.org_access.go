@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -138,7 +137,7 @@ func (a accessAPI) roleID(ctx context.Context, id, name string) (string, error) 
 	if id != "" {
 		return id, nil
 	}
-	roles, err := listAll[cmd.AccessRole](ctx, a, "/v1/access/roles", nil)
+	roles, err := listAll[cmd.AccessRole](ctx, a, "/v1/access/roles", url.Values{"name": {name}})
 	if err != nil {
 		return "", fmt.Errorf("looking up role %q: %w", name, err)
 	}
@@ -165,9 +164,15 @@ func userIDByEmail(ctx context.Context, api *managementapi.Client, email string)
 	return "", fmt.Errorf("multiple users with email %q", email)
 }
 
-// subject resolves the holder flags into an assignment subject. Service
-// accounts are users to role assignments. Returns nil when no flag is set.
-func (a accessAPI) subject(ctx context.Context, f cmd.OrgAccessHolderFilterFlags) (*cmd.AccessSubject, error) {
+// accessSubject is who holds a role, as the access API names it.
+type accessSubject struct {
+	Type string
+	ID   string
+}
+
+// subject resolves the holder flags into an assignment subject. Returns nil
+// when no flag is set.
+func (a accessAPI) subject(ctx context.Context, f cmd.OrgAccessHolderFilterFlags) (*accessSubject, error) {
 	set := 0
 	for _, value := range []string{f.UserID, f.UserEmail, f.ServiceAccountID, f.ServiceAccountName, f.DirectoryGroupID} {
 		if value != "" {
@@ -180,38 +185,68 @@ func (a accessAPI) subject(ctx context.Context, f cmd.OrgAccessHolderFilterFlags
 	}
 	switch {
 	case f.UserID != "":
-		return &cmd.AccessSubject{Type: "user", ID: f.UserID}, nil
+		return &accessSubject{Type: "USER", ID: f.UserID}, nil
 	case f.UserEmail != "":
 		id, err := userIDByEmail(ctx, a.api, f.UserEmail)
 		if err != nil {
 			return nil, err
 		}
-		return &cmd.AccessSubject{Type: "user", ID: id}, nil
+		return &accessSubject{Type: "USER", ID: id}, nil
 	case f.ServiceAccountID != "":
-		return &cmd.AccessSubject{Type: "user", ID: f.ServiceAccountID}, nil
+		return &accessSubject{Type: "SERVICE_ACCOUNT", ID: f.ServiceAccountID}, nil
 	case f.ServiceAccountName != "":
 		id, err := orgServiceAccountIDByName(ctx, a.api, f.ServiceAccountName)
 		if err != nil {
 			return nil, err
 		}
-		return &cmd.AccessSubject{Type: "user", ID: id}, nil
+		return &accessSubject{Type: "SERVICE_ACCOUNT", ID: id}, nil
 	case f.DirectoryGroupID != "":
-		return &cmd.AccessSubject{Type: "directory_group", ID: f.DirectoryGroupID}, nil
+		return &accessSubject{Type: "DIRECTORY_GROUP", ID: f.DirectoryGroupID}, nil
 	}
 	return nil, nil
 }
 
-func commandOrgAccessPermissionList(ctx *CommandContext, flags *cmd.OrgAccessPermissionListFlags) error {
+// parseResourceSet reads TYPE:ID entries joined by commas, such as
+// model:abc,environment:staging. Types are case-insensitive; the API checks
+// the rest.
+func parseResourceSet(value string) ([]cmd.AccessResourceSetEntry, error) {
+	var entries []cmd.AccessResourceSetEntry
+	for _, part := range strings.Split(value, ",") {
+		resourceType, id, ok := strings.Cut(strings.TrimSpace(part), ":")
+		if !ok || resourceType == "" || id == "" {
+			return nil, cmd.NewErrUsagef("resource set entry %q isn't TYPE:ID, such as model:<model-id> or environment:staging", part)
+		}
+		entries = append(entries, cmd.AccessResourceSetEntry{Type: strings.ToUpper(resourceType), Identifier: id})
+	}
+	return entries, nil
+}
+
+func resourceSetText(set []cmd.AccessResourceSetEntry) string {
+	entries := make([]string, 0, len(set))
+	for _, entry := range set {
+		entries = append(entries, strings.ToLower(entry.Type)+":"+entry.Identifier)
+	}
+	return strings.Join(entries, ",")
+}
+
+func resourceSetsText(sets [][]cmd.AccessResourceSetEntry) string {
+	if len(sets) == 0 {
+		return "all"
+	}
+	texts := make([]string, 0, len(sets))
+	for _, set := range sets {
+		texts = append(texts, resourceSetText(set))
+	}
+	return strings.Join(texts, "; ")
+}
+
+func commandOrgAccessPermissionList(ctx *CommandContext, _ *cmd.OrgAccessPermissionListFlags) error {
 	a, err := newAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
-	query, _, err := a.teamQuery(ctx, flags.Team)
-	if err != nil {
-		return err
-	}
 	var catalog cmd.AccessPermissionCatalog
-	if err := a.call(ctx, http.MethodGet, "/v1/access/permissions", query, nil, &catalog); err != nil {
+	if err := a.call(ctx, http.MethodGet, "/v1/access/permissions", nil, nil, &catalog); err != nil {
 		return fmt.Errorf("listing permissions: %w", err)
 	}
 	if ctx.JSON {
@@ -222,9 +257,11 @@ func commandOrgAccessPermissionList(ctx *CommandContext, flags *cmd.OrgAccessPer
 	}
 	rows := make([][]string, 0, len(catalog.Permissions))
 	for _, p := range catalog.Permissions {
-		rows = append(rows, []string{p.Name, p.Label, strings.Join(p.RoleKinds, ","), yesNo(p.Selectable)})
+		rows = append(rows, []string{
+			p.Name, p.DisplayName, strings.ToLower(strings.Join(p.RoleKinds, ",")), yesNo(p.Available && !p.Reserved),
+		})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "LABEL", "ROLE KINDS", "SELECTABLE"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "LABEL", "ROLE KINDS", "ASSIGNABLE"}, Rows: rows})
 	return nil
 }
 
@@ -252,7 +289,7 @@ func commandOrgAccessRoleList(ctx *CommandContext, flags *cmd.OrgAccessRoleListF
 	rows := make([][]string, 0, len(roles))
 	for _, r := range roles {
 		rows = append(rows, []string{
-			r.ID, r.Name, orDash(r.Kind), orDash(r.TeamID), yesNo(r.BuiltIn), strings.Join(r.Permissions, ","),
+			r.ID, r.Name, strings.ToLower(r.Kind), orDash(r.TeamName), yesNo(r.BuiltIn), strings.Join(r.Permissions, ","),
 		})
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME", "KIND", "TEAM", "BUILT-IN", "PERMISSIONS"}, Rows: rows})
@@ -280,19 +317,15 @@ func commandOrgAccessRoleDescribe(ctx *CommandContext, flags *cmd.OrgAccessRoleD
 		ctx.OutputJSON(role)
 		return nil
 	}
-	writeAccessRole(ctx, role)
+	ctx.Outputf("ID:          %s\n", role.ID)
+	ctx.Outputf("Name:        %s\n", role.Name)
+	ctx.Outputf("Description: %s\n", role.Description)
+	ctx.Outputf("Kind:        %s\n", strings.ToLower(role.Kind))
+	ctx.Outputf("Team:        %s\n", orDash(role.TeamName))
+	ctx.Outputf("Built-in:    %s\n", yesNo(role.BuiltIn))
+	ctx.Outputf("Permissions: %s\n", joinOrDash(role.Permissions))
+	ctx.Outputf("Includes:    %s\n", joinOrDash(role.IncludeRoleIDs))
 	return nil
-}
-
-func writeAccessRole(ctx *CommandContext, r cmd.AccessRole) {
-	ctx.Outputf("ID:          %s\n", r.ID)
-	ctx.Outputf("Name:        %s\n", r.Name)
-	ctx.Outputf("Description: %s\n", r.Description)
-	ctx.Outputf("Kind:        %s\n", orDash(r.Kind))
-	ctx.Outputf("Team:        %s\n", orDash(r.TeamID))
-	ctx.Outputf("Built-in:    %s\n", yesNo(r.BuiltIn))
-	ctx.Outputf("Permissions: %s\n", joinOrDash(r.Permissions))
-	ctx.Outputf("Includes:    %s\n", joinOrDash(r.Includes))
 }
 
 func commandOrgAccessRoleCreate(ctx *CommandContext, flags *cmd.OrgAccessRoleCreateFlags) error {
@@ -301,11 +334,11 @@ func commandOrgAccessRoleCreate(ctx *CommandContext, flags *cmd.OrgAccessRoleCre
 		return err
 	}
 	body := map[string]any{
-		"name":        flags.Name,
-		"kind":        flags.Kind,
-		"description": flags.Description,
-		"permissions": normalizeJSONSlice(flags.Permissions),
-		"includes":    normalizeJSONSlice(flags.Includes),
+		"name":             flags.Name,
+		"kind":             strings.ToUpper(flags.Kind),
+		"description":      flags.Description,
+		"permissions":      normalizeJSONSlice(flags.Permissions),
+		"include_role_ids": normalizeJSONSlice(flags.Includes),
 	}
 	if flags.Team != "" {
 		teamID, err := ResolveTeam(ctx, a.api, flags.Team)
@@ -335,14 +368,19 @@ func commandOrgAccessRoleUpdate(ctx *CommandContext, flags *cmd.OrgAccessRoleUpd
 	if flags.Description.IsSet() {
 		body["description"] = *flags.Description.Pointer()
 	}
-	if len(flags.Permissions) > 0 {
-		body["permissions"] = flags.Permissions
-	}
-	if len(flags.Includes) > 0 {
-		body["includes"] = flags.Includes
+	for key, values := range map[string][]string{
+		"permissions":                flags.AddPermissions,
+		"permissions_to_delete":      flags.RemovePermissions,
+		"include_role_ids":           flags.AddIncludes,
+		"include_role_ids_to_delete": flags.RemoveIncludes,
+	} {
+		if len(values) > 0 {
+			body[key] = values
+		}
 	}
 	if len(body) == 0 {
-		return cmd.NewErrUsagef("pass at least one of --new-name, --description, --permission and --include")
+		return cmd.NewErrUsagef("pass at least one of --new-name, --description, --add-permission, " +
+			"--remove-permission, --add-include and --remove-include")
 	}
 	a, err := newAccessAPI(ctx)
 	if err != nil {
@@ -386,8 +424,13 @@ func commandOrgAccessRoleDelete(ctx *CommandContext, flags *cmd.OrgAccessRoleDel
 }
 
 func commandOrgAccessAssignmentCreate(ctx *CommandContext, flags *cmd.OrgAccessAssignmentCreateFlags) error {
-	if (len(flags.ModelIDs) > 0 || len(flags.ModelNames) > 0) && flags.Team == "" {
-		return cmd.NewErrUsagef("--model-id and --model-name need --team")
+	resourceSets := make([][]cmd.AccessResourceSetEntry, 0, len(flags.ResourceSets))
+	for _, value := range flags.ResourceSets {
+		set, err := parseResourceSet(value)
+		if err != nil {
+			return err
+		}
+		resourceSets = append(resourceSets, set)
 	}
 	a, err := newAccessAPI(ctx)
 	if err != nil {
@@ -401,29 +444,17 @@ func commandOrgAccessAssignmentCreate(ctx *CommandContext, flags *cmd.OrgAccessA
 	if err != nil {
 		return err
 	}
-	resources := make([]cmd.AccessResource, 0, len(flags.ModelIDs)+len(flags.ModelNames))
-	for _, id := range flags.ModelIDs {
-		resources = append(resources, cmd.AccessResource{Type: "model", ID: id})
-	}
-	for _, name := range flags.ModelNames {
-		resources = append(resources, cmd.AccessResource{Type: "model", Name: name})
-	}
-	selection := cmd.AccessResourceSelection{Mode: "all", Resources: []cmd.AccessResource{}}
-	if len(resources) > 0 {
-		selection = cmd.AccessResourceSelection{Mode: "selected", Resources: resources}
-	}
-	scope := map[string]any{
-		"resource_selection":    selection,
-		"environment_selection": normalizeJSONSlice(flags.EnvironmentIDs),
+	body := map[string]any{"role_id": roleID, "subject_type": subject.Type, "subject_id": subject.ID}
+	if len(resourceSets) > 0 {
+		body["resource_sets"] = resourceSets
 	}
 	if flags.Team != "" {
 		teamID, err := ResolveTeam(ctx, a.api, flags.Team)
 		if err != nil {
 			return err
 		}
-		scope["team_id"] = teamID
+		body["team_id"] = teamID
 	}
-	body := map[string]any{"subject": subject, "role_id": roleID, "scope": scope}
 	var assignment cmd.AccessAssignment
 	if err := a.call(ctx, http.MethodPost, "/v1/access/assignments", nil, body, &assignment); err != nil {
 		return fmt.Errorf("assigning role %s: %w", roleID, err)
@@ -432,8 +463,8 @@ func commandOrgAccessAssignmentCreate(ctx *CommandContext, flags *cmd.OrgAccessA
 		ctx.OutputJSON(assignment)
 		return nil
 	}
-	ctx.Logf("Assigned role %s\n", assignment.RoleID)
-	ctx.OutputLine(assignment.ID)
+	ctx.Logf("Assigned role %s\n", assignment.RoleName)
+	ctx.OutputLine(orDash(assignment.ID))
 	return nil
 }
 
@@ -479,16 +510,26 @@ func commandOrgAccessAssignmentList(ctx *CommandContext, flags *cmd.OrgAccessAss
 	rows := make([][]string, 0, len(assignments))
 	for _, as := range assignments {
 		rows = append(rows, []string{
-			as.ID, as.RoleID, as.Subject.Type + " " + as.Subject.ID, orDash(as.Scope.TeamID),
-			resourcesText(as.Scope.ResourceSelection), joinOrDash(as.Scope.EnvironmentSelection),
-			as.CreatedAt.UTC().Format(time.RFC3339),
+			orDash(as.ID), as.RoleName, holderText(as), orDash(as.TeamName), resourceSetsText(as.ResourceSets),
+			timeOrDash(as.CreatedAt),
 		})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers: []string{"ID", "ROLE", "HOLDER", "TEAM", "RESOURCES", "ENVIRONMENTS", "CREATED"},
+		Headers: []string{"ID", "ROLE", "HOLDER", "TEAM", "RESOURCE SETS", "CREATED"},
 		Rows:    rows,
 	})
 	return nil
+}
+
+func holderText(as cmd.AccessAssignment) string {
+	return strings.ReplaceAll(strings.ToLower(as.SubjectType), "_", " ") + " " + as.SubjectName
+}
+
+func timeOrDash(t *time.Time) string {
+	if t == nil {
+		return "-"
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func commandOrgAccessAssignmentDescribe(ctx *CommandContext, flags *cmd.OrgAccessAssignmentRefFlags) error {
@@ -504,14 +545,13 @@ func commandOrgAccessAssignmentDescribe(ctx *CommandContext, flags *cmd.OrgAcces
 		ctx.OutputJSON(as)
 		return nil
 	}
-	ctx.Outputf("ID:           %s\n", as.ID)
-	ctx.Outputf("Role:         %s\n", as.RoleID)
-	ctx.Outputf("Holder:       %s %s\n", as.Subject.Type, as.Subject.ID)
-	ctx.Outputf("Team:         %s\n", orDash(as.Scope.TeamID))
-	ctx.Outputf("Resources:    %s\n", resourcesText(as.Scope.ResourceSelection))
-	ctx.Outputf("Environments: %s\n", joinOrDash(as.Scope.EnvironmentSelection))
-	ctx.Outputf("Created by:   %s\n", orDash(as.CreatedBy))
-	ctx.Outputf("Created:      %s\n", as.CreatedAt.UTC().Format(time.RFC3339))
+	ctx.Outputf("ID:            %s\n", orDash(as.ID))
+	ctx.Outputf("Role:          %s (%s)\n", as.RoleName, as.RoleID)
+	ctx.Outputf("Holder:        %s (%s)\n", holderText(as), as.SubjectID)
+	ctx.Outputf("Team:          %s\n", orDash(as.TeamName))
+	ctx.Outputf("Resource sets: %s\n", resourceSetsText(as.ResourceSets))
+	ctx.Outputf("Created by:    %s\n", orDash(as.CreatedBy))
+	ctx.Outputf("Created:       %s\n", timeOrDash(as.CreatedAt))
 	return nil
 }
 
@@ -546,12 +586,16 @@ func commandOrgAccessDescribe(ctx *CommandContext, flags *cmd.OrgAccessDescribeF
 	if err != nil {
 		return err
 	}
-	path := "/v1/access/me"
-	switch {
-	case flags.ServiceAccountID != "" || flags.ServiceAccountName != "":
-		path = "/v1/access/service_accounts/" + url.PathEscape(subject.ID)
-	case subject != nil:
-		path = "/v1/access/users/" + url.PathEscape(subject.ID)
+	path := "/v1/users/me/access"
+	if subject != nil {
+		switch subject.Type {
+		case "SERVICE_ACCOUNT":
+			path = "/v1/service_accounts/" + url.PathEscape(subject.ID) + "/access"
+		case "USER":
+			path = "/v1/users/" + url.PathEscape(subject.ID) + "/access"
+		default:
+			return fmt.Errorf("unexpected subject type %q", subject.Type)
+		}
 	}
 	var access cmd.Access
 	if err := a.call(ctx, http.MethodGet, path, nil, nil, &access); err != nil {
@@ -562,67 +606,69 @@ func commandOrgAccessDescribe(ctx *CommandContext, flags *cmd.OrgAccessDescribeF
 		ctx.OutputJSON(access)
 		return nil
 	}
-	ctx.Outputf("%s %s\n", access.Subject.Type, access.Subject.ID)
+	ctx.Outputf("%s %s (%s)\n", strings.ReplaceAll(strings.ToLower(access.SubjectType), "_", " "),
+		access.SubjectName, access.SubjectID)
 	rows := make([][]string, 0, len(access.Assignments))
 	for _, held := range access.Assignments {
-		via := "membership"
-		if held.ID != nil {
-			via = "assignment"
-		}
-		if held.Subject.Type == "directory_group" {
-			via += " to group " + held.Subject.ID
+		via := strings.ToLower(held.GrantedVia)
+		if held.SubjectType == "DIRECTORY_GROUP" {
+			via += " to group " + held.SubjectName
 		}
 		rows = append(rows, []string{
-			held.Role.Name, via, orDash(held.Scope.TeamID), resourcesText(held.Scope.ResourceSelection),
-			joinOrDash(held.Scope.EnvironmentSelection), orDash(held.ID),
+			held.RoleName, via, orDash(held.TeamName), resourceSetsText(held.ResourceSets), orDash(held.ID),
 		})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers: []string{"ROLE", "HELD VIA", "TEAM", "RESOURCES", "ENVIRONMENTS", "ASSIGNMENT"},
+		Headers: []string{"ROLE", "HELD VIA", "TEAM", "RESOURCE SETS", "ASSIGNMENT"},
 		Rows:    rows,
 	})
-	if access.Effective == nil {
+	if access.Permissions == nil {
 		ctx.LogLine("Effective permissions aren't available yet.")
 		return nil
 	}
-	e := access.Effective
-	ctx.Outputf("\nOrganization: %s\n", joinOrDash(e.OrgWide))
-	for _, team := range sortedKeys(e.Teams) {
-		ctx.Outputf("Team %s: %s\n", team, strings.Join(e.Teams[team], ", "))
-	}
-	for _, resourceType := range sortedKeys(e.Resources) {
-		for _, id := range sortedKeys(e.Resources[resourceType]) {
-			ctx.Outputf("%s %s: %s\n", resourceType, id, strings.Join(e.Resources[resourceType][id], ", "))
+	var grants [][]string
+	for _, permission := range access.Permissions {
+		for _, grant := range permission.Grants {
+			team := "organization"
+			if grant.TeamName != nil {
+				team = *grant.TeamName
+			}
+			set := resourceSetText(grant.ResourceSet)
+			if set == "" {
+				set = "all"
+			}
+			grants = append(grants, []string{permission.Name, team, set})
 		}
 	}
-	for _, environment := range sortedKeys(e.Environments) {
-		ctx.Outputf("Environment %s: %s\n", environment, strings.Join(e.Environments[environment], ", "))
-	}
+	ctx.Outputf("\n")
+	ctx.OutputTable(TableOutput{Headers: []string{"PERMISSION", "TEAM", "RESOURCE SET"}, Rows: grants})
 	return nil
 }
 
 func commandOrgAccessCheck(ctx *CommandContext, flags *cmd.OrgAccessCheckFlags) error {
-	if flags.Team != "" && flags.ModelID != "" {
-		return cmd.NewErrUsagef("pass --team or --model-id, not both")
+	var resourceSet []cmd.AccessResourceSetEntry
+	if flags.ResourceSet != "" {
+		set, err := parseResourceSet(flags.ResourceSet)
+		if err != nil {
+			return err
+		}
+		resourceSet = set
 	}
 	a, err := newAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
-	var resource *cmd.AccessResource
-	switch {
-	case flags.Team != "":
-		teamID, err := ResolveTeam(ctx, a.api, flags.Team)
+	var teamID *string
+	if flags.Team != "" {
+		id, err := ResolveTeam(ctx, a.api, flags.Team)
 		if err != nil {
 			return err
 		}
-		resource = &cmd.AccessResource{Type: "team", ID: teamID}
-	case flags.ModelID != "":
-		resource = &cmd.AccessResource{Type: "model", ID: flags.ModelID}
+		teamID = &id
 	}
 	checks := make([]cmd.AccessCheck, 0, len(flags.Permissions))
 	for _, permission := range flags.Permissions {
-		checks = append(checks, cmd.AccessCheck{Permission: permission, Resource: resource})
+		checks = append(checks, cmd.AccessCheck{Permission: permission, TeamID: teamID, ResourceSet: resourceSet})
 	}
 	var results cmd.AccessCheckResults
 	if err := a.call(ctx, http.MethodPost, "/v1/access/check", nil, map[string]any{"checks": checks}, &results); err != nil {
@@ -635,13 +681,13 @@ func commandOrgAccessCheck(ctx *CommandContext, flags *cmd.OrgAccessCheckFlags) 
 	}
 	rows := make([][]string, 0, len(results.Results))
 	for _, r := range results.Results {
-		on := "organization"
-		if r.Check.Resource != nil {
-			on = r.Check.Resource.Type + " " + r.Check.Resource.ID
+		set := resourceSetText(r.ResourceSet)
+		if set == "" {
+			set = "-"
 		}
-		rows = append(rows, []string{r.Check.Permission, on, yesNo(r.Allow)})
+		rows = append(rows, []string{r.Permission, orDash(r.TeamID), set, yesNo(r.Allowed)})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"PERMISSION", "ON", "ALLOWED"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"PERMISSION", "TEAM", "RESOURCE SET", "ALLOWED"}, Rows: rows})
 	return nil
 }
 
@@ -651,7 +697,7 @@ func commandOrgAccessSettingsDescribe(ctx *CommandContext, _ *cmd.OrgAccessSetti
 		return err
 	}
 	var settings cmd.AccessSettings
-	if err := a.call(ctx, http.MethodGet, "/v1/access/settings", nil, nil, &settings); err != nil {
+	if err := a.call(ctx, http.MethodGet, "/v1/organizations/me", nil, nil, &settings); err != nil {
 		return fmt.Errorf("reading role settings: %w", err)
 	}
 	if ctx.JSON {
@@ -669,7 +715,7 @@ func commandOrgAccessSettingsUpdate(ctx *CommandContext, flags *cmd.OrgAccessSet
 	}
 	body := cmd.AccessSettings{AllowTeamAdminsToManageRoles: *flags.AllowTeamAdminsToManageRoles.Pointer()}
 	var settings cmd.AccessSettings
-	if err := a.call(ctx, http.MethodPatch, "/v1/access/settings", nil, body, &settings); err != nil {
+	if err := a.call(ctx, http.MethodPatch, "/v1/organizations/me", nil, body, &settings); err != nil {
 		return fmt.Errorf("updating role settings: %w", err)
 	}
 	if ctx.JSON {
@@ -678,26 +724,6 @@ func commandOrgAccessSettingsUpdate(ctx *CommandContext, flags *cmd.OrgAccessSet
 	}
 	ctx.LogLine("Updated role settings")
 	return nil
-}
-
-func resourcesText(selection cmd.AccessResourceSelection) string {
-	if selection.Mode != "selected" {
-		return "all"
-	}
-	names := make([]string, 0, len(selection.Resources))
-	for _, r := range selection.Resources {
-		names = append(names, r.Type+" "+r.ID)
-	}
-	return strings.Join(names, ", ")
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func orDash(s *string) string {
