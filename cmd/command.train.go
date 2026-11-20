@@ -665,7 +665,7 @@ type TrainWorkstationCreateFlags struct {
 
 	Accelerator string `flag:"accelerator" desc:"GPU accelerator type." default:"H100"`
 	GPUCount    int    `flag:"gpu-count" desc:"Number of GPUs on a single node, 1 to 8. Mutually exclusive with --node-count."`
-	NodeCount   int    `flag:"node-count" desc:"Number of eight-GPU nodes, 1 to 16. Mutually exclusive with --gpu-count."`
+	NodeCount   int    `flag:"node-count" desc:"Number of eight-GPU nodes. Mutually exclusive with --gpu-count."`
 	Image       string `flag:"image" desc:"Docker base image the workstation runs."`
 	Spot        bool   `flag:"spot" desc:"Run on interruptible spot capacity."`
 
