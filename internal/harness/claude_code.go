@@ -99,6 +99,11 @@ var claudeTierModelKeys = []string{
 	"ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 }
 
+var claudeCacheTTLs = [][2]string{
+	{"CLAUDE_CODE_PROMPT_CACHE_TTL", "1h"},
+	{"CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL", "5m"},
+}
+
 var claudePaths = [][]string{
 	{"model"}, {"fallbackModel"}, {"modelPicker", "options"},
 	{"modelPicker", "replaceBuiltInOptions"}, {"availableModels"},
@@ -162,7 +167,7 @@ func (h claudeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 		credentialPath = nil
 	}
 	p, err := prepareSettings(path, credentialPath, func(data map[string]any) ([]setting, error) {
-		return claudeSettings(routes, s, endpoint, data, helper, cli, opts.NoClaudeServedModel, opts.GitContext)
+		return claudeSettings(routes, s, endpoint, data, helper, cli, opts.NoClaudeServedModel, opts.GitContext, opts.ClaudeExtendedPromptCache)
 	})
 	if err != nil {
 		return nil, err
@@ -181,7 +186,7 @@ func (h claudeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 	return plans, nil
 }
 
-func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string, noServedModel, gitContext bool) ([]setting, error) {
+func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string, noServedModel, gitContext, extendedPromptCache bool) ([]setting, error) {
 	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
@@ -236,6 +241,13 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{"CLAUDE_CODE_TETHER_LIVE", "0"},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
+	}
+	for _, kv := range claudeCacheTTLs {
+		if extendedPromptCache {
+			values = append(values, desired([]string{"env", kv[0]}, kv[1]))
+		} else if get(current, []string{"env", kv[0]}).Data == kv[1] {
+			values = append(values, setting{Path: []string{"env", kv[0]}})
+		}
 	}
 	// Claude Code's built-in tier aliases keep their own model IDs; the gateway maps them to routes.
 	for _, key := range claudeTierModelKeys {
@@ -527,6 +539,11 @@ func claudeTeardownPaths(data map[string]any) [][]string {
 	}
 	if claudeServedModelOwned(get(data, claudeStatusLinePath).Data) {
 		paths = append(paths, claudeStatusLinePath)
+	}
+	for _, kv := range claudeCacheTTLs {
+		if get(data, []string{"env", kv[0]}).Data == kv[1] {
+			paths = append(paths, []string{"env", kv[0]})
+		}
 	}
 	return paths
 }

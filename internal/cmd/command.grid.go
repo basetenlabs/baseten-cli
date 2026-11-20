@@ -367,7 +367,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
 		noOpenCodeServedModel := target.record.NoOpenCodeServedModel || !harness.HasOpenCode2(target.detection)
-		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, Installs: target.detection.Installs, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel, GitContext: target.record.GitContext, KeepChatGPTLogin: target.record.KeepChatGPTLogin})
+		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, Installs: target.detection.Installs, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel, GitContext: target.record.GitContext, ClaudeExtendedPromptCache: target.record.ClaudeExtendedPromptCache, KeepChatGPTLogin: target.record.KeepChatGPTLogin})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -460,14 +460,15 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	targets := make([]gridHarnessTarget, len(selected))
 	for i := range selected {
 		record := harness.Record{
-			KeyName:               f.KeyName,
-			Profile:               session.ProfileName(),
-			CredentialSource:      credentialSource,
-			NoClaudeServedModel:   noServedModel(harness.Claude),
-			NoPiServedModel:       noServedModel(harness.Pi),
-			NoOpenCodeServedModel: noServedModel(harness.OpenCode),
-			GitContext:            f.GitContext,
-			KeepChatGPTLogin:      keepChatGPT && selected[i].Name() == harness.Codex,
+			KeyName:                   f.KeyName,
+			Profile:                   session.ProfileName(),
+			CredentialSource:          credentialSource,
+			NoClaudeServedModel:       noServedModel(harness.Claude),
+			NoPiServedModel:           noServedModel(harness.Pi),
+			NoOpenCodeServedModel:     noServedModel(harness.OpenCode),
+			GitContext:                f.GitContext,
+			ClaudeExtendedPromptCache: f.ClaudeExtendedPromptCache && selected[i].Name() == harness.Claude,
+			KeepChatGPTLogin:          keepChatGPT && selected[i].Name() == harness.Codex,
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
 			// A harness that cannot run the helper keeps a key.
@@ -694,6 +695,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		{"hide-served-model-indicator", harness.Pi, func(r *harness.Record) { r.NoPiServedModel = f.HideServedModel }},
 		{"hide-served-model-indicator", harness.OpenCode, func(r *harness.Record) { r.NoOpenCodeServedModel = f.HideServedModel }},
 		{"git-context", "", func(r *harness.Record) { r.GitContext = f.GitContext }},
+		{"claude-extended-prompt-cache", harness.Claude, func(r *harness.Record) { r.ClaudeExtendedPromptCache = f.ClaudeExtendedPromptCache }},
 	}
 	if err := gridRequireGit(ctx, f.GitContext); err != nil {
 		return err
