@@ -57,12 +57,13 @@ func commandModelEnvironmentTrafficRuleCreate(
 	} else {
 		target.DeploymentId = &flags.TargetDeploymentID
 	}
+	sampling_mode := managementapi.TrafficRoutingRuleShadowSamplingMode(enumToAPIValue(flags.SamplingMode))
 	rule := managementapi.TrafficRoutingRuleUpsert{
 		Type:                        enumToAPIValue(flags.Type),
 		Targets:                     []managementapi.TrafficRoutingTargetUpsert{target},
 		PercentTraffic:              flags.PercentTraffic,
 		ExpiresAt:                   flags.ExpiresAt,
-		SamplingMode:                managementapi.TrafficRoutingRuleShadowSamplingMode(enumToAPIValue(flags.SamplingMode)),
+		SamplingMode:                &sampling_mode,
 		PropagateClientCancellation: *flags.PropagateClientCancellation.Pointer(),
 	}
 
@@ -200,7 +201,7 @@ func trafficRuleMerge(
 		}},
 		PercentTraffic:              existing.PercentTraffic,
 		ExpiresAt:                   existing.ExpiresAt,
-		SamplingMode:                existing.SamplingMode,
+		SamplingMode:                &existing.SamplingMode,
 		PropagateClientCancellation: existing.PropagateClientCancellation,
 	}
 	if value := flags.PercentTraffic.Pointer(); value != nil {
@@ -210,7 +211,8 @@ func trafficRuleMerge(
 		rule.ExpiresAt = flags.ExpiresAt
 	}
 	if value := flags.SamplingMode.Pointer(); value != nil {
-		rule.SamplingMode = managementapi.TrafficRoutingRuleShadowSamplingMode(enumToAPIValue(*value))
+		sampling_mode := managementapi.TrafficRoutingRuleShadowSamplingMode(enumToAPIValue(*value))
+		rule.SamplingMode = &sampling_mode
 	}
 	if value := flags.PropagateClientCancellation.Pointer(); value != nil {
 		rule.PropagateClientCancellation = *value

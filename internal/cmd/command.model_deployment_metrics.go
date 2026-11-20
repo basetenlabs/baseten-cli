@@ -38,8 +38,8 @@ func commandModelDeploymentMetrics(ctx *CommandContext, flags *cmd.ModelDeployme
 }
 
 // metricsQuery is the transport-neutral set of metric-query parameters shared by
-// the deployment and environment metrics endpoints. Each command maps it onto
-// its own generated query-params type.
+// the deployment, environment, and Model API metrics endpoints. Each command maps
+// it onto its own generated query-params type.
 type metricsQuery struct {
 	Mode             managementapi.MetricMode
 	StartEpochMillis *int
@@ -50,8 +50,8 @@ type metricsQuery struct {
 // metricsFetcher fetches metrics for the given query.
 type metricsFetcher func(q metricsQuery) (*managementapi.GetMetricsResponse, error)
 
-// runMetricsCommand implements the shared metrics command flow for both
-// deployment and environment metrics. It validates the flags, resolves the mode
+// runMetricsCommand implements the shared metrics command flow for deployment,
+// environment, and Model API metrics. It validates the flags, resolves the mode
 // and time window into a metricsQuery, fetches via the supplied fetcher, and
 // renders the response.
 func runMetricsCommand(ctx *CommandContext, flags *cmd.MetricsFlags, fetch metricsFetcher) error {
