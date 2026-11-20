@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	internalcmd "github.com/basetenlabs/baseten-cli/internal/cmd"
@@ -375,4 +376,79 @@ func Test_Model_Rename_JSON(t *testing.T) {
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &out))
 	h.Require.Equal("beta", out["name"])
 	h.Require.Contains(h.Stderr.String(), "warning: update model_name in config.yaml")
+}
+
+func modelInstanceTypePriceFixture(
+	id string, gpuType any, gpuCount int, gpuMemoryMiB any, millicpu, memoryMiB int, price float64,
+) map[string]any {
+	return map[string]any{
+		"instance_type": map[string]any{
+			"id":                   id,
+			"name":                 id + " - display name",
+			"gpu_type":             gpuType,
+			"gpu_count":            gpuCount,
+			"gpu_memory_limit_mib": gpuMemoryMiB,
+			"millicpu_limit":       millicpu,
+			"memory_limit_mib":     memoryMiB,
+		},
+		"price": price,
+	}
+}
+
+func Test_Model_InstanceTypes_Empty(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/instance_type_prices", 200,
+		map[string]any{"instance_types": []any{}})
+
+	h.Require.NoError(h.Execute("model", "instance-types"))
+	h.Require.Equal("", h.Stdout.String())
+	h.Require.Contains(h.Stderr.String(), "No instance types found.")
+}
+
+func Test_Model_InstanceTypes_Table(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/instance_type_prices", 200, map[string]any{
+		"instance_types": []any{
+			// GPU memory is the total across GPUs, and 0 for CPU-only types, as
+			// the API returns it.
+			modelInstanceTypePriceFixture("H100:2", "H100", 2, 163840, 32000, 241664, 0.21666),
+			modelInstanceTypePriceFixture("A10G:2x24x96", "A10G", 2, 49152, 24000, 96256, 0.05672),
+			modelInstanceTypePriceFixture("1x2", nil, 0, 0, 1000, 2048, 0.00058),
+			// Same price as A10G:2x24x96 but sorts after it by name.
+			modelInstanceTypePriceFixture("L4:2x24x96", "L4", 2, 49152, 24000, 98304, 0.05672),
+		},
+	})
+
+	h.Require.NoError(h.Execute("model", "instance-types"))
+	out := h.Stdout.String()
+	h.Require.Regexp(`ID\s+\$/MIN\s+VCPU\s+RAM\s+GPU\s+VRAM`, out)
+	h.Require.Regexp(`H100:2\s+\$0\.21666\s+32\s+236 GiB\s+2x H100\s+160 GiB`, out)
+	h.Require.Regexp(`A10G:2x24x96\s+\$0\.05672\s+24\s+94 GiB\s+2x A10G\s+48 GiB`, out)
+	h.Require.Regexp(`1x2\s+\$0\.00058\s+1\s+2 GiB\s+-\s+-`, out)
+	h.Require.Less(strings.Index(out, "1x2"), strings.Index(out, "A10G:2x24x96"))
+	h.Require.Less(strings.Index(out, "A10G:2x24x96"), strings.Index(out, "L4:2x24x96"))
+	h.Require.Less(strings.Index(out, "L4:2x24x96"), strings.Index(out, "H100:2"))
+}
+
+func Test_Model_InstanceTypes_JSON(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/instance_type_prices", 200, map[string]any{
+		"instance_types": []any{
+			modelInstanceTypePriceFixture("H100", "H100", 1, 81920, 16000, 120832, 0.10833),
+			modelInstanceTypePriceFixture("1x2", nil, 0, nil, 1000, 2048, 0.00058),
+		},
+	})
+
+	h.Require.NoError(h.Execute("model", "instance-types", "--output", "json"))
+	var out struct {
+		InstanceTypes []struct {
+			InstanceType struct {
+				ID string `json:"id"`
+			} `json:"instance_type"`
+		} `json:"instance_types"`
+	}
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &out))
+	h.Require.Len(out.InstanceTypes, 2)
+	h.Require.Equal("1x2", out.InstanceTypes[0].InstanceType.ID)
+	h.Require.Equal("H100", out.InstanceTypes[1].InstanceType.ID)
 }
