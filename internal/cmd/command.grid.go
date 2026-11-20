@@ -1640,7 +1640,7 @@ func commandGridRouteClassifierList(ctx *CommandContext, f *cmd.GridRouteClassif
 			routeClassifier.Id,
 			routeClassifier.DisplayName,
 			gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs),
-			strings.Join(routeClassifier.DecidableModels, ", "),
+			strings.Join(routeClassifier.DecidableCanonicalModelIds, ", "),
 		})
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME", "TRADEOFFS", "DECIDABLE MODELS"}, Rows: rows})
@@ -1666,7 +1666,7 @@ func commandGridRouteClassifierDescribe(ctx *CommandContext, f *cmd.GridRouteCla
 	ctx.Outputf("ID:               %s\n", routeClassifier.Id)
 	ctx.Outputf("Name:             %s\n", routeClassifier.DisplayName)
 	ctx.Outputf("Tradeoffs:        %s\n", gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs))
-	ctx.Outputf("Decidable Models: %s\n", strings.Join(routeClassifier.DecidableModels, ", "))
+	ctx.Outputf("Decidable Models: %s\n", strings.Join(routeClassifier.DecidableCanonicalModelIds, ", "))
 	return nil
 }
 

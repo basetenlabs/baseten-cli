@@ -604,7 +604,7 @@ func Test_Grid_Route_Describe_IntelligentTarget(t *testing.T) {
 		"type": "INTELLIGENT",
 		"route_classifier": map[string]any{
 			"id": "general-v1", "display_name": "General", "supported_tradeoffs": []any{},
-			"decidable_models": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
+			"decidable_canonical_model_ids": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
 		},
 		"tradeoff": "balanced",
 	}
