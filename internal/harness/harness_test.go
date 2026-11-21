@@ -86,7 +86,7 @@ func TestNewRouteMarksIntelligentRoutes(t *testing.T) {
 
 func TestNewRouteTakesTargetAPIFromFirstSupportedAPIFormat(t *testing.T) {
 	tools, ctx, out := true, 128000, 4096
-	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI}
+	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI, "conn-vertex": ProviderVertex}
 	for _, tc := range []struct {
 		name                string
 		target              string
@@ -100,6 +100,7 @@ func TestNewRouteTakesTargetAPIFromFirstSupportedAPIFormat(t *testing.T) {
 		{"model api in the server's order", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, []managementapi.GridRouteMetadataApiFormats{"messages", "chat_completions"}, TargetAPIMessages, true, false, ""},
 		{"responses only", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, []managementapi.GridRouteMetadataApiFormats{"responses"}, TargetAPIResponses, false, true, ""},
 		{"messages only", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, []managementapi.GridRouteMetadataApiFormats{"messages"}, TargetAPIMessages, true, false, ""},
+		{"gemini only", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "google/gemini"}`, []managementapi.GridRouteMetadataApiFormats{"gemini"}, TargetAPIGemini, false, false, ""},
 		{"empty", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{}, "", false, false, `route "acme/route" has no supported API formats`},
 		{"unknown first", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{"future_format", "messages"}, "", false, false, `route "acme/route" prefers unknown API format "future_format"`},
 	} {
@@ -981,11 +982,12 @@ func TestOpenCodeJSONC(t *testing.T) {
 
 func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, openCodeHarness{})
-	routes := testRoutes()
+	routes := append(testRoutes(), testRoute("acme/gemini", "Gemini"))
 	routes[0].TargetAPI = TargetAPIMessages
 	routes[1].TargetAPI = TargetAPIResponses
 	routes[2].TargetAPI = TargetAPIChatCompletions
 	routes[3].TargetAPI, routes[3].UpstreamModel = TargetAPIMessages, "claude-opus-4-5"
+	routes[4].TargetAPI = TargetAPIGemini
 	for i := range routes {
 		routes[i].ReasoningLevels = []string{"none", "high"}
 	}
@@ -997,6 +999,12 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/primary"].(map[string]any)["provider"])
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/openai"}, models["acme/background"].(map[string]any)["provider"])
 	require.NotContains(t, models["acme/subagent"], "provider")
+	gemini := models["acme/gemini"].(map[string]any)
+	require.Equal(t, map[string]any{"npm": "@ai-sdk/google", "api": testEndpoint + "/v1beta"}, gemini["provider"])
+	require.Equal(t, map[string]any{
+		"none": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": false, "thinkingBudget": json.Number("0")}},
+		"high": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": true, "thinkingLevel": "high"}},
+	}, gemini["variants"])
 	require.Equal(t, map[string]any{"high": map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}, "effort": "high"}}, models["acme/primary"].(map[string]any)["variants"])
 	for _, name := range []string{"acme/background", "acme/subagent", "acme/fallback"} {
 		require.Equal(t, map[string]any{"none": map[string]any{"reasoningEffort": "none"}, "high": map[string]any{"reasoningEffort": "high"}}, models[name].(map[string]any)["variants"], name)
@@ -1052,12 +1060,14 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	path := settingsPath(t, openCodeHarness{})
 	save(t, path, openCodeV2File())
 	cacheRead := 0.3
-	routes := testRoutes()
+	routes := append(testRoutes(), testRoute("acme/gemini", "Gemini"))
 	routes[0].TargetAPI = TargetAPIMessages
 	routes[0].ReasoningLevels = []string{"none", "low", "max"}
 	routes[0].Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, LongContext: &Cost{Input: 6, Output: 22.5}}
 	routes[1].TargetAPI = TargetAPIResponses
 	routes[3].ReasoningLevels = []string{"none"}
+	routes[4].TargetAPI = TargetAPIGemini
+	routes[4].ReasoningLevels = []string{"none", "low", "high"}
 	plans := setup(t, openCodeHarness{}, path, routes, Selection{Subagent: "acme/subagent"})
 	require.Equal(t, []string{"model"}, plans[0].Replaced)
 	d := load(t, path)
@@ -1081,7 +1091,7 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	require.NotContains(t, provider, "options")
 
 	models := provider["models"].(map[string]any)
-	require.Len(t, models, 5)
+	require.Len(t, models, 6)
 	primary := models["acme/primary"].(map[string]any)
 	require.Equal(t, map[string]any{
 		"name":         "Primary",
@@ -1098,6 +1108,14 @@ func TestOpenCodeV2Settings(t *testing.T) {
 		},
 	}, primary)
 	require.Equal(t, "@opencode/ai/providers/openai", models["acme/background"].(map[string]any)["package"])
+	gemini := models["acme/gemini"].(map[string]any)
+	require.Equal(t, "@opencode/ai/providers/google", gemini["package"])
+	require.Equal(t, map[string]any{"baseURL": testEndpoint + "/v1beta"}, gemini["settings"])
+	require.Equal(t, []any{
+		map[string]any{"id": "none", "settings": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": false, "thinkingBudget": json.Number("0")}}},
+		map[string]any{"id": "low", "settings": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": true, "thinkingLevel": "low"}}},
+		map[string]any{"id": "high", "settings": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": true, "thinkingLevel": "high"}}},
+	}, gemini["variants"])
 	subagent := models["acme/subagent"].(map[string]any)
 	require.NotContains(t, subagent, "package")
 	require.NotContains(t, subagent, "cost")
@@ -1112,7 +1130,7 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	require.Equal(t, StateConfigured, status.State)
 	require.Equal(t, "acme/primary", status.DefaultRoute)
 	require.Equal(t, defaultBackgroundRoute, status.BackgroundRoute)
-	require.Len(t, status.Routes, 4)
+	require.Len(t, status.Routes, 5)
 	require.Contains(t, status.Managed, "providers."+providerID)
 	require.Contains(t, status.Managed, "agents.title.model")
 
@@ -1249,11 +1267,12 @@ func TestOpenCodeDesktopDetection(t *testing.T) {
 
 func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, piHarness{})
-	routes := testRoutes()
+	routes := append(testRoutes(), testRoute("acme/gemini", "Gemini"))
 	routes[0].TargetAPI = TargetAPIMessages
 	routes[1].TargetAPI = TargetAPIResponses
 	routes[2].TargetAPI = TargetAPIChatCompletions
 	routes[3].TargetAPI, routes[3].IntelligentRoute = TargetAPIMessages, true
+	routes[4].TargetAPI = TargetAPIGemini
 	setup(t, piHarness{}, path, routes, Selection{})
 	provider := get(load(t, path), piProviderPath).Data.(map[string]any)
 	require.Equal(t, "openai-completions", provider["api"])
@@ -1272,6 +1291,9 @@ func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.Equal(t, "openai-responses", models["acme/background"]["api"])
 	require.NotContains(t, models["acme/background"], "baseUrl")
 	require.NotContains(t, models["acme/background"], "compat")
+	require.Equal(t, "google-generative-ai", models["acme/gemini"]["api"])
+	require.Equal(t, testEndpoint+"/v1beta", models["acme/gemini"]["baseUrl"])
+	require.NotContains(t, models["acme/gemini"], "compat")
 	require.NotContains(t, models["acme/subagent"], "api")
 	require.Equal(t, "max_tokens", get(models["acme/subagent"], []string{"compat", "maxTokensField"}).Data)
 }
