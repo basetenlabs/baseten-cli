@@ -384,6 +384,15 @@ func commandTrainJobList(ctx *CommandContext, flags *cmd.TrainJobListFlags) erro
 	if err != nil {
 		return fmt.Errorf("list training jobs: %w", err)
 	}
+	for resp.Pagination.HasMore && resp.Pagination.Cursor != nil {
+		req.Cursor = resp.Pagination.Cursor
+		page, err := cl.API().PostTrainingJobsSearch(ctx, req)
+		if err != nil {
+			return fmt.Errorf("list training jobs: %w", err)
+		}
+		page.TrainingJobs = append(resp.TrainingJobs, page.TrainingJobs...)
+		resp = page
+	}
 
 	if ctx.JSON {
 		ctx.OutputJSON(resp)
