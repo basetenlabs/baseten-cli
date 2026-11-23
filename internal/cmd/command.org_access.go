@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -132,12 +133,18 @@ func (a accessAPI) teamQuery(ctx context.Context, team string) (url.Values, stri
 	return query, teamID, nil
 }
 
-// roleID resolves a role reference. Names are unique in the organization.
-func (a accessAPI) roleID(ctx context.Context, id, name string) (string, error) {
+// roleID resolves a role reference. Names are unique in the organization. A
+// name is looked up in teamID's role list when given, which a team admin can
+// read without organization-wide access to roles.
+func (a accessAPI) roleID(ctx context.Context, id, name, teamID string) (string, error) {
 	if id != "" {
 		return id, nil
 	}
-	roles, err := listAll[cmd.AccessRole](ctx, a, "/v1/access/roles", url.Values{"name": {name}})
+	query := url.Values{"name": {name}}
+	if teamID != "" {
+		query.Set("team_id", teamID)
+	}
+	roles, err := listAll[cmd.AccessRole](ctx, a, "/v1/access/roles", query)
 	if err != nil {
 		return "", fmt.Errorf("looking up role %q: %w", name, err)
 	}
@@ -301,11 +308,11 @@ func commandOrgAccessRoleDescribe(ctx *CommandContext, flags *cmd.OrgAccessRoleD
 	if err != nil {
 		return err
 	}
-	query, _, err := a.teamQuery(ctx, flags.Team)
+	query, teamID, err := a.teamQuery(ctx, flags.Team)
 	if err != nil {
 		return err
 	}
-	id, err := a.roleID(ctx, flags.ID, flags.Name)
+	id, err := a.roleID(ctx, flags.ID, flags.Name, teamID)
 	if err != nil {
 		return err
 	}
@@ -386,7 +393,7 @@ func commandOrgAccessRoleUpdate(ctx *CommandContext, flags *cmd.OrgAccessRoleUpd
 	if err != nil {
 		return err
 	}
-	id, err := a.roleID(ctx, flags.ID, flags.Name)
+	id, err := a.roleID(ctx, flags.ID, flags.Name, "")
 	if err != nil {
 		return err
 	}
@@ -407,7 +414,7 @@ func commandOrgAccessRoleDelete(ctx *CommandContext, flags *cmd.OrgAccessRoleDel
 	if err != nil {
 		return err
 	}
-	id, err := a.roleID(ctx, flags.ID, flags.Name)
+	id, err := a.roleID(ctx, flags.ID, flags.Name, "")
 	if err != nil {
 		return err
 	}
@@ -440,7 +447,15 @@ func commandOrgAccessAssignmentCreate(ctx *CommandContext, flags *cmd.OrgAccessA
 	if err != nil {
 		return err
 	}
-	roleID, err := a.roleID(ctx, flags.RoleID, flags.RoleName)
+	if subject == nil {
+		return cmd.NewErrUsagef("pass one of --user-id, --user-email, --service-account-id, " +
+			"--service-account-name and --directory-group-id")
+	}
+	teamID, err := ResolveTeam(ctx, a.api, flags.Team)
+	if err != nil {
+		return err
+	}
+	roleID, err := a.roleID(ctx, flags.RoleID, flags.RoleName, teamID)
 	if err != nil {
 		return err
 	}
@@ -448,11 +463,7 @@ func commandOrgAccessAssignmentCreate(ctx *CommandContext, flags *cmd.OrgAccessA
 	if len(resourceSets) > 0 {
 		body["resource_sets"] = resourceSets
 	}
-	if flags.Team != "" {
-		teamID, err := ResolveTeam(ctx, a.api, flags.Team)
-		if err != nil {
-			return err
-		}
+	if teamID != "" {
 		body["team_id"] = teamID
 	}
 	var assignment cmd.AccessAssignment
@@ -480,12 +491,12 @@ func commandOrgAccessAssignmentList(ctx *CommandContext, flags *cmd.OrgAccessAss
 	if err != nil {
 		return err
 	}
-	query, _, err := a.teamQuery(ctx, flags.Team)
+	query, teamID, err := a.teamQuery(ctx, flags.Team)
 	if err != nil {
 		return err
 	}
 	if flags.RoleID != "" || flags.RoleName != "" {
-		roleID, err := a.roleID(ctx, flags.RoleID, flags.RoleName)
+		roleID, err := a.roleID(ctx, flags.RoleID, flags.RoleName, teamID)
 		if err != nil {
 			return err
 		}
@@ -700,11 +711,14 @@ func commandOrgAccessSettingsDescribe(ctx *CommandContext, _ *cmd.OrgAccessSetti
 	if err := a.call(ctx, http.MethodGet, "/v1/organizations/me", nil, nil, &settings); err != nil {
 		return fmt.Errorf("reading role settings: %w", err)
 	}
+	if settings.AllowTeamAdminsToManageRoles == nil {
+		return errRoleSettingsUnavailable
+	}
 	if ctx.JSON {
 		ctx.OutputJSON(settings)
 		return nil
 	}
-	ctx.Outputf("Team admins manage roles: %s\n", yesNo(settings.AllowTeamAdminsToManageRoles))
+	ctx.Outputf("Team admins manage roles: %s\n", yesNo(*settings.AllowTeamAdminsToManageRoles))
 	return nil
 }
 
@@ -713,10 +727,13 @@ func commandOrgAccessSettingsUpdate(ctx *CommandContext, flags *cmd.OrgAccessSet
 	if err != nil {
 		return err
 	}
-	body := cmd.AccessSettings{AllowTeamAdminsToManageRoles: *flags.AllowTeamAdminsToManageRoles.Pointer()}
+	body := cmd.AccessSettings{AllowTeamAdminsToManageRoles: flags.AllowTeamAdminsToManageRoles.Pointer()}
 	var settings cmd.AccessSettings
 	if err := a.call(ctx, http.MethodPatch, "/v1/organizations/me", nil, body, &settings); err != nil {
 		return fmt.Errorf("updating role settings: %w", err)
+	}
+	if settings.AllowTeamAdminsToManageRoles == nil {
+		return errRoleSettingsUnavailable
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(settings)
@@ -725,6 +742,11 @@ func commandOrgAccessSettingsUpdate(ctx *CommandContext, flags *cmd.OrgAccessSet
 	ctx.LogLine("Updated role settings")
 	return nil
 }
+
+// errRoleSettingsUnavailable is the organization's answer without a role
+// setting: custom roles aren't available to it, or the caller can't read its roles.
+var errRoleSettingsUnavailable = cmd.NewErrNotFound(errors.New("role settings aren't available: " +
+	"your organization doesn't have custom roles, or you can't read its roles"))
 
 func orDash(s *string) string {
 	if s == nil || *s == "" {

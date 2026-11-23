@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+
+	"github.com/basetenlabs/baseten-cli/cmd"
 )
 
 func orgAccessRoleFixture(id, name string) map[string]any {
@@ -338,4 +340,39 @@ func Test_Org_Access_RoleInUse_ReportsConflict(t *testing.T) {
 	})
 
 	h.Require.ErrorContains(h.Execute("org", "access", "role", "delete", "--id", "role_1"), "ROLE_IN_USE")
+}
+
+func Test_Org_Access_Assignment_Create_LooksUpRoleNameInTheTeam(t *testing.T) {
+	h := NewCommandHarness(t)
+	orgAccessRoutes(h)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/access/assignments", 200, orgAccessAssignmentFixture())
+
+	h.Require.NoError(h.Execute("org", "access", "assignment", "create", "--role-name", "deployer",
+		"--user-id", "u1", "--team", "Engineering"))
+	query, err := url.ParseQuery(m.FindCall("GET", "/v1/access/roles").RawQuery)
+	h.Require.NoError(err)
+	h.Require.Equal("deployer", query.Get("name"))
+	h.Require.Equal("t123456", query.Get("team_id"))
+}
+
+func Test_Org_Access_Assignment_Create_RequiresAHolder(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetHandlerFallback(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Fatalf("server should not be hit on usage error")
+	})
+	h.Require.ErrorContains(h.Execute("org", "access", "assignment", "create", "--role-id", "role_1",
+		"--user-id", ""), "pass one of --user-id")
+	h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
+}
+
+func Test_Org_Access_Settings_Describe_WithoutTheSettingIsNotFound(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200, map[string]any{
+		"org_id": "o1", "allow_personal_api_keys": true, "allow_team_admins_to_manage_roles": nil,
+	})
+
+	h.Require.ErrorContains(h.Execute("org", "access", "settings", "describe"), "role settings aren't available")
+	h.Require.Equal(int(cmd.ExitNotFound), h.ExitCode)
+	h.Require.NotContains(h.Stdout.String(), "Team admins manage roles")
 }

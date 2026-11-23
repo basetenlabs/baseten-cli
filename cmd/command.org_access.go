@@ -516,7 +516,7 @@ type AccessCheckResults struct {
 
 // AccessSettings is the organization's role management settings.
 type AccessSettings struct {
-	AllowTeamAdminsToManageRoles bool `json:"allow_team_admins_to_manage_roles"`
+	AllowTeamAdminsToManageRoles *bool `json:"allow_team_admins_to_manage_roles"`
 }
 
 // OrgAccessSubjectFlags picks who holds a role, exactly one of them.
