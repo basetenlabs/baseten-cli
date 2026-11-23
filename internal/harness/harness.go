@@ -169,7 +169,7 @@ var targetAPIsByFormat = map[managementapi.GridRouteMetadataApiFormats]TargetAPI
 	managementapi.GridRouteMetadataApiFormats_messages:         TargetAPIMessages,
 	managementapi.GridRouteMetadataApiFormats_responses:        TargetAPIResponses,
 	managementapi.GridRouteMetadataApiFormats_chat_completions: TargetAPIChatCompletions,
-	managementapi.GridRouteMetadataApiFormats("gemini"):        TargetAPIGemini,
+	managementapi.GridRouteMetadataApiFormats_gemini:           TargetAPIGemini,
 }
 
 type RouteAliasKind string

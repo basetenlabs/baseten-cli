@@ -100,7 +100,7 @@ func TestNewRouteTakesTargetAPIFromFirstSupportedAPIFormat(t *testing.T) {
 		{"model api in the server's order", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, []managementapi.GridRouteMetadataApiFormats{"messages", "chat_completions"}, TargetAPIMessages, true, false, ""},
 		{"responses only", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, []managementapi.GridRouteMetadataApiFormats{"responses"}, TargetAPIResponses, false, true, ""},
 		{"messages only", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, []managementapi.GridRouteMetadataApiFormats{"messages"}, TargetAPIMessages, true, false, ""},
-		{"gemini only", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "google/gemini"}`, []managementapi.GridRouteMetadataApiFormats{"gemini"}, TargetAPIGemini, false, false, ""},
+		{"gemini only", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "google/gemini"}`, []managementapi.GridRouteMetadataApiFormats{managementapi.GridRouteMetadataApiFormats_gemini}, TargetAPIGemini, false, false, ""},
 		{"empty", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{}, "", false, false, `route "acme/route" has no supported API formats`},
 		{"unknown first", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{"future_format", "messages"}, "", false, false, `route "acme/route" prefers unknown API format "future_format"`},
 	} {
