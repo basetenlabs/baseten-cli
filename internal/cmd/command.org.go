@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -548,12 +550,12 @@ func commandOrgRegions(ctx *CommandContext, flags *cmd.OrgRegionsFlags) error {
 }
 
 func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error {
-	cl, err := ctx.NewManagementClient()
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
-	info, err := cl.API().GetOrganizationsMe(ctx)
-	if err != nil {
+	var info cmd.OrgInfo
+	if err := a.call(ctx, http.MethodGet, "/v1/organizations/me", nil, nil, &info); err != nil {
 		return fmt.Errorf("fetching organization info: %w", err)
 	}
 
@@ -568,6 +570,13 @@ func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error 
 	}
 	ctx.Outputf("Personal API Keys:    %s\n", orgAPIKeySettingText(info.AllowPersonalApiKeys))
 	ctx.Outputf("Service Account Keys: %s\n", orgAPIKeySettingText(info.AllowServiceAccountApiKeys))
+	if info.AllowTeamAdminsToManageRoles != nil {
+		roleAdmins := "organization admins only"
+		if *info.AllowTeamAdminsToManageRoles {
+			roleAdmins = "team admins allowed"
+		}
+		ctx.Outputf("Team Role Management: %s\n", roleAdmins)
+	}
 	if info.AwsAssumeRole != nil {
 		ctx.Outputf("AWS AssumeRole:\n")
 		ctx.Outputf("  Baseten Role ARN:     %s\n", info.AwsAssumeRole.BasetenRoleArn)
@@ -584,21 +593,36 @@ func orgAPIKeySettingText(allowed bool) string {
 	return "blocked for new keys"
 }
 
+// orgUpdateRequest adds the role setting the generated request doesn't have yet.
+type orgUpdateRequest struct {
+	managementapi.UpdateOrganizationRequest
+	AllowTeamAdminsToManageRoles *bool `json:"allow_team_admins_to_manage_roles,omitempty"`
+}
+
 func commandOrgUpdate(ctx *CommandContext, flags *cmd.OrgUpdateFlags) error {
-	req := managementapi.UpdateOrganizationRequest{
-		AllowPersonalApiKeys:       flags.AllowPersonalAPIKeys.Pointer(),
-		AllowServiceAccountApiKeys: flags.AllowServiceAccountAPIKeys.Pointer(),
+	req := orgUpdateRequest{
+		UpdateOrganizationRequest: managementapi.UpdateOrganizationRequest{
+			AllowPersonalApiKeys:       flags.AllowPersonalAPIKeys.Pointer(),
+			AllowServiceAccountApiKeys: flags.AllowServiceAccountAPIKeys.Pointer(),
+		},
+		AllowTeamAdminsToManageRoles: flags.AllowTeamAdminsToManageRoles.Pointer(),
 	}
-	if req == (managementapi.UpdateOrganizationRequest{}) {
-		return cmd.NewErrUsagef("nothing to update; pass --allow-personal-api-keys or --allow-service-account-api-keys")
+	if req == (orgUpdateRequest{}) {
+		return cmd.NewErrUsagef("nothing to update; pass --allow-personal-api-keys, --allow-service-account-api-keys " +
+			"or --allow-team-admins-to-manage-roles")
 	}
-	cl, err := ctx.NewManagementClient()
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
-	info, err := cl.API().PatchOrganizationsMe(ctx, req)
-	if err != nil {
+	var info cmd.OrgInfo
+	if err := a.call(ctx, http.MethodPatch, "/v1/organizations/me", nil, req, &info); err != nil {
 		return fmt.Errorf("updating organization: %w", err)
+	}
+	// The organization has no role setting to change without custom roles.
+	if req.AllowTeamAdminsToManageRoles != nil && info.AllowTeamAdminsToManageRoles == nil {
+		return cmd.NewErrNotFound(errors.New("--allow-team-admins-to-manage-roles isn't available: " +
+			"your organization doesn't have custom roles, or you can't read its roles"))
 	}
 	if ctx.JSON {
 		ctx.OutputJSON(info)

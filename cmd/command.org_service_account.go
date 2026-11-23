@@ -11,6 +11,7 @@ var commandOrgServiceAccount = Command{
 	Description: "Manage service accounts, the identities that workload identity federation " +
 		"tokens act as. Trust rules map a workload's tokens to a service account.",
 	Children: []Command{
+		commandOrgServiceAccountAccess,
 		{
 			Name:    "create",
 			Summary: "Create a service account (PRE-RELEASE)",

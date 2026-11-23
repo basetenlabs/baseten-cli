@@ -71,13 +71,13 @@ func orgAccessRoutes(h *CommandHarness) {
 	})
 }
 
-func Test_Org_Access_Role_Create_SendsTeamRole(t *testing.T) {
+func Test_Org_Role_Create_SendsTeamRole(t *testing.T) {
 	h := NewCommandHarness(t)
 	orgAccessRoutes(h)
 	m := h.MockManagementAPI()
 	m.SetRoute("POST", "/v1/access/roles", 200, orgAccessRoleFixture("role_1", "deployer"))
 
-	h.Require.NoError(h.Execute("org", "access", "role", "create", "--name", "deployer", "--kind", "team",
+	h.Require.NoError(h.Execute("org", "role", "create", "--name", "deployer", "--kind", "team",
 		"--team", "Engineering", "--permission", "model.deployment.write", "--permission", "model.read",
 		"--include", "baseten:reader"))
 	h.Require.Equal(map[string]any{
@@ -92,21 +92,41 @@ func Test_Org_Access_Role_Create_SendsTeamRole(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Created role deployer")
 }
 
-func Test_Org_Access_Role_List_FollowsPages(t *testing.T) {
+func Test_Org_Role_List_FollowsPages(t *testing.T) {
 	h := NewCommandHarness(t)
 	orgAccessRoutes(h)
 
-	h.Require.NoError(h.Execute("org", "access", "role", "list", "--jq", ".items[].name"))
+	h.Require.NoError(h.Execute("org", "role", "list", "--jq", ".items[].name"))
 	h.Require.Equal("\"reader\"\n\"deployer\"\n", h.Stdout.String())
 }
 
-func Test_Org_Access_Role_Update_AddsAndRemoves(t *testing.T) {
+func Test_Org_Role_List_CountsPermissions(t *testing.T) {
+	h := NewCommandHarness(t)
+	orgAccessRoutes(h)
+
+	h.Require.NoError(h.Execute("org", "role", "list"))
+	h.Require.Regexp(`deployer\s+team\s+-\s+no\s+1\s`, h.Stdout.String())
+	h.Require.NotContains(h.Stdout.String(), "model.deployment.write")
+}
+
+func Test_Org_Role_Describe_ListsPermissions(t *testing.T) {
+	h := NewCommandHarness(t)
+	orgAccessRoutes(h)
+	role := orgAccessRoleFixture("role_1", "deployer")
+	role["permissions"] = []any{"model.deployment.write", "model.read"}
+	h.MockManagementAPI().SetRoute("GET", "/v1/access/roles/role_1", 200, role)
+
+	h.Require.NoError(h.Execute("org", "role", "describe", "--name", "deployer"))
+	h.Require.Contains(h.Stdout.String(), "Permissions: model.deployment.write, model.read")
+}
+
+func Test_Org_Role_Update_AddsAndRemoves(t *testing.T) {
 	h := NewCommandHarness(t)
 	orgAccessRoutes(h)
 	m := h.MockManagementAPI()
 	m.SetRoute("PATCH", "/v1/access/roles/role_1", 200, orgAccessRoleFixture("role_1", "deployer"))
 
-	h.Require.NoError(h.Execute("org", "access", "role", "update", "--name", "deployer",
+	h.Require.NoError(h.Execute("org", "role", "update", "--name", "deployer",
 		"--description", "", "--add-permission", "model.deployment.delete",
 		"--remove-permission", "model.deployment.write", "--remove-include", "baseten:reader"))
 	h.Require.Equal(map[string]any{
@@ -120,29 +140,29 @@ func Test_Org_Access_Role_Update_AddsAndRemoves(t *testing.T) {
 	h.Require.Equal("deployer", query.Get("name"))
 }
 
-func Test_Org_Access_Role_Update_RequiresAChange(t *testing.T) {
+func Test_Org_Role_Update_RequiresAChange(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetHandlerFallback(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Fatalf("server should not be hit on usage error")
 	})
-	h.Require.ErrorContains(h.Execute("org", "access", "role", "update", "--id", "role_1"), "at least one")
+	h.Require.ErrorContains(h.Execute("org", "role", "update", "--id", "role_1"), "at least one")
 }
 
-func Test_Org_Access_Role_Delete_UnknownName(t *testing.T) {
+func Test_Org_Role_Delete_UnknownName(t *testing.T) {
 	h := NewCommandHarness(t)
 	orgAccessRoutes(h)
 
-	h.Require.ErrorContains(h.Execute("org", "access", "role", "delete", "--name", "missing"), `no role named "missing"`)
+	h.Require.ErrorContains(h.Execute("org", "role", "delete", "--name", "missing"), `no role named "missing"`)
 	h.Require.Nil(h.MockManagementAPI().FindCall("DELETE", "/v1/access/roles/missing"))
 }
 
-func Test_Org_Access_Assignment_Create_ServiceAccountWithResourceSets(t *testing.T) {
+func Test_Org_RoleAssignment_Create_ServiceAccountWithResourceSets(t *testing.T) {
 	h := NewCommandHarness(t)
 	orgAccessRoutes(h)
 	m := h.MockManagementAPI()
 	m.SetRoute("POST", "/v1/access/assignments", 200, orgAccessAssignmentFixture())
 
-	h.Require.NoError(h.Execute("org", "access", "assignment", "create", "--role-name", "deployer",
+	h.Require.NoError(h.Execute("org", "role-assignment", "create", "--role-name", "deployer",
 		"--service-account-name", "ci-deployer", "--team", "Engineering",
 		"--resource-set", "model:m1,environment:staging", "--resource-set", "ENVIRONMENT:production"))
 	h.Require.Equal(map[string]any{
@@ -162,13 +182,13 @@ func Test_Org_Access_Assignment_Create_ServiceAccountWithResourceSets(t *testing
 	h.Require.Contains(h.Stderr.String(), "Assigned role deployer")
 }
 
-func Test_Org_Access_Assignment_Create_OrganizationRoleForDirectoryGroup(t *testing.T) {
+func Test_Org_RoleAssignment_Create_OrganizationRoleForDirectoryGroup(t *testing.T) {
 	h := NewCommandHarness(t)
 	orgAccessRoutes(h)
 	m := h.MockManagementAPI()
 	m.SetRoute("POST", "/v1/access/assignments", 200, orgAccessAssignmentFixture())
 
-	h.Require.NoError(h.Execute("org", "access", "assignment", "create", "--role-id", "role_9",
+	h.Require.NoError(h.Execute("org", "role-assignment", "create", "--role-id", "role_9",
 		"--directory-group-id", "dg1"))
 	h.Require.Equal(map[string]any{
 		"role_id":      "role_9",
@@ -178,16 +198,16 @@ func Test_Org_Access_Assignment_Create_OrganizationRoleForDirectoryGroup(t *test
 	h.Require.Nil(m.FindCall("GET", "/v1/access/roles"))
 }
 
-func Test_Org_Access_Assignment_Create_RefusesMalformedResourceSet(t *testing.T) {
+func Test_Org_RoleAssignment_Create_RefusesMalformedResourceSet(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetHandlerFallback(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Fatalf("server should not be hit on usage error")
 	})
-	h.Require.ErrorContains(h.Execute("org", "access", "assignment", "create", "--role-id", "role_1",
+	h.Require.ErrorContains(h.Execute("org", "role-assignment", "create", "--role-id", "role_1",
 		"--user-id", "u1", "--resource-set", "model"), "isn't TYPE:ID")
 }
 
-func Test_Org_Access_Assignment_List_Filters(t *testing.T) {
+func Test_Org_RoleAssignment_List_Filters(t *testing.T) {
 	h := NewCommandHarness(t)
 	orgAccessRoutes(h)
 	m := h.MockManagementAPI()
@@ -196,7 +216,7 @@ func Test_Org_Access_Assignment_List_Filters(t *testing.T) {
 		"pagination": map[string]any{"has_more": false},
 	})
 
-	h.Require.NoError(h.Execute("org", "access", "assignment", "list", "--team", "Engineering",
+	h.Require.NoError(h.Execute("org", "role-assignment", "list", "--team", "Engineering",
 		"--role-name", "deployer", "--user-email", "ada@example.com"))
 	query, err := url.ParseQuery(m.FindCall("GET", "/v1/access/assignments").RawQuery)
 	h.Require.NoError(err)
@@ -210,16 +230,16 @@ func Test_Org_Access_Assignment_List_Filters(t *testing.T) {
 	h.Require.Contains(h.Stdout.String(), "environment:production; environment:staging,model:m1")
 }
 
-func Test_Org_Access_Assignment_List_OneHolder(t *testing.T) {
+func Test_Org_RoleAssignment_List_OneHolder(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetHandlerFallback(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Fatalf("server should not be hit on usage error")
 	})
-	h.Require.ErrorContains(h.Execute("org", "access", "assignment", "list", "--user-id", "u1",
+	h.Require.ErrorContains(h.Execute("org", "role-assignment", "list", "--user-id", "u1",
 		"--directory-group-id", "dg1"), "at most one")
 }
 
-func Test_Org_Access_Describe_PicksEndpoint(t *testing.T) {
+func Test_Org_Access_PicksEndpoint(t *testing.T) {
 	access := map[string]any{
 		"subject_type": "USER",
 		"subject_id":   "u1",
@@ -232,9 +252,11 @@ func Test_Org_Access_Describe_PicksEndpoint(t *testing.T) {
 		args []string
 		path string
 	}{
-		{"yourself", nil, "/v1/users/me/access"},
-		{"user by email", []string{"--user-email", "ada@example.com"}, "/v1/users/u1/access"},
-		{"service account by name", []string{"--service-account-name", "ci-deployer"}, "/v1/service_accounts/sa1/access"},
+		{"yourself", []string{"user", "access", "--user-id", "me"}, "/v1/users/me/access"},
+		{"user by ID", []string{"user", "access", "--user-id", "u2"}, "/v1/users/u2/access"},
+		{"user by email", []string{"user", "access", "--user-email", "ada@example.com"}, "/v1/users/u1/access"},
+		{"service account by name", []string{"service-account", "access", "--name", "ci-deployer"}, "/v1/service_accounts/sa1/access"},
+		{"service account by ID", []string{"service-account", "access", "--id", "sa2"}, "/v1/service_accounts/sa2/access"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := NewCommandHarness(t)
@@ -242,14 +264,14 @@ func Test_Org_Access_Describe_PicksEndpoint(t *testing.T) {
 			m := h.MockManagementAPI()
 			m.SetRoute("GET", tc.path, 200, access)
 
-			h.Require.NoError(h.Execute(append([]string{"org", "access", "describe"}, tc.args...)...))
+			h.Require.NoError(h.Execute(append([]string{"org"}, tc.args...)...))
 			h.Require.NotNil(m.FindCall("GET", tc.path))
 			h.Require.Contains(h.Stderr.String(), "Effective permissions aren't available yet.")
 		})
 	}
 }
 
-func Test_Org_Access_Describe_ListsWhereEachPermissionIsHeld(t *testing.T) {
+func Test_Org_Access_ListsWhereEachPermissionIsHeld(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/users/me/access", 200, map[string]any{
@@ -272,13 +294,13 @@ func Test_Org_Access_Describe_ListsWhereEachPermissionIsHeld(t *testing.T) {
 		}},
 	})
 
-	h.Require.NoError(h.Execute("org", "access", "describe"))
+	h.Require.NoError(h.Execute("org", "user", "access", "--user-id", "me"))
 	h.Require.Contains(h.Stdout.String(), "service account ci-deployer (sa1)")
 	h.Require.Contains(h.Stdout.String(), "model:m1,environment:staging")
 	h.Require.NotContains(h.Stderr.String(), "aren't available")
 }
 
-func Test_Org_Access_Check_InTeamWhereAResourceSetSelects(t *testing.T) {
+func Test_Org_AccessCheck_InTeamWhereAResourceSetSelects(t *testing.T) {
 	h := NewCommandHarness(t)
 	orgAccessRoutes(h)
 	m := h.MockManagementAPI()
@@ -295,7 +317,7 @@ func Test_Org_Access_Check_InTeamWhereAResourceSetSelects(t *testing.T) {
 		}},
 	})
 
-	h.Require.NoError(h.Execute("org", "access", "check", "--permission", "model.deployment.write",
+	h.Require.NoError(h.Execute("org", "access-check", "--permission", "model.deployment.write",
 		"--team", "Engineering", "--resource-set", "model:m1,environment:staging"))
 	h.Require.Equal(map[string]any{
 		"checks": []any{map[string]any{
@@ -304,51 +326,38 @@ func Test_Org_Access_Check_InTeamWhereAResourceSetSelects(t *testing.T) {
 			"resource_set": resourceSet,
 		}},
 	}, m.FindCall("POST", "/v1/access/check").BodyJSON(t))
-	h.Require.Contains(h.Stdout.String(), "yes")
+	h.Require.Regexp(`model\.deployment\.write\s+model:m1,environment:staging\s+yes\s`, h.Stdout.String())
+	h.Require.NotContains(h.Stdout.String(), "TEAM")
+	h.Require.NotContains(h.Stdout.String(), "t123456")
 }
 
-func Test_Org_Access_Check_ForTheOrganization(t *testing.T) {
+func Test_Org_AccessCheck_ForTheOrganization(t *testing.T) {
 	h := NewCommandHarness(t)
 	m := h.MockManagementAPI()
 	m.SetRoute("POST", "/v1/access/check", 200, map[string]any{"results": []any{}})
 
-	h.Require.NoError(h.Execute("org", "access", "check", "--permission", "access.role.write"))
+	h.Require.NoError(h.Execute("org", "access-check", "--permission", "access.role.write"))
 	h.Require.Equal(map[string]any{
 		"checks": []any{map[string]any{"permission": "access.role.write"}},
 	}, m.FindCall("POST", "/v1/access/check").BodyJSON(t))
 }
 
-func Test_Org_Access_Settings_Update(t *testing.T) {
-	h := NewCommandHarness(t)
-	m := h.MockManagementAPI()
-	m.SetRoute("PATCH", "/v1/organizations/me", 200, map[string]any{
-		"org_id":                            "o1",
-		"allow_personal_api_keys":           true,
-		"allow_team_admins_to_manage_roles": false,
-	})
-
-	h.Require.NoError(h.Execute("org", "access", "settings", "update", "--allow-team-admins-to-manage-roles", "false"))
-	h.Require.Equal(map[string]any{"allow_team_admins_to_manage_roles": false},
-		m.FindCall("PATCH", "/v1/organizations/me").BodyJSON(t))
-	h.Require.Contains(h.Stderr.String(), "Updated role settings")
-}
-
-func Test_Org_Access_RoleInUse_ReportsConflict(t *testing.T) {
+func Test_Org_Role_InUse_ReportsConflict(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("DELETE", "/v1/access/roles/role_1", 409, map[string]any{
 		"code": "CONFLICT", "message": "The role is assigned.", "details": map[string]any{"reason": "ROLE_IN_USE"},
 	})
 
-	h.Require.ErrorContains(h.Execute("org", "access", "role", "delete", "--id", "role_1"), "ROLE_IN_USE")
+	h.Require.ErrorContains(h.Execute("org", "role", "delete", "--id", "role_1"), "ROLE_IN_USE")
 }
 
-func Test_Org_Access_Assignment_Create_LooksUpRoleNameInTheTeam(t *testing.T) {
+func Test_Org_RoleAssignment_Create_LooksUpRoleNameInTheTeam(t *testing.T) {
 	h := NewCommandHarness(t)
 	orgAccessRoutes(h)
 	m := h.MockManagementAPI()
 	m.SetRoute("POST", "/v1/access/assignments", 200, orgAccessAssignmentFixture())
 
-	h.Require.NoError(h.Execute("org", "access", "assignment", "create", "--role-name", "deployer",
+	h.Require.NoError(h.Execute("org", "role-assignment", "create", "--role-name", "deployer",
 		"--user-id", "u1", "--team", "Engineering"))
 	query, err := url.ParseQuery(m.FindCall("GET", "/v1/access/roles").RawQuery)
 	h.Require.NoError(err)
@@ -356,23 +365,12 @@ func Test_Org_Access_Assignment_Create_LooksUpRoleNameInTheTeam(t *testing.T) {
 	h.Require.Equal("t123456", query.Get("team_id"))
 }
 
-func Test_Org_Access_Assignment_Create_RequiresAHolder(t *testing.T) {
+func Test_Org_RoleAssignment_Create_RequiresAHolder(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetHandlerFallback(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Fatalf("server should not be hit on usage error")
 	})
-	h.Require.ErrorContains(h.Execute("org", "access", "assignment", "create", "--role-id", "role_1",
+	h.Require.ErrorContains(h.Execute("org", "role-assignment", "create", "--role-id", "role_1",
 		"--user-id", ""), "pass one of --user-id")
 	h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
-}
-
-func Test_Org_Access_Settings_Describe_WithoutTheSettingIsNotFound(t *testing.T) {
-	h := NewCommandHarness(t)
-	h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200, map[string]any{
-		"org_id": "o1", "allow_personal_api_keys": true, "allow_team_admins_to_manage_roles": nil,
-	})
-
-	h.Require.ErrorContains(h.Execute("org", "access", "settings", "describe"), "role settings aren't available")
-	h.Require.Equal(int(cmd.ExitNotFound), h.ExitCode)
-	h.Require.NotContains(h.Stdout.String(), "Team admins manage roles")
 }

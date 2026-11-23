@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	publiccmd "github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 )
 
@@ -249,8 +250,37 @@ func Test_Org_Describe_Text(t *testing.T) {
 	h.Require.Contains(out, "Service Account Keys: blocked for new keys")
 	h.Require.NotContains(out, "Teams")
 	h.Require.NotContains(out, "OIDC")
+	h.Require.NotContains(out, "Team Role Management")
 	h.Require.Contains(out, "AWS AssumeRole:\n  Baseten Role ARN:     arn:aws:iam::337139236424:role/baseten-customer-access")
 	h.Require.Contains(out, "AWS External ID:      baseten-2fdd8a01c4c34e6bb92a2b96fca29b70")
+}
+
+func Test_Org_Describe_Text_TeamRoleManagement(t *testing.T) {
+	for _, tc := range []struct {
+		allowed bool
+		want    string
+	}{
+		{true, "Team Role Management: team admins allowed"},
+		{false, "Team Role Management: organization admins only"},
+	} {
+		h := NewCommandHarness(t)
+		info := orgInfoFixture(nil)
+		info["allow_team_admins_to_manage_roles"] = tc.allowed
+		h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200, info)
+
+		h.Require.NoError(h.Execute("org", "describe"))
+		h.Require.Contains(h.Stdout.String(), tc.want)
+	}
+}
+
+func Test_Org_Describe_JQ_TeamRoleManagement(t *testing.T) {
+	h := NewCommandHarness(t)
+	info := orgInfoFixture(nil)
+	info["allow_team_admins_to_manage_roles"] = false
+	h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200, info)
+
+	h.Require.NoError(h.Execute("org", "describe", "--jq", ".allow_team_admins_to_manage_roles"))
+	h.Require.Equal("false\n", h.Stdout.String())
 }
 
 func Test_Org_Describe_Text_AssumeRoleNotEnabled(t *testing.T) {
@@ -305,6 +335,30 @@ func Test_Org_Update_JQ(t *testing.T) {
 	h.Require.Equal(map[string]any{"allow_personal_api_keys": true, "allow_service_account_api_keys": false},
 		m.FindCall("PATCH", "/v1/organizations/me").BodyJSON(t))
 	h.Require.Equal("true\n", h.Stdout.String())
+}
+
+func Test_Org_Update_TeamAdminsManageRoles(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	info := orgInfoFixture(nil)
+	info["allow_team_admins_to_manage_roles"] = false
+	m.SetRoute("PATCH", "/v1/organizations/me", 200, info)
+
+	h.Require.NoError(h.Execute("org", "update", "--allow-team-admins-to-manage-roles", "false"))
+	h.Require.Equal(map[string]any{"allow_team_admins_to_manage_roles": false},
+		m.FindCall("PATCH", "/v1/organizations/me").BodyJSON(t))
+	h.Require.Contains(h.Stderr.String(), "Updated organization")
+	h.Require.Equal("", h.Stdout.String())
+}
+
+func Test_Org_Update_TeamAdminsManageRoles_WithoutCustomRolesIsNotFound(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("PATCH", "/v1/organizations/me", 200, orgInfoFixture(nil))
+
+	h.Require.ErrorContains(h.Execute("org", "update", "--allow-team-admins-to-manage-roles", "true"),
+		"doesn't have custom roles")
+	h.Require.Equal(int(publiccmd.ExitNotFound), h.ExitCode)
+	h.Require.NotContains(h.Stderr.String(), "Updated organization")
 }
 
 func Test_Org_Update_NothingToUpdate(t *testing.T) {

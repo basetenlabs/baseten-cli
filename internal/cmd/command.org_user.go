@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
@@ -61,16 +62,10 @@ func commandOrgUserDescribe(ctx *CommandContext, flags *cmd.OrgUserDescribeFlags
 
 	var user *managementapi.UserInfo
 	if flags.UserEmail != "" {
-		resp, err := cl.API().GetUsers(ctx, managementapi.GetV1UsersParams{Email: &flags.UserEmail})
+		user, err = orgUserByEmail(ctx, cl.API(), flags.UserEmail)
 		if err != nil {
-			return fmt.Errorf("describe user %q: %w", flags.UserEmail, err)
+			return err
 		}
-		if len(resp.Items) == 0 {
-			return fmt.Errorf("no user with email %q", flags.UserEmail)
-		} else if len(resp.Items) > 1 {
-			return fmt.Errorf("multiple users with email %q", flags.UserEmail)
-		}
-		user = &resp.Items[0]
 	} else if flags.UserID == "me" {
 		// "me" routes to the dedicated authenticated-user endpoint.
 		user, err = cl.API().GetUsersMe(ctx)
@@ -90,6 +85,21 @@ func commandOrgUserDescribe(ctx *CommandContext, flags *cmd.OrgUserDescribeFlags
 	}
 	writeUserInfo(ctx, user)
 	return nil
+}
+
+// orgUserByEmail looks up the organization's user with this email.
+func orgUserByEmail(ctx context.Context, api *managementapi.Client, email string) (*managementapi.UserInfo, error) {
+	resp, err := api.GetUsers(ctx, managementapi.GetV1UsersParams{Email: &email})
+	if err != nil {
+		return nil, fmt.Errorf("looking up user %q: %w", email, err)
+	}
+	switch len(resp.Items) {
+	case 0:
+		return nil, cmd.NewErrNotFound(fmt.Errorf("no user with email %q", email))
+	case 1:
+		return &resp.Items[0], nil
+	}
+	return nil, fmt.Errorf("multiple users with email %q", email)
 }
 
 // writeUserInfo prints a UserInfo as a field-per-line summary. Shared by

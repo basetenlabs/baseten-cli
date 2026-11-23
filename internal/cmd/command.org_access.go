@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,40 +18,39 @@ import (
 )
 
 func init() {
-	Register("org access assignment create", commandOrgAccessAssignmentCreate)
-	Register("org access assignment delete", commandOrgAccessAssignmentDelete)
-	Register("org access assignment describe", commandOrgAccessAssignmentDescribe)
-	Register("org access assignment list", commandOrgAccessAssignmentList)
-	Register("org access check", commandOrgAccessCheck)
-	Register("org access describe", commandOrgAccessDescribe)
-	Register("org access permission list", commandOrgAccessPermissionList)
-	Register("org access role create", commandOrgAccessRoleCreate)
-	Register("org access role delete", commandOrgAccessRoleDelete)
-	Register("org access role describe", commandOrgAccessRoleDescribe)
-	Register("org access role list", commandOrgAccessRoleList)
-	Register("org access role update", commandOrgAccessRoleUpdate)
-	Register("org access settings describe", commandOrgAccessSettingsDescribe)
-	Register("org access settings update", commandOrgAccessSettingsUpdate)
+	Register("org access-check", commandOrgAccessCheck)
+	Register("org permission list", commandOrgPermissionList)
+	Register("org role create", commandOrgRoleCreate)
+	Register("org role delete", commandOrgRoleDelete)
+	Register("org role describe", commandOrgRoleDescribe)
+	Register("org role list", commandOrgRoleList)
+	Register("org role update", commandOrgRoleUpdate)
+	Register("org role-assignment create", commandOrgRoleAssignmentCreate)
+	Register("org role-assignment delete", commandOrgRoleAssignmentDelete)
+	Register("org role-assignment describe", commandOrgRoleAssignmentDescribe)
+	Register("org role-assignment list", commandOrgRoleAssignmentList)
+	Register("org service-account access", commandOrgServiceAccountAccess)
+	Register("org user access", commandOrgUserAccess)
 }
 
-// accessAPI calls the /v1/access role endpoints, which the generated client
-// doesn't cover while they are pre-release.
-type accessAPI struct {
+// orgAccessAPI calls the custom role endpoints, and the organization's role
+// setting, which the generated client doesn't cover while they are pre-release.
+type orgAccessAPI struct {
 	api *managementapi.Client
 }
 
-func newAccessAPI(ctx *CommandContext) (accessAPI, error) {
+func newOrgAccessAPI(ctx *CommandContext) (orgAccessAPI, error) {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
-		return accessAPI{}, err
+		return orgAccessAPI{}, err
 	}
-	return accessAPI{api: cl.API()}, nil
+	return orgAccessAPI{api: cl.API()}, nil
 }
 
 // call sends body (when not nil) as JSON and decodes a 2xx response into out.
 // Any other status returns a *managementapi.ResponseError, so failures exit
 // like every other management API command.
-func (a accessAPI) call(ctx context.Context, method, path string, query url.Values, body, out any) error {
+func (a orgAccessAPI) call(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -90,38 +90,31 @@ func (a accessAPI) call(ctx context.Context, method, path string, query url.Valu
 	return nil
 }
 
-type accessPage[T any] struct {
+type orgAccessPage[T any] struct {
 	Items      []T                              `json:"items"`
 	Pagination managementapi.PaginationResponse `json:"pagination"`
 }
 
-// listAll follows a paginated access listing to its end.
-func listAll[T any](ctx context.Context, a accessAPI, path string, query url.Values) ([]T, error) {
-	query = cloneQuery(query)
+// orgAccessListAll follows a paginated listing to its end.
+func orgAccessListAll[T any](ctx context.Context, a orgAccessAPI, path string, query url.Values) ([]T, error) {
+	pageQuery := url.Values{}
+	maps.Copy(pageQuery, query)
 	var items []T
 	for {
-		var page accessPage[T]
-		if err := a.call(ctx, http.MethodGet, path, query, nil, &page); err != nil {
+		var page orgAccessPage[T]
+		if err := a.call(ctx, http.MethodGet, path, pageQuery, nil, &page); err != nil {
 			return nil, err
 		}
 		items = append(items, page.Items...)
 		if !page.Pagination.HasMore || page.Pagination.Cursor == nil {
 			return items, nil
 		}
-		query.Set("cursor", *page.Pagination.Cursor)
+		pageQuery.Set("cursor", *page.Pagination.Cursor)
 	}
-}
-
-func cloneQuery(query url.Values) url.Values {
-	out := url.Values{}
-	for key, values := range query {
-		out[key] = append([]string(nil), values...)
-	}
-	return out
 }
 
 // teamQuery resolves --team, when given, into a team_id query parameter.
-func (a accessAPI) teamQuery(ctx context.Context, team string) (url.Values, string, error) {
+func (a orgAccessAPI) teamQuery(ctx context.Context, team string) (url.Values, string, error) {
 	query := url.Values{}
 	teamID, err := ResolveTeam(ctx, a.api, team)
 	if err != nil {
@@ -136,7 +129,7 @@ func (a accessAPI) teamQuery(ctx context.Context, team string) (url.Values, stri
 // roleID resolves a role reference. Names are unique in the organization. A
 // name is looked up in teamID's role list when given, which a team admin can
 // read without organization-wide access to roles.
-func (a accessAPI) roleID(ctx context.Context, id, name, teamID string) (string, error) {
+func (a orgAccessAPI) roleID(ctx context.Context, id, name, teamID string) (string, error) {
 	if id != "" {
 		return id, nil
 	}
@@ -144,7 +137,7 @@ func (a accessAPI) roleID(ctx context.Context, id, name, teamID string) (string,
 	if teamID != "" {
 		query.Set("team_id", teamID)
 	}
-	roles, err := listAll[cmd.AccessRole](ctx, a, "/v1/access/roles", query)
+	roles, err := orgAccessListAll[cmd.AccessRole](ctx, a, "/v1/access/roles", query)
 	if err != nil {
 		return "", fmt.Errorf("looking up role %q: %w", name, err)
 	}
@@ -156,30 +149,15 @@ func (a accessAPI) roleID(ctx context.Context, id, name, teamID string) (string,
 	return "", cmd.NewErrNotFound(fmt.Errorf("no role named %q", name))
 }
 
-// userIDByEmail looks up the ID of the organization's user with this email.
-func userIDByEmail(ctx context.Context, api *managementapi.Client, email string) (string, error) {
-	resp, err := api.GetUsers(ctx, managementapi.GetV1UsersParams{Email: &email})
-	if err != nil {
-		return "", fmt.Errorf("looking up user %q: %w", email, err)
-	}
-	switch len(resp.Items) {
-	case 0:
-		return "", cmd.NewErrNotFound(fmt.Errorf("no user with email %q", email))
-	case 1:
-		return resp.Items[0].UserId, nil
-	}
-	return "", fmt.Errorf("multiple users with email %q", email)
-}
-
-// accessSubject is who holds a role, as the access API names it.
-type accessSubject struct {
+// orgAccessSubject is who holds a role, as the access API names it.
+type orgAccessSubject struct {
 	Type string
 	ID   string
 }
 
 // subject resolves the holder flags into an assignment subject. Returns nil
 // when no flag is set.
-func (a accessAPI) subject(ctx context.Context, f cmd.OrgAccessHolderFilterFlags) (*accessSubject, error) {
+func (a orgAccessAPI) subject(ctx context.Context, f cmd.OrgRoleAssignmentHolderFilterFlags) (*orgAccessSubject, error) {
 	set := 0
 	for _, value := range []string{f.UserID, f.UserEmail, f.ServiceAccountID, f.ServiceAccountName, f.DirectoryGroupID} {
 		if value != "" {
@@ -192,31 +170,31 @@ func (a accessAPI) subject(ctx context.Context, f cmd.OrgAccessHolderFilterFlags
 	}
 	switch {
 	case f.UserID != "":
-		return &accessSubject{Type: "USER", ID: f.UserID}, nil
+		return &orgAccessSubject{Type: "USER", ID: f.UserID}, nil
 	case f.UserEmail != "":
-		id, err := userIDByEmail(ctx, a.api, f.UserEmail)
+		user, err := orgUserByEmail(ctx, a.api, f.UserEmail)
 		if err != nil {
 			return nil, err
 		}
-		return &accessSubject{Type: "USER", ID: id}, nil
+		return &orgAccessSubject{Type: "USER", ID: user.UserId}, nil
 	case f.ServiceAccountID != "":
-		return &accessSubject{Type: "SERVICE_ACCOUNT", ID: f.ServiceAccountID}, nil
+		return &orgAccessSubject{Type: "SERVICE_ACCOUNT", ID: f.ServiceAccountID}, nil
 	case f.ServiceAccountName != "":
 		id, err := orgServiceAccountIDByName(ctx, a.api, f.ServiceAccountName)
 		if err != nil {
 			return nil, err
 		}
-		return &accessSubject{Type: "SERVICE_ACCOUNT", ID: id}, nil
+		return &orgAccessSubject{Type: "SERVICE_ACCOUNT", ID: id}, nil
 	case f.DirectoryGroupID != "":
-		return &accessSubject{Type: "DIRECTORY_GROUP", ID: f.DirectoryGroupID}, nil
+		return &orgAccessSubject{Type: "DIRECTORY_GROUP", ID: f.DirectoryGroupID}, nil
 	}
 	return nil, nil
 }
 
-// parseResourceSet reads TYPE:ID entries joined by commas, such as
+// orgAccessParseResourceSet reads TYPE:ID entries joined by commas, such as
 // model:abc,environment:staging. Types are case-insensitive; the API checks
 // the rest.
-func parseResourceSet(value string) ([]cmd.AccessResourceSetEntry, error) {
+func orgAccessParseResourceSet(value string) ([]cmd.AccessResourceSetEntry, error) {
 	var entries []cmd.AccessResourceSetEntry
 	for _, part := range strings.Split(value, ",") {
 		resourceType, id, ok := strings.Cut(strings.TrimSpace(part), ":")
@@ -228,7 +206,12 @@ func parseResourceSet(value string) ([]cmd.AccessResourceSetEntry, error) {
 	return entries, nil
 }
 
-func resourceSetText(set []cmd.AccessResourceSetEntry) string {
+// orgAccessResourceSetText renders a resource set as the --resource-set
+// syntax, or fallback when it's empty.
+func orgAccessResourceSetText(set []cmd.AccessResourceSetEntry, fallback string) string {
+	if len(set) == 0 {
+		return fallback
+	}
 	entries := make([]string, 0, len(set))
 	for _, entry := range set {
 		entries = append(entries, strings.ToLower(entry.Type)+":"+entry.Identifier)
@@ -236,19 +219,38 @@ func resourceSetText(set []cmd.AccessResourceSetEntry) string {
 	return strings.Join(entries, ",")
 }
 
-func resourceSetsText(sets []cmd.AccessResourceSet) string {
+func orgAccessResourceSetsText(sets []cmd.AccessResourceSet) string {
 	if len(sets) == 0 {
 		return "all"
 	}
 	texts := make([]string, 0, len(sets))
 	for _, set := range sets {
-		texts = append(texts, resourceSetText(set.AllOf))
+		texts = append(texts, orgAccessResourceSetText(set.AllOf, ""))
 	}
 	return strings.Join(texts, "; ")
 }
 
-func commandOrgAccessPermissionList(ctx *CommandContext, _ *cmd.OrgAccessPermissionListFlags) error {
-	a, err := newAccessAPI(ctx)
+// orgAccessSubjectText renders a role holder, such as "service account ci-deployer".
+func orgAccessSubjectText(subjectType, name string) string {
+	return strings.ReplaceAll(strings.ToLower(subjectType), "_", " ") + " " + name
+}
+
+func orgAccessOrDash(s *string) string {
+	if s == nil || *s == "" {
+		return "-"
+	}
+	return *s
+}
+
+func orgAccessYesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
+func commandOrgPermissionList(ctx *CommandContext, _ *cmd.OrgPermissionListFlags) error {
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
@@ -265,15 +267,15 @@ func commandOrgAccessPermissionList(ctx *CommandContext, _ *cmd.OrgAccessPermiss
 	rows := make([][]string, 0, len(catalog.Permissions))
 	for _, p := range catalog.Permissions {
 		rows = append(rows, []string{
-			p.Name, p.DisplayName, strings.ToLower(strings.Join(p.RoleKinds, ",")), yesNo(p.Available && !p.Reserved),
+			p.Name, p.DisplayName, strings.ToLower(strings.Join(p.RoleKinds, ",")), orgAccessYesNo(p.Available && !p.Reserved),
 		})
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "LABEL", "ROLE KINDS", "ASSIGNABLE"}, Rows: rows})
 	return nil
 }
 
-func commandOrgAccessRoleList(ctx *CommandContext, flags *cmd.OrgAccessRoleListFlags) error {
-	a, err := newAccessAPI(ctx)
+func commandOrgRoleList(ctx *CommandContext, flags *cmd.OrgRoleListFlags) error {
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
@@ -281,7 +283,7 @@ func commandOrgAccessRoleList(ctx *CommandContext, flags *cmd.OrgAccessRoleListF
 	if err != nil {
 		return err
 	}
-	roles, err := listAll[cmd.AccessRole](ctx, a, "/v1/access/roles", query)
+	roles, err := orgAccessListAll[cmd.AccessRole](ctx, a, "/v1/access/roles", query)
 	if err != nil {
 		return fmt.Errorf("listing roles: %w", err)
 	}
@@ -296,15 +298,20 @@ func commandOrgAccessRoleList(ctx *CommandContext, flags *cmd.OrgAccessRoleListF
 	rows := make([][]string, 0, len(roles))
 	for _, r := range roles {
 		rows = append(rows, []string{
-			r.ID, r.Name, strings.ToLower(r.Kind), orDash(r.TeamName), yesNo(r.BuiltIn), strings.Join(r.Permissions, ","),
+			r.ID, r.Name, strings.ToLower(r.Kind), orgAccessOrDash(r.TeamName), orgAccessYesNo(r.BuiltIn),
+			strconv.Itoa(len(r.Permissions)),
 		})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME", "KIND", "TEAM", "BUILT-IN", "PERMISSIONS"}, Rows: rows})
+	ctx.OutputTable(TableOutput{
+		Headers:             []string{"ID", "NAME", "KIND", "TEAM", "BUILT-IN", "PERMISSIONS"},
+		Rows:                rows,
+		RightAlignedColumns: []int{5},
+	})
 	return nil
 }
 
-func commandOrgAccessRoleDescribe(ctx *CommandContext, flags *cmd.OrgAccessRoleDescribeFlags) error {
-	a, err := newAccessAPI(ctx)
+func commandOrgRoleDescribe(ctx *CommandContext, flags *cmd.OrgRoleDescribeFlags) error {
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
@@ -324,19 +331,26 @@ func commandOrgAccessRoleDescribe(ctx *CommandContext, flags *cmd.OrgAccessRoleD
 		ctx.OutputJSON(role)
 		return nil
 	}
+	permissions, includes := "-", "-"
+	if len(role.Permissions) > 0 {
+		permissions = strings.Join(role.Permissions, ", ")
+	}
+	if len(role.IncludeRoleIDs) > 0 {
+		includes = strings.Join(role.IncludeRoleIDs, ", ")
+	}
 	ctx.Outputf("ID:          %s\n", role.ID)
 	ctx.Outputf("Name:        %s\n", role.Name)
 	ctx.Outputf("Description: %s\n", role.Description)
 	ctx.Outputf("Kind:        %s\n", strings.ToLower(role.Kind))
-	ctx.Outputf("Team:        %s\n", orDash(role.TeamName))
-	ctx.Outputf("Built-in:    %s\n", yesNo(role.BuiltIn))
-	ctx.Outputf("Permissions: %s\n", joinOrDash(role.Permissions))
-	ctx.Outputf("Includes:    %s\n", joinOrDash(role.IncludeRoleIDs))
+	ctx.Outputf("Team:        %s\n", orgAccessOrDash(role.TeamName))
+	ctx.Outputf("Built-in:    %s\n", orgAccessYesNo(role.BuiltIn))
+	ctx.Outputf("Permissions: %s\n", permissions)
+	ctx.Outputf("Includes:    %s\n", includes)
 	return nil
 }
 
-func commandOrgAccessRoleCreate(ctx *CommandContext, flags *cmd.OrgAccessRoleCreateFlags) error {
-	a, err := newAccessAPI(ctx)
+func commandOrgRoleCreate(ctx *CommandContext, flags *cmd.OrgRoleCreateFlags) error {
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
@@ -367,7 +381,7 @@ func commandOrgAccessRoleCreate(ctx *CommandContext, flags *cmd.OrgAccessRoleCre
 	return nil
 }
 
-func commandOrgAccessRoleUpdate(ctx *CommandContext, flags *cmd.OrgAccessRoleUpdateFlags) error {
+func commandOrgRoleUpdate(ctx *CommandContext, flags *cmd.OrgRoleUpdateFlags) error {
 	body := map[string]any{}
 	if flags.NewName != "" {
 		body["name"] = flags.NewName
@@ -389,7 +403,7 @@ func commandOrgAccessRoleUpdate(ctx *CommandContext, flags *cmd.OrgAccessRoleUpd
 		return cmd.NewErrUsagef("pass at least one of --new-name, --description, --add-permission, " +
 			"--remove-permission, --add-include and --remove-include")
 	}
-	a, err := newAccessAPI(ctx)
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
@@ -409,8 +423,8 @@ func commandOrgAccessRoleUpdate(ctx *CommandContext, flags *cmd.OrgAccessRoleUpd
 	return nil
 }
 
-func commandOrgAccessRoleDelete(ctx *CommandContext, flags *cmd.OrgAccessRoleDeleteFlags) error {
-	a, err := newAccessAPI(ctx)
+func commandOrgRoleDelete(ctx *CommandContext, flags *cmd.OrgRoleDeleteFlags) error {
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
@@ -430,20 +444,20 @@ func commandOrgAccessRoleDelete(ctx *CommandContext, flags *cmd.OrgAccessRoleDel
 	return nil
 }
 
-func commandOrgAccessAssignmentCreate(ctx *CommandContext, flags *cmd.OrgAccessAssignmentCreateFlags) error {
+func commandOrgRoleAssignmentCreate(ctx *CommandContext, flags *cmd.OrgRoleAssignmentCreateFlags) error {
 	resourceSets := make([]cmd.AccessResourceSet, 0, len(flags.ResourceSets))
 	for _, value := range flags.ResourceSets {
-		set, err := parseResourceSet(value)
+		set, err := orgAccessParseResourceSet(value)
 		if err != nil {
 			return err
 		}
 		resourceSets = append(resourceSets, cmd.AccessResourceSet{AllOf: set})
 	}
-	a, err := newAccessAPI(ctx)
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
-	subject, err := a.subject(ctx, cmd.OrgAccessHolderFilterFlags(flags.OrgAccessSubjectFlags))
+	subject, err := a.subject(ctx, cmd.OrgRoleAssignmentHolderFilterFlags(flags.OrgRoleAssignmentHolderFlags))
 	if err != nil {
 		return err
 	}
@@ -475,19 +489,19 @@ func commandOrgAccessAssignmentCreate(ctx *CommandContext, flags *cmd.OrgAccessA
 		return nil
 	}
 	ctx.Logf("Assigned role %s\n", assignment.RoleName)
-	ctx.OutputLine(orDash(assignment.ID))
+	ctx.OutputLine(orgAccessOrDash(assignment.ID))
 	return nil
 }
 
-func commandOrgAccessAssignmentList(ctx *CommandContext, flags *cmd.OrgAccessAssignmentListFlags) error {
+func commandOrgRoleAssignmentList(ctx *CommandContext, flags *cmd.OrgRoleAssignmentListFlags) error {
 	if flags.RoleID != "" && flags.RoleName != "" {
 		return cmd.NewErrUsagef("pass --role-id or --role-name, not both")
 	}
-	a, err := newAccessAPI(ctx)
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
-	subject, err := a.subject(ctx, flags.OrgAccessHolderFilterFlags)
+	subject, err := a.subject(ctx, flags.OrgRoleAssignmentHolderFilterFlags)
 	if err != nil {
 		return err
 	}
@@ -506,7 +520,7 @@ func commandOrgAccessAssignmentList(ctx *CommandContext, flags *cmd.OrgAccessAss
 		query.Set("subject_type", subject.Type)
 		query.Set("subject_id", subject.ID)
 	}
-	assignments, err := listAll[cmd.AccessAssignment](ctx, a, "/v1/access/assignments", query)
+	assignments, err := orgAccessListAll[cmd.AccessAssignment](ctx, a, "/v1/access/assignments", query)
 	if err != nil {
 		return fmt.Errorf("listing role assignments: %w", err)
 	}
@@ -520,9 +534,13 @@ func commandOrgAccessAssignmentList(ctx *CommandContext, flags *cmd.OrgAccessAss
 	}
 	rows := make([][]string, 0, len(assignments))
 	for _, as := range assignments {
+		created := "-"
+		if as.CreatedAt != nil {
+			created = as.CreatedAt.UTC().Format(time.RFC3339)
+		}
 		rows = append(rows, []string{
-			orDash(as.ID), as.RoleName, holderText(as), orDash(as.TeamName), resourceSetsText(as.ResourceSets),
-			timeOrDash(as.CreatedAt),
+			orgAccessOrDash(as.ID), as.RoleName, orgAccessSubjectText(as.SubjectType, as.SubjectName),
+			orgAccessOrDash(as.TeamName), orgAccessResourceSetsText(as.ResourceSets), created,
 		})
 	}
 	ctx.OutputTable(TableOutput{
@@ -532,19 +550,8 @@ func commandOrgAccessAssignmentList(ctx *CommandContext, flags *cmd.OrgAccessAss
 	return nil
 }
 
-func holderText(as cmd.AccessAssignment) string {
-	return strings.ReplaceAll(strings.ToLower(as.SubjectType), "_", " ") + " " + as.SubjectName
-}
-
-func timeOrDash(t *time.Time) string {
-	if t == nil {
-		return "-"
-	}
-	return t.UTC().Format(time.RFC3339)
-}
-
-func commandOrgAccessAssignmentDescribe(ctx *CommandContext, flags *cmd.OrgAccessAssignmentRefFlags) error {
-	a, err := newAccessAPI(ctx)
+func commandOrgRoleAssignmentDescribe(ctx *CommandContext, flags *cmd.OrgRoleAssignmentRefFlags) error {
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
@@ -556,18 +563,22 @@ func commandOrgAccessAssignmentDescribe(ctx *CommandContext, flags *cmd.OrgAcces
 		ctx.OutputJSON(as)
 		return nil
 	}
-	ctx.Outputf("ID:            %s\n", orDash(as.ID))
+	created := "-"
+	if as.CreatedAt != nil {
+		created = as.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	ctx.Outputf("ID:            %s\n", orgAccessOrDash(as.ID))
 	ctx.Outputf("Role:          %s (%s)\n", as.RoleName, as.RoleID)
-	ctx.Outputf("Holder:        %s (%s)\n", holderText(as), as.SubjectID)
-	ctx.Outputf("Team:          %s\n", orDash(as.TeamName))
-	ctx.Outputf("Resource sets: %s\n", resourceSetsText(as.ResourceSets))
-	ctx.Outputf("Created by:    %s\n", orDash(as.CreatedBy))
-	ctx.Outputf("Created:       %s\n", timeOrDash(as.CreatedAt))
+	ctx.Outputf("Holder:        %s (%s)\n", orgAccessSubjectText(as.SubjectType, as.SubjectName), as.SubjectID)
+	ctx.Outputf("Team:          %s\n", orgAccessOrDash(as.TeamName))
+	ctx.Outputf("Resource sets: %s\n", orgAccessResourceSetsText(as.ResourceSets))
+	ctx.Outputf("Created by:    %s\n", orgAccessOrDash(as.CreatedBy))
+	ctx.Outputf("Created:       %s\n", created)
 	return nil
 }
 
-func commandOrgAccessAssignmentDelete(ctx *CommandContext, flags *cmd.OrgAccessAssignmentRefFlags) error {
-	a, err := newAccessAPI(ctx)
+func commandOrgRoleAssignmentDelete(ctx *CommandContext, flags *cmd.OrgRoleAssignmentRefFlags) error {
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
@@ -583,31 +594,37 @@ func commandOrgAccessAssignmentDelete(ctx *CommandContext, flags *cmd.OrgAccessA
 	return nil
 }
 
-func commandOrgAccessDescribe(ctx *CommandContext, flags *cmd.OrgAccessDescribeFlags) error {
-	a, err := newAccessAPI(ctx)
+func commandOrgUserAccess(ctx *CommandContext, flags *cmd.OrgUserAccessFlags) error {
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
-	subject, err := a.subject(ctx, cmd.OrgAccessHolderFilterFlags{
-		UserID:             flags.UserID,
-		UserEmail:          flags.UserEmail,
-		ServiceAccountID:   flags.ServiceAccountID,
-		ServiceAccountName: flags.ServiceAccountName,
-	})
-	if err != nil {
-		return err
-	}
-	path := "/v1/users/me/access"
-	if subject != nil {
-		switch subject.Type {
-		case "SERVICE_ACCOUNT":
-			path = "/v1/service_accounts/" + url.PathEscape(subject.ID) + "/access"
-		case "USER":
-			path = "/v1/users/" + url.PathEscape(subject.ID) + "/access"
-		default:
-			return fmt.Errorf("unexpected subject type %q", subject.Type)
+	userID := flags.UserID
+	if flags.UserEmail != "" {
+		user, err := orgUserByEmail(ctx, a.api, flags.UserEmail)
+		if err != nil {
+			return err
 		}
+		userID = user.UserId
 	}
+	return orgAccessDescribe(ctx, a, "/v1/users/"+url.PathEscape(userID)+"/access")
+}
+
+func commandOrgServiceAccountAccess(ctx *CommandContext, flags *cmd.OrgServiceAccountAccessFlags) error {
+	a, err := newOrgAccessAPI(ctx)
+	if err != nil {
+		return err
+	}
+	id, err := resolveOrgServiceAccountRef(ctx, a.api, flags.OrgServiceAccountRefFlags)
+	if err != nil {
+		return err
+	}
+	return orgAccessDescribe(ctx, a, "/v1/service_accounts/"+url.PathEscape(id)+"/access")
+}
+
+// orgAccessDescribe prints the roles and permissions a principal's access
+// endpoint returns.
+func orgAccessDescribe(ctx *CommandContext, a orgAccessAPI, path string) error {
 	var access cmd.Access
 	if err := a.call(ctx, http.MethodGet, path, nil, nil, &access); err != nil {
 		return fmt.Errorf("describing access: %w", err)
@@ -617,8 +634,7 @@ func commandOrgAccessDescribe(ctx *CommandContext, flags *cmd.OrgAccessDescribeF
 		ctx.OutputJSON(access)
 		return nil
 	}
-	ctx.Outputf("%s %s (%s)\n", strings.ReplaceAll(strings.ToLower(access.SubjectType), "_", " "),
-		access.SubjectName, access.SubjectID)
+	ctx.Outputf("%s (%s)\n", orgAccessSubjectText(access.SubjectType, access.SubjectName), access.SubjectID)
 	rows := make([][]string, 0, len(access.Assignments))
 	for _, held := range access.Assignments {
 		via := strings.ToLower(held.GrantedVia)
@@ -626,7 +642,8 @@ func commandOrgAccessDescribe(ctx *CommandContext, flags *cmd.OrgAccessDescribeF
 			via += " to group " + held.SubjectName
 		}
 		rows = append(rows, []string{
-			held.RoleName, via, orDash(held.TeamName), resourceSetsText(held.ResourceSets), orDash(held.ID),
+			held.RoleName, via, orgAccessOrDash(held.TeamName), orgAccessResourceSetsText(held.ResourceSets),
+			orgAccessOrDash(held.ID),
 		})
 	}
 	ctx.OutputTable(TableOutput{
@@ -644,11 +661,7 @@ func commandOrgAccessDescribe(ctx *CommandContext, flags *cmd.OrgAccessDescribeF
 			if grant.TeamName != nil {
 				team = *grant.TeamName
 			}
-			set := resourceSetText(grant.ResourceSet)
-			if set == "" {
-				set = "all"
-			}
-			grants = append(grants, []string{permission.Name, team, set})
+			grants = append(grants, []string{permission.Name, team, orgAccessResourceSetText(grant.ResourceSet, "all")})
 		}
 	}
 	ctx.Outputf("\n")
@@ -659,13 +672,13 @@ func commandOrgAccessDescribe(ctx *CommandContext, flags *cmd.OrgAccessDescribeF
 func commandOrgAccessCheck(ctx *CommandContext, flags *cmd.OrgAccessCheckFlags) error {
 	var resourceSet []cmd.AccessResourceSetEntry
 	if flags.ResourceSet != "" {
-		set, err := parseResourceSet(flags.ResourceSet)
+		set, err := orgAccessParseResourceSet(flags.ResourceSet)
 		if err != nil {
 			return err
 		}
 		resourceSet = set
 	}
-	a, err := newAccessAPI(ctx)
+	a, err := newOrgAccessAPI(ctx)
 	if err != nil {
 		return err
 	}
@@ -692,79 +705,8 @@ func commandOrgAccessCheck(ctx *CommandContext, flags *cmd.OrgAccessCheckFlags) 
 	}
 	rows := make([][]string, 0, len(results.Results))
 	for _, r := range results.Results {
-		set := resourceSetText(r.ResourceSet)
-		if set == "" {
-			set = "-"
-		}
-		rows = append(rows, []string{r.Permission, orDash(r.TeamID), set, yesNo(r.Allowed)})
+		rows = append(rows, []string{r.Permission, orgAccessResourceSetText(r.ResourceSet, "-"), orgAccessYesNo(r.Allowed)})
 	}
-	ctx.OutputTable(TableOutput{Headers: []string{"PERMISSION", "TEAM", "RESOURCE SET", "ALLOWED"}, Rows: rows})
+	ctx.OutputTable(TableOutput{Headers: []string{"PERMISSION", "RESOURCE SET", "ALLOWED"}, Rows: rows})
 	return nil
-}
-
-func commandOrgAccessSettingsDescribe(ctx *CommandContext, _ *cmd.OrgAccessSettingsDescribeFlags) error {
-	a, err := newAccessAPI(ctx)
-	if err != nil {
-		return err
-	}
-	var settings cmd.AccessSettings
-	if err := a.call(ctx, http.MethodGet, "/v1/organizations/me", nil, nil, &settings); err != nil {
-		return fmt.Errorf("reading role settings: %w", err)
-	}
-	if settings.AllowTeamAdminsToManageRoles == nil {
-		return errRoleSettingsUnavailable
-	}
-	if ctx.JSON {
-		ctx.OutputJSON(settings)
-		return nil
-	}
-	ctx.Outputf("Team admins manage roles: %s\n", yesNo(*settings.AllowTeamAdminsToManageRoles))
-	return nil
-}
-
-func commandOrgAccessSettingsUpdate(ctx *CommandContext, flags *cmd.OrgAccessSettingsUpdateFlags) error {
-	a, err := newAccessAPI(ctx)
-	if err != nil {
-		return err
-	}
-	body := cmd.AccessSettings{AllowTeamAdminsToManageRoles: flags.AllowTeamAdminsToManageRoles.Pointer()}
-	var settings cmd.AccessSettings
-	if err := a.call(ctx, http.MethodPatch, "/v1/organizations/me", nil, body, &settings); err != nil {
-		return fmt.Errorf("updating role settings: %w", err)
-	}
-	if settings.AllowTeamAdminsToManageRoles == nil {
-		return errRoleSettingsUnavailable
-	}
-	if ctx.JSON {
-		ctx.OutputJSON(settings)
-		return nil
-	}
-	ctx.LogLine("Updated role settings")
-	return nil
-}
-
-// errRoleSettingsUnavailable is the organization's answer without a role
-// setting: custom roles aren't available to it, or the caller can't read its roles.
-var errRoleSettingsUnavailable = cmd.NewErrNotFound(errors.New("role settings aren't available: " +
-	"your organization doesn't have custom roles, or you can't read its roles"))
-
-func orDash(s *string) string {
-	if s == nil || *s == "" {
-		return "-"
-	}
-	return *s
-}
-
-func joinOrDash(values []string) string {
-	if len(values) == 0 {
-		return "-"
-	}
-	return strings.Join(values, ", ")
-}
-
-func yesNo(b bool) string {
-	if b {
-		return "yes"
-	}
-	return "no"
 }

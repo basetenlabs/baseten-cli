@@ -146,9 +146,10 @@ var commandOrg = Command{
 			Summary:     "Describe the organization",
 			Description: "Describe the caller's organization.",
 			Flags:       OrgDescribeFlags{},
-			Output: &CommandOutput[managementapi.OrganizationInfo]{
+			Output: &CommandOutput[OrgInfo]{
 				TextDescription: "Field-per-line summary: org ID, name (when set), whether new personal and service account API keys " +
-					"can be created, and the AWS AssumeRole role ARN and external ID (if enabled).",
+					"can be created, whether team admins can manage their team's custom roles (only for organizations " +
+					"with custom roles), and the AWS AssumeRole role ARN and external ID (if enabled).",
 				Examples: []CommandExample{
 					{
 						Description: "Describe the organization.",
@@ -313,15 +314,20 @@ var commandOrg = Command{
 		{
 			Name:    "update",
 			Summary: "Update organization settings (PRE-RELEASE)",
-			Description: "Update the organization's API key settings. Turning a setting off only " +
-				"stops new keys from being created; existing keys keep working.",
+			Description: "Update the organization's API key and custom role settings. Turning an API key " +
+				"setting off only stops new keys from being created; existing keys keep working. Team admins " +
+				"can assign roles in their team whether or not they can manage its custom roles.",
 			Flags: OrgUpdateFlags{},
-			Output: &CommandOutput[managementapi.OrganizationInfo]{
+			Output: &CommandOutput[OrgInfo]{
 				TextDescription: "Prints \"Updated organization\" to stderr; no stdout output.",
 				Examples: []CommandExample{
 					{
 						Description: "Stop new service account API keys from being created.",
 						Command:     "baseten org update --allow-service-account-api-keys false",
+					},
+					{
+						Description: "Let only organization admins manage custom roles.",
+						Command:     "baseten org update --allow-team-admins-to-manage-roles false",
 					},
 				},
 				JQExample: CommandExample{
@@ -335,6 +341,7 @@ var commandOrg = Command{
 			Summary:     "View users",
 			Description: "List and inspect the users in the organization.",
 			Children: []Command{
+				commandOrgUserAccess,
 				{
 					Name:        "describe",
 					Summary:     "Describe a user",
@@ -410,11 +417,22 @@ var commandOrg = Command{
 				},
 			},
 		},
-		commandOrgAccess,
+		commandOrgAccessCheck,
 		commandOrgIdentityProvider,
+		commandOrgPermission,
+		commandOrgRole,
+		commandOrgRoleAssignment,
 		commandOrgServiceAccount,
 		commandOrgTrustRule,
 	},
+}
+
+// OrgInfo is the JSON output of `baseten org describe` and `baseten org
+// update`. AllowTeamAdminsToManageRoles is null for organizations without
+// custom roles.
+type OrgInfo struct {
+	managementapi.OrganizationInfo
+	AllowTeamAdminsToManageRoles *bool `json:"allow_team_admins_to_manage_roles"`
 }
 
 // OrgUserList is the JSON output of `baseten org user list`: the users
@@ -443,8 +461,9 @@ type OrgDescribeFlags struct {
 type OrgUpdateFlags struct {
 	CommandFlags
 
-	AllowPersonalAPIKeys       OptionalFlag[bool] `flag:"allow-personal-api-keys" desc:"Whether members can create new personal API keys."`
-	AllowServiceAccountAPIKeys OptionalFlag[bool] `flag:"allow-service-account-api-keys" desc:"Whether new team and organization API keys can be created."`
+	AllowPersonalAPIKeys         OptionalFlag[bool] `flag:"allow-personal-api-keys" desc:"Whether members can create new personal API keys."`
+	AllowServiceAccountAPIKeys   OptionalFlag[bool] `flag:"allow-service-account-api-keys" desc:"Whether new team and organization API keys can be created."`
+	AllowTeamAdminsToManageRoles OptionalFlag[bool] `flag:"allow-team-admins-to-manage-roles" desc:"Whether team admins can create, change and delete their team's custom roles. Only for organizations with custom roles (pre-release)."`
 }
 
 type OrgUserListFlags struct {
