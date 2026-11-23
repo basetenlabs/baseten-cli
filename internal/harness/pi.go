@@ -195,6 +195,8 @@ func piModel(r Route, baseURL string) map[string]any {
 		model["compat"] = compat
 	case TargetAPIResponses:
 		model["api"] = "openai-responses"
+	case TargetAPIGemini:
+		model["api"], model["baseUrl"] = "google-generative-ai", baseURL+"/v1beta"
 	default:
 		// The provider's compat would apply to every API, so only Chat
 		// Completions models carry it, as Pi's built-in Baseten provider sets it.
