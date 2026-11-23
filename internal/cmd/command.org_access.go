@@ -141,12 +141,20 @@ func (a orgAccessAPI) roleID(ctx context.Context, id, name, teamID string) (stri
 	if err != nil {
 		return "", fmt.Errorf("looking up role %q: %w", name, err)
 	}
+	var ids []string
 	for _, role := range roles {
 		if role.Name == name {
-			return role.ID, nil
+			ids = append(ids, role.ID)
 		}
 	}
-	return "", cmd.NewErrNotFound(fmt.Errorf("no role named %q", name))
+	switch len(ids) {
+	case 0:
+		return "", cmd.NewErrNotFound(fmt.Errorf("no role named %q", name))
+	case 1:
+		return ids[0], nil
+	}
+	// A custom role can share a built-in role's name.
+	return "", cmd.NewErrUsagef("more than one role is named %q (%s); pass its ID instead", name, strings.Join(ids, ", "))
 }
 
 // orgAccessSubject is who holds a role, as the access API names it.
