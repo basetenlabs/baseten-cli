@@ -19,6 +19,8 @@ const CredentialSourceSession = "session"
 // as the credential command instead of a key.
 const CredentialSourceHelper = "helper"
 
+const CredentialSourceGridKey = ""
+
 // Record remembers the options of the last successful setup for one harness,
 // so sync can replay them. Explicit route selections are stored as route names;
 // an empty route follows the current default, never the default resolved at setup
