@@ -993,7 +993,10 @@ func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	}
 	setup(t, openCodeHarness{}, path, routes, Selection{})
 	data := load(t, path)
-	require.Equal(t, "@ai-sdk/openai-compatible", get(data, []string{"provider", providerID, "npm"}).Data)
+	provider := get(data, openCodeV1ProviderPath).Data.(map[string]any)
+	require.Equal(t, "@ai-sdk/openai-compatible", provider["npm"])
+	require.Equal(t, testEndpoint+"/v1", provider["api"])
+	require.NotContains(t, provider["options"], "baseURL")
 	require.Equal(t, "Bearer "+testToken, get(data, openCodeV1BearerPath).Data, "@ai-sdk/anthropic sends apiKey only as x-api-key")
 	models := get(data, []string{"provider", providerID, "models"}).Data.(map[string]any)
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/primary"].(map[string]any)["provider"])

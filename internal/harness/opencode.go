@@ -405,8 +405,8 @@ func openCodeV1Settings(routes []Route, s Selection, endpoint, bearer string) []
 		desired(openCodeV1ProviderPath, map[string]any{
 			"npm":  "@ai-sdk/openai-compatible",
 			"name": "Baseten",
+			"api":  strings.TrimRight(endpoint, "/") + "/v1",
 			"options": map[string]any{
-				"baseURL": strings.TrimRight(endpoint, "/") + "/v1",
 				"apiKey":  "",
 				"headers": map[string]any{"Authorization": bearer, clientHeader: OpenCode},
 			},
