@@ -51,7 +51,7 @@ var commandOrgAccess = Command{
 							Description: "Print where the role applies.",
 							CommandLines: []string{
 								"baseten org access assignment create --role-id <role> --user-id <user>",
-								"--team <team> --jq '.resource_sets'",
+								"--team <team> --jq '.resource_sets[].all_of'",
 							},
 						},
 					},
@@ -440,21 +440,26 @@ type AccessResourceSetEntry struct {
 	Identifier string `json:"identifier"`
 }
 
+// AccessResourceSet selects what every entry in AllOf selects.
+type AccessResourceSet struct {
+	AllOf []AccessResourceSetEntry `json:"all_of"`
+}
+
 // AccessAssignment is a role held by a user, service account or directory
 // group: assigned (ID set), or through membership (ID null).
 type AccessAssignment struct {
-	ID           *string                    `json:"id"`
-	GrantedVia   string                     `json:"granted_via"`
-	RoleID       string                     `json:"role_id"`
-	RoleName     string                     `json:"role_name"`
-	SubjectType  string                     `json:"subject_type"`
-	SubjectID    string                     `json:"subject_id"`
-	SubjectName  string                     `json:"subject_name"`
-	TeamID       *string                    `json:"team_id"`
-	TeamName     *string                    `json:"team_name"`
-	ResourceSets [][]AccessResourceSetEntry `json:"resource_sets"`
-	CreatedBy    *string                    `json:"created_by"`
-	CreatedAt    *time.Time                 `json:"created_at"`
+	ID           *string             `json:"id"`
+	GrantedVia   string              `json:"granted_via"`
+	RoleID       string              `json:"role_id"`
+	RoleName     string              `json:"role_name"`
+	SubjectType  string              `json:"subject_type"`
+	SubjectID    string              `json:"subject_id"`
+	SubjectName  string              `json:"subject_name"`
+	TeamID       *string             `json:"team_id"`
+	TeamName     *string             `json:"team_name"`
+	ResourceSets []AccessResourceSet `json:"resource_sets"`
+	CreatedBy    *string             `json:"created_by"`
+	CreatedAt    *time.Time          `json:"created_at"`
 }
 
 // AccessAssignmentList is the JSON output of `baseten org access assignment

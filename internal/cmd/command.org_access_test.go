@@ -33,11 +33,11 @@ func orgAccessAssignmentFixture() map[string]any {
 		"team_id":      "t123456",
 		"team_name":    "Engineering",
 		"resource_sets": []any{
-			[]any{map[string]any{"type": "ENVIRONMENT", "identifier": "production"}},
-			[]any{
+			map[string]any{"all_of": []any{map[string]any{"type": "ENVIRONMENT", "identifier": "production"}}},
+			map[string]any{"all_of": []any{
 				map[string]any{"type": "ENVIRONMENT", "identifier": "staging"},
 				map[string]any{"type": "MODEL", "identifier": "m1"},
-			},
+			}},
 		},
 		"created_by": "u0",
 		"created_at": "2026-11-01T00:00:00Z",
@@ -149,11 +149,11 @@ func Test_Org_Access_Assignment_Create_ServiceAccountWithResourceSets(t *testing
 		"subject_id":   "sa1",
 		"team_id":      "t123456",
 		"resource_sets": []any{
-			[]any{
+			map[string]any{"all_of": []any{
 				map[string]any{"type": "MODEL", "identifier": "m1"},
 				map[string]any{"type": "ENVIRONMENT", "identifier": "staging"},
-			},
-			[]any{map[string]any{"type": "ENVIRONMENT", "identifier": "production"}},
+			}},
+			map[string]any{"all_of": []any{map[string]any{"type": "ENVIRONMENT", "identifier": "production"}}},
 		},
 	}, m.FindCall("POST", "/v1/access/assignments").BodyJSON(t))
 	h.Require.Equal("as1\n", h.Stdout.String())

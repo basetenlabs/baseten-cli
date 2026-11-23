@@ -229,13 +229,13 @@ func resourceSetText(set []cmd.AccessResourceSetEntry) string {
 	return strings.Join(entries, ",")
 }
 
-func resourceSetsText(sets [][]cmd.AccessResourceSetEntry) string {
+func resourceSetsText(sets []cmd.AccessResourceSet) string {
 	if len(sets) == 0 {
 		return "all"
 	}
 	texts := make([]string, 0, len(sets))
 	for _, set := range sets {
-		texts = append(texts, resourceSetText(set))
+		texts = append(texts, resourceSetText(set.AllOf))
 	}
 	return strings.Join(texts, "; ")
 }
@@ -424,13 +424,13 @@ func commandOrgAccessRoleDelete(ctx *CommandContext, flags *cmd.OrgAccessRoleDel
 }
 
 func commandOrgAccessAssignmentCreate(ctx *CommandContext, flags *cmd.OrgAccessAssignmentCreateFlags) error {
-	resourceSets := make([][]cmd.AccessResourceSetEntry, 0, len(flags.ResourceSets))
+	resourceSets := make([]cmd.AccessResourceSet, 0, len(flags.ResourceSets))
 	for _, value := range flags.ResourceSets {
 		set, err := parseResourceSet(value)
 		if err != nil {
 			return err
 		}
-		resourceSets = append(resourceSets, set)
+		resourceSets = append(resourceSets, cmd.AccessResourceSet{AllOf: set})
 	}
 	a, err := newAccessAPI(ctx)
 	if err != nil {
