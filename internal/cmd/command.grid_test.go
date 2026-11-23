@@ -3045,13 +3045,14 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	t.Cleanup(gateway.Close)
 	h, api := gridAPI(t, gateway.URL)
 	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	const auto, primary = "Auto (Baseten Internal Dogfooding)", "Primary"
 	route := func(id, name, display string, metadata, target map[string]any) map[string]any {
 		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": metadata, "target": target}
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", messagesFirstRouteMetadata, map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "display_name": "General"}, "tradeoff": "balanced"}),
-			route("route-primary", "acme/primary", "Primary", harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
+			route("route-auto", "acme/auto", auto, messagesFirstRouteMetadata, map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "display_name": "General"}, "tradeoff": "balanced"}),
+			route("route-primary", "acme/primary", primary, harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -3066,7 +3067,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(work) })
 	h.Require.NoError(os.WriteFile(filepath.Join(work, "notes.txt"), []byte("hello\n"), 0o600))
 	tmp := t.TempDir()
-	toast := []string{"Served model", "Auto (Baseten Internal Dogfooding)", "→ qwen/Qwen3.6-Coder"}
+	toast := []string{"Served model", auto, "→ qwen/Qwen3.6-Coder"}
 	toasted := func(screen string) bool {
 		return !slices.ContainsFunc(toast, func(part string) bool { return !strings.Contains(screen, part) })
 	}
@@ -3111,7 +3112,26 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			_ = terminal.Close()
 		})
 	}
-	tui := func(env ...string) (string, []string) {
+	squash := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	await := func(ctx context.Context, shown func() string, text string) bool {
+		for !strings.Contains(squash(shown()), squash(text)) {
+			if ctx.Err() != nil {
+				return false
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return true
+	}
+	submit := func(ctx context.Context, terminal *os.File, shown func() string, model, prompt string) {
+		t.Helper()
+		h.Require.True(await(ctx, shown, model), "OpenCode selected the configured model\n%s", shown())
+		_, err := terminal.WriteString(prompt)
+		h.Require.NoError(err)
+		h.Require.True(await(ctx, shown, prompt), "OpenCode showed the typed prompt\n%s", shown())
+		_, err = terminal.WriteString("\r")
+		h.Require.NoError(err)
+	}
+	tui := func(model string, env ...string) (string, []string) {
 		t.Helper()
 		started := time.Now()
 		mu.Lock()
@@ -3119,7 +3139,9 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 		mu.Unlock()
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 		defer cancel()
-		_, shown, stop := launch(ctx, []string{"--standalone", "--prompt", "Read notes.txt and reply."}, env...)
+		terminal, shown, stop := launch(ctx, []string{"--standalone"}, env...)
+		defer stop()
+		submit(ctx, terminal, shown, model, "Read notes.txt and reply.")
 		settled := func() bool {
 			mu.Lock()
 			defer mu.Unlock()
@@ -3136,14 +3158,14 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	}
 
 	setup("route-auto")
-	screen, models := tui()
+	screen, models := tui(auto)
 	h.Require.NotContains(screen, "zai-org/GLM-5.3-Flash", "the intermediate tool step does not toast")
 	for _, part := range toast {
 		h.Require.Contains(screen, part, "the TUI toasts the router route and the model that served the final response")
 	}
 	h.Require.Equal([]string{"acme/auto", "acme/auto"}, slices.DeleteFunc(models, func(model string) bool { return model != "acme/auto" }))
 
-	screen, models = tui("BASETEN_OPENCODE_SERVED_MODEL=0")
+	screen, models = tui(auto, "BASETEN_OPENCODE_SERVED_MODEL=0")
 	h.Require.NotContains(screen, "Served model", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.Contains(models, "acme/auto")
@@ -3161,14 +3183,10 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	terminal, shown, stop := launch(ctx, []string{"--prompt", "Start quietly from notes.txt."})
+	terminal, shown, stop := launch(ctx, nil)
 	defer stop()
-	await := func(text string) {
-		for ctx.Err() == nil && !strings.Contains(shown(), text) {
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
-	await("Served reply.")
+	submit(ctx, terminal, shown, auto, "Start quietly from notes.txt.")
+	await(ctx, shown, "Served reply.")
 	other := exec.CommandContext(ctx, binary, "run", "Reply in another session.")
 	other.Dir = work
 	other.Env = environment()
@@ -3178,17 +3196,13 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	h.Require.NotContains(shown(), "zai-org/GLM-5.3-Flash", "a run whose final response names no served model does not toast an earlier step's")
 	h.Require.NotContains(shown(), "moonshotai/Kimi-K2.6", "a response in another session on the same background server does not toast")
-	_, err = terminal.WriteString("Reply in this session again.")
-	h.Require.NoError(err)
-	await("Reply in this session again.")
-	_, err = terminal.WriteString("\r")
-	h.Require.NoError(err)
-	await("→ deepseek-ai/DeepSeek-V4.2")
+	submit(ctx, terminal, shown, auto, "Reply in this session again.")
+	await(ctx, shown, "→ deepseek-ai/DeepSeek-V4.2")
 	h.Require.Contains(shown(), "→ deepseek-ai/DeepSeek-V4.2", "a response in the session on screen toasts")
 	stop()
 
 	setup("route-primary")
-	screen, models = tui()
+	screen, models = tui(primary)
 	h.Require.NotContains(screen, "Served model", "a route that is not a router shows nothing")
 	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "a route that is not a router shows nothing")
 	h.Require.Contains(models, "acme/primary")
