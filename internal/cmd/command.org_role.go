@@ -89,7 +89,7 @@ func commandOrgRoleList(ctx *CommandContext, flags *cmd.OrgRoleListFlags) error 
 	rows := make([][]string, 0, len(roles))
 	for _, r := range roles {
 		rows = append(rows, []string{
-			r.Id, r.Name, strings.ToLower(string(r.Kind)), orgAccessOrDash(r.TeamName), strconv.FormatBool(r.BuiltIn),
+			r.Id, r.Name, strings.ToLower(string(r.Kind)), orgRoleOrDash(r.TeamName), strconv.FormatBool(r.BuiltIn),
 			strconv.Itoa(len(r.Permissions)), strconv.Itoa(len(r.IncludeRoleIds)),
 		})
 	}
@@ -137,7 +137,7 @@ func commandOrgRoleDescribe(ctx *CommandContext, flags *cmd.OrgRoleDescribeFlags
 	ctx.Outputf("Name:        %s\n", role.Name)
 	ctx.Outputf("Description: %s\n", role.Description)
 	ctx.Outputf("Kind:        %s\n", strings.ToLower(string(role.Kind)))
-	ctx.Outputf("Team:        %s\n", orgAccessOrDash(role.TeamName))
+	ctx.Outputf("Team:        %s\n", orgRoleOrDash(role.TeamName))
 	ctx.Outputf("Built-in:    %t\n", role.BuiltIn)
 	ctx.Outputf("Permissions: %s\n", permissions)
 	ctx.Outputf("Includes:    %s\n", includes)
@@ -153,9 +153,11 @@ func commandOrgRoleCreate(ctx *CommandContext, flags *cmd.OrgRoleCreateFlags) er
 	req := managementapi.CreateAccessRoleRequest{
 		Name:           flags.Name,
 		Kind:           managementapi.AccessRoleKind(strings.ToUpper(flags.Kind)),
-		Description:    &flags.Description,
 		Permissions:    &permissions,
 		IncludeRoleIds: &includes,
+	}
+	if flags.Description != "" {
+		req.Description = &flags.Description
 	}
 	if flags.Team != "" {
 		teamID, err := ResolveTeam(ctx, cl.API(), flags.Team)

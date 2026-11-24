@@ -17,15 +17,20 @@ func init() {
 	Register("org role-assignment list", commandOrgRoleAssignmentList)
 }
 
-// orgAccessSubject is who holds a role, as the access API names it.
-type orgAccessSubject struct {
+// orgRoleHolder is who holds a role, as the access API names it.
+type orgRoleHolder struct {
 	Type managementapi.AccessSubjectType
 	ID   string
 }
 
-// orgAccessSubjectFromFlags resolves the holder flags into an assignment
+// orgRoleHolderFlags are the role-holder flags a command was given.
+type orgRoleHolderFlags struct {
+	UserID, UserEmail, ServiceAccountID, ServiceAccountName, DirectoryGroupID string
+}
+
+// orgRoleHolderFromFlags resolves the holder flags into an assignment
 // subject. Returns nil when no flag is set.
-func orgAccessSubjectFromFlags(ctx context.Context, api *managementapi.Client, f cmd.OrgRoleAssignmentHolderFilterFlags) (*orgAccessSubject, error) {
+func orgRoleHolderFromFlags(ctx context.Context, api *managementapi.Client, f orgRoleHolderFlags) (*orgRoleHolder, error) {
 	set := 0
 	for _, value := range []string{f.UserID, f.UserEmail, f.ServiceAccountID, f.ServiceAccountName, f.DirectoryGroupID} {
 		if value != "" {
@@ -38,31 +43,31 @@ func orgAccessSubjectFromFlags(ctx context.Context, api *managementapi.Client, f
 	}
 	switch {
 	case f.UserID != "":
-		return &orgAccessSubject{Type: managementapi.AccessSubjectType_USER, ID: f.UserID}, nil
+		return &orgRoleHolder{Type: managementapi.AccessSubjectType_USER, ID: f.UserID}, nil
 	case f.UserEmail != "":
 		user, err := orgUserByEmail(ctx, api, f.UserEmail)
 		if err != nil {
 			return nil, err
 		}
-		return &orgAccessSubject{Type: managementapi.AccessSubjectType_USER, ID: user.UserId}, nil
+		return &orgRoleHolder{Type: managementapi.AccessSubjectType_USER, ID: user.UserId}, nil
 	case f.ServiceAccountID != "":
-		return &orgAccessSubject{Type: managementapi.AccessSubjectType_SERVICE_ACCOUNT, ID: f.ServiceAccountID}, nil
+		return &orgRoleHolder{Type: managementapi.AccessSubjectType_SERVICE_ACCOUNT, ID: f.ServiceAccountID}, nil
 	case f.ServiceAccountName != "":
 		id, err := orgServiceAccountIDByName(ctx, api, f.ServiceAccountName)
 		if err != nil {
 			return nil, err
 		}
-		return &orgAccessSubject{Type: managementapi.AccessSubjectType_SERVICE_ACCOUNT, ID: id}, nil
+		return &orgRoleHolder{Type: managementapi.AccessSubjectType_SERVICE_ACCOUNT, ID: id}, nil
 	case f.DirectoryGroupID != "":
-		return &orgAccessSubject{Type: managementapi.AccessSubjectType_DIRECTORY_GROUP, ID: f.DirectoryGroupID}, nil
+		return &orgRoleHolder{Type: managementapi.AccessSubjectType_DIRECTORY_GROUP, ID: f.DirectoryGroupID}, nil
 	}
 	return nil, nil
 }
 
-// orgAccessParseResourceSet reads TYPE:ID entries joined by commas, such as
+// orgRoleParseResourceSet reads TYPE:ID entries joined by commas, such as
 // model:abc,environment:staging. Types are case-insensitive; the API checks
 // the rest.
-func orgAccessParseResourceSet(value string) ([]managementapi.AccessResourceRequest, error) {
+func orgRoleParseResourceSet(value string) ([]managementapi.AccessResourceRequest, error) {
 	var entries []managementapi.AccessResourceRequest
 	for _, part := range strings.Split(value, ",") {
 		resourceType, id, ok := strings.Cut(strings.TrimSpace(part), ":")
@@ -76,9 +81,9 @@ func orgAccessParseResourceSet(value string) ([]managementapi.AccessResourceRequ
 	return entries, nil
 }
 
-// orgAccessResourceSetText renders a resource set as the --resource-set
+// orgRoleResourceSetText renders a resource set as the --resource-set
 // syntax, or fallback when it's empty.
-func orgAccessResourceSetText(set []managementapi.AccessResource, fallback string) string {
+func orgRoleResourceSetText(set []managementapi.AccessResource, fallback string) string {
 	if len(set) == 0 {
 		return fallback
 	}
@@ -89,23 +94,23 @@ func orgAccessResourceSetText(set []managementapi.AccessResource, fallback strin
 	return strings.Join(entries, ",")
 }
 
-func orgAccessResourceSetsText(sets []managementapi.AccessResourceSet) string {
+func orgRoleResourceSetsText(sets []managementapi.AccessResourceSet) string {
 	if len(sets) == 0 {
 		return "all"
 	}
 	texts := make([]string, 0, len(sets))
 	for _, set := range sets {
-		texts = append(texts, orgAccessResourceSetText(set.AllOf, ""))
+		texts = append(texts, orgRoleResourceSetText(set.AllOf, ""))
 	}
 	return strings.Join(texts, "; ")
 }
 
-// orgAccessSubjectText renders a role holder, such as "service account ci-deployer".
-func orgAccessSubjectText(subjectType managementapi.AccessSubjectType, name string) string {
+// orgRoleHolderText renders a role holder, such as "service account ci-deployer".
+func orgRoleHolderText(subjectType managementapi.AccessSubjectType, name string) string {
 	return strings.ReplaceAll(strings.ToLower(string(subjectType)), "_", " ") + " " + name
 }
 
-func orgAccessOrDash(s *string) string {
+func orgRoleOrDash(s *string) string {
 	if s == nil || *s == "" {
 		return "-"
 	}
@@ -115,7 +120,7 @@ func orgAccessOrDash(s *string) string {
 func commandOrgRoleAssignmentCreate(ctx *CommandContext, flags *cmd.OrgRoleAssignmentCreateFlags) error {
 	resourceSets := make([]managementapi.AccessResourceSetRequest, 0, len(flags.ResourceSets))
 	for _, value := range flags.ResourceSets {
-		set, err := orgAccessParseResourceSet(value)
+		set, err := orgRoleParseResourceSet(value)
 		if err != nil {
 			return err
 		}
@@ -125,7 +130,13 @@ func commandOrgRoleAssignmentCreate(ctx *CommandContext, flags *cmd.OrgRoleAssig
 	if err != nil {
 		return err
 	}
-	subject, err := orgAccessSubjectFromFlags(ctx, cl.API(), cmd.OrgRoleAssignmentHolderFilterFlags(flags.OrgRoleAssignmentHolderFlags))
+	subject, err := orgRoleHolderFromFlags(ctx, cl.API(), orgRoleHolderFlags{
+		UserID:             flags.UserID,
+		UserEmail:          flags.UserEmail,
+		ServiceAccountID:   flags.ServiceAccountID,
+		ServiceAccountName: flags.ServiceAccountName,
+		DirectoryGroupID:   flags.DirectoryGroupID,
+	})
 	if err != nil {
 		return err
 	}
@@ -157,7 +168,7 @@ func commandOrgRoleAssignmentCreate(ctx *CommandContext, flags *cmd.OrgRoleAssig
 		return nil
 	}
 	ctx.Logf("Assigned role %s\n", assignment.RoleName)
-	ctx.OutputLine(orgAccessOrDash(assignment.Id))
+	ctx.OutputLine(orgRoleOrDash(assignment.Id))
 	return nil
 }
 
@@ -169,7 +180,13 @@ func commandOrgRoleAssignmentList(ctx *CommandContext, flags *cmd.OrgRoleAssignm
 	if err != nil {
 		return err
 	}
-	subject, err := orgAccessSubjectFromFlags(ctx, cl.API(), flags.OrgRoleAssignmentHolderFilterFlags)
+	subject, err := orgRoleHolderFromFlags(ctx, cl.API(), orgRoleHolderFlags{
+		UserID:             flags.UserID,
+		UserEmail:          flags.UserEmail,
+		ServiceAccountID:   flags.ServiceAccountID,
+		ServiceAccountName: flags.ServiceAccountName,
+		DirectoryGroupID:   flags.DirectoryGroupID,
+	})
 	if err != nil {
 		return err
 	}
@@ -219,8 +236,8 @@ func commandOrgRoleAssignmentList(ctx *CommandContext, flags *cmd.OrgRoleAssignm
 			created = as.CreatedAt.UTC().Format(time.RFC3339)
 		}
 		rows = append(rows, []string{
-			orgAccessOrDash(as.Id), as.RoleName, orgAccessSubjectText(as.SubjectType, as.SubjectName),
-			orgAccessOrDash(as.TeamName), orgAccessResourceSetsText(as.ResourceSets), created,
+			orgRoleOrDash(as.Id), as.RoleName, orgRoleHolderText(as.SubjectType, as.SubjectName),
+			orgRoleOrDash(as.TeamName), orgRoleResourceSetsText(as.ResourceSets), created,
 		})
 	}
 	ctx.OutputTable(TableOutput{
@@ -247,12 +264,12 @@ func commandOrgRoleAssignmentDescribe(ctx *CommandContext, flags *cmd.OrgRoleAss
 	if as.CreatedAt != nil {
 		created = as.CreatedAt.UTC().Format(time.RFC3339)
 	}
-	ctx.Outputf("ID:            %s\n", orgAccessOrDash(as.Id))
+	ctx.Outputf("ID:            %s\n", orgRoleOrDash(as.Id))
 	ctx.Outputf("Role:          %s (%s)\n", as.RoleName, as.RoleId)
-	ctx.Outputf("Holder:        %s (%s)\n", orgAccessSubjectText(as.SubjectType, as.SubjectName), as.SubjectId)
-	ctx.Outputf("Team:          %s\n", orgAccessOrDash(as.TeamName))
-	ctx.Outputf("Resource sets: %s\n", orgAccessResourceSetsText(as.ResourceSets))
-	ctx.Outputf("Created by:    %s\n", orgAccessOrDash(as.CreatedBy))
+	ctx.Outputf("Holder:        %s (%s)\n", orgRoleHolderText(as.SubjectType, as.SubjectName), as.SubjectId)
+	ctx.Outputf("Team:          %s\n", orgRoleOrDash(as.TeamName))
+	ctx.Outputf("Resource sets: %s\n", orgRoleResourceSetsText(as.ResourceSets))
+	ctx.Outputf("Created by:    %s\n", orgRoleOrDash(as.CreatedBy))
 	ctx.Outputf("Created:       %s\n", created)
 	return nil
 }

@@ -6,18 +6,18 @@ import "github.com/basetenlabs/baseten-go/client/managementapi"
 var commandOrgRoleAssignment = Command{
 	Name:    "role-assignment",
 	Summary: "Manage role assignments (PRE-RELEASE)",
-	Description: orgAccessPrereleaseNotice +
+	Description: orgRolePrereleaseNotice +
 		"Give roles to users, service accounts and directory groups, for the organization or in a team. " +
-		orgAccessUnavailable,
+		orgRoleUnavailable,
 	Children: []Command{
 		{
 			Name:    "create",
 			Summary: "Assign a role (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice +
+			Description: orgRolePrereleaseNotice +
 				"Give a role to a user, service account or directory group. An organization " +
 				"role applies across the organization; a team role needs --team. Pass --resource-set " +
 				"to limit the role to what any of the sets selects; omit it for every resource where " +
-				"the role applies. " + orgAccessResourceSetUsage,
+				"the role applies. " + orgRoleResourceSetUsage,
 			Flags: OrgRoleAssignmentCreateFlags{},
 			Output: &CommandOutput[managementapi.AccessAssignment]{
 				TextDescription: "Prints the new assignment's ID on stdout, and \"Assigned role " +
@@ -48,7 +48,7 @@ var commandOrgRoleAssignment = Command{
 		{
 			Name:        "delete",
 			Summary:     "Remove a role assignment (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice + "Remove a role assignment by ID.",
+			Description: orgRolePrereleaseNotice + "Remove a role assignment by ID.",
 			Flags:       OrgRoleAssignmentRefFlags{},
 			Output: &CommandOutput[managementapi.AccessAssignmentTombstone]{
 				TextDescription: "Prints \"Removed role assignment <ID>\" to stderr; no stdout output.",
@@ -67,7 +67,7 @@ var commandOrgRoleAssignment = Command{
 		{
 			Name:        "describe",
 			Summary:     "Describe a role assignment (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice + "Describe a role assignment by ID.",
+			Description: orgRolePrereleaseNotice + "Describe a role assignment by ID.",
 			Flags:       OrgRoleAssignmentRefFlags{},
 			Output: &CommandOutput[managementapi.AccessAssignment]{
 				TextDescription: "Field-per-line summary of the assignment.",
@@ -86,7 +86,7 @@ var commandOrgRoleAssignment = Command{
 		{
 			Name:    "list",
 			Summary: "List role assignments (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice +
+			Description: orgRolePrereleaseNotice +
 				"List role assignments, optionally only one team's, one role's, or one " +
 				"holder's. Roles held through organization and team membership aren't listed; " +
 				"'baseten org user access' and 'baseten org service-account access' show them.",
@@ -119,41 +119,31 @@ type OrgRoleAssignmentList struct {
 	Items []managementapi.AccessAssignment `json:"items"`
 }
 
-// OrgRoleAssignmentHolderFlags picks who holds a role, exactly one of them.
-type OrgRoleAssignmentHolderFlags struct {
-	UserID             string `flag:"user-id" desc:"User ID." oneof:"subject"`
-	UserEmail          string `flag:"user-email" desc:"Email of the user." oneof:"subject"`
-	ServiceAccountID   string `flag:"service-account-id" desc:"Service account ID." oneof:"subject"`
-	ServiceAccountName string `flag:"service-account-name" desc:"Name of the service account." oneof:"subject"`
-	DirectoryGroupID   string `flag:"directory-group-id" desc:"Directory group ID." oneof:"subject"`
+type OrgRoleAssignmentCreateFlags struct {
+	CommandFlags
+
+	UserID             string   `flag:"user-id" desc:"User ID." oneof:"subject"`
+	UserEmail          string   `flag:"user-email" desc:"Email of the user." oneof:"subject"`
+	ServiceAccountID   string   `flag:"service-account-id" desc:"Service account ID." oneof:"subject"`
+	ServiceAccountName string   `flag:"service-account-name" desc:"Name of the service account." oneof:"subject"`
+	DirectoryGroupID   string   `flag:"directory-group-id" desc:"Directory group ID." oneof:"subject"`
+	RoleID             string   `flag:"role-id" desc:"Role to assign, by ID." oneof:"role-ref"`
+	RoleName           string   `flag:"role-name" desc:"Role to assign, by name." oneof:"role-ref"`
+	Team               string   `flag:"team" desc:"Team to assign a team role in, by name or ID. Omit for an organization role."`
+	ResourceSets       []string `flag:"resource-set" desc:"Limit the role to what this set selects, such as model:<model-id>,environment:staging. May be repeated."`
 }
 
-// OrgRoleAssignmentHolderFilterFlags optionally narrows a listing to one holder.
-type OrgRoleAssignmentHolderFilterFlags struct {
+type OrgRoleAssignmentListFlags struct {
+	CommandFlags
+
 	UserID             string `flag:"user-id" desc:"Only this user's. Mutually exclusive with the other holder flags."`
 	UserEmail          string `flag:"user-email" desc:"Only the user with this email's."`
 	ServiceAccountID   string `flag:"service-account-id" desc:"Only this service account's."`
 	ServiceAccountName string `flag:"service-account-name" desc:"Only the service account with this name's."`
 	DirectoryGroupID   string `flag:"directory-group-id" desc:"Only this directory group's."`
-}
-
-type OrgRoleAssignmentCreateFlags struct {
-	CommandFlags
-	OrgRoleAssignmentHolderFlags
-
-	RoleID       string   `flag:"role-id" desc:"Role to assign, by ID." oneof:"role-ref"`
-	RoleName     string   `flag:"role-name" desc:"Role to assign, by name." oneof:"role-ref"`
-	Team         string   `flag:"team" desc:"Team to assign a team role in, by name or ID. Omit for an organization role."`
-	ResourceSets []string `flag:"resource-set" desc:"Limit the role to what this set selects, such as model:<model-id>,environment:staging. May be repeated."`
-}
-
-type OrgRoleAssignmentListFlags struct {
-	CommandFlags
-	OrgRoleAssignmentHolderFilterFlags
-
-	Team     string `flag:"team" desc:"Only assignments in this team, by name or ID."`
-	RoleID   string `flag:"role-id" desc:"Only assignments of the role with this ID. Mutually exclusive with --role-name."`
-	RoleName string `flag:"role-name" desc:"Only assignments of the role with this name."`
+	Team               string `flag:"team" desc:"Only assignments in this team, by name or ID."`
+	RoleID             string `flag:"role-id" desc:"Only assignments of the role with this ID. Mutually exclusive with --role-name."`
+	RoleName           string `flag:"role-name" desc:"Only assignments of the role with this name."`
 }
 
 // OrgRoleAssignmentRefFlags picks one role assignment.

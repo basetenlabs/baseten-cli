@@ -139,12 +139,12 @@ var commandOrgServiceAccount = Command{
 		{
 			Name:    "access",
 			Summary: "Describe a service account's roles and access (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice +
+			Description: orgRolePrereleaseNotice +
 				"List every role a service account holds, through an assignment to it or through " +
-				"organization and team membership, and the permissions they grant. " + orgAccessUnavailable,
+				"organization and team membership, and the permissions they grant. " + orgRoleUnavailable,
 			Flags: OrgServiceAccountAccessFlags{},
 			Output: &CommandOutput[managementapi.EffectiveAccess]{
-				TextDescription: orgAccessDescribeText,
+				TextDescription: orgSubjectAccessText,
 				Examples: []CommandExample{
 					{
 						Description: "Describe a service account's access.",

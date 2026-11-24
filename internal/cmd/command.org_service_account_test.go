@@ -236,7 +236,7 @@ func Test_Org_ServiceAccount_Access_PicksServiceAccount(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := NewCommandHarness(t)
-			orgAccessRoutes(h)
+			orgRoleRoutes(h)
 			m := h.MockManagementAPI()
 			m.SetRoute("GET", tc.path, 200, access)
 

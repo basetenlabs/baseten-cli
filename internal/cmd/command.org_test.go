@@ -372,7 +372,7 @@ func Test_Org_Update_NothingToUpdate(t *testing.T) {
 
 func Test_Org_AccessCheck_InTeamWhereAResourceSetSelects(t *testing.T) {
 	h := NewCommandHarness(t)
-	orgAccessRoutes(h)
+	orgRoleRoutes(h)
 	m := h.MockManagementAPI()
 	resourceSet := []any{
 		map[string]any{"type": "MODEL", "identifier": "m1"},
@@ -410,4 +410,28 @@ func Test_Org_AccessCheck_ForTheOrganization(t *testing.T) {
 	h.Require.Equal(map[string]any{
 		"checks": []any{map[string]any{"permission": "access.role.write"}},
 	}, m.FindCall("POST", "/v1/access/check").BodyJSON(t))
+}
+
+func Test_Org_Permissions_ShowsWhichAreAssignable(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/access/permissions", 200, map[string]any{
+		"categories": []any{map[string]any{
+			"name": "model", "display_name": "Models", "description": "",
+			"resource_types": []any{"MODEL"}, "supports_environments": true,
+		}},
+		"permissions": []any{
+			map[string]any{
+				"name": "model.read", "category": "model", "display_name": "View models", "description": "",
+				"role_kinds": []any{"TEAM"}, "reserved": false, "available": true,
+			},
+			map[string]any{
+				"name": "access.role.write", "category": "access.role", "display_name": "Manage roles",
+				"description": "", "role_kinds": []any{"ORGANIZATION", "TEAM"}, "reserved": true, "available": true,
+			},
+		},
+	})
+
+	h.Require.NoError(h.Execute("org", "permissions"))
+	h.Require.Regexp(`model\.read\s+View models\s+team\s+true\s`, h.Stdout.String())
+	h.Require.Regexp(`access\.role\.write\s+Manage roles\s+organization,team\s+false\s`, h.Stdout.String())
 }

@@ -177,7 +177,7 @@ func Test_Org_User_Access_PicksUser(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := NewCommandHarness(t)
-			orgAccessRoutes(h)
+			orgRoleRoutes(h)
 			m := h.MockManagementAPI()
 			m.SetRoute("GET", tc.path, 200, access)
 
@@ -195,7 +195,7 @@ func Test_Org_User_Access_ListsWhereEachPermissionIsHeld(t *testing.T) {
 		"subject_type": "SERVICE_ACCOUNT",
 		"subject_id":   "sa1",
 		"subject_name": "ci-deployer",
-		"assignments":  []any{orgAccessAssignmentFixture()},
+		"assignments":  []any{orgRoleAssignmentFixture()},
 		"permissions": []any{map[string]any{
 			"name":         "model.deployment.write",
 			"display_name": "Push deployments",

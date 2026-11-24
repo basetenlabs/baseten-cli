@@ -26,7 +26,7 @@ func init() {
 	Register("org update", commandOrgUpdate)
 	Register("org regions", commandOrgRegions)
 	Register("org access-check", commandOrgAccessCheck)
-	Register("org permission list", commandOrgPermissionList)
+	Register("org permissions", commandOrgPermissions)
 }
 
 func commandOrgBillingUsage(ctx *CommandContext, flags *cmd.OrgBillingUsageFlags) error {
@@ -622,7 +622,7 @@ func commandOrgUpdate(ctx *CommandContext, flags *cmd.OrgUpdateFlags) error {
 func commandOrgAccessCheck(ctx *CommandContext, flags *cmd.OrgAccessCheckFlags) error {
 	var resourceSet *[]managementapi.AccessResourceRequest
 	if flags.ResourceSet != "" {
-		set, err := orgAccessParseResourceSet(flags.ResourceSet)
+		set, err := orgRoleParseResourceSet(flags.ResourceSet)
 		if err != nil {
 			return err
 		}
@@ -655,12 +655,13 @@ func commandOrgAccessCheck(ctx *CommandContext, flags *cmd.OrgAccessCheckFlags) 
 	}
 	rows := make([][]string, 0, len(results.Results))
 	for _, r := range results.Results {
-		rows = append(rows, []string{r.Permission, orgAccessResourceSetText(r.ResourceSet, "-"), strconv.FormatBool(r.Allowed)})
+		rows = append(rows, []string{r.Permission, orgRoleResourceSetText(r.ResourceSet, "-"), strconv.FormatBool(r.Allowed)})
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"PERMISSION", "RESOURCE SET", "ALLOWED"}, Rows: rows})
 	return nil
 }
-func commandOrgPermissionList(ctx *CommandContext, _ *cmd.OrgPermissionListFlags) error {
+
+func commandOrgPermissions(ctx *CommandContext, _ *cmd.OrgPermissionsFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err

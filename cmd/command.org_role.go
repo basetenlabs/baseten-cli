@@ -6,16 +6,16 @@ import "github.com/basetenlabs/baseten-go/client/managementapi"
 var commandOrgRole = Command{
 	Name:    "role",
 	Summary: "Manage custom roles (PRE-RELEASE)",
-	Description: orgAccessPrereleaseNotice +
-		"View built-in roles and manage the organization's custom roles. " + orgAccessUnavailable,
+	Description: orgRolePrereleaseNotice +
+		"View built-in roles and manage the organization's custom roles. " + orgRoleUnavailable,
 	Children: []Command{
 		{
 			Name:    "create",
 			Summary: "Create a custom role (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice +
+			Description: orgRolePrereleaseNotice +
 				"Create a custom role. An organization role is assigned across the " +
 				"organization; a team role is assigned in a team, any team unless --team names the " +
-				"only one it can be assigned in. Run 'baseten org permission list' for the " +
+				"only one it can be assigned in. Run 'baseten org permissions' for the " +
 				"permissions it can grant.",
 			Flags: OrgRoleCreateFlags{},
 			Output: &CommandOutput[managementapi.AccessRole]{
@@ -41,7 +41,7 @@ var commandOrgRole = Command{
 		{
 			Name:    "delete",
 			Summary: "Delete a custom role (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice +
+			Description: orgRolePrereleaseNotice +
 				"Delete a custom role. Fails while any assignment uses it; remove those " +
 				"first. Built-in roles can't be deleted.",
 			Flags: OrgRoleDeleteFlags{},
@@ -62,7 +62,7 @@ var commandOrgRole = Command{
 		{
 			Name:        "describe",
 			Summary:     "Describe a role (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice + "Describe a built-in or custom role by ID or name.",
+			Description: orgRolePrereleaseNotice + "Describe a built-in or custom role by ID or name.",
 			Flags:       OrgRoleDescribeFlags{},
 			Output: &CommandOutput[managementapi.AccessRole]{
 				TextDescription: "Field-per-line summary of the role, including every permission it grants itself.",
@@ -81,7 +81,7 @@ var commandOrgRole = Command{
 		{
 			Name:    "list",
 			Summary: "List roles (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice +
+			Description: orgRolePrereleaseNotice +
 				"List built-in roles and the organization's custom roles. Pass --team for " +
 				"only the roles that can be assigned in that team.",
 			Flags: OrgRoleListFlags{},
@@ -109,7 +109,7 @@ var commandOrgRole = Command{
 		{
 			Name:    "update",
 			Summary: "Update a custom role (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice +
+			Description: orgRolePrereleaseNotice +
 				"Change a custom role's name or description, add or remove permissions, " +
 				"and include or stop including built-in roles. Changes apply to every holder of the role.",
 			Flags: OrgRoleUpdateFlags{},

@@ -261,5 +261,5 @@ func commandOrgServiceAccountAccess(ctx *CommandContext, flags *cmd.OrgServiceAc
 	if err != nil {
 		return fmt.Errorf("describing access: %w", err)
 	}
-	return orgAccessDescribe(ctx, access)
+	return orgOutputSubjectAccess(ctx, access)
 }

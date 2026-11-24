@@ -14,10 +14,10 @@ var commandOrg = Command{
 		{
 			Name:    "access-check",
 			Summary: "Check whether you hold permissions (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice +
+			Description: orgRolePrereleaseNotice +
 				"Check whether you hold each --permission: in --team, where --resource-set selects, " +
 				"or across the organization when neither is given. To check whether you can create something " +
-				"in a team, check its write permission in the team. " + orgAccessResourceSetUsage + " " + orgAccessUnavailable,
+				"in a team, check its write permission in the team. " + orgRoleResourceSetUsage + " " + orgRoleUnavailable,
 			Flags: OrgAccessCheckFlags{},
 			Output: &CommandOutput[managementapi.CheckAccessResponse]{
 				TextDescription: "Table with columns: PERMISSION, RESOURCE SET (- when none is given), ALLOWED (true or false).",
@@ -192,34 +192,26 @@ var commandOrg = Command{
 			},
 		},
 		{
-			Name:    "permission",
-			Summary: "View the permissions roles can grant (PRE-RELEASE)",
-			Description: orgAccessPrereleaseNotice +
-				"View the permissions custom roles can grant. " + orgAccessUnavailable,
-			Children: []Command{
-				{
-					Name:    "list",
-					Summary: "List the permissions roles can grant (PRE-RELEASE)",
-					Description: orgAccessPrereleaseNotice +
-						"List the permissions roles can grant. A custom role can hold a permission " +
-						"only when it's assignable: available to the organization and not reserved for " +
-						"built-in admin roles.",
-					Flags: OrgPermissionListFlags{},
-					Output: &CommandOutput[managementapi.AccessPermissions]{
-						TextDescription: "Table with columns: NAME, LABEL, ROLE KINDS, ASSIGNABLE.",
-						Examples: []CommandExample{
-							{
-								Description: "List the permissions.",
-								Command:     "baseten org permission list",
-							},
-						},
-						JQExample: CommandExample{
-							Description: "Print the permissions a team role can hold.",
-							CommandLines: []string{
-								"baseten org permission list",
-								"--jq '.permissions[] | select(.role_kinds | index(\"TEAM\")) | .name'",
-							},
-						},
+			Name:    "permissions",
+			Summary: "List the permissions roles can grant (PRE-RELEASE)",
+			Description: orgRolePrereleaseNotice +
+				"List the permissions roles can grant. A custom role can hold a permission " +
+				"only when it's assignable: available to the organization and not reserved for " +
+				"built-in admin roles. " + orgRoleUnavailable,
+			Flags: OrgPermissionsFlags{},
+			Output: &CommandOutput[managementapi.AccessPermissions]{
+				TextDescription: "Table with columns: NAME, LABEL, ROLE KINDS, ASSIGNABLE.",
+				Examples: []CommandExample{
+					{
+						Description: "List the permissions.",
+						Command:     "baseten org permissions",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the permissions a team role can hold.",
+					CommandLines: []string{
+						"baseten org permissions",
+						"--jq '.permissions[] | select(.role_kinds | index(\"TEAM\")) | .name'",
 					},
 				},
 			},
@@ -406,13 +398,13 @@ var commandOrg = Command{
 				{
 					Name:    "access",
 					Summary: "Describe a user's roles and access (PRE-RELEASE)",
-					Description: orgAccessPrereleaseNotice +
+					Description: orgRolePrereleaseNotice +
 						"List every role a user holds, through an assignment to them or to a directory group " +
 						"they're in, or through organization and team membership, and the permissions they grant. " +
-						"Pass --user-id me for the authenticated user. " + orgAccessUnavailable,
+						"Pass --user-id me for the authenticated user. " + orgRoleUnavailable,
 					Flags: OrgUserAccessFlags{},
 					Output: &CommandOutput[managementapi.EffectiveAccess]{
-						TextDescription: orgAccessDescribeText,
+						TextDescription: orgSubjectAccessText,
 						Examples: []CommandExample{
 							{
 								Description: "Describe your own access.",
@@ -512,17 +504,17 @@ var commandOrg = Command{
 	},
 }
 
-const orgAccessPrereleaseNotice = "PRE-RELEASE: custom role commands are not GA yet. " +
+const orgRolePrereleaseNotice = "PRE-RELEASE: custom role commands are not GA yet. " +
 	"Their arguments, flags, and output may change.\n\n"
 
-const orgAccessUnavailable = "Organizations without custom roles get not found."
+const orgRoleUnavailable = "Organizations without custom roles get not found."
 
-// orgAccessResourceSetUsage explains the --resource-set syntax shared by role-assignment create and access-check.
-const orgAccessResourceSetUsage = "A resource set is TYPE:ID entries joined by commas, at most one resource and at most one " +
+// orgRoleResourceSetUsage explains the --resource-set syntax shared by role-assignment create and access-check.
+const orgRoleResourceSetUsage = "A resource set is TYPE:ID entries joined by commas, at most one resource and at most one " +
 	"environment, such as model:<model-id>,environment:production. An environment entry names the " +
 	"environment, such as staging."
 
-const orgAccessDescribeText = "The principal on the first line, then a table of roles with columns: ROLE, " +
+const orgSubjectAccessText = "The principal on the first line, then a table of roles with columns: ROLE, " +
 	"HELD VIA, TEAM, RESOURCE SETS, ASSIGNMENT, then a table of permissions with columns: " +
 	"PERMISSION, TEAM, RESOURCE SET. Prints \"Effective permissions aren't available yet.\" to " +
 	"stderr instead of the permissions until fine-grained authorization decides the " +
@@ -574,7 +566,7 @@ type OrgAccessCheckFlags struct {
 	ResourceSet string   `flag:"resource-set" desc:"Check where this set selects, such as model:<model-id>,environment:production."`
 }
 
-type OrgPermissionListFlags struct {
+type OrgPermissionsFlags struct {
 	CommandFlags
 }
 

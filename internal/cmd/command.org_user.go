@@ -124,29 +124,34 @@ func commandOrgUserAccess(ctx *CommandContext, flags *cmd.OrgUserAccessFlags) er
 	if err != nil {
 		return err
 	}
-	userID := flags.UserID
-	if flags.UserEmail != "" {
-		user, err := orgUserByEmail(ctx, cl.API(), flags.UserEmail)
-		if err != nil {
-			return err
+	var access *managementapi.EffectiveAccess
+	if flags.UserID == "me" {
+		access, err = cl.API().GetUsersMeAccess(ctx)
+	} else {
+		userID := flags.UserID
+		if flags.UserEmail != "" {
+			user, err := orgUserByEmail(ctx, cl.API(), flags.UserEmail)
+			if err != nil {
+				return err
+			}
+			userID = user.UserId
 		}
-		userID = user.UserId
+		access, err = cl.API().GetUsersAccess(ctx, userID)
 	}
-	access, err := cl.API().GetUsersAccess(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("describing access: %w", err)
 	}
-	return orgAccessDescribe(ctx, access)
+	return orgOutputSubjectAccess(ctx, access)
 }
 
-// orgAccessDescribe prints the roles and permissions a principal holds.
-func orgAccessDescribe(ctx *CommandContext, access *managementapi.EffectiveAccess) error {
+// orgOutputSubjectAccess prints the roles and permissions a principal holds.
+func orgOutputSubjectAccess(ctx *CommandContext, access *managementapi.EffectiveAccess) error {
 	if ctx.JSON {
 		access.Assignments = normalizeJSONSlice(access.Assignments)
 		ctx.OutputJSON(access)
 		return nil
 	}
-	ctx.Outputf("%s (%s)\n", orgAccessSubjectText(access.SubjectType, access.SubjectName), access.SubjectId)
+	ctx.Outputf("%s (%s)\n", orgRoleHolderText(access.SubjectType, access.SubjectName), access.SubjectId)
 	rows := make([][]string, 0, len(access.Assignments))
 	for _, held := range access.Assignments {
 		via := strings.ToLower(string(held.GrantedVia))
@@ -154,8 +159,8 @@ func orgAccessDescribe(ctx *CommandContext, access *managementapi.EffectiveAcces
 			via += " to group " + held.SubjectName
 		}
 		rows = append(rows, []string{
-			held.RoleName, via, orgAccessOrDash(held.TeamName), orgAccessResourceSetsText(held.ResourceSets),
-			orgAccessOrDash(held.Id),
+			held.RoleName, via, orgRoleOrDash(held.TeamName), orgRoleResourceSetsText(held.ResourceSets),
+			orgRoleOrDash(held.Id),
 		})
 	}
 	ctx.OutputTable(TableOutput{
@@ -173,7 +178,7 @@ func orgAccessDescribe(ctx *CommandContext, access *managementapi.EffectiveAcces
 			if grant.TeamName != nil {
 				team = *grant.TeamName
 			}
-			grants = append(grants, []string{permission.Name, team, orgAccessResourceSetText(grant.ResourceSet, "all")})
+			grants = append(grants, []string{permission.Name, team, orgRoleResourceSetText(grant.ResourceSet, "all")})
 		}
 	}
 	ctx.Outputf("\n")

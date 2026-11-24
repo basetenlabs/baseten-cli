@@ -8,7 +8,7 @@ import (
 	"github.com/basetenlabs/baseten-cli/cmd"
 )
 
-func orgAccessAssignmentFixture() map[string]any {
+func orgRoleAssignmentFixture() map[string]any {
 	return map[string]any{
 		"id":           "as1",
 		"granted_via":  "ASSIGNMENT",
@@ -33,9 +33,9 @@ func orgAccessAssignmentFixture() map[string]any {
 
 func Test_Org_RoleAssignment_Create_ServiceAccountWithResourceSets(t *testing.T) {
 	h := NewCommandHarness(t)
-	orgAccessRoutes(h)
+	orgRoleRoutes(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/access/assignments", 200, orgAccessAssignmentFixture())
+	m.SetRoute("POST", "/v1/access/assignments", 200, orgRoleAssignmentFixture())
 
 	h.Require.NoError(h.Execute("org", "role-assignment", "create", "--role-name", "deployer",
 		"--service-account-name", "ci-deployer", "--team", "Engineering",
@@ -59,9 +59,9 @@ func Test_Org_RoleAssignment_Create_ServiceAccountWithResourceSets(t *testing.T)
 
 func Test_Org_RoleAssignment_Create_OrganizationRoleForDirectoryGroup(t *testing.T) {
 	h := NewCommandHarness(t)
-	orgAccessRoutes(h)
+	orgRoleRoutes(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/access/assignments", 200, orgAccessAssignmentFixture())
+	m.SetRoute("POST", "/v1/access/assignments", 200, orgRoleAssignmentFixture())
 
 	h.Require.NoError(h.Execute("org", "role-assignment", "create", "--role-id", "role_9",
 		"--directory-group-id", "dg1"))
@@ -84,10 +84,10 @@ func Test_Org_RoleAssignment_Create_RefusesMalformedResourceSet(t *testing.T) {
 
 func Test_Org_RoleAssignment_List_Filters(t *testing.T) {
 	h := NewCommandHarness(t)
-	orgAccessRoutes(h)
+	orgRoleRoutes(h)
 	m := h.MockManagementAPI()
 	m.SetRoute("GET", "/v1/access/assignments", 200, map[string]any{
-		"items":      []any{orgAccessAssignmentFixture()},
+		"items":      []any{orgRoleAssignmentFixture()},
 		"pagination": map[string]any{"has_more": false},
 	})
 
@@ -116,9 +116,9 @@ func Test_Org_RoleAssignment_List_OneHolder(t *testing.T) {
 
 func Test_Org_RoleAssignment_Create_LooksUpRoleNameInTheTeam(t *testing.T) {
 	h := NewCommandHarness(t)
-	orgAccessRoutes(h)
+	orgRoleRoutes(h)
 	m := h.MockManagementAPI()
-	m.SetRoute("POST", "/v1/access/assignments", 200, orgAccessAssignmentFixture())
+	m.SetRoute("POST", "/v1/access/assignments", 200, orgRoleAssignmentFixture())
 
 	h.Require.NoError(h.Execute("org", "role-assignment", "create", "--role-name", "deployer",
 		"--user-id", "u1", "--team", "Engineering"))
@@ -136,4 +136,27 @@ func Test_Org_RoleAssignment_Create_RequiresAHolder(t *testing.T) {
 	h.Require.ErrorContains(h.Execute("org", "role-assignment", "create", "--role-id", "role_1",
 		"--user-id", ""), "pass one of --user-id")
 	h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
+}
+
+func Test_Org_RoleAssignment_Describe_ShowsHolderAndResourceSets(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/access/assignments/as1", 200, orgRoleAssignmentFixture())
+
+	h.Require.NoError(h.Execute("org", "role-assignment", "describe", "--id", "as1"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Role:          deployer (role_1)")
+	h.Require.Contains(out, "Holder:        service account ci-deployer (sa1)")
+	h.Require.Contains(out, "Team:          Engineering")
+	h.Require.Contains(out, "Resource sets: environment:production; environment:staging,model:m1")
+	h.Require.Contains(out, "Created:       2026-11-01T00:00:00Z")
+}
+
+func Test_Org_RoleAssignment_Delete_RemovesByID(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("DELETE", "/v1/access/assignments/as1", 200, map[string]any{"id": "as1"})
+
+	h.Require.NoError(h.Execute("org", "role-assignment", "delete", "--id", "as1"))
+	h.Require.NotNil(m.FindCall("DELETE", "/v1/access/assignments/as1"))
+	h.Require.Contains(h.Stderr.String(), "Removed role assignment as1")
 }
