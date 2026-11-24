@@ -83,6 +83,7 @@ var (
 var openCodeModelPackages = map[TargetAPI]string{
 	TargetAPIMessages:  "@ai-sdk/anthropic",
 	TargetAPIResponses: "@ai-sdk/openai",
+	TargetAPIGemini:    "@ai-sdk/google",
 }
 
 // openCodeV2Packages maps the AI SDK packages V1 names to OpenCode 2's
@@ -91,6 +92,7 @@ var openCodeV2Packages = map[string]string{
 	"@ai-sdk/openai-compatible": "@opencode/ai/providers/openai-compatible",
 	"@ai-sdk/anthropic":         "@opencode/ai/providers/anthropic",
 	"@ai-sdk/openai":            "@opencode/ai/providers/openai",
+	"@ai-sdk/google":            "@opencode/ai/providers/google",
 }
 
 var (
@@ -357,6 +359,10 @@ func openCodeServedModelFiles(intelligentRoutes map[string]string) ([]ownedFile,
 	return files, nil
 }
 
+func openCodeGeminiBaseURL(endpoint string) string {
+	return strings.TrimRight(endpoint, "/") + "/v1beta"
+}
+
 // openCodeV1Settings builds the original settings format.
 func openCodeV1Settings(routes []Route, s Selection, endpoint, bearer string) []setting {
 	models := map[string]any{}
@@ -385,7 +391,11 @@ func openCodeV1Settings(routes []Route, s Selection, endpoint, bearer string) []
 		// A model's npm overrides the provider's, so a route is called with the
 		// API its supported formats advertise, at the same base URL.
 		if npm, ok := openCodeModelPackages[r.TargetAPI]; ok {
-			model["provider"] = map[string]any{"npm": npm}
+			provider := map[string]any{"npm": npm}
+			if r.TargetAPI == TargetAPIGemini {
+				provider["api"] = openCodeGeminiBaseURL(endpoint)
+			}
+			model["provider"] = provider
 		}
 		models[r.Name] = model
 	}
@@ -395,8 +405,8 @@ func openCodeV1Settings(routes []Route, s Selection, endpoint, bearer string) []
 		desired(openCodeV1ProviderPath, map[string]any{
 			"npm":  "@ai-sdk/openai-compatible",
 			"name": "Baseten",
+			"api":  strings.TrimRight(endpoint, "/") + "/v1",
 			"options": map[string]any{
-				"baseURL": strings.TrimRight(endpoint, "/") + "/v1",
 				"apiKey":  "",
 				"headers": map[string]any{"Authorization": bearer, clientHeader: OpenCode},
 			},
@@ -430,6 +440,9 @@ func openCodeV2Settings(routes []Route, s Selection, endpoint, bearer string) []
 		}
 		if npm, ok := openCodeModelPackages[r.TargetAPI]; ok {
 			model["package"] = openCodeV2Packages[npm]
+			if r.TargetAPI == TargetAPIGemini {
+				model["settings"] = map[string]any{"baseURL": openCodeGeminiBaseURL(endpoint)}
+			}
 		}
 		models[r.Name] = model
 	}
@@ -452,6 +465,13 @@ func openCodeVariantSettings(r Route, level string) map[string]any {
 			return nil
 		}
 		return map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}, "effort": level}
+	}
+	if r.TargetAPI == TargetAPIGemini {
+		// NB(nikhil): Gemini doesn't support thinking level none, so we explicitly set the budget to 0.
+		if level == "none" {
+			return map[string]any{"thinkingConfig": map[string]any{"includeThoughts": false, "thinkingBudget": 0}}
+		}
+		return map[string]any{"thinkingConfig": map[string]any{"includeThoughts": true, "thinkingLevel": level}}
 	}
 	return map[string]any{"reasoningEffort": level}
 }

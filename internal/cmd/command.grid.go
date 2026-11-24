@@ -367,7 +367,7 @@ func gridPlanHarnessSetup(ctx *CommandContext, api *managementapi.Client, team *
 			targetHelper = &harness.Helper{Path: helper, Profile: target.record.Profile}
 		}
 		noOpenCodeServedModel := target.record.NoOpenCodeServedModel || !harness.HasOpenCode2(target.detection)
-		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, Installs: target.detection.Installs, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel, GitContext: target.record.GitContext, KeepChatGPTLogin: target.record.KeepChatGPTLogin})
+		current, err := target.Prepare(target.detection.Path, callable, harness.PrepareOptions{Selection: selection.Selection, Endpoint: endpoint, Helper: targetHelper, CLI: helper, Installs: target.detection.Installs, NoClaudeServedModel: target.record.NoClaudeServedModel, NoPiServedModel: target.record.NoPiServedModel, NoOpenCodeServedModel: noOpenCodeServedModel, GitContext: target.record.GitContext, ClaudeExtendedPromptCache: target.record.ClaudeExtendedPromptCache, KeepChatGPTLogin: target.record.KeepChatGPTLogin})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Name(), err)
 		}
@@ -460,14 +460,15 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	targets := make([]gridHarnessTarget, len(selected))
 	for i := range selected {
 		record := harness.Record{
-			KeyName:               f.KeyName,
-			Profile:               session.ProfileName(),
-			CredentialSource:      credentialSource,
-			NoClaudeServedModel:   noServedModel(harness.Claude),
-			NoPiServedModel:       noServedModel(harness.Pi),
-			NoOpenCodeServedModel: noServedModel(harness.OpenCode),
-			GitContext:            f.GitContext,
-			KeepChatGPTLogin:      keepChatGPT && selected[i].Name() == harness.Codex,
+			KeyName:                   f.KeyName,
+			Profile:                   session.ProfileName(),
+			CredentialSource:          credentialSource,
+			NoClaudeServedModel:       noServedModel(harness.Claude),
+			NoPiServedModel:           noServedModel(harness.Pi),
+			NoOpenCodeServedModel:     noServedModel(harness.OpenCode),
+			GitContext:                f.GitContext,
+			ClaudeExtendedPromptCache: f.ClaudeExtendedPromptCache && selected[i].Name() == harness.Claude,
+			KeepChatGPTLogin:          keepChatGPT && selected[i].Name() == harness.Codex,
 		}
 		if credentialSource == harness.CredentialSourceHelper && !selected[i].SupportsHelper() {
 			// A harness that cannot run the helper keeps a key.
@@ -694,6 +695,7 @@ func commandGridSync(ctx *CommandContext, f *cmd.GridSyncFlags) error {
 		{"hide-served-model-indicator", harness.Pi, func(r *harness.Record) { r.NoPiServedModel = f.HideServedModel }},
 		{"hide-served-model-indicator", harness.OpenCode, func(r *harness.Record) { r.NoOpenCodeServedModel = f.HideServedModel }},
 		{"git-context", "", func(r *harness.Record) { r.GitContext = f.GitContext }},
+		{"claude-extended-prompt-cache", harness.Claude, func(r *harness.Record) { r.ClaudeExtendedPromptCache = f.ClaudeExtendedPromptCache }},
 	}
 	if err := gridRequireGit(ctx, f.GitContext); err != nil {
 		return err
@@ -1020,8 +1022,10 @@ func gridAskKeepChatGPT(ctx *CommandContext) (bool, error) {
 
 const gridHarnessCodexDaemonRestartHint = "Run `codex app-server daemon restart` when you're done so Codex loads the changes."
 
+const gridHarnessCodexDaemonRestartNotice = "Changes are applied on the next daemon restart."
+
 // gridHarnessRestartCodexDaemon restarts the codex app-server daemon after setup,
-// asking first when sessions are attached. It reports false when a restart is
+// asking first when the run is interactive. It reports false when a restart is
 // still needed: the prompt was declined or the restart failed.
 func gridHarnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) bool {
 	socket := harness.CodexDaemonSocket(ctx, ctx.Execer(), dir)
@@ -1035,13 +1039,22 @@ func gridHarnessRestartCodexDaemon(ctx *CommandContext, dir string, yes bool) bo
 	case clients > 0:
 		ctx.Warnf("%d Codex session(s) are running; restarting Codex interrupts their current turn (resume with `codex resume`)", clients)
 	}
-	if (err != nil || clients > 0) && !yes {
-		if ctx.ConfirmYesNo("Restart Codex now?") != nil {
-			ctx.LogLine(gridHarnessCodexDaemonRestartHint)
+	if !yes && ctx.IsInteractive() {
+		if ctx.ConfirmYesNo("Restart Codex now? This closes all open Codex sessions and stops any running turns.") != nil {
+			ctx.LogLine(gridHarnessCodexDaemonRestartNotice)
 			return false
 		}
 	}
+	restore, err := harness.CodexSkipShutdownGrace(dir)
+	if err != nil {
+		ctx.Warnf("could not skip the codex app-server daemon's shutdown grace: %v", err)
+	}
 	pid, err := harness.RestartCodexDaemon(ctx, ctx.Execer(), dir)
+	if restore != nil {
+		if err := restore(); err != nil {
+			ctx.Warnf("could not restore the codex app-server daemon's settings: %v", err)
+		}
+	}
 	if err != nil {
 		ctx.Warnf("could not restart the codex app-server daemon: %v", err)
 		ctx.LogLine(gridHarnessCodexDaemonRestartHint)
@@ -1629,7 +1642,7 @@ func commandGridRouteClassifierList(ctx *CommandContext, f *cmd.GridRouteClassif
 			routeClassifier.Id,
 			routeClassifier.DisplayName,
 			gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs),
-			strings.Join(routeClassifier.DecidableModels, ", "),
+			strings.Join(routeClassifier.DecidableCanonicalModelIds, ", "),
 		})
 	}
 	ctx.OutputTable(TableOutput{Headers: []string{"ID", "NAME", "TRADEOFFS", "DECIDABLE MODELS"}, Rows: rows})
@@ -1655,7 +1668,7 @@ func commandGridRouteClassifierDescribe(ctx *CommandContext, f *cmd.GridRouteCla
 	ctx.Outputf("ID:               %s\n", routeClassifier.Id)
 	ctx.Outputf("Name:             %s\n", routeClassifier.DisplayName)
 	ctx.Outputf("Tradeoffs:        %s\n", gridRouteClassifierTradeoffsText(routeClassifier.SupportedTradeoffs))
-	ctx.Outputf("Decidable Models: %s\n", strings.Join(routeClassifier.DecidableModels, ", "))
+	ctx.Outputf("Decidable Models: %s\n", strings.Join(routeClassifier.DecidableCanonicalModelIds, ", "))
 	return nil
 }
 

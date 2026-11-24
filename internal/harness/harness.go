@@ -115,12 +115,13 @@ type PrepareOptions struct {
 	CLI       string
 	// Installs are the copies of the harness Detect found, for a harness that
 	// configures each kind of install in its own files.
-	Installs              []Install
-	NoClaudeServedModel   bool
-	NoPiServedModel       bool
-	NoOpenCodeServedModel bool
-	GitContext            bool
-	KeepChatGPTLogin      bool
+	Installs                  []Install
+	NoClaudeServedModel       bool
+	NoPiServedModel           bool
+	NoOpenCodeServedModel     bool
+	GitContext                bool
+	ClaudeExtendedPromptCache bool
+	KeepChatGPTLogin          bool
 }
 
 // Helper is the credential command a harness runs instead of storing a key:
@@ -161,12 +162,14 @@ const (
 	TargetAPIMessages        TargetAPI = "messages"
 	TargetAPIResponses       TargetAPI = "responses"
 	TargetAPIChatCompletions TargetAPI = "chat-completions"
+	TargetAPIGemini          TargetAPI = "gemini"
 )
 
 var targetAPIsByFormat = map[managementapi.GridRouteMetadataApiFormats]TargetAPI{
 	managementapi.GridRouteMetadataApiFormats_messages:         TargetAPIMessages,
 	managementapi.GridRouteMetadataApiFormats_responses:        TargetAPIResponses,
 	managementapi.GridRouteMetadataApiFormats_chat_completions: TargetAPIChatCompletions,
+	managementapi.GridRouteMetadataApiFormats_gemini:           TargetAPIGemini,
 }
 
 type RouteAliasKind string

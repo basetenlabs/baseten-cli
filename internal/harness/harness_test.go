@@ -86,7 +86,7 @@ func TestNewRouteMarksIntelligentRoutes(t *testing.T) {
 
 func TestNewRouteTakesTargetAPIFromFirstSupportedAPIFormat(t *testing.T) {
 	tools, ctx, out := true, 128000, 4096
-	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI}
+	providers := Providers{"conn-anthropic": ProviderAnthropic, "conn-openai": ProviderOpenAI, "conn-vertex": ProviderVertex}
 	for _, tc := range []struct {
 		name                string
 		target              string
@@ -100,6 +100,7 @@ func TestNewRouteTakesTargetAPIFromFirstSupportedAPIFormat(t *testing.T) {
 		{"model api in the server's order", `{"type": "BASETEN_MODEL_API", "model": "deepseek"}`, []managementapi.GridRouteMetadataApiFormats{"messages", "chat_completions"}, TargetAPIMessages, true, false, ""},
 		{"responses only", `{"type": "CONNECTION", "connection_id": "conn-openai", "model": "gpt"}`, []managementapi.GridRouteMetadataApiFormats{"responses"}, TargetAPIResponses, false, true, ""},
 		{"messages only", `{"type": "CONNECTION", "connection_id": "conn-anthropic", "model": "claude"}`, []managementapi.GridRouteMetadataApiFormats{"messages"}, TargetAPIMessages, true, false, ""},
+		{"gemini only", `{"type": "CONNECTION", "connection_id": "conn-vertex", "model": "google/gemini"}`, []managementapi.GridRouteMetadataApiFormats{managementapi.GridRouteMetadataApiFormats_gemini}, TargetAPIGemini, false, false, ""},
 		{"empty", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{}, "", false, false, `route "acme/route" has no supported API formats`},
 		{"unknown first", `{"type": "INTELLIGENT"}`, []managementapi.GridRouteMetadataApiFormats{"future_format", "messages"}, "", false, false, `route "acme/route" prefers unknown API format "future_format"`},
 	} {
@@ -551,6 +552,58 @@ func TestTeardownUnconfiguredIsNoop(t *testing.T) {
 	}
 }
 
+func TestTeardownPreservesUserCacheTTLs(t *testing.T) {
+	h := claudeHarness{}
+	t.Run("preserves user values", func(t *testing.T) {
+		path := settingsPath(t, h)
+		save(t, path, map[string]any{"env": map[string]any{
+			claudeMarker:                            "1",
+			"CLAUDE_CODE_PROMPT_CACHE_TTL":          "5m",
+			"CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "1h",
+		}})
+		teardown(t, h, path)
+		d := load(t, path)
+		require.Equal(t, "5m", get(d, []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}).Data)
+		require.Equal(t, "1h", get(d, []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"}).Data)
+	})
+	t.Run("removes grid values", func(t *testing.T) {
+		path := settingsPath(t, h)
+		save(t, path, map[string]any{"env": map[string]any{
+			claudeMarker:                            "1",
+			"CLAUDE_CODE_PROMPT_CACHE_TTL":          "1h",
+			"CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "5m",
+		}})
+		teardown(t, h, path)
+		d := load(t, path)
+		require.False(t, get(d, []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}).Exists)
+		require.False(t, get(d, []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"}).Exists)
+	})
+}
+
+func TestClaudeExtendedPromptCacheIsOptIn(t *testing.T) {
+	h := claudeHarness{}
+	path := settingsPath(t, h)
+	ttls := func() []value {
+		d := load(t, path)
+		return []value{get(d, []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}), get(d, []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"})}
+	}
+	plans, err := h.Prepare(path, testRoutes(), PrepareOptions{Endpoint: testEndpoint, ClaudeExtendedPromptCache: true})
+	require.NoError(t, err)
+	require.NoError(t, ApplyPlans(plans, testToken))
+	require.Equal(t, []value{{Exists: true, Data: "1h"}, {Exists: true, Data: "5m"}}, ttls())
+
+	setup(t, h, path, testRoutes(), Selection{})
+	require.Equal(t, []value{{}, {}}, ttls(), "a refresh without the option removes Grid's values")
+
+	d := load(t, path)
+	env := d["env"].(map[string]any)
+	env["CLAUDE_CODE_PROMPT_CACHE_TTL"] = "5m"
+	env["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"] = "1h"
+	save(t, path, d)
+	setup(t, h, path, testRoutes(), Selection{})
+	require.Equal(t, []value{{Exists: true, Data: "5m"}, {Exists: true, Data: "1h"}}, ttls(), "a refresh without the option keeps the user's values")
+}
+
 func TestTeardownPreservesAnotherProviderSelection(t *testing.T) {
 	for _, h := range []Harness{codexHarness{}, openCodeHarness{}} {
 		t.Run(h.Name(), func(t *testing.T) {
@@ -929,22 +982,32 @@ func TestOpenCodeJSONC(t *testing.T) {
 
 func TestOpenCodeFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, openCodeHarness{})
-	routes := testRoutes()
+	routes := append(testRoutes(), testRoute("acme/gemini", "Gemini"))
 	routes[0].TargetAPI = TargetAPIMessages
 	routes[1].TargetAPI = TargetAPIResponses
 	routes[2].TargetAPI = TargetAPIChatCompletions
 	routes[3].TargetAPI, routes[3].UpstreamModel = TargetAPIMessages, "claude-opus-4-5"
+	routes[4].TargetAPI = TargetAPIGemini
 	for i := range routes {
 		routes[i].ReasoningLevels = []string{"none", "high"}
 	}
 	setup(t, openCodeHarness{}, path, routes, Selection{})
 	data := load(t, path)
-	require.Equal(t, "@ai-sdk/openai-compatible", get(data, []string{"provider", providerID, "npm"}).Data)
+	provider := get(data, openCodeV1ProviderPath).Data.(map[string]any)
+	require.Equal(t, "@ai-sdk/openai-compatible", provider["npm"])
+	require.Equal(t, testEndpoint+"/v1", provider["api"])
+	require.NotContains(t, provider["options"], "baseURL")
 	require.Equal(t, "Bearer "+testToken, get(data, openCodeV1BearerPath).Data, "@ai-sdk/anthropic sends apiKey only as x-api-key")
 	models := get(data, []string{"provider", providerID, "models"}).Data.(map[string]any)
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/anthropic"}, models["acme/primary"].(map[string]any)["provider"])
 	require.Equal(t, map[string]any{"npm": "@ai-sdk/openai"}, models["acme/background"].(map[string]any)["provider"])
 	require.NotContains(t, models["acme/subagent"], "provider")
+	gemini := models["acme/gemini"].(map[string]any)
+	require.Equal(t, map[string]any{"npm": "@ai-sdk/google", "api": testEndpoint + "/v1beta"}, gemini["provider"])
+	require.Equal(t, map[string]any{
+		"none": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": false, "thinkingBudget": json.Number("0")}},
+		"high": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": true, "thinkingLevel": "high"}},
+	}, gemini["variants"])
 	require.Equal(t, map[string]any{"high": map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}, "effort": "high"}}, models["acme/primary"].(map[string]any)["variants"])
 	for _, name := range []string{"acme/background", "acme/subagent", "acme/fallback"} {
 		require.Equal(t, map[string]any{"none": map[string]any{"reasoningEffort": "none"}, "high": map[string]any{"reasoningEffort": "high"}}, models[name].(map[string]any)["variants"], name)
@@ -1000,12 +1063,14 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	path := settingsPath(t, openCodeHarness{})
 	save(t, path, openCodeV2File())
 	cacheRead := 0.3
-	routes := testRoutes()
+	routes := append(testRoutes(), testRoute("acme/gemini", "Gemini"))
 	routes[0].TargetAPI = TargetAPIMessages
 	routes[0].ReasoningLevels = []string{"none", "low", "max"}
 	routes[0].Cost = &Cost{Input: 3, Output: 15, CacheRead: &cacheRead, LongContext: &Cost{Input: 6, Output: 22.5}}
 	routes[1].TargetAPI = TargetAPIResponses
 	routes[3].ReasoningLevels = []string{"none"}
+	routes[4].TargetAPI = TargetAPIGemini
+	routes[4].ReasoningLevels = []string{"none", "low", "high"}
 	plans := setup(t, openCodeHarness{}, path, routes, Selection{Subagent: "acme/subagent"})
 	require.Equal(t, []string{"model"}, plans[0].Replaced)
 	d := load(t, path)
@@ -1029,7 +1094,7 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	require.NotContains(t, provider, "options")
 
 	models := provider["models"].(map[string]any)
-	require.Len(t, models, 5)
+	require.Len(t, models, 6)
 	primary := models["acme/primary"].(map[string]any)
 	require.Equal(t, map[string]any{
 		"name":         "Primary",
@@ -1046,6 +1111,14 @@ func TestOpenCodeV2Settings(t *testing.T) {
 		},
 	}, primary)
 	require.Equal(t, "@opencode/ai/providers/openai", models["acme/background"].(map[string]any)["package"])
+	gemini := models["acme/gemini"].(map[string]any)
+	require.Equal(t, "@opencode/ai/providers/google", gemini["package"])
+	require.Equal(t, map[string]any{"baseURL": testEndpoint + "/v1beta"}, gemini["settings"])
+	require.Equal(t, []any{
+		map[string]any{"id": "none", "settings": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": false, "thinkingBudget": json.Number("0")}}},
+		map[string]any{"id": "low", "settings": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": true, "thinkingLevel": "low"}}},
+		map[string]any{"id": "high", "settings": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": true, "thinkingLevel": "high"}}},
+	}, gemini["variants"])
 	subagent := models["acme/subagent"].(map[string]any)
 	require.NotContains(t, subagent, "package")
 	require.NotContains(t, subagent, "cost")
@@ -1060,7 +1133,7 @@ func TestOpenCodeV2Settings(t *testing.T) {
 	require.Equal(t, StateConfigured, status.State)
 	require.Equal(t, "acme/primary", status.DefaultRoute)
 	require.Equal(t, defaultBackgroundRoute, status.BackgroundRoute)
-	require.Len(t, status.Routes, 4)
+	require.Len(t, status.Routes, 5)
 	require.Contains(t, status.Managed, "providers."+providerID)
 	require.Contains(t, status.Managed, "agents.title.model")
 
@@ -1197,11 +1270,12 @@ func TestOpenCodeDesktopDetection(t *testing.T) {
 
 func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	path := settingsPath(t, piHarness{})
-	routes := testRoutes()
+	routes := append(testRoutes(), testRoute("acme/gemini", "Gemini"))
 	routes[0].TargetAPI = TargetAPIMessages
 	routes[1].TargetAPI = TargetAPIResponses
 	routes[2].TargetAPI = TargetAPIChatCompletions
 	routes[3].TargetAPI, routes[3].IntelligentRoute = TargetAPIMessages, true
+	routes[4].TargetAPI = TargetAPIGemini
 	setup(t, piHarness{}, path, routes, Selection{})
 	provider := get(load(t, path), piProviderPath).Data.(map[string]any)
 	require.Equal(t, "openai-completions", provider["api"])
@@ -1220,6 +1294,9 @@ func TestPiFirstPartyRoutesUseNativeAPIs(t *testing.T) {
 	require.Equal(t, "openai-responses", models["acme/background"]["api"])
 	require.NotContains(t, models["acme/background"], "baseUrl")
 	require.NotContains(t, models["acme/background"], "compat")
+	require.Equal(t, "google-generative-ai", models["acme/gemini"]["api"])
+	require.Equal(t, testEndpoint+"/v1beta", models["acme/gemini"]["baseUrl"])
+	require.NotContains(t, models["acme/gemini"], "compat")
 	require.NotContains(t, models["acme/subagent"], "api")
 	require.Equal(t, "max_tokens", get(models["acme/subagent"], []string{"compat", "maxTokensField"}).Data)
 }
@@ -1334,6 +1411,8 @@ func TestClientHeaderNamesHarness(t *testing.T) {
 				require.Equal(t, "1", get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Data)
 				require.Equal(t, "true", get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Data)
 				require.Equal(t, "0", get(load(t, path), []string{"env", "CLAUDE_CODE_TETHER_LIVE"}).Data)
+				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_PROMPT_CACHE_TTL"}).Exists, "setup leaves the prompt cache TTL key unset by default")
+				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"}).Exists, "setup leaves the subagent prompt cache TTL key unset by default")
 				teardown(t, h, path)
 				require.False(t, get(load(t, path), []string{"env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"}).Exists, "teardown removes the gateway hint key")
 				require.False(t, get(load(t, path), []string{"env", "ENABLE_TOOL_SEARCH"}).Exists, "teardown removes the tool search key")
@@ -1709,4 +1788,59 @@ func TestCodexClearCloudConfig(t *testing.T) {
 	require.NoError(t, CodexClearCloudConfig(dir))
 	require.NoError(t, os.MkdirAll(filepath.Join(cache, "child"), 0o700))
 	require.Error(t, CodexClearCloudConfig(dir))
+}
+
+func TestCodexSkipShutdownGrace(t *testing.T) {
+	settings := func(t *testing.T) (string, string) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "app-server-daemon", "settings.json")
+		require.NoError(t, os.Mkdir(filepath.Dir(path), 0o700))
+		return dir, path
+	}
+	t.Run("missing", func(t *testing.T) {
+		dir, path := settings(t)
+		restore, err := CodexSkipShutdownGrace(dir)
+		require.NoError(t, err)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"shutdownGraceSeconds":0}`, string(data))
+		require.NoError(t, restore())
+		require.NoFileExists(t, path)
+		require.NoError(t, restore())
+	})
+	t.Run("existing", func(t *testing.T) {
+		dir, path := settings(t)
+		original := "{\n  \"shutdownGraceSeconds\": 30,\n  \"remoteControlEnabled\": true,\n  \"extra\": {\"ports\": [1, 2]}\n}\n"
+		require.NoError(t, os.WriteFile(path, []byte(original), 0o600))
+		restore, err := CodexSkipShutdownGrace(dir)
+		require.NoError(t, err)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"shutdownGraceSeconds":0,"remoteControlEnabled":true,"extra":{"ports":[1,2]}}`, string(data))
+		require.NoError(t, restore())
+		data, err = os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, original, string(data))
+	})
+	for name, original := range map[string]string{
+		"malformed": `{"shutdownGraceSeconds":`,
+		"array":     `[]`,
+		"null":      `null`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, path := settings(t)
+			require.NoError(t, os.WriteFile(path, []byte(original), 0o600))
+			_, err := CodexSkipShutdownGrace(dir)
+			require.ErrorContains(t, err, "is not a JSON object")
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, original, string(data))
+		})
+	}
+	t.Run("no daemon directory", func(t *testing.T) {
+		dir := t.TempDir()
+		_, err := CodexSkipShutdownGrace(dir)
+		require.ErrorIs(t, err, os.ErrNotExist)
+		require.NoDirExists(t, filepath.Join(dir, "app-server-daemon"))
+	})
 }

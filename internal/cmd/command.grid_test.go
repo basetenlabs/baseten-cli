@@ -3045,13 +3045,14 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	t.Cleanup(gateway.Close)
 	h, api := gridAPI(t, gateway.URL)
 	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	const auto, primary = "Auto (Baseten Internal Dogfooding)", "Primary"
 	route := func(id, name, display string, metadata, target map[string]any) map[string]any {
 		return map[string]any{"team_id": "team-a", "team_name": "Engineering", "id": id, "name": name, "display_name": display, "invoke_url": gateway.URL, "metadata": metadata, "target": target}
 	}
 	api.SetRoute("GET", "/v1/grid/routes", 200, map[string]any{
 		"items": []any{
-			route("route-auto", "acme/auto", "Auto (Baseten Internal Dogfooding)", messagesFirstRouteMetadata, map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "display_name": "General"}, "tradeoff": "balanced"}),
-			route("route-primary", "acme/primary", "Primary", harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
+			route("route-auto", "acme/auto", auto, messagesFirstRouteMetadata, map[string]any{"type": "INTELLIGENT", "route_classifier": map[string]any{"id": "general-v1", "display_name": "General"}, "tradeoff": "balanced"}),
+			route("route-primary", "acme/primary", primary, harnessRouteMetadata, map[string]any{"type": "BASETEN_MODEL_API", "model": "deepseek"}),
 		},
 		"pagination": map[string]any{"has_more": false},
 	})
@@ -3066,7 +3067,7 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(work) })
 	h.Require.NoError(os.WriteFile(filepath.Join(work, "notes.txt"), []byte("hello\n"), 0o600))
 	tmp := t.TempDir()
-	toast := []string{"Served model", "Auto (Baseten Internal Dogfooding)", "→ qwen/Qwen3.6-Coder"}
+	toast := []string{"Served model", auto, "→ qwen/Qwen3.6-Coder"}
 	toasted := func(screen string) bool {
 		return !slices.ContainsFunc(toast, func(part string) bool { return !strings.Contains(screen, part) })
 	}
@@ -3112,7 +3113,26 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			_ = terminal.Close()
 		})
 	}
-	tui := func(env ...string) (string, []string) {
+	squash := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	await := func(ctx context.Context, shown func() string, text string) bool {
+		for !strings.Contains(squash(shown()), squash(text)) {
+			if ctx.Err() != nil {
+				return false
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return true
+	}
+	submit := func(ctx context.Context, terminal *os.File, shown func() string, model, prompt string) {
+		t.Helper()
+		h.Require.True(await(ctx, shown, model), "OpenCode selected the configured model\n%s", shown())
+		_, err := terminal.WriteString(prompt)
+		h.Require.NoError(err)
+		h.Require.True(await(ctx, shown, prompt), "OpenCode showed the typed prompt\n%s", shown())
+		_, err = terminal.WriteString("\r")
+		h.Require.NoError(err)
+	}
+	tui := func(model string, env ...string) (string, []string) {
 		t.Helper()
 		started := time.Now()
 		mu.Lock()
@@ -3120,7 +3140,9 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 		mu.Unlock()
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 		defer cancel()
-		_, shown, stop := launch(ctx, []string{"--standalone", "--prompt", "Read notes.txt and reply."}, env...)
+		terminal, shown, stop := launch(ctx, []string{"--standalone"}, env...)
+		defer stop()
+		submit(ctx, terminal, shown, model, "Read notes.txt and reply.")
 		settled := func() bool {
 			mu.Lock()
 			defer mu.Unlock()
@@ -3137,14 +3159,14 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	}
 
 	setup("route-auto")
-	screen, models := tui()
+	screen, models := tui(auto)
 	h.Require.NotContains(screen, "zai-org/GLM-5.3-Flash", "the intermediate tool step does not toast")
 	for _, part := range toast {
 		h.Require.Contains(screen, part, "the TUI toasts the router route and the model that served the final response")
 	}
 	h.Require.Equal([]string{"acme/auto", "acme/auto"}, slices.DeleteFunc(models, func(model string) bool { return model != "acme/auto" }))
 
-	screen, models = tui("BASETEN_OPENCODE_SERVED_MODEL=0")
+	screen, models = tui(auto, "BASETEN_OPENCODE_SERVED_MODEL=0")
 	h.Require.NotContains(screen, "Served model", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "BASETEN_OPENCODE_SERVED_MODEL=0 turns the display off")
 	h.Require.Contains(models, "acme/auto")
@@ -3162,14 +3184,10 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	terminal, shown, stop := launch(ctx, []string{"--prompt", "Start quietly from notes.txt."})
+	terminal, shown, stop := launch(ctx, nil)
 	defer stop()
-	await := func(text string) {
-		for ctx.Err() == nil && !strings.Contains(shown(), text) {
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
-	await("Served reply.")
+	submit(ctx, terminal, shown, auto, "Start quietly from notes.txt.")
+	await(ctx, shown, "Served reply.")
 	other := exec.CommandContext(ctx, binary, "run", "Reply in another session.")
 	other.Dir = work
 	other.Env = environment()
@@ -3179,17 +3197,13 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	h.Require.NotContains(shown(), "zai-org/GLM-5.3-Flash", "a run whose final response names no served model does not toast an earlier step's")
 	h.Require.NotContains(shown(), "moonshotai/Kimi-K2.6", "a response in another session on the same background server does not toast")
-	_, err = terminal.WriteString("Reply in this session again.")
-	h.Require.NoError(err)
-	await("Reply in this session again.")
-	_, err = terminal.WriteString("\r")
-	h.Require.NoError(err)
-	await("→ deepseek-ai/DeepSeek-V4.2")
+	submit(ctx, terminal, shown, auto, "Reply in this session again.")
+	await(ctx, shown, "→ deepseek-ai/DeepSeek-V4.2")
 	h.Require.Contains(shown(), "→ deepseek-ai/DeepSeek-V4.2", "a response in the session on screen toasts")
 	stop()
 
 	setup("route-primary")
-	screen, models = tui()
+	screen, models = tui(primary)
 	h.Require.NotContains(screen, "Served model", "a route that is not a router shows nothing")
 	h.Require.NotContains(screen, "qwen/Qwen3.6-Coder", "a route that is not a router shows nothing")
 	h.Require.Contains(models, "acme/primary")
@@ -3297,6 +3311,35 @@ func Test_Grid_Setup_GitContext(t *testing.T) {
 	h.Require.NoError(h.Execute(setup...))
 	h.Require.Equal([]bool{false, false, false}, installed(), "setup without the flag removes them")
 	h.Require.NotContains(record(), "git_context")
+}
+
+func claudePromptCacheTTLs(t *testing.T, root string) []any {
+	t.Helper()
+	env, _ := readHarnessSettings(t, "claude", filepath.Join(root, "claude", "settings.json"))["env"].(map[string]any)
+	return []any{env["CLAUDE_CODE_PROMPT_CACHE_TTL"], env["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"]}
+}
+
+func Test_Grid_Setup_ClaudeExtendedPromptCache(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := fakeGridAPI(t)
+	root := gridSyncHarnessRoot(t)
+	setup := []string{"grid", "setup", "--harness", "claude", "--harness", "pi", "--yes"}
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root))
+	h.Require.NotContains(harnessRecordJSON(t), "claude_extended_prompt_cache")
+
+	h.Require.NoError(h.Execute(append(setup, "--claude-extended-prompt-cache")...))
+	h.Require.Equal([]any{"1h", "5m"}, claudePromptCacheTTLs(t, root))
+	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"claude_extended_prompt_cache": true`))
+	h.Require.True(harnessRecordFile(t).Harnesses["claude"].ClaudeExtendedPromptCache)
+
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Equal([]any{"1h", "5m"}, claudePromptCacheTTLs(t, root), "sync replays the recorded opt-in")
+
+	h.Require.NoError(h.Execute(setup...))
+	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root), "setup without the flag removes them")
+	h.Require.NotContains(harnessRecordJSON(t), "claude_extended_prompt_cache")
 }
 
 func Test_Grid_PiGitContext_RealPi(t *testing.T) {
@@ -3490,6 +3533,8 @@ type codexDaemonHarnessExecer struct {
 	noLsof        bool
 	restartFails  bool
 	restarts      int
+	settingsPath  string
+	restartedWith []byte
 	loggedIn      bool
 	apiKey        bool
 	logoutFails   bool
@@ -3515,6 +3560,7 @@ func (e *codexDaemonHarnessExecer) Exec(command *exec.Cmd) error {
 		return err
 	case "app-server daemon restart":
 		e.restarts++
+		e.restartedWith, _ = os.ReadFile(e.settingsPath)
 		if e.restartFails {
 			return errors.New("exit status 1")
 		}
@@ -3561,6 +3607,7 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 		t.Fatal(err)
 	}
 	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	settings := "{\n  \"shutdownGraceSeconds\": 60\n}\n"
 	for name, tc := range map[string]struct {
 		execer   *codexDaemonHarnessExecer
 		restarts int
@@ -3576,9 +3623,70 @@ func Test_Grid_Setup_RestartsCodexDaemon(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _ := gridAPI(t, "")
 			h.Context = internalcmd.WithExecer(h.Context, tc.execer)
-			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", t.TempDir(), "--yes", "--verbose"))
+			dir := t.TempDir()
+			tc.execer.settingsPath = filepath.Join(dir, "app-server-daemon", "settings.json")
+			h.Require.NoError(os.Mkdir(filepath.Dir(tc.execer.settingsPath), 0o700))
+			h.Require.NoError(os.WriteFile(tc.execer.settingsPath, []byte(settings), 0o600))
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--yes", "--verbose"))
 			h.Require.Equal(tc.restarts, tc.execer.restarts)
+			if tc.restarts > 0 {
+				h.Require.JSONEq(`{"shutdownGraceSeconds":0}`, string(tc.execer.restartedWith))
+			}
+			restored, err := os.ReadFile(tc.execer.settingsPath)
+			h.Require.NoError(err)
+			h.Require.Equal(settings, string(restored))
 			h.Require.Contains(h.Stderr.String(), "Grid is set up. Restart Codex to load the changes.\n")
+			for _, want := range tc.stderr {
+				h.Require.Contains(h.Stderr.String(), want)
+			}
+			for _, unwanted := range tc.absent {
+				h.Require.NotContains(h.Stderr.String(), unwanted)
+			}
+		})
+	}
+}
+
+func Test_Grid_Setup_AsksBeforeRestartingCodexDaemon(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	settings := "{\n  \"shutdownGraceSeconds\": 60\n}\n"
+	notice := "Changes are applied on the next daemon restart."
+	for name, tc := range map[string]struct {
+		answer   string
+		restarts int
+		pending  bool
+		stderr   []string
+		absent   []string
+	}{
+		"yes": {"1", 1, false, []string{"Restarted codex app-server daemon (pid 4242)"}, []string{notice}},
+		"no":  {"2", 0, true, []string{notice}, []string{"Restarted", "Run `codex app-server daemon restart`"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := gridAPI(t, "")
+			execer := &codexDaemonHarnessExecer{socket: socket, lsof: listener}
+			dir := t.TempDir()
+			execer.settingsPath = filepath.Join(dir, "app-server-daemon", "settings.json")
+			h.Require.NoError(os.Mkdir(filepath.Dir(execer.settingsPath), 0o700))
+			h.Require.NoError(os.WriteFile(execer.settingsPath, []byte(settings), 0o600))
+			h.Context = internalcmd.WithPromptAnswers(internalcmd.WithExecer(h.Context, execer), "1", tc.answer)
+			h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--verbose"))
+			h.Require.Contains(h.Stderr.String(), "Restart Codex now? This closes all open Codex sessions and stops any running turns.")
+			h.Require.Equal(tc.restarts, execer.restarts)
+			if tc.restarts > 0 {
+				h.Require.JSONEq(`{"shutdownGraceSeconds":0}`, string(execer.restartedWith))
+			}
+			restored, err := os.ReadFile(execer.settingsPath)
+			h.Require.NoError(err)
+			h.Require.Equal(settings, string(restored))
+			h.Require.Equal(tc.pending, harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
 			for _, want := range tc.stderr {
 				h.Require.Contains(h.Stderr.String(), want)
 			}
@@ -4279,6 +4387,37 @@ func Test_Grid_Sync_RestartsCodexDaemon(t *testing.T) {
 	h.Require.Equal(1, busy.restarts)
 }
 
+func Test_Grid_Sync_RestartsCodexDaemonWithoutTerminal(t *testing.T) {
+	skipUnlessSupported(t)
+	socket := filepath.Join(t.TempDir(), "app-server-control.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := "p1\nf31\nn" + socket + " type=STREAM\n"
+	h, api := gridAPI(t, "")
+	setHarnessRoutes(api, "acme/primary")
+	base := h.Context
+	failing := &codexDaemonHarnessExecer{socket: socket, lsof: listener, restartFails: true}
+	h.Context = internalcmd.WithExecer(base, failing)
+	dir := t.TempDir()
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "codex", "--config-dir", dir, "--yes"))
+	h.Require.Equal(1, failing.restarts)
+	h.Require.True(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+
+	busy := &codexDaemonHarnessExecer{socket: socket, lsof: listener + "f14\nn" + socket + " type=STREAM\n"}
+	h.Context = internalcmd.WithExecer(base, busy)
+	h.Require.NoError(h.Execute("grid", "sync", "--verbose"))
+	h.Require.Equal(1, busy.restarts)
+	h.Require.Contains(h.Stderr.String(), "1 Codex session(s) are running")
+	h.Require.Contains(h.Stderr.String(), "Restarted codex app-server daemon (pid 4242)")
+	h.Require.NotContains(h.Stderr.String(), "Restart Codex now?")
+	h.Require.False(harnessRecordFile(t).Harnesses["codex"].CodexRestartPending)
+}
+
 func gridSyncHarnessRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -4331,6 +4470,40 @@ func Test_Grid_Sync_GitContext(t *testing.T) {
 	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
 	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
 	h.Require.Equal([]bool{false, false, false}, installed(), "sync replays the recorded opt-out")
+}
+
+func Test_Grid_Sync_ClaudeExtendedPromptCache(t *testing.T) {
+	skipUnlessSupported(t)
+	h, _ := fakeGridAPI(t)
+	root := gridSyncHarnessRoot(t)
+	h.Require.NoError(h.Execute("grid", "setup", "--harness", "claude", "--harness", "pi", "--yes"))
+	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root))
+
+	h.Require.NoError(h.Execute("grid", "sync", "--claude-extended-prompt-cache", "--dry-run", "--output", "json"))
+	var preview public.GridPlanList
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &preview))
+	h.Require.True(slices.ContainsFunc(preview.Items, func(p public.GridPlan) bool { return p.Changed }), "the preview applies the flag")
+	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root), "a dry run changes no files")
+	h.Require.NotContains(harnessRecordJSON(t), "claude_extended_prompt_cache", "a dry run changes no records")
+
+	h.Require.NoError(h.Execute("grid", "sync", "--claude-extended-prompt-cache", "--yes"))
+	h.Require.Equal([]any{"1h", "5m"}, claudePromptCacheTTLs(t, root))
+	h.Require.Equal(1, strings.Count(harnessRecordJSON(t), `"claude_extended_prompt_cache": true`))
+	h.Require.True(harnessRecordFile(t).Harnesses["claude"].ClaudeExtendedPromptCache)
+
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal([]any{"1h", "5m"}, claudePromptCacheTTLs(t, root), "sync replays the recorded opt-in")
+	h.Require.NoError(h.Execute("grid", "sync", "--claude-extended-prompt-cache", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.", "a flag matching the record changes nothing")
+
+	h.Require.NoError(h.Execute("grid", "sync", "--claude-extended-prompt-cache=false", "--yes"))
+	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root))
+	h.Require.NotContains(harnessRecordJSON(t), "claude_extended_prompt_cache")
+
+	h.Require.NoError(h.Execute("grid", "sync", "--yes"))
+	h.Require.Contains(h.Stderr.String(), "All configured harnesses are up to date.")
+	h.Require.Equal([]any{nil, nil}, claudePromptCacheTTLs(t, root), "sync replays the recorded opt-out")
 }
 
 func Test_Grid_Sync_ServedModel(t *testing.T) {
@@ -4732,7 +4905,7 @@ func Test_Grid_Setup_RejectsEmptyOrInvalidTeamScope(t *testing.T) {
 func routeClassifierFixture(id, name string) map[string]any {
 	return map[string]any{
 		"id": id, "display_name": name, "supported_tradeoffs": []any{},
-		"decidable_models": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
+		"decidable_canonical_model_ids": []any{"zai-org/GLM-5.3", "anthropic/claude-opus-5-5"},
 	}
 }
 
