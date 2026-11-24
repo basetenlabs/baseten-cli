@@ -51,7 +51,8 @@ func commandVolumeCat(ctx *CommandContext, flags *cmd.VolumeCatFlags) error {
 	// stderr stays as quiet as the unix namesake.
 	written := false
 	_, err = transfer.PullVolume(ctx, client.PullVolumeOptions{
-		Ref: ref,
+		Ref:     ref,
+		Hosting: volumeHosting(flags.VolumeHostingFlags),
 		EntryHandler: func(_ context.Context, entry client.VolumePulledEntry) error {
 			switch {
 			// A pull is also handed the directories leading to what it
@@ -124,6 +125,7 @@ func commandVolumePush(ctx *CommandContext, flags *cmd.VolumePushFlags) error {
 	started := ctx.Now()
 	result, err := transfer.PushVolume(ctx, client.PushVolumeOptions{
 		Ref:       ref,
+		Hosting:   volumeHosting(flags.VolumeHostingFlags),
 		SourceDir: dir,
 		SourceURI: flags.SourceURI,
 		Tags:      tags,
@@ -206,6 +208,7 @@ func commandVolumePull(ctx *CommandContext, flags *cmd.VolumePullFlags) error {
 	started := ctx.Now()
 	result, err := transfer.PullVolume(ctx, client.PullVolumeOptions{
 		Ref:          ref,
+		Hosting:      volumeHosting(flags.VolumeHostingFlags),
 		DestDir:      dir,
 		Overwrite:    flags.Overwrite,
 		Include:      flags.Include,

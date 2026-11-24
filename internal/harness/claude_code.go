@@ -202,12 +202,22 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 	}
 	options := []any{}
 	allowed := []any{}
+	allow := func(id string) {
+		if !slices.Contains(allowed, any(id)) {
+			allowed = append(allowed, id)
+		}
+	}
 	overrides := map[string]any{}
 	effort := map[string]any{}
 	for _, r := range routes {
 		id := modelID(r.Name)
 		options = append(options, map[string]any{"model": id, "label": r.DisplayName})
-		allowed = append(allowed, id)
+		allow(id)
+		// Claude Code checks a tier alias such as fable against the allowlist by its
+		// built-in model ID, which the gateway serves through a route alias.
+		for _, alias := range r.Aliases {
+			allow(alias)
+		}
 		if id != r.Name {
 			overrides[id] = r.Name
 		}
@@ -216,9 +226,7 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 			effort[id] = map[string]any{"maxEffortLevel": high}
 		}
 	}
-	if !slices.Contains(allowed, any(modelID(background))) {
-		allowed = append(allowed, modelID(background))
-	}
+	allow(modelID(background))
 	values := []setting{
 		desired([]string{"model"}, modelID(s.Primary)),
 		desired([]string{"fallbackModel"}, []string{modelID(s.Fallback)}),
