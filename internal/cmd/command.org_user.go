@@ -101,7 +101,7 @@ func orgUserByEmail(ctx context.Context, api *managementapi.Client, email string
 	case 1:
 		return &resp.Items[0], nil
 	}
-	return nil, fmt.Errorf("multiple users with email %q", email)
+	return nil, cmd.NewErrUsagef("more than one user has email %q; pass --user-id instead", email)
 }
 
 // writeUserInfo prints a UserInfo as a field-per-line summary. Shared by

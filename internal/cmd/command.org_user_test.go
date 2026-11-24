@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/basetenlabs/baseten-cli/cmd"
 )
 
 func userFixture(id, email, name string) map[string]any {
@@ -123,6 +125,22 @@ func Test_Org_User_Describe_ByEmail_NotFound(t *testing.T) {
 
 	err := h.Execute("org", "user", "describe", "--user-email", "ghost@acme.io")
 	h.Require.ErrorContains(err, `no user with email "ghost@acme.io"`)
+}
+
+// Deliberately unrealistic: the API is not expected to return two users for one
+// email, but if it does the CLI must not pick one.
+func Test_Org_User_Describe_ByEmail_SharedEmailNeedsID(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/users", 200, map[string]any{
+		"items": []any{
+			userFixture("u1", "ada@acme.io", "Ada"), userFixture("u2", "ada@acme.io", "Ada L."),
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	err := h.Execute("org", "user", "describe", "--user-email", "ada@acme.io")
+	h.Require.ErrorContains(err, `more than one user has email "ada@acme.io"; pass --user-id instead`)
+	h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
 }
 
 func Test_Org_User_Describe_IDAndEmail_Rejected(t *testing.T) {

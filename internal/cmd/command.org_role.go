@@ -90,13 +90,13 @@ func commandOrgRoleList(ctx *CommandContext, flags *cmd.OrgRoleListFlags) error 
 	for _, r := range roles {
 		rows = append(rows, []string{
 			r.Id, r.Name, strings.ToLower(string(r.Kind)), orgAccessOrDash(r.TeamName), strconv.FormatBool(r.BuiltIn),
-			strconv.Itoa(len(r.Permissions)),
+			strconv.Itoa(len(r.Permissions)), strconv.Itoa(len(r.IncludeRoleIds)),
 		})
 	}
 	ctx.OutputTable(TableOutput{
-		Headers:             []string{"ID", "NAME", "KIND", "TEAM", "BUILT-IN", "PERMISSIONS"},
+		Headers:             []string{"ID", "NAME", "KIND", "TEAM", "BUILT-IN", "PERMISSIONS", "INCLUDES"},
 		Rows:                rows,
-		RightAlignedColumns: []int{5},
+		RightAlignedColumns: []int{5, 6},
 	})
 	return nil
 }
@@ -202,7 +202,15 @@ func commandOrgRoleUpdate(ctx *CommandContext, flags *cmd.OrgRoleUpdateFlags) er
 	if err != nil {
 		return err
 	}
-	id, err := orgRoleID(ctx, cl.API(), flags.ID, flags.Name, nil)
+	var teamID *string
+	if flags.Team != "" {
+		id, err := ResolveTeam(ctx, cl.API(), flags.Team)
+		if err != nil {
+			return err
+		}
+		teamID = &id
+	}
+	id, err := orgRoleID(ctx, cl.API(), flags.ID, flags.Name, teamID)
 	if err != nil {
 		return err
 	}
@@ -223,7 +231,15 @@ func commandOrgRoleDelete(ctx *CommandContext, flags *cmd.OrgRoleDeleteFlags) er
 	if err != nil {
 		return err
 	}
-	id, err := orgRoleID(ctx, cl.API(), flags.ID, flags.Name, nil)
+	var teamID *string
+	if flags.Team != "" {
+		id, err := ResolveTeam(ctx, cl.API(), flags.Team)
+		if err != nil {
+			return err
+		}
+		teamID = &id
+	}
+	id, err := orgRoleID(ctx, cl.API(), flags.ID, flags.Name, teamID)
 	if err != nil {
 		return err
 	}

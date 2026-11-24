@@ -77,12 +77,17 @@ func Test_Org_Role_List_FollowsPages(t *testing.T) {
 	h.Require.Equal("\"reader\"\n\"deployer\"\n", h.Stdout.String())
 }
 
-func Test_Org_Role_List_CountsPermissions(t *testing.T) {
+func Test_Org_Role_List_CountsPermissionsAndIncludes(t *testing.T) {
+	role := orgAccessRoleFixture("role_1", "deployer")
+	role["include_role_ids"] = []any{"baseten:reader"}
 	h := NewCommandHarness(t)
-	orgAccessRoutes(h)
+	h.MockManagementAPI().SetRoute("GET", "/v1/access/roles", 200, map[string]any{
+		"items": []any{role}, "pagination": map[string]any{"has_more": false},
+	})
 
 	h.Require.NoError(h.Execute("org", "role", "list"))
-	h.Require.Regexp(`deployer\s+team\s+-\s+false\s+1\s`, h.Stdout.String())
+	h.Require.Contains(h.Stdout.String(), "INCLUDES")
+	h.Require.Regexp(`deployer\s+team\s+-\s+false\s+1\s+1\s`, h.Stdout.String())
 	h.Require.NotContains(h.Stdout.String(), "model.deployment.write")
 }
 
@@ -115,6 +120,34 @@ func Test_Org_Role_Update_AddsAndRemoves(t *testing.T) {
 	query, err := url.ParseQuery(m.FindCall("GET", "/v1/access/roles").RawQuery)
 	h.Require.NoError(err)
 	h.Require.Equal("deployer", query.Get("name"))
+}
+
+// A team admin can't list the organization's roles, only a team's, so a name
+// is looked up in the --team role list (RolesView.get in the API).
+func Test_Org_Role_UpdateAndDelete_LookUpTheNameInTheTeam(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		method string
+	}{
+		{"update", []string{"update", "--description", "Deploys"}, "PATCH"},
+		{"delete", []string{"delete"}, "DELETE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			orgAccessRoutes(h)
+			m := h.MockManagementAPI()
+			m.SetRoute(tc.method, "/v1/access/roles/role_1", 200, orgAccessRoleFixture("role_1", "deployer"))
+
+			args := append([]string{"org", "role"}, tc.args...)
+			h.Require.NoError(h.Execute(append(args, "--name", "deployer", "--team", "Engineering")...))
+			query, err := url.ParseQuery(m.FindCall("GET", "/v1/access/roles").RawQuery)
+			h.Require.NoError(err)
+			h.Require.Equal("t123456", query.Get("team_id"))
+			h.Require.Equal("deployer", query.Get("name"))
+			h.Require.NotNil(m.FindCall(tc.method, "/v1/access/roles/role_1"))
+		})
+	}
 }
 
 func Test_Org_Role_Update_RequiresAChange(t *testing.T) {

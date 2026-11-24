@@ -87,8 +87,9 @@ var commandOrgRole = Command{
 			Flags: OrgRoleListFlags{},
 			Output: &CommandOutput[OrgRoleList]{
 				TextDescription: "Table with columns: ID, NAME, KIND, TEAM, BUILT-IN, PERMISSIONS (how many " +
-					"the role grants itself; 'baseten org role describe' lists them). When none match, " +
-					"prints \"No roles found.\" to stderr.",
+					"the role grants itself), INCLUDES (how many roles it includes, whose permissions it " +
+					"also grants); 'baseten org role describe' lists both. When none match, prints " +
+					"\"No roles found.\" to stderr.",
 				Examples: []CommandExample{
 					{
 						Description: "List every role.",
@@ -158,6 +159,8 @@ type OrgRoleCreateFlags struct {
 type OrgRoleDeleteFlags struct {
 	CommandFlags
 	OrgRoleRefFlags
+
+	Team string `flag:"team" desc:"Look the --name up in this team's role list, by name or ID. Needed only to manage a team's roles without organization-wide access to roles."`
 }
 
 type OrgRoleDescribeFlags struct {
@@ -183,4 +186,5 @@ type OrgRoleUpdateFlags struct {
 	RemovePermissions []string             `flag:"remove-permission" desc:"Permission to remove from the role. May be repeated."`
 	AddIncludes       []string             `flag:"add-include" desc:"ID of a built-in role for the role to include. May be repeated."`
 	RemoveIncludes    []string             `flag:"remove-include" desc:"ID of a built-in role for the role to stop including. May be repeated."`
+	Team              string               `flag:"team" desc:"Look the --name up in this team's role list, by name or ID. Needed only to manage a team's roles without organization-wide access to roles."`
 }
