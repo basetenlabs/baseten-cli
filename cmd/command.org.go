@@ -12,6 +12,35 @@ var commandOrg = Command{
 	Description: "Manage API keys, secrets, billing, and workload identity federation for the active organization.",
 	Children: []Command{
 		{
+			Name:    "access-check",
+			Summary: "Check whether you hold permissions (PRE-RELEASE)",
+			Description: orgAccessPrereleaseNotice +
+				"Check whether you hold each --permission: in --team, where --resource-set selects, " +
+				"or across the organization when neither is given. To check whether you can create something " +
+				"in a team, check its write permission in the team. " + orgAccessResourceSetUsage + " " + orgAccessUnavailable,
+			Flags: OrgAccessCheckFlags{},
+			Output: &CommandOutput[managementapi.CheckAccessResponse]{
+				TextDescription: "Table with columns: PERMISSION, RESOURCE SET (- when none is given), ALLOWED (true or false).",
+				Examples: []CommandExample{
+					{
+						Description: "Check whether you can push deployments in a team.",
+						Command:     "baseten org access-check --permission model.deployment.write --team <team>",
+					},
+					{
+						Description: "Check two permissions on one model in production.",
+						CommandLines: []string{
+							"baseten org access-check --permission model.read --permission model.deployment.write",
+							"--resource-set model:<model-id>,environment:production",
+						},
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print whether the first check is allowed.",
+					Command:     "baseten org access-check --permission access.role.write --jq '.results[0].allowed'",
+				},
+			},
+		},
+		{
 			Name:    "api-key",
 			Summary: "Manage API keys",
 			Children: []Command{
@@ -159,6 +188,39 @@ var commandOrg = Command{
 				JQExample: CommandExample{
 					Description: "Print just the organization ID.",
 					Command:     "baseten org describe --jq '.org_id'",
+				},
+			},
+		},
+		{
+			Name:    "permission",
+			Summary: "View the permissions roles can grant (PRE-RELEASE)",
+			Description: orgAccessPrereleaseNotice +
+				"View the permissions custom roles can grant. " + orgAccessUnavailable,
+			Children: []Command{
+				{
+					Name:    "list",
+					Summary: "List the permissions roles can grant (PRE-RELEASE)",
+					Description: orgAccessPrereleaseNotice +
+						"List the permissions roles can grant. A custom role can hold a permission " +
+						"only when it's assignable: available to the organization and not reserved for " +
+						"built-in admin roles.",
+					Flags: OrgPermissionListFlags{},
+					Output: &CommandOutput[managementapi.AccessPermissions]{
+						TextDescription: "Table with columns: NAME, LABEL, ROLE KINDS, ASSIGNABLE.",
+						Examples: []CommandExample{
+							{
+								Description: "List the permissions.",
+								Command:     "baseten org permission list",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print the permissions a team role can hold.",
+							CommandLines: []string{
+								"baseten org permission list",
+								"--jq '.permissions[] | select(.role_kinds | index(\"TEAM\")) | .name'",
+							},
+						},
+					},
 				},
 			},
 		},
@@ -341,7 +403,32 @@ var commandOrg = Command{
 			Summary:     "View users",
 			Description: "List and inspect the users in the organization.",
 			Children: []Command{
-				commandOrgUserAccess,
+				{
+					Name:    "access",
+					Summary: "Describe a user's roles and access (PRE-RELEASE)",
+					Description: orgAccessPrereleaseNotice +
+						"List every role a user holds, through an assignment to them or to a directory group " +
+						"they're in, or through organization and team membership, and the permissions they grant. " +
+						"Pass --user-id me for the authenticated user. " + orgAccessUnavailable,
+					Flags: OrgUserAccessFlags{},
+					Output: &CommandOutput[managementapi.EffectiveAccess]{
+						TextDescription: orgAccessDescribeText,
+						Examples: []CommandExample{
+							{
+								Description: "Describe your own access.",
+								Command:     "baseten org user access --user-id me",
+							},
+							{
+								Description: "Describe a user's access by email.",
+								Command:     "baseten org user access --user-email <email>",
+							},
+						},
+						JQExample: CommandExample{
+							Description: "Print the permissions you hold.",
+							Command:     "baseten org user access --user-id me --jq '.permissions[].name'",
+						},
+					},
+				},
 				{
 					Name:        "describe",
 					Summary:     "Describe a user",
@@ -417,15 +504,29 @@ var commandOrg = Command{
 				},
 			},
 		},
-		commandOrgAccessCheck,
 		commandOrgIdentityProvider,
-		commandOrgPermission,
 		commandOrgRole,
 		commandOrgRoleAssignment,
 		commandOrgServiceAccount,
 		commandOrgTrustRule,
 	},
 }
+
+const orgAccessPrereleaseNotice = "PRE-RELEASE: custom role commands are not GA yet. " +
+	"Their arguments, flags, and output may change.\n\n"
+
+const orgAccessUnavailable = "Organizations without custom roles get not found."
+
+// orgAccessResourceSetUsage explains the --resource-set syntax shared by role-assignment create and access-check.
+const orgAccessResourceSetUsage = "A resource set is TYPE:ID entries joined by commas, at most one resource and at most one " +
+	"environment, such as model:<model-id>,environment:production. An environment entry names the " +
+	"environment, such as staging."
+
+const orgAccessDescribeText = "The principal on the first line, then a table of roles with columns: ROLE, " +
+	"HELD VIA, TEAM, RESOURCE SETS, ASSIGNMENT, then a table of permissions with columns: " +
+	"PERMISSION, TEAM, RESOURCE SET. Prints \"Effective permissions aren't available yet.\" to " +
+	"stderr instead of the permissions until fine-grained authorization decides the " +
+	"organization's requests."
 
 // OrgUserList is the JSON output of `baseten org user list`: the users
 // aggregated across all pages.
@@ -456,6 +557,25 @@ type OrgUpdateFlags struct {
 	AllowPersonalAPIKeys         OptionalFlag[bool] `flag:"allow-personal-api-keys" desc:"Whether members can create new personal API keys."`
 	AllowServiceAccountAPIKeys   OptionalFlag[bool] `flag:"allow-service-account-api-keys" desc:"Whether new team and organization API keys can be created."`
 	AllowTeamAdminsToManageRoles OptionalFlag[bool] `flag:"allow-team-admins-to-manage-roles" desc:"Whether team admins can create, change and delete their team's custom roles. Only for organizations with custom roles (pre-release)."`
+}
+
+type OrgUserAccessFlags struct {
+	CommandFlags
+
+	UserID    string `flag:"user-id" desc:"User ID. Pass 'me' for the authenticated user." oneof:"user-ref"`
+	UserEmail string `flag:"user-email" desc:"Email of the user." oneof:"user-ref"`
+}
+
+type OrgAccessCheckFlags struct {
+	CommandFlags
+
+	Permissions []string `flag:"permission" desc:"Permission to check, such as model.deployment.write. May be repeated." required:"true"`
+	Team        string   `flag:"team" desc:"Check in this team, by name or ID."`
+	ResourceSet string   `flag:"resource-set" desc:"Check where this set selects, such as model:<model-id>,environment:production."`
+}
+
+type OrgPermissionListFlags struct {
+	CommandFlags
 }
 
 type OrgUserListFlags struct {

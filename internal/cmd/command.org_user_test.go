@@ -139,3 +139,62 @@ func Test_Org_User_Describe_JSON(t *testing.T) {
 	h.Require.NoError(h.Execute("org", "user", "describe", "--user-id", "me", "--output", "json"))
 	h.Require.Contains(h.Stdout.String(), `"user_id": "u1"`)
 }
+
+func Test_Org_User_Access_PicksUser(t *testing.T) {
+	access := map[string]any{
+		"subject_type": "USER",
+		"subject_id":   "u1",
+		"subject_name": "Ada",
+		"assignments":  []any{},
+		"permissions":  nil,
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		path string
+	}{
+		{"yourself", []string{"--user-id", "me"}, "/v1/users/me/access"},
+		{"user by ID", []string{"--user-id", "u2"}, "/v1/users/u2/access"},
+		{"user by email", []string{"--user-email", "ada@example.com"}, "/v1/users/u1/access"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			orgAccessRoutes(h)
+			m := h.MockManagementAPI()
+			m.SetRoute("GET", tc.path, 200, access)
+
+			h.Require.NoError(h.Execute(append([]string{"org", "user", "access"}, tc.args...)...))
+			h.Require.NotNil(m.FindCall("GET", tc.path))
+			h.Require.Contains(h.Stderr.String(), "Effective permissions aren't available yet.")
+		})
+	}
+}
+
+func Test_Org_User_Access_ListsWhereEachPermissionIsHeld(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/users/me/access", 200, map[string]any{
+		"subject_type": "SERVICE_ACCOUNT",
+		"subject_id":   "sa1",
+		"subject_name": "ci-deployer",
+		"assignments":  []any{orgAccessAssignmentFixture()},
+		"permissions": []any{map[string]any{
+			"name":         "model.deployment.write",
+			"display_name": "Push deployments",
+			"category":     "model.deployment",
+			"grants": []any{map[string]any{
+				"team_id":   "t123456",
+				"team_name": "Engineering",
+				"resource_set": []any{
+					map[string]any{"type": "MODEL", "identifier": "m1"},
+					map[string]any{"type": "ENVIRONMENT", "identifier": "staging"},
+				},
+			}},
+		}},
+	})
+
+	h.Require.NoError(h.Execute("org", "user", "access", "--user-id", "me"))
+	h.Require.Contains(h.Stdout.String(), "service account ci-deployer (sa1)")
+	h.Require.Contains(h.Stdout.String(), "model:m1,environment:staging")
+	h.Require.NotContains(h.Stderr.String(), "aren't available")
+}

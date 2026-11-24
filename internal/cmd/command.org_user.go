@@ -3,12 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
 func init() {
+	Register("org user access", commandOrgUserAccess)
 	Register("org user describe", commandOrgUserDescribe)
 	Register("org user list", commandOrgUserList)
 }
@@ -115,4 +117,66 @@ func writeUserInfo(ctx *CommandContext, user *managementapi.UserInfo) {
 	if ws := deref(user.WorkspaceName); ws != "" {
 		ctx.Outputf("Workspace:  %s\n", ws)
 	}
+}
+
+func commandOrgUserAccess(ctx *CommandContext, flags *cmd.OrgUserAccessFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	userID := flags.UserID
+	if flags.UserEmail != "" {
+		user, err := orgUserByEmail(ctx, cl.API(), flags.UserEmail)
+		if err != nil {
+			return err
+		}
+		userID = user.UserId
+	}
+	access, err := cl.API().GetUsersAccess(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("describing access: %w", err)
+	}
+	return orgAccessDescribe(ctx, access)
+}
+
+// orgAccessDescribe prints the roles and permissions a principal holds.
+func orgAccessDescribe(ctx *CommandContext, access *managementapi.EffectiveAccess) error {
+	if ctx.JSON {
+		access.Assignments = normalizeJSONSlice(access.Assignments)
+		ctx.OutputJSON(access)
+		return nil
+	}
+	ctx.Outputf("%s (%s)\n", orgAccessSubjectText(access.SubjectType, access.SubjectName), access.SubjectId)
+	rows := make([][]string, 0, len(access.Assignments))
+	for _, held := range access.Assignments {
+		via := strings.ToLower(string(held.GrantedVia))
+		if held.SubjectType == managementapi.AccessSubjectType_DIRECTORY_GROUP {
+			via += " to group " + held.SubjectName
+		}
+		rows = append(rows, []string{
+			held.RoleName, via, orgAccessOrDash(held.TeamName), orgAccessResourceSetsText(held.ResourceSets),
+			orgAccessOrDash(held.Id),
+		})
+	}
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"ROLE", "HELD VIA", "TEAM", "RESOURCE SETS", "ASSIGNMENT"},
+		Rows:    rows,
+	})
+	if access.Permissions == nil {
+		ctx.LogLine("Effective permissions aren't available yet.")
+		return nil
+	}
+	var grants [][]string
+	for _, permission := range *access.Permissions {
+		for _, grant := range permission.Grants {
+			team := "organization"
+			if grant.TeamName != nil {
+				team = *grant.TeamName
+			}
+			grants = append(grants, []string{permission.Name, team, orgAccessResourceSetText(grant.ResourceSet, "all")})
+		}
+	}
+	ctx.Outputf("\n")
+	ctx.OutputTable(TableOutput{Headers: []string{"PERMISSION", "TEAM", "RESOURCE SET"}, Rows: grants})
+	return nil
 }

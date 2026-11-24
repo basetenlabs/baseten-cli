@@ -16,6 +16,7 @@ func init() {
 	Register("org service-account describe", commandOrgServiceAccountDescribe)
 	Register("org service-account update", commandOrgServiceAccountUpdate)
 	Register("org service-account delete", commandOrgServiceAccountDelete)
+	Register("org service-account access", commandOrgServiceAccountAccess)
 }
 
 // orgServiceAccountPermissions builds the access to send for --type and the
@@ -245,4 +246,20 @@ func commandOrgServiceAccountDelete(ctx *CommandContext, flags *cmd.OrgServiceAc
 	}
 	ctx.Logf("Deleted service account %s\n", tomb.Id)
 	return nil
+}
+
+func commandOrgServiceAccountAccess(ctx *CommandContext, flags *cmd.OrgServiceAccountAccessFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	id, err := resolveOrgServiceAccountRef(ctx, cl.API(), flags.OrgServiceAccountRefFlags)
+	if err != nil {
+		return err
+	}
+	access, err := cl.API().GetServiceAccountsAccess(ctx, id)
+	if err != nil {
+		return fmt.Errorf("describing access: %w", err)
+	}
+	return orgAccessDescribe(ctx, access)
 }

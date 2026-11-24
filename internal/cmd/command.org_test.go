@@ -351,17 +351,63 @@ func Test_Org_Update_TeamAdminsManageRoles(t *testing.T) {
 	h.Require.Equal("", h.Stdout.String())
 }
 
-func Test_Org_Update_TeamAdminsManageRoles_WithoutCustomRolesIsNotFound(t *testing.T) {
+// The server refuses the setting for an organization without custom roles
+// (change_team_admin_role_management in the API), so the CLI reports its error.
+func Test_Org_Update_TeamAdminsManageRoles_WithoutCustomRolesFails(t *testing.T) {
 	h := NewCommandHarness(t)
-	h.MockManagementAPI().SetRoute("PATCH", "/v1/organizations/me", 200, orgInfoFixture(nil))
+	h.MockManagementAPI().SetRoute("PATCH", "/v1/organizations/me", 400, map[string]any{
+		"code": "VALIDATION_ERROR", "message": "Custom roles aren't available to your organization.",
+	})
 
 	h.Require.ErrorContains(h.Execute("org", "update", "--allow-team-admins-to-manage-roles", "true"),
-		"doesn't have custom roles")
-	h.Require.Equal(int(publiccmd.ExitNotFound), h.ExitCode)
+		"Custom roles aren't available to your organization.")
+	h.Require.Equal(int(publiccmd.ExitValidation), h.ExitCode)
 	h.Require.NotContains(h.Stderr.String(), "Updated organization")
 }
 
 func Test_Org_Update_NothingToUpdate(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.Require.ErrorContains(h.Execute("org", "update"), "nothing to update")
+}
+
+func Test_Org_AccessCheck_InTeamWhereAResourceSetSelects(t *testing.T) {
+	h := NewCommandHarness(t)
+	orgAccessRoutes(h)
+	m := h.MockManagementAPI()
+	resourceSet := []any{
+		map[string]any{"type": "MODEL", "identifier": "m1"},
+		map[string]any{"type": "ENVIRONMENT", "identifier": "staging"},
+	}
+	m.SetRoute("POST", "/v1/access/check", 200, map[string]any{
+		"results": []any{map[string]any{
+			"permission":   "model.deployment.write",
+			"team_id":      "t123456",
+			"resource_set": resourceSet,
+			"allowed":      true,
+		}},
+	})
+
+	h.Require.NoError(h.Execute("org", "access-check", "--permission", "model.deployment.write",
+		"--team", "Engineering", "--resource-set", "model:m1,environment:staging"))
+	h.Require.Equal(map[string]any{
+		"checks": []any{map[string]any{
+			"permission":   "model.deployment.write",
+			"team_id":      "t123456",
+			"resource_set": resourceSet,
+		}},
+	}, m.FindCall("POST", "/v1/access/check").BodyJSON(t))
+	h.Require.Regexp(`model\.deployment\.write\s+model:m1,environment:staging\s+true\s`, h.Stdout.String())
+	h.Require.NotContains(h.Stdout.String(), "TEAM")
+	h.Require.NotContains(h.Stdout.String(), "t123456")
+}
+
+func Test_Org_AccessCheck_ForTheOrganization(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/access/check", 200, map[string]any{"results": []any{}})
+
+	h.Require.NoError(h.Execute("org", "access-check", "--permission", "access.role.write"))
+	h.Require.Equal(map[string]any{
+		"checks": []any{map[string]any{"permission": "access.role.write"}},
+	}, m.FindCall("POST", "/v1/access/check").BodyJSON(t))
 }

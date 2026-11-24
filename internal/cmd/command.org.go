@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -26,6 +25,8 @@ func init() {
 	Register("org describe", commandOrgDescribe)
 	Register("org update", commandOrgUpdate)
 	Register("org regions", commandOrgRegions)
+	Register("org access-check", commandOrgAccessCheck)
+	Register("org permission list", commandOrgPermissionList)
 }
 
 func commandOrgBillingUsage(ctx *CommandContext, flags *cmd.OrgBillingUsageFlags) error {
@@ -610,15 +611,80 @@ func commandOrgUpdate(ctx *CommandContext, flags *cmd.OrgUpdateFlags) error {
 	if err != nil {
 		return fmt.Errorf("updating organization: %w", err)
 	}
-	// The organization has no role setting to change without custom roles.
-	if req.AllowTeamAdminsToManageRoles != nil && info.AllowTeamAdminsToManageRoles == nil {
-		return cmd.NewErrNotFound(errors.New("--allow-team-admins-to-manage-roles isn't available: " +
-			"your organization doesn't have custom roles, or you can't read its roles"))
-	}
 	if ctx.JSON {
 		ctx.OutputJSON(info)
 		return nil
 	}
 	ctx.LogLine("Updated organization")
+	return nil
+}
+
+func commandOrgAccessCheck(ctx *CommandContext, flags *cmd.OrgAccessCheckFlags) error {
+	var resourceSet *[]managementapi.AccessResourceRequest
+	if flags.ResourceSet != "" {
+		set, err := orgAccessParseResourceSet(flags.ResourceSet)
+		if err != nil {
+			return err
+		}
+		resourceSet = &set
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	var teamID *string
+	if flags.Team != "" {
+		id, err := ResolveTeam(ctx, cl.API(), flags.Team)
+		if err != nil {
+			return err
+		}
+		teamID = &id
+	}
+	checks := make([]managementapi.AccessCheck, 0, len(flags.Permissions))
+	for _, permission := range flags.Permissions {
+		checks = append(checks, managementapi.AccessCheck{Permission: permission, TeamId: teamID, ResourceSet: resourceSet})
+	}
+	results, err := cl.API().PostAccessCheck(ctx, managementapi.CheckAccessRequest{Checks: checks})
+	if err != nil {
+		return fmt.Errorf("checking access: %w", err)
+	}
+	if ctx.JSON {
+		results.Results = normalizeJSONSlice(results.Results)
+		ctx.OutputJSON(results)
+		return nil
+	}
+	rows := make([][]string, 0, len(results.Results))
+	for _, r := range results.Results {
+		rows = append(rows, []string{r.Permission, orgAccessResourceSetText(r.ResourceSet, "-"), strconv.FormatBool(r.Allowed)})
+	}
+	ctx.OutputTable(TableOutput{Headers: []string{"PERMISSION", "RESOURCE SET", "ALLOWED"}, Rows: rows})
+	return nil
+}
+func commandOrgPermissionList(ctx *CommandContext, _ *cmd.OrgPermissionListFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	catalog, err := cl.API().GetAccessPermissions(ctx)
+	if err != nil {
+		return fmt.Errorf("listing permissions: %w", err)
+	}
+	if ctx.JSON {
+		catalog.Categories = normalizeJSONSlice(catalog.Categories)
+		catalog.Permissions = normalizeJSONSlice(catalog.Permissions)
+		ctx.OutputJSON(catalog)
+		return nil
+	}
+	rows := make([][]string, 0, len(catalog.Permissions))
+	for _, p := range catalog.Permissions {
+		kinds := make([]string, 0, len(p.RoleKinds))
+		for _, kind := range p.RoleKinds {
+			kinds = append(kinds, strings.ToLower(string(kind)))
+		}
+		rows = append(rows, []string{
+			p.Name, p.DisplayName, strings.Join(kinds, ","), strconv.FormatBool(p.Available && !p.Reserved),
+		})
+	}
+	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "LABEL", "ROLE KINDS", "ASSIGNABLE"}, Rows: rows})
 	return nil
 }
