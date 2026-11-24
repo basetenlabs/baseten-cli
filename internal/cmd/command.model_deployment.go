@@ -74,7 +74,7 @@ func findDeploymentIDByName(
 		return "", fmt.Errorf("list deployments for model %s: %w", modelID, err)
 	}
 	if len(resp.Deployments) == 0 {
-		return "", fmt.Errorf("no deployment named %q in model %s", name, modelID)
+		return "", cmd.NewErrNotFound(fmt.Errorf("no deployment named %q in model %s", name, modelID))
 	} else if len(resp.Deployments) > 1 {
 		return "", fmt.Errorf("multiple deployments named %q in model %s", name, modelID)
 	}

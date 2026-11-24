@@ -66,7 +66,7 @@ func commandOrgUserDescribe(ctx *CommandContext, flags *cmd.OrgUserDescribeFlags
 			return fmt.Errorf("describe user %q: %w", flags.UserEmail, err)
 		}
 		if len(resp.Items) == 0 {
-			return fmt.Errorf("no user with email %q", flags.UserEmail)
+			return cmd.NewErrNotFound(fmt.Errorf("no user with email %q", flags.UserEmail))
 		} else if len(resp.Items) > 1 {
 			return fmt.Errorf("multiple users with email %q", flags.UserEmail)
 		}
