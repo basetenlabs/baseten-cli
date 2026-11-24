@@ -174,7 +174,11 @@ var targetAPIsByFormat = map[managementapi.GridRouteMetadataApiFormats]TargetAPI
 
 type RouteAliasKind string
 
-const RouteAliasKindClaudeDesktop RouteAliasKind = "CLAUDE_DESKTOP"
+const (
+	RouteAliasKindClaudeDesktop RouteAliasKind = "CLAUDE_DESKTOP"
+	// RouteAliasKindAlias names another model ID the gateway resolves to the route.
+	RouteAliasKindAlias RouteAliasKind = "ALIAS"
+)
 
 type RouteAlias struct {
 	Name string         `json:"name"`
@@ -187,6 +191,7 @@ type Route struct {
 	Name               string
 	DisplayName        string
 	ClaudeDesktopAlias string
+	Aliases            []string
 	// Provider is the route's upstream provider, such as ProviderAnthropic.
 	// It is "" when unknown, as for an intelligent route that picks a model per request.
 	Provider         string
@@ -236,9 +241,13 @@ func NewProviders(connections []managementapi.GridConnection) Providers {
 func NewRoute(api managementapi.GridRoute, providers Providers, aliases ...RouteAlias) (Route, error) {
 	r := Route{Name: api.Name, DisplayName: api.DisplayName, IntelligentRoute: routeIsIntelligentRoute(api)}
 	for _, alias := range aliases {
-		if alias.Kind == RouteAliasKindClaudeDesktop {
-			r.ClaudeDesktopAlias = alias.Name
-			break
+		switch alias.Kind {
+		case RouteAliasKindClaudeDesktop:
+			if r.ClaudeDesktopAlias == "" {
+				r.ClaudeDesktopAlias = alias.Name
+			}
+		case RouteAliasKindAlias:
+			r.Aliases = append(r.Aliases, alias.Name)
 		}
 	}
 	r.Provider, r.UpstreamModel = routeTarget(api, providers)
