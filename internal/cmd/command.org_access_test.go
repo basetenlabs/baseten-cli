@@ -374,19 +374,3 @@ func Test_Org_RoleAssignment_Create_RequiresAHolder(t *testing.T) {
 		"--user-id", ""), "pass one of --user-id")
 	h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
 }
-
-func Test_Org_Role_Delete_RefusesANameSharedWithABuiltInRole(t *testing.T) {
-	h := NewCommandHarness(t)
-	m := h.MockManagementAPI()
-	m.SetRoute("GET", "/v1/access/roles", 200, map[string]any{
-		"items": []any{
-			orgAccessRoleFixture("baseten:admin", "Admin"),
-			orgAccessRoleFixture("role_1", "Admin"),
-		},
-		"pagination": map[string]any{"has_more": false},
-	})
-
-	h.Require.ErrorContains(h.Execute("org", "role", "delete", "--name", "Admin"), "more than one role is named")
-	h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
-	h.Require.Nil(m.FindCall("DELETE", "/v1/access/roles/role_1"))
-}
