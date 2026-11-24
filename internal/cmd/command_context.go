@@ -133,6 +133,7 @@ func normalizeForJQ(v any) (any, error) {
 
 func (c *CommandContext) encodeJSON(v any) {
 	enc := json.NewEncoder(c.Stdout)
+	enc.SetEscapeHTML(false)
 	if !c.JSONCompact {
 		enc.SetIndent("", "  ")
 	}

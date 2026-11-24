@@ -161,6 +161,18 @@ func Test_Model_Predict_OutputJSONLCompact(t *testing.T) {
 	h.Require.Equal("{\"result\":42}\n", h.Stdout.String())
 }
 
+func Test_Model_Predict_KeepsHTMLCharacters(t *testing.T) {
+	h, m := newPredictHarness(t)
+	m.SetRouteFunc("POST", "/environments/production/predict", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"<think>a < b && c</think>"}`))
+	})
+
+	err := h.Execute("model", "predict", "--model-id", "m-1", "--data", `{}`, "--output", "jsonl")
+	h.Require.NoError(err)
+	h.Require.Equal("{\"text\":\"<think>a < b && c</think>\"}\n", h.Stdout.String())
+}
+
 func Test_Model_Predict_BinaryResponse_Text(t *testing.T) {
 	h, m := newPredictHarness(t)
 	m.SetRouteFunc("POST", "/environments/production/predict", func(w http.ResponseWriter, _ *http.Request) {
