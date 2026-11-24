@@ -141,7 +141,7 @@ type OrgRoleList struct {
 // OrgRoleRefFlags picks one role.
 type OrgRoleRefFlags struct {
 	ID   string `flag:"id" desc:"Role ID." oneof:"role-ref"`
-	Name string `flag:"name" desc:"Role name." oneof:"role-ref"`
+	Name string `flag:"name" desc:"Custom role name. Pass a built-in role by --id, such as baseten:reader." oneof:"role-ref"`
 }
 
 type OrgRoleCreateFlags struct {

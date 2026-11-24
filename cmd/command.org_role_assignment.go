@@ -142,7 +142,7 @@ type OrgRoleAssignmentCreateFlags struct {
 	OrgRoleAssignmentHolderFlags
 
 	RoleID       string   `flag:"role-id" desc:"Role to assign, by ID." oneof:"role-ref"`
-	RoleName     string   `flag:"role-name" desc:"Role to assign, by name." oneof:"role-ref"`
+	RoleName     string   `flag:"role-name" desc:"Custom role to assign, by name. Pass a built-in role by --role-id, such as baseten:reader." oneof:"role-ref"`
 	Team         string   `flag:"team" desc:"Team to assign a team role in, by name or ID. Omit for an organization role."`
 	ResourceSets []string `flag:"resource-set" desc:"Limit the role to what this set selects, such as model:<model-id>,environment:staging. May be repeated."`
 }
@@ -153,7 +153,7 @@ type OrgRoleAssignmentListFlags struct {
 
 	Team     string `flag:"team" desc:"Only assignments in this team, by name or ID."`
 	RoleID   string `flag:"role-id" desc:"Only assignments of the role with this ID. Mutually exclusive with --role-name."`
-	RoleName string `flag:"role-name" desc:"Only assignments of the role with this name."`
+	RoleName string `flag:"role-name" desc:"Only assignments of the custom role with this name."`
 }
 
 // OrgRoleAssignmentRefFlags picks one role assignment.
