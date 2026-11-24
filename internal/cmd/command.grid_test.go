@@ -3076,7 +3076,6 @@ func Test_Grid_OpenCodeServedModel_RealOpenCode2(t *testing.T) {
 			"HOME=" + root, "PATH=" + os.Getenv("PATH"), "TERM=xterm-256color", "TMPDIR=" + tmp,
 			"XDG_CONFIG_HOME=" + filepath.Join(root, ".config"), "XDG_DATA_HOME=" + filepath.Join(root, ".local", "share"),
 			"XDG_STATE_HOME=" + filepath.Join(root, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(root, ".cache"),
-			"OPENCODE_DISABLE_FREE_MODELS=1",
 		}, env...)
 	}
 	launch := func(ctx context.Context, args []string, env ...string) (*os.File, func() string, func()) {
