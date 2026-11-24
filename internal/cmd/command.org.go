@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -550,12 +549,12 @@ func commandOrgRegions(ctx *CommandContext, flags *cmd.OrgRegionsFlags) error {
 }
 
 func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error {
-	a, err := newOrgAccessAPI(ctx)
+	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	var info cmd.OrgInfo
-	if err := a.call(ctx, http.MethodGet, "/v1/organizations/me", nil, nil, &info); err != nil {
+	info, err := cl.API().GetOrganizationsMe(ctx)
+	if err != nil {
 		return fmt.Errorf("fetching organization info: %w", err)
 	}
 
@@ -593,30 +592,22 @@ func orgAPIKeySettingText(allowed bool) string {
 	return "blocked for new keys"
 }
 
-// orgUpdateRequest adds the role setting the generated request doesn't have yet.
-type orgUpdateRequest struct {
-	managementapi.UpdateOrganizationRequest
-	AllowTeamAdminsToManageRoles *bool `json:"allow_team_admins_to_manage_roles,omitempty"`
-}
-
 func commandOrgUpdate(ctx *CommandContext, flags *cmd.OrgUpdateFlags) error {
-	req := orgUpdateRequest{
-		UpdateOrganizationRequest: managementapi.UpdateOrganizationRequest{
-			AllowPersonalApiKeys:       flags.AllowPersonalAPIKeys.Pointer(),
-			AllowServiceAccountApiKeys: flags.AllowServiceAccountAPIKeys.Pointer(),
-		},
+	req := managementapi.UpdateOrganizationRequest{
+		AllowPersonalApiKeys:         flags.AllowPersonalAPIKeys.Pointer(),
+		AllowServiceAccountApiKeys:   flags.AllowServiceAccountAPIKeys.Pointer(),
 		AllowTeamAdminsToManageRoles: flags.AllowTeamAdminsToManageRoles.Pointer(),
 	}
-	if req == (orgUpdateRequest{}) {
+	if req == (managementapi.UpdateOrganizationRequest{}) {
 		return cmd.NewErrUsagef("nothing to update; pass --allow-personal-api-keys, --allow-service-account-api-keys " +
 			"or --allow-team-admins-to-manage-roles")
 	}
-	a, err := newOrgAccessAPI(ctx)
+	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	var info cmd.OrgInfo
-	if err := a.call(ctx, http.MethodPatch, "/v1/organizations/me", nil, req, &info); err != nil {
+	info, err := cl.API().PatchOrganizationsMe(ctx, req)
+	if err != nil {
 		return fmt.Errorf("updating organization: %w", err)
 	}
 	// The organization has no role setting to change without custom roles.

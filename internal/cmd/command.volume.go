@@ -351,7 +351,8 @@ func volumeStatVolume(ctx *CommandContext, ref client.VolumeRef) error {
 	if err != nil {
 		return err
 	}
-	volume, err := cl.API().GetVolumesVolumeName(ctx, ref.Namespace, ref.Volume)
+	volume, err := cl.API().GetVolumesVolumeName(
+		ctx, ref.Namespace, ref.Volume, managementapi.GetV1VolumesVolumeNamespaceVolumeNameParams{})
 	if err != nil {
 		return fmt.Errorf("describing %s: %w", ref, err)
 	}
@@ -387,7 +388,8 @@ func volumeStatVersion(ctx *CommandContext, flags *cmd.VolumeStatFlags, ref clie
 		return err
 	}
 	version, err := cl.API().GetVolumesVersionsVolumeVersion(
-		ctx, ref.Namespace, ref.Volume, volumeVersionSelector(ref))
+		ctx, ref.Namespace, ref.Volume, volumeVersionSelector(ref),
+		managementapi.GetV1VolumesVolumeNamespaceVolumeNameVersionsVolumeVersionParams{})
 	if err != nil {
 		return fmt.Errorf("describing %s: %w", ref, err)
 	}
