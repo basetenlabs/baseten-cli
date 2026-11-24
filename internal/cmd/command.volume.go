@@ -43,19 +43,19 @@ func commandVolumeLs(ctx *CommandContext, flags *cmd.VolumeLsFlags) error {
 		arg = strings.TrimSpace(ctx.Args[0])
 	}
 	if arg == "" || arg == volumeRefScheme {
-		return volumeLsNamespaces(ctx)
+		return volumeLsNamespaces(ctx, flags.VolumeHostingFlags)
 	}
 	ref, err := volumeParseRef(arg)
 	if err != nil {
 		return err
 	}
 	if ref.Level() == client.VolumeRefLevelNamespace {
-		return volumeLsVolumes(ctx, ref.Namespace)
+		return volumeLsVolumes(ctx, flags.VolumeHostingFlags, ref.Namespace)
 	}
 	return volumeLsEntries(ctx, flags, ref)
 }
 
-func volumeLsNamespaces(ctx *CommandContext) error {
+func volumeLsNamespaces(ctx *CommandContext, hosting cmd.VolumeHostingFlags) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
@@ -64,7 +64,7 @@ func volumeLsNamespaces(ctx *CommandContext) error {
 	// Every page is walked and aggregated rather than exposing cursors,
 	// matching `org user list`.
 	var items []string
-	var params managementapi.GetV1VolumesNamespacesParams
+	params := managementapi.GetV1VolumesNamespacesParams{Hosting: volumeHostingParam(hosting)}
 	for {
 		resp, err := cl.API().GetVolumesNamespaces(ctx, params)
 		if err != nil {
@@ -96,14 +96,14 @@ func volumeLsNamespaces(ctx *CommandContext) error {
 	return nil
 }
 
-func volumeLsVolumes(ctx *CommandContext, namespace string) error {
+func volumeLsVolumes(ctx *CommandContext, hosting cmd.VolumeHostingFlags, namespace string) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
 
 	var items []managementapi.Volume
-	params := managementapi.GetV1VolumesParams{Namespace: namespace}
+	params := managementapi.GetV1VolumesParams{Namespace: namespace, Hosting: volumeHostingParam(hosting)}
 	for {
 		resp, err := cl.API().GetVolumes(ctx, params)
 		if err != nil {
@@ -153,9 +153,10 @@ func volumeLsEntries(ctx *CommandContext, flags *cmd.VolumeLsFlags, ref client.V
 		return err
 	}
 	manifest, err := transfer.FetchVolumeManifest(ctx, client.FetchVolumeManifestOptions{
-		Ref:    ref,
-		Hasher: volumeHasher,
-		Store:  &volumeObjectStore{ctx: ctx},
+		Ref:     ref,
+		Hosting: volumeHosting(flags.VolumeHostingFlags),
+		Hasher:  volumeHasher,
+		Store:   &volumeObjectStore{ctx: ctx},
 	})
 	if err != nil {
 		return fmt.Errorf("listing %s: %w", ref, err)
@@ -338,7 +339,7 @@ func commandVolumeStat(ctx *CommandContext, flags *cmd.VolumeStatFlags) error {
 			"ref %s names a namespace, which has nothing to describe; "+
 				"list its volumes with 'baseten volume ls %s'", ref, ref)
 	case client.VolumeRefLevelVolume:
-		return volumeStatVolume(ctx, ref)
+		return volumeStatVolume(ctx, flags.VolumeHostingFlags, ref)
 	case client.VolumeRefLevelPoint:
 		return volumeStatVersion(ctx, flags, ref)
 	default:
@@ -346,12 +347,13 @@ func commandVolumeStat(ctx *CommandContext, flags *cmd.VolumeStatFlags) error {
 	}
 }
 
-func volumeStatVolume(ctx *CommandContext, ref client.VolumeRef) error {
+func volumeStatVolume(ctx *CommandContext, hosting cmd.VolumeHostingFlags, ref client.VolumeRef) error {
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
 		return err
 	}
-	volume, err := cl.API().GetVolumesVolumeName(ctx, ref.Namespace, ref.Volume)
+	volume, err := cl.API().GetVolumesVolumeName(ctx, ref.Namespace, ref.Volume,
+		managementapi.GetV1VolumesVolumeNamespaceVolumeNameParams{Hosting: volumeHostingParam(hosting)})
 	if err != nil {
 		return fmt.Errorf("describing %s: %w", ref, err)
 	}
@@ -387,7 +389,10 @@ func volumeStatVersion(ctx *CommandContext, flags *cmd.VolumeStatFlags, ref clie
 		return err
 	}
 	version, err := cl.API().GetVolumesVersionsVolumeVersion(
-		ctx, ref.Namespace, ref.Volume, volumeVersionSelector(ref))
+		ctx, ref.Namespace, ref.Volume, volumeVersionSelector(ref),
+		managementapi.GetV1VolumesVolumeNamespaceVolumeNameVersionsVolumeVersionParams{
+			Hosting: volumeHostingParam(flags.VolumeHostingFlags),
+		})
 	if err != nil {
 		return fmt.Errorf("describing %s: %w", ref, err)
 	}
@@ -435,7 +440,8 @@ func volumeStatEntry(ctx *CommandContext, flags *cmd.VolumeStatFlags, ref client
 	// directory even when no record describes it.
 	var beneath int
 	manifest, err := transfer.FetchVolumeManifest(ctx, client.FetchVolumeManifestOptions{
-		Ref: ref,
+		Ref:     ref,
+		Hosting: volumeHosting(flags.VolumeHostingFlags),
 		EntryFilter: func(_ context.Context, entry client.VolumeEntry) bool {
 			if entry.Path == ref.Path {
 				return true
@@ -517,6 +523,7 @@ func commandVolumeVersions(ctx *CommandContext, flags *cmd.VolumeVersionsFlags) 
 	resp, err := cl.API().GetVolumesVersions(ctx, ref.Namespace, ref.Volume,
 		managementapi.GetV1VolumesVolumeNamespaceVolumeNameVersionsParams{
 			IncludeTombstoned: &flags.IncludeTombstoned,
+			Hosting:           volumeHostingParam(flags.VolumeHostingFlags),
 		})
 	if err != nil {
 		return fmt.Errorf("listing versions of %s: %w", ref, err)
@@ -607,7 +614,9 @@ func volumeRmVersion(ctx *CommandContext, flags *cmd.VolumeRmFlags, ref client.V
 	}
 
 	resp, err := cl.API().DeleteVolumesVersions(ctx, ref.Namespace, ref.Volume,
-		volumeVersionSelector(ref), managementapi.DeleteVolumeVersionRequest{})
+		volumeVersionSelector(ref), managementapi.DeleteVolumeVersionRequest{
+			Hosting: volumeHostingParam(flags.VolumeHostingFlags),
+		})
 	if err != nil {
 		return fmt.Errorf("deleting %s: %w", ref, err)
 	}
@@ -637,7 +646,7 @@ func volumeRmVolume(ctx *CommandContext, flags *cmd.VolumeRmFlags, ref client.Vo
 	}
 
 	resp, err := cl.API().DeleteVolumes(ctx, ref.Namespace, ref.Volume,
-		managementapi.DeleteVolumeRequest{})
+		managementapi.DeleteVolumeRequest{Hosting: volumeHostingParam(flags.VolumeHostingFlags)})
 	if err != nil {
 		return fmt.Errorf("deleting %s: %w", ref, err)
 	}
@@ -669,7 +678,9 @@ func commandVolumeRestore(ctx *CommandContext, flags *cmd.VolumeRestoreFlags) er
 	}
 
 	resp, err := cl.API().PostVolumesVersionsRestore(ctx, ref.Namespace, ref.Volume,
-		volumeVersionSelector(ref), managementapi.RestoreVolumeVersionRequest{})
+		volumeVersionSelector(ref), managementapi.RestoreVolumeVersionRequest{
+			Hosting: volumeHostingParam(flags.VolumeHostingFlags),
+		})
 	if err != nil {
 		return fmt.Errorf("restoring %s: %w", ref, err)
 	}
@@ -728,7 +739,10 @@ func commandVolumeUpdate(ctx *CommandContext, flags *cmd.VolumeUpdateFlags) erro
 	}
 
 	resp, err := cl.API().PatchVolumes(ctx, ref.Namespace, ref.Volume,
-		managementapi.PatchVolumeRequest{ExpiresAt: expiresAt})
+		managementapi.PatchVolumeRequest{
+			ExpiresAt: expiresAt,
+			Hosting:   volumeHostingParam(flags.VolumeHostingFlags),
+		})
 	if err != nil {
 		return fmt.Errorf("updating %s: %w", ref, err)
 	}
@@ -763,7 +777,11 @@ func commandVolumeTagSet(ctx *CommandContext, flags *cmd.VolumeTagSetFlags) erro
 	if err := volumeTagArg(ref, tag); err != nil {
 		return err
 	}
-	body := managementapi.SetVolumeTagRequest{Tag: tag, Version: volumeVersionSelector(ref)}
+	body := managementapi.SetVolumeTagRequest{
+		Tag:     tag,
+		Version: volumeVersionSelector(ref),
+		Hosting: volumeHostingParam(flags.VolumeHostingFlags),
+	}
 	if flags.ExpiresAt != "" {
 		expiresAt, err := volumeExpiresAtArg(flags.ExpiresAt)
 		if err != nil {
@@ -836,7 +854,7 @@ func commandVolumeTagDelete(ctx *CommandContext, flags *cmd.VolumeTagDeleteFlags
 	}
 
 	resp, err := cl.API().DeleteVolumesTags(ctx, ref.Namespace, ref.Volume, tag,
-		managementapi.DeleteVolumeTagRequest{})
+		managementapi.DeleteVolumeTagRequest{Hosting: volumeHostingParam(flags.VolumeHostingFlags)})
 	if err != nil {
 		return fmt.Errorf("deleting tag %s from %s: %w", tag, ref, err)
 	}
@@ -866,6 +884,49 @@ func volumeTagArg(ref client.VolumeRef, tag string) error {
 				"characters plus dots and hyphens, and be at most 128 characters", tag)
 	}
 	return nil
+}
+
+// volumeHostingNames is one --hosting value as a transfer and as a management
+// API request each take it.
+type volumeHostingNames struct {
+	transfer client.VolumeHosting
+	api      managementapi.VolumeHosting
+}
+
+var volumeHostings = map[string]volumeHostingNames{
+	"baseten-cloud": {client.VolumeHostingBasetenCloud, managementapi.VolumeHosting_BASETEN_CLOUD},
+	"single-tenant": {client.VolumeHostingSingleTenant, managementapi.VolumeHosting_SINGLE_TENANT},
+	"self-hosted":   {client.VolumeHostingSelfHosted, managementapi.VolumeHosting_SELF_HOSTED},
+}
+
+// volumeHostingOf looks up --hosting, reporting false when it is unset, which
+// leaves the choice to the API: the organization's only hosting.
+func volumeHostingOf(flags cmd.VolumeHostingFlags) (volumeHostingNames, bool) {
+	if flags.Hosting == "" {
+		return volumeHostingNames{}, false
+	}
+	hosting, ok := volumeHostings[flags.Hosting]
+	if !ok {
+		// The flag's enum refuses anything else before a command runs.
+		panic(fmt.Sprintf("unhandled --hosting %q", flags.Hosting))
+	}
+	return hosting, true
+}
+
+// volumeHosting is --hosting for a transfer, empty when unset.
+func volumeHosting(flags cmd.VolumeHostingFlags) client.VolumeHosting {
+	hosting, _ := volumeHostingOf(flags)
+	return hosting.transfer
+}
+
+// volumeHostingParam is --hosting for a management API request, absent when
+// unset.
+func volumeHostingParam(flags cmd.VolumeHostingFlags) *managementapi.VolumeHosting {
+	hosting, set := volumeHostingOf(flags)
+	if !set {
+		return nil
+	}
+	return &hosting.api
 }
 
 // volumeVersionSelector renders the version a ref selects in the syntax the

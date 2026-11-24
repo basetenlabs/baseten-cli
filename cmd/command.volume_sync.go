@@ -152,6 +152,7 @@ var commandVolumeSync = Command{
 
 type VolumeSyncStartFlags struct {
 	CommandFlags
+	VolumeHostingFlags
 
 	Source      string   `flag:"source" desc:"Remote source URI. Supported schemes: hf://, s3://, gs://, azure://, r2://, cw://, and bt://." required:"true"`
 	Destination string   `flag:"dest" desc:"Destination ref as bdn:<namespace>/<volume>, with an optional :<tag>." required:"true"`

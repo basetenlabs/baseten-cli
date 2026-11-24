@@ -1952,3 +1952,128 @@ func Test_Volume_LiveBandwidthDropsDuringStall(t *testing.T) {
 		})
 	}
 }
+
+// volumeHostingVolumePayload is a volume as the management API renders it.
+var volumeHostingVolumePayload = map[string]any{
+	"name": "llama", "namespace": "weights", "sequence": 7, "updated_at": volumeTestTime,
+	"version_ref": "bdn:weights/llama", "versions_alive": 1, "versions_tombstoned": 0,
+	"versions_untagged": 0, "versions_expiring": 0, "tag_count": 0, "tags": []any{},
+}
+
+// Test_Volume_Hosting_ReachesTheAPI runs every command that calls the
+// management API with --hosting, and checks the API saw it: as a query
+// parameter on a read and in the body of a write.
+func Test_Volume_Hosting_ReachesTheAPI(t *testing.T) {
+	empty := map[string]any{"items": []any{}, "pagination": map[string]any{"has_more": false}}
+	tests := []struct {
+		name, method, path string
+		reply              map[string]any
+		args               []string
+	}{
+		{"ls namespaces", "GET", "/v1/volumes/namespaces", empty, []string{"volume", "ls"}},
+		{"ls volumes", "GET", "/v1/volumes", empty, []string{"volume", "ls", "bdn:weights"}},
+		{"stat volume", "GET", "/v1/volumes/weights/llama", volumeHostingVolumePayload,
+			[]string{"volume", "stat", "bdn:weights/llama"}},
+		{"stat version", "GET", "/v1/volumes/weights/llama/versions/:prod", volumeVersionPayload,
+			[]string{"volume", "stat", "bdn:weights/llama:prod"}},
+		{"versions", "GET", "/v1/volumes/weights/llama/versions",
+			map[string]any{"volume_sequence": 9, "versions": []any{}},
+			[]string{"volume", "versions", "bdn:weights/llama"}},
+		{"rm version", "DELETE", "/v1/volumes/weights/llama/versions/@b3:aabbccddeeff", map[string]any{
+			"namespace": "weights", "volume": "llama", "digest": "b3:aabbccddeeff",
+			"version_ref": "bdn:weights/llama@b3:aabbccddeeff", "lifecycle": "TOMBSTONED",
+			"delete_after": volumeTestTime, "volume_sequence": 10,
+		}, []string{"volume", "rm", "--yes", "bdn:weights/llama@b3:aabbccddeeff"}},
+		{"rm volume", "DELETE", "/v1/volumes/weights/llama", map[string]any{
+			"namespace": "weights", "name": "llama", "versions_deleted": 4, "volume_sequence": 11,
+		}, []string{"volume", "rm", "--recursive", "--yes", "bdn:weights/llama"}},
+		{"restore", "POST", "/v1/volumes/weights/llama/versions/@b3:aabbccddeeff/restore", map[string]any{
+			"namespace": "weights", "volume": "llama", "digest": "b3:aabbccddeeff",
+			"version_ref": "bdn:weights/llama@b3:aabbccddeeff", "lifecycle": "ALIVE",
+			"volume_sequence": 12,
+		}, []string{"volume", "restore", "bdn:weights/llama@b3:aabbccddeeff"}},
+		{"update", "PATCH", volumeUpdatePath, volumeUpdatePayload,
+			[]string{"volume", "update", "bdn:weights/llama", "--clear-expires-at", "--yes"}},
+		{"tag set", "POST", volumeTagsPath, volumeTagSetPayload,
+			[]string{"volume", "tag", "set", "--volume-ref", volumeTagRefByDigest, "--tag", "prod"}},
+		{"tag delete", "DELETE", volumeTagDeletePath, volumeTagDeletePayload,
+			[]string{"volume", "tag", "delete", "--volume-ref", "bdn:weights/llama", "--tag", "prod"}},
+		{"sync start", "POST", "/v1/volumes/syncs", volumeSyncPayload("vsync-1", "PENDING"),
+			[]string{"volume", "sync", "start", "--source", "hf://org/model", "--dest", "bdn:weights/llama"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			m := h.MockManagementAPI()
+			m.SetRoute(tc.method, tc.path, 200, tc.reply)
+
+			h.Require.NoError(h.Execute(append(tc.args, "--hosting", "single-tenant")...))
+			call := m.FindCall(tc.method, tc.path)
+			if tc.method == "GET" {
+				h.Require.Equal("SINGLE_TENANT", call.Query().Get("hosting"))
+				return
+			}
+			var body map[string]any
+			h.Require.NoError(json.Unmarshal([]byte(call.Body), &body))
+			h.Require.Equal("SINGLE_TENANT", body["hosting"])
+		})
+	}
+}
+
+// Test_Volume_Hosting_ReachesTheTransfer checks the commands that read or
+// write a volume's contents hand --hosting to the transfer, which uses it for
+// the token exchange, and hand it nothing without the flag.
+func Test_Volume_Hosting_ReachesTheTransfer(t *testing.T) {
+	for _, hosting := range []struct {
+		flag string
+		want client.VolumeHosting
+	}{
+		{"self-hosted", client.VolumeHostingSelfHosted},
+		{"", ""},
+	} {
+		run := func(h *CommandHarness, args ...string) {
+			if hosting.flag != "" {
+				args = append(args, "--hosting", hosting.flag)
+			}
+			h.Require.NoError(h.Execute(args...))
+		}
+
+		h := NewCommandHarness(t)
+		fake := withVolumeTransfer(t, h)
+		fake.Contents = map[string]string{"/config/model.json": "{}"}
+		run(h, "volume", "cat", "bdn:weights/llama/config/model.json")
+		h.Require.Equal(hosting.want, fake.PullOptions.Hosting, "cat")
+
+		h = NewCommandHarness(t)
+		fake = withVolumeTransfer(t, h)
+		run(h, "volume", "ls", "bdn:weights/llama")
+		h.Require.Equal(hosting.want, fake.ManifestOptions.Hosting, "ls")
+
+		h = NewCommandHarness(t)
+		fake = withVolumeTransfer(t, h)
+		run(h, "volume", "stat", "bdn:weights/llama/config/model.json")
+		h.Require.Equal(hosting.want, fake.ManifestOptions.Hosting, "stat")
+
+		h = NewCommandHarness(t)
+		fake = withVolumeTransfer(t, h)
+		fake.PushResult = &client.PushVolumeResult{
+			VersionRef: client.VolumeRef{Namespace: "weights", Volume: "llama", Digest: "b3:a1b2"},
+		}
+		run(h, "volume", "push", t.TempDir(), "bdn:weights/llama")
+		h.Require.Equal(hosting.want, fake.PushOptions.Hosting, "push")
+
+		h = NewCommandHarness(t)
+		fake = withVolumeTransfer(t, h)
+		fake.PullResult = &client.PullVolumeResult{
+			VersionRef: client.VolumeRef{Namespace: "weights", Volume: "llama", Digest: "b3:a1b2"},
+		}
+		run(h, "volume", "pull", "bdn:weights/llama", t.TempDir())
+		h.Require.Equal(hosting.want, fake.PullOptions.Hosting, "pull")
+	}
+}
+
+func Test_Volume_Hosting_RefusesAnUnknownValue(t *testing.T) {
+	h := NewCommandHarness(t)
+	err := h.Execute("volume", "ls", "--hosting", "private")
+	h.Require.ErrorContains(err, "baseten-cloud")
+}
