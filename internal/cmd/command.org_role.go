@@ -34,11 +34,9 @@ func orgListRoles(ctx context.Context, api *managementapi.Client, params managem
 	}
 }
 
-// orgRoleID resolves a role reference. A name matches custom roles only, which
-// are unique in the organization: a built-in role, now or added later, can share
-// a custom role's name, so built-in roles are passed by ID. A name is looked up
-// in teamID's role list when given, which a team admin can read without
-// organization-wide access to roles.
+// orgRoleID resolves a role reference. Names are unique in the organization. A
+// name is looked up in teamID's role list when given, which a team admin can
+// read without organization-wide access to roles.
 func orgRoleID(ctx context.Context, api *managementapi.Client, id, name string, teamID *string) (string, error) {
 	if id != "" {
 		return id, nil
@@ -48,11 +46,11 @@ func orgRoleID(ctx context.Context, api *managementapi.Client, id, name string, 
 		return "", fmt.Errorf("looking up role %q: %w", name, err)
 	}
 	for _, role := range roles {
-		if role.Name == name && !role.BuiltIn {
+		if role.Name == name {
 			return role.Id, nil
 		}
 	}
-	return "", cmd.NewErrNotFound(fmt.Errorf("no custom role named %q; pass a built-in role by ID, such as baseten:reader", name))
+	return "", cmd.NewErrNotFound(fmt.Errorf("no role named %q", name))
 }
 
 func commandOrgRoleList(ctx *CommandContext, flags *cmd.OrgRoleListFlags) error {
