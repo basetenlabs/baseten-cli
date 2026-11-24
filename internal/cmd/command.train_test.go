@@ -76,6 +76,32 @@ func Test_Train_Job_List(t *testing.T) {
 	h.Require.NotContains(out, "TRAINING_JOB_RUNNING")
 }
 
+func Test_Train_Job_List_Paginates(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRouteFunc("POST", trainSearchPath, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+		if body["cursor"] == nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"training_jobs": []any{trainJobFixture("job-1", "TRAINING_JOB_RUNNING")},
+				"pagination":    map[string]any{"has_more": true, "cursor": "page2"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"training_jobs": []any{trainJobFixture("job-2", "TRAINING_JOB_COMPLETED")},
+			"pagination":    map[string]any{"has_more": false},
+		})
+	})
+
+	h.Require.NoError(h.Execute("train", "job", "list"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "job-1")
+	h.Require.Contains(out, "job-2")
+}
+
 func Test_Train_Job_List_Empty(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("POST", trainSearchPath, 200, map[string]any{"training_jobs": []any{}})
