@@ -45,12 +45,20 @@ func orgRoleID(ctx context.Context, api *managementapi.Client, id, name string, 
 	if err != nil {
 		return "", fmt.Errorf("looking up role %q: %w", name, err)
 	}
+	var ids []string
 	for _, role := range roles {
 		if role.Name == name {
-			return role.Id, nil
+			ids = append(ids, role.Id)
 		}
 	}
-	return "", cmd.NewErrNotFound(fmt.Errorf("no role named %q", name))
+	switch len(ids) {
+	case 0:
+		return "", cmd.NewErrNotFound(fmt.Errorf("no role named %q", name))
+	case 1:
+		return ids[0], nil
+	}
+	// A built-in role added later can share a custom role's name.
+	return "", cmd.NewErrUsagef("more than one role is named %q (%s); pass its ID instead", name, strings.Join(ids, ", "))
 }
 
 func commandOrgRoleList(ctx *CommandContext, flags *cmd.OrgRoleListFlags) error {

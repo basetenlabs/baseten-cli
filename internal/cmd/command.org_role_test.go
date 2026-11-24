@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+
+	"github.com/basetenlabs/baseten-cli/cmd"
 )
 
 func orgAccessRoleFixture(id, name string) map[string]any {
@@ -129,6 +131,24 @@ func Test_Org_Role_Delete_UnknownName(t *testing.T) {
 
 	h.Require.ErrorContains(h.Execute("org", "role", "delete", "--name", "missing"), `no role named "missing"`)
 	h.Require.Nil(h.MockManagementAPI().FindCall("DELETE", "/v1/access/roles/missing"))
+}
+
+// The API lists built-in roles with the organization's custom roles, and a
+// built-in added later can share a custom role's name.
+func Test_Org_Role_Describe_NameSharedByTwoRolesNeedsID(t *testing.T) {
+	builtIn := orgAccessRoleFixture("baseten:deployer", "Deployer")
+	builtIn["built_in"] = true
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/access/roles", 200, map[string]any{
+		"items":      []any{builtIn, orgAccessRoleFixture("role_7", "Deployer")},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	h.Require.ErrorContains(h.Execute("org", "role", "describe", "--name", "Deployer"),
+		`more than one role is named "Deployer" (baseten:deployer, role_7); pass its ID instead`)
+	h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
+	h.Require.Nil(m.FindCall("GET", "/v1/access/roles/role_7"))
 }
 
 func Test_Org_Role_Delete_InUseReportsConflict(t *testing.T) {
