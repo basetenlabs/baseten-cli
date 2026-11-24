@@ -443,6 +443,21 @@ func Test_Model_Deployment_Logs_OneShotJSON(t *testing.T) {
 	h.Require.Contains(out, `"message": "hi"`)
 }
 
+func Test_Model_Deployment_Logs_KeepsHTMLCharacters(t *testing.T) {
+	for _, output := range []string{"json", "jsonl"} {
+		t.Run(output, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			h.MockManagementAPI().SetRoute("GET", logsLogsPath, 200, logsResponse(
+				map[string]any{"timestamp": "1", "message": "<think>a < b && c</think>", "replica": nil},
+			))
+			err := h.Execute("model", "deployment", "logs",
+				"--model-id", "m", "--deployment-id", "d", "--output", output)
+			h.Require.NoError(err)
+			h.Require.Contains(h.Stdout.String(), `<think>a < b && c</think>`)
+		})
+	}
+}
+
 func Test_Model_Deployment_Logs_OneShotJSONL(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.MockManagementAPI().SetRoute("GET", logsLogsPath, 200, logsResponse(

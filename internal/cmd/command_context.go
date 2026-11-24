@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -133,6 +134,7 @@ func normalizeForJQ(v any) (any, error) {
 
 func (c *CommandContext) encodeJSON(v any) {
 	enc := json.NewEncoder(c.Stdout)
+	enc.SetEscapeHTML(false)
 	if !c.JSONCompact {
 		enc.SetIndent("", "  ")
 	}
@@ -349,7 +351,7 @@ func (w *JSONArrayWriter) Write(v any) {
 
 func (w *JSONArrayWriter) writeOne(v any) {
 	if w.lines {
-		b, err := json.Marshal(v)
+		b, err := marshalJSON(v, "", "")
 		if err != nil {
 			panic(err)
 		}
@@ -365,14 +367,27 @@ func (w *JSONArrayWriter) writeOne(v any) {
 	var b []byte
 	var err error
 	if w.compact {
-		b, err = json.Marshal(v)
+		b, err = marshalJSON(v, "", "")
 	} else {
-		b, err = json.MarshalIndent(v, "  ", "  ")
+		b, err = marshalJSON(v, "  ", "  ")
 	}
 	if err != nil {
 		panic(err)
 	}
 	panicOnOutputError(fmt.Fprintf(w.w, "  %s", b))
+}
+
+// marshalJSON is json.Marshal / json.MarshalIndent without HTML escaping, so
+// it prints < > & as-is like encodeJSON.
+func marshalJSON(v any, prefix, indent string) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent(prefix, indent)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 // Close finishes the JSON array.
