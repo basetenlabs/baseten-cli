@@ -483,7 +483,7 @@ type VolumePushFlags struct {
 
 	SourceURI string `flag:"source-uri" desc:"Where the tree came from, for example 'hf://<repo>@<revision>'. Defaults to a file URI for DIR and is part of the version's digest, so a fixed value keeps the same tree at one version across directories."`
 
-	FileJobs int `flag:"file-jobs" desc:"Number of files processed concurrently. Defaults to 16." group:"transfer"`
+	FileJobs int `flag:"file-jobs" desc:"Number of files processed concurrently. Defaults to 256, or to --chunk-operations when that is set." group:"transfer"`
 }
 
 type VolumePullFlags struct {
