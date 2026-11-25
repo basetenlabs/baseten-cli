@@ -19,6 +19,30 @@
 - JSONL preserves JSON's response structure without indentation; only explicitly streamed arrays (`JSONArrayStreamed: true`, `NewJSONArrayWriter`) emit one record per line.
 - Wrap non-`omitempty` slices the CLI builds for JSON output (such as a list's `Items`) in `normalizeJSONSlice`, so an empty result prints `[]`, not `null`.
 
+## Designing commands
+
+The CLI is one client of the public API among several (SDKs, MCP, Terraform). Keep it consistent with the rest of the CLI and faithful to the API.
+
+- Call the API through the typed client generated in [baseten-go](https://github.com/basetenlabs/baseten-go). When an endpoint is missing there, regenerate baseten-go first and point `go.mod` at it, a branch pseudo-version while both are in review; don't hand-write requests or redefine response types.
+- JSON output is the API's response type, or a list wrapper of it; don't copy it into a CLI-only struct. If a command needs data the API doesn't return, add it to the API, not to the CLI.
+- Shape the command tree by resource, not by API path. An organization resource sits directly under `org` (`org service-account`, `org role`, `org role-assignment`), and an operation on an existing resource sits under that resource (`org user access`). Add a new organization field to `org describe` and `org update` rather than a new command.
+- A command that will only ever list uses the plural noun and no subcommand (`org regions`, `org audit-logs`, `model instance-types`).
+- Mark a pre-release command with ` (PRE-RELEASE)` at the end of its `Summary` and a notice at the start of its `Description`. Don't hide it.
+- For the caller's own resource (`me`), call the API's `me` endpoint (`GetUsersMe`, `GetUsersMeAccess`) instead of resolving the caller's ID first.
+- A lookup by name that matches more than one resource fails with a usage error that asks for the ID; don't pick one.
+- Table output shows readable names rather than IDs (team name, not team ID), drops a column the caller already filtered by, and shows a count where the full list belongs in `describe`. Group settings for a feature most organizations don't use under their own heading, shown only when the feature is configured.
+- Examples show the common case, one way.
+
+## Writing command code
+
+- Put a command's runner in `internal/cmd/command.<name>.go`, the file matching its `cmd/command.<name>.go`, with its `Command` literal and flags structs together in that file, literals first. A parent with few or small children keeps them in its own file. Code written later should look like it was written with the rest of the file.
+- `cmd` and `internal/cmd` are each one large package, so prefix helper and type names with their command area (`orgRole...`), named after a command that exists. Inline a helper of a line or two; extract a lookup shared by two commands (such as a user by email) into one helper both use.
+- Build API request structures field by field from flags; don't convert between structs that happen to share field names. Set an optional request field only when its flag is set.
+- Validate flags before sending the request. A command that fails after the server has already applied the change misleads the caller.
+- Separate functions with a blank line (`gofmt` doesn't enforce it).
+- Give every new command test coverage, named after its real command path.
+- Keep unrelated changes, including test fixes for another area, in their own PR so that area's owners can review them.
+
 ## End-to-end tests
 
 E2e tests live in `internal/e2e-tests/` behind the `e2e` build tag and run against a live Baseten environment. They auto-skip when `BASETEN_E2E_TEST_API_KEY` is unset, so CI must opt in explicitly.
