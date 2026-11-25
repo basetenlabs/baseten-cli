@@ -7,10 +7,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/basetenlabs/baseten-cli/internal/auth"
+	"github.com/basetenlabs/baseten-go/client"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
@@ -30,6 +32,10 @@ func storeWithConfigDir(t *testing.T) *auth.Store {
 	t.Setenv("BASETEN_CONFIG_DIR", dir)
 	t.Setenv("BASETEN_API_KEY", "")
 	t.Setenv("BASETEN_PROFILE", "")
+	t.Setenv("BASETEN_REMOTE_URL", "")
+	t.Setenv(auth.IdentityTokenFileEnv, "")
+	t.Setenv(auth.IdentityTokenEnv, "")
+	t.Setenv(auth.TrustRuleIDEnv, "")
 	return auth.NewStore(auth.StoreOptions{Dir: dir})
 }
 
@@ -268,4 +274,238 @@ func TestSession_UsesAPIKey(t *testing.T) {
 
 	t.Setenv("BASETEN_API_KEY", "env-key")
 	require.True(t, mustResolve(t, "").UsesAPIKey())
+}
+
+// setWorkloadIdentityEnv writes an identity token file and sets both workload
+// identity variables, returning the token file path.
+func setWorkloadIdentityEnv(t *testing.T, trustRuleID string) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "token")
+	require.NoError(t, os.WriteFile(file, []byte("identity-jwt\n"), 0o600))
+	t.Setenv(auth.IdentityTokenFileEnv, file)
+	t.Setenv(auth.TrustRuleIDEnv, trustRuleID)
+	return file
+}
+
+// tokenExchangeServer answers the workload identity token exchange with
+// access-<n> tokens, or with invalid_grant when refuse is set.
+type tokenExchangeServer struct {
+	*httptest.Server
+	Exchanges  int
+	Assertions []string
+	refuse     bool
+}
+
+func newTokenExchangeServer(t *testing.T, refuse bool) *tokenExchangeServer {
+	t.Helper()
+	s := &tokenExchangeServer{refuse: refuse}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/auth/token", r.URL.Path)
+		var body map[string]string
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		s.Assertions = append(s.Assertions, body["subject_token"])
+		w.Header().Set("Content-Type", "application/json")
+		if s.refuse {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+			return
+		}
+		s.Exchanges++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "access-" + strconv.Itoa(s.Exchanges),
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+		})
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+func TestResolveSession_WorkloadIdentityPrecedence(t *testing.T) {
+	s := storeWithConfigDir(t)
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileB, remoteURL, "key-bob", false, nil))
+	file := setWorkloadIdentityEnv(t, "rule-1")
+	t.Setenv("BASETEN_REMOTE_URL", "https://app.example.com")
+
+	// Workload identity wins over BASETEN_PROFILE and the current profile.
+	t.Setenv("BASETEN_PROFILE", profileB)
+	session := mustResolve(t, "")
+	require.Equal(t, &auth.WorkloadIdentity{IdentityTokenFile: file, TrustRuleID: "rule-1"}, session.WorkloadIdentity())
+	require.True(t, session.IsEphemeral())
+	require.False(t, session.UsesAPIKey())
+	require.Empty(t, session.ProfileName())
+	require.Equal(t, "https://app.example.com", session.RemoteURL())
+
+	// --profile wins over workload identity.
+	session = mustResolve(t, profileA)
+	require.Nil(t, session.WorkloadIdentity())
+	require.Equal(t, profileA, session.ProfileName())
+
+	// BASETEN_API_KEY with workload identity is ambiguous, so neither wins.
+	t.Setenv("BASETEN_API_KEY", "env-key")
+	_, err := auth.ResolveSession("", "")
+	require.ErrorContains(t, err, "both BASETEN_API_KEY and workload identity")
+	require.Equal(t, profileA, mustResolve(t, profileA).ProfileName())
+}
+
+func TestResolveSession_WorkloadIdentityInlineToken(t *testing.T) {
+	storeWithConfigDir(t)
+	t.Setenv(auth.IdentityTokenEnv, "identity-jwt")
+	t.Setenv(auth.TrustRuleIDEnv, "rule-1")
+	session := mustResolve(t, "")
+	require.Equal(t, &auth.WorkloadIdentity{IdentityToken: "identity-jwt", TrustRuleID: "rule-1"}, session.WorkloadIdentity())
+
+	// The file and the inline token together are ambiguous.
+	t.Setenv(auth.IdentityTokenFileEnv, "/token")
+	_, err := auth.ResolveSession("", "")
+	require.ErrorContains(t, err, "both "+auth.IdentityTokenFileEnv+" and "+auth.IdentityTokenEnv+" are set")
+}
+
+func TestResolveSession_WorkloadIdentityUnsetKeepsProfileOrder(t *testing.T) {
+	s := storeWithConfigDir(t)
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
+	session := mustResolve(t, "")
+	require.Nil(t, session.WorkloadIdentity())
+	require.Equal(t, profileA, session.ProfileName())
+
+	t.Setenv("BASETEN_API_KEY", "env-key")
+	require.True(t, mustResolve(t, "").UsesAPIKey())
+}
+
+func TestResolveSession_WorkloadIdentityHalfConfigured(t *testing.T) {
+	for _, tc := range []struct {
+		set, missing string
+	}{
+		{auth.IdentityTokenFileEnv, auth.TrustRuleIDEnv},
+		{auth.IdentityTokenEnv, auth.TrustRuleIDEnv},
+		{auth.TrustRuleIDEnv, auth.IdentityTokenFileEnv},
+	} {
+		t.Run(tc.set, func(t *testing.T) {
+			s := storeWithConfigDir(t)
+			require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
+			t.Setenv(tc.set, "value")
+
+			// Falling through to the current profile would silently run as a
+			// different identity.
+			_, err := auth.ResolveSession("", "")
+			require.ErrorContains(t, err, tc.set+" is set but ")
+			require.ErrorContains(t, err, tc.missing)
+
+			// --profile still resolves.
+			require.Equal(t, profileA, mustResolve(t, profileA).ProfileName())
+		})
+	}
+}
+
+func TestTransport_WorkloadIdentityBearerInjected(t *testing.T) {
+	storeWithConfigDir(t)
+	setWorkloadIdentityEnv(t, "rule-1")
+	exchange := newTokenExchangeServer(t, false)
+	session := mustResolve(t, "")
+	creds, err := session.NewWorkloadIdentityCredentials(exchange.URL, nil)
+	require.NoError(t, err)
+	assertWorkloadIdentityBearer(t, session, creds, exchange)
+}
+
+func TestTransport_WorkloadIdentityInlineTokenBearerInjected(t *testing.T) {
+	storeWithConfigDir(t)
+	t.Setenv(auth.IdentityTokenEnv, "identity-jwt")
+	t.Setenv(auth.TrustRuleIDEnv, "rule-1")
+	exchange := newTokenExchangeServer(t, false)
+	session := mustResolve(t, "")
+	creds, err := session.NewWorkloadIdentityCredentials(exchange.URL, nil)
+	require.NoError(t, err)
+	assertWorkloadIdentityBearer(t, session, creds, exchange)
+}
+
+func assertWorkloadIdentityBearer(t *testing.T, session *auth.Session, creds client.Credentials, exchange *tokenExchangeServer) {
+	t.Helper()
+	es := newEchoServer(t)
+	tr := &auth.Transport{Session: session, WorkloadIdentity: creds}
+	for range 2 {
+		resp, err := tr.Do(mustRequest(t, es.URL))
+		require.NoError(t, err)
+		resp.Body.Close()
+		require.Equal(t, "Bearer access-1", es.LastAuthHeader)
+	}
+	// The cached access token is reused across requests.
+	require.Equal(t, 1, exchange.Exchanges)
+	require.Equal(t, []string{"identity-jwt"}, exchange.Assertions)
+}
+
+func TestTransport_WorkloadIdentityRefusedTokenIsReplaced(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		challenge string
+		replaced  bool
+	}{
+		{"baseten refusal", `Bearer realm="baseten", error="invalid_token"`, true},
+		// A model's own 401 is not Baseten refusing the token.
+		{"other 401", `Bearer error="invalid_token"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			storeWithConfigDir(t)
+			setWorkloadIdentityEnv(t, "rule-1")
+			exchange := newTokenExchangeServer(t, false)
+			session := mustResolve(t, "")
+			creds, err := session.NewWorkloadIdentityCredentials(exchange.URL, nil)
+			require.NoError(t, err)
+
+			var seen []string
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = append(seen, r.Header.Get("Authorization"))
+				if len(seen) == 1 {
+					w.Header().Set("WWW-Authenticate", tc.challenge)
+					w.WriteHeader(http.StatusUnauthorized)
+				}
+			}))
+			t.Cleanup(api.Close)
+
+			tr := &auth.Transport{Session: session, WorkloadIdentity: creds}
+			for range 2 {
+				resp, err := tr.Do(mustRequest(t, api.URL))
+				require.NoError(t, err)
+				resp.Body.Close()
+			}
+
+			second := "Bearer access-1"
+			if tc.replaced {
+				second = "Bearer access-2"
+			}
+			// The refused request is not sent again; only the next one gets a new token.
+			require.Equal(t, []string{"Bearer access-1", second}, seen)
+		})
+	}
+}
+
+func TestTransport_WorkloadIdentityInvalidGrant(t *testing.T) {
+	storeWithConfigDir(t)
+	file := setWorkloadIdentityEnv(t, "rule-1")
+	exchange := newTokenExchangeServer(t, true)
+	session := mustResolve(t, "")
+	creds, err := session.NewWorkloadIdentityCredentials(exchange.URL, nil)
+	require.NoError(t, err)
+
+	_, err = (&auth.Transport{Session: session, WorkloadIdentity: creds}).Credential(t.Context())
+	require.True(t, auth.IsTokenExchangeRefused(err))
+	require.ErrorContains(t, err, "workload identity (BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID=rule-1, BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE=")
+	require.ErrorContains(t, err, file)
+}
+
+func TestTransport_AccessTokenRefusesAPIKey(t *testing.T) {
+	s := storeWithConfigDir(t)
+	require.NoError(t, s.SetAPIKeyProfile(t.Context(), profileA, remoteURL, apiKeyA, true, nil))
+	_, err := (&auth.Transport{Session: mustResolve(t, profileA)}).AccessToken(t.Context())
+	require.ErrorContains(t, err, "not an access token")
+}
+
+func TestSession_CacheIdentityWorkloadIdentity(t *testing.T) {
+	storeWithConfigDir(t)
+	setWorkloadIdentityEnv(t, "rule-1")
+	first := mustResolve(t, "").CacheIdentity()
+	require.Regexp(t, `^wif-[0-9a-f]{16}$`, first)
+
+	t.Setenv(auth.TrustRuleIDEnv, "rule-2")
+	require.NotEqual(t, first, mustResolve(t, "").CacheIdentity())
 }

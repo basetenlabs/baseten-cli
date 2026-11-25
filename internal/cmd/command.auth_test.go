@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/auth"
@@ -106,6 +108,7 @@ func Test_Auth_Status_JSON(t *testing.T) {
 		Profile:   "alice",
 		RemoteURL: "https://app.example.com",
 		AuthType:  "api_key",
+		Source:    "profile",
 	}, got)
 }
 
@@ -600,6 +603,206 @@ func Test_Auth_Login_Web_ProfileFlagOverridesName(t *testing.T) {
 	h.Require.Equal("work", name)
 }
 
+// setWorkloadIdentityEnv clears BASETEN_API_KEY and configures workload
+// identity with an identity token file, returning its path.
+func setWorkloadIdentityEnv(t *testing.T) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(file, []byte("identity-jwt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BASETEN_API_KEY", "")
+	t.Setenv("BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE", file)
+	t.Setenv("BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID", "rule-1")
+	return file
+}
+
+// setInlineWorkloadIdentityEnv clears BASETEN_API_KEY and configures workload
+// identity with the identity token itself.
+func setInlineWorkloadIdentityEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("BASETEN_API_KEY", "")
+	t.Setenv("BASETEN_WORKLOAD_IDENTITY_TOKEN", "identity-jwt")
+	t.Setenv("BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID", "rule-1")
+}
+
+// serveTokenExchange answers the workload identity token exchange on the
+// harness's management API, refusing it with invalid_grant when refuse is set.
+func serveTokenExchange(h *CommandHarness, refuse bool) {
+	h.MockManagementAPI().SetRouteFunc("POST", "/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if refuse {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "wif-access", "token_type": "Bearer", "expires_in": 3600})
+	})
+}
+
+func Test_Auth_Status_WorkloadIdentity(t *testing.T) {
+	h := newAuthHarness(t)
+	file := setWorkloadIdentityEnv(t)
+	t.Setenv("BASETEN_REMOTE_URL", "https://app.example.com")
+
+	h.Require.NoError(h.Execute("auth", "status"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Using workload identity")
+	h.Require.Contains(out, "Trust rule: rule-1")
+	h.Require.Contains(out, "Identity token file: "+file)
+	h.Require.Contains(out, "https://app.example.com")
+
+	h.Require.NoError(h.Execute("auth", "status", "--output", "json"))
+	var got cmd.AuthStatusResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal(cmd.AuthStatusResult{
+		RemoteURL:         "https://app.example.com",
+		AuthType:          "workload_identity",
+		Source:            "workload_identity",
+		TrustRuleID:       "rule-1",
+		IdentityTokenFile: file,
+	}, got)
+}
+
+func Test_Auth_Status_WorkloadIdentityInlineToken(t *testing.T) {
+	h := newAuthHarness(t)
+	setInlineWorkloadIdentityEnv(t)
+
+	h.Require.NoError(h.Execute("auth", "status"))
+	out := h.Stdout.String()
+	h.Require.Contains(out, "Identity token: from BASETEN_WORKLOAD_IDENTITY_TOKEN")
+	h.Require.NotContains(out, "identity-jwt")
+
+	h.Require.NoError(h.Execute("auth", "status", "--output", "json"))
+	h.Require.NotContains(h.Stdout.String(), "identity-jwt")
+	var got cmd.AuthStatusResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal("rule-1", got.TrustRuleID)
+	h.Require.True(got.IdentityTokenInline)
+	h.Require.Empty(got.IdentityTokenFile)
+}
+
+func Test_Auth_Status_APIKeyWithWorkloadIdentityIsError(t *testing.T) {
+	h := newAuthHarness(t)
+	setWorkloadIdentityEnv(t)
+	t.Setenv("BASETEN_API_KEY", "env-key")
+
+	h.Require.Error(h.Execute("auth", "status"))
+	h.Require.Contains(h.Stderr.String(), "both BASETEN_API_KEY and workload identity")
+	h.Require.NotContains(h.Stderr.String(), "env-key")
+}
+
+func Test_Auth_Status_ProfileSource(t *testing.T) {
+	h := newAuthHarness(t)
+	store := configDirStore(t)
+	h.Require.NoError(store.SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-xyz", true, nil))
+
+	h.Require.NoError(h.Execute("auth", "status", "--output", "json"))
+	var got cmd.AuthStatusResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal("profile", got.Source)
+}
+
+func Test_Auth_Status_WorkloadIdentityHalfConfigured(t *testing.T) {
+	h := newAuthHarness(t)
+	t.Setenv("BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID", "rule-1")
+
+	h.Require.Error(h.Execute("auth", "status"))
+	h.Require.Contains(h.Stderr.String(), "BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID is set but neither "+
+		"BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE nor BASETEN_WORKLOAD_IDENTITY_TOKEN is")
+}
+
+func Test_Auth_WorkloadIdentityToken(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T)
+	}{
+		{"file", func(t *testing.T) { setWorkloadIdentityEnv(t) }},
+		{"inline", setInlineWorkloadIdentityEnv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newAuthHarness(t)
+			tc.setup(t)
+			serveTokenExchange(h, false)
+
+			h.Require.NoError(h.Execute("auth", "workload-identity-token"))
+			h.Require.Equal("wif-access\n", h.Stdout.String())
+
+			h.Require.NoError(h.Execute("auth", "workload-identity-token", "--output", "json"))
+			var got cmd.AuthWorkloadIdentityTokenResult
+			h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+			h.Require.Equal("wif-access", got.Token)
+			h.Require.NotNil(got.ExpiresAt)
+			h.Require.WithinDuration(time.Now().Add(time.Hour), *got.ExpiresAt, time.Minute)
+		})
+	}
+}
+
+func Test_Auth_WorkloadIdentityToken_InvalidGrant(t *testing.T) {
+	h := newAuthHarness(t)
+	setWorkloadIdentityEnv(t)
+	serveTokenExchange(h, true)
+
+	h.Require.Error(h.Execute("auth", "workload-identity-token"))
+	h.Require.Equal(int(cmd.ExitAuth), h.ExitCode)
+	h.Require.Empty(h.Stdout.String())
+	h.Require.Contains(h.Stderr.String(),
+		"workload identity (BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID=rule-1, BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE=")
+	h.Require.Contains(h.Stderr.String(), "refused for trust rule rule-1")
+}
+
+func Test_Auth_WorkloadIdentityToken_NotConfigured(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T)
+	}{
+		{"none", func(t *testing.T) {}},
+		{"api key env", func(t *testing.T) { t.Setenv("BASETEN_API_KEY", "env-key") }},
+		{"oauth profile", func(t *testing.T) {
+			if err := configDirStore(t).SetOAuthProfile(t.Context(), "alice", "https://app.example.com",
+				auth.OAuthCredential{AccessToken: "oauth-access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)},
+				true, nil); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newAuthHarness(t)
+			tc.setup(t)
+			h.Require.Error(h.Execute("auth", "workload-identity-token"))
+			h.Require.Empty(h.Stdout.String())
+			h.Require.Contains(h.Stderr.String(), "workload identity is not configured")
+			h.Require.NotContains(h.Stderr.String(), "env-key")
+			h.Require.NotContains(h.Stderr.String(), "oauth-access")
+		})
+	}
+}
+
+func Test_Auth_List_WorkloadIdentityMarksNoProfile(t *testing.T) {
+	h := newAuthHarness(t)
+	h.Require.NoError(configDirStore(t).SetAPIKeyProfile(t.Context(), "alice", "https://app.example.com", "key-a", true, nil))
+	setWorkloadIdentityEnv(t)
+
+	h.Require.Empty(authListCurrent(h))
+}
+
+// Every API command authenticates through the same transport, so one
+// management command stands in for all of them.
+func Test_Auth_WorkloadIdentity_AuthenticatesManagementCommands(t *testing.T) {
+	h := newAuthHarness(t)
+	setWorkloadIdentityEnv(t)
+	serveTokenExchange(h, false)
+	var authHeaders []string
+	h.MockManagementAPI().SetRouteFunc("GET", "/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":[]}`))
+	})
+
+	h.Require.NoError(h.Execute("model", "list"))
+	h.Require.Equal([]string{"Bearer wif-access"}, authHeaders)
+}
+
 // newExplicitProfileHarness returns an auth harness with profiles alice
 // (current) and bob stored, then explicit profile selection enabled.
 func newExplicitProfileHarness(t *testing.T) *CommandHarness {
@@ -693,6 +896,17 @@ func Test_Auth_Status_ExplicitProfileFromEnv(t *testing.T) {
 	var got cmd.AuthStatusResult
 	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
 	h.Require.Equal("bob", got.Profile)
+	h.Require.True(got.RequireExplicitProfile)
+}
+
+func Test_Auth_Status_ExplicitProfileWithWorkloadIdentity(t *testing.T) {
+	h := newExplicitProfileHarness(t)
+	file := setWorkloadIdentityEnv(t)
+	h.Require.NoError(h.Execute("auth", "status", "--output", "json"))
+	var got cmd.AuthStatusResult
+	h.Require.NoError(json.Unmarshal(h.Stdout.Bytes(), &got))
+	h.Require.Equal("workload_identity", got.Source)
+	h.Require.Equal(file, got.IdentityTokenFile)
 	h.Require.True(got.RequireExplicitProfile)
 }
 

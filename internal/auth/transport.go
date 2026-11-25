@@ -4,22 +4,58 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
+	"sync/atomic"
 
 	"github.com/basetenlabs/baseten-go/client"
+	"github.com/basetenlabs/baseten-go/client/managementapi"
 	"golang.org/x/oauth2"
 )
 
+// Environment variables that select workload identity federation: the CLI
+// exchanges an identity token, read from IdentityTokenFileEnv or given inline in
+// IdentityTokenEnv, for a short-lived Baseten access token under the trust rule
+// in TrustRuleIDEnv.
+const (
+	IdentityTokenFileEnv = "BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE"
+	IdentityTokenEnv     = "BASETEN_WORKLOAD_IDENTITY_TOKEN"
+	TrustRuleIDEnv       = "BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID"
+)
+
+// WorkloadIdentity is the workload identity federation configuration read
+// from the environment. Exactly one of IdentityTokenFile and IdentityToken is
+// set.
+type WorkloadIdentity struct {
+	IdentityTokenFile string
+	// IdentityToken is the identity token itself. Unlike a file, it cannot be
+	// replaced while the CLI runs, so exchanges fail once it expires.
+	IdentityToken string
+	TrustRuleID   string
+}
+
+// IdentityTokenSource names where the identity token comes from, for messages.
+func (w *WorkloadIdentity) IdentityTokenSource() string {
+	if w.IdentityToken != "" {
+		return IdentityTokenEnv
+	}
+	return IdentityTokenFileEnv + "=" + w.IdentityTokenFile
+}
+
 // Session is the auth context resolved once per invocation. Exactly one of the
-// credential paths applies: a stored profile (ProfileName set) or ephemeral env
-// credentials (ephemeralAPIKey set).
+// credential paths applies: a stored profile (ProfileName set), an ephemeral
+// API key from the environment (ephemeralAPIKey set), or workload identity
+// from the environment (workloadIdentity set).
 type Session struct {
-	store           *Store
-	profileName     string
-	ephemeralAPIKey string
-	remoteURL       string
+	store            *Store
+	profileName      string
+	ephemeralAPIKey  string
+	workloadIdentity *WorkloadIdentity
+	remoteURL        string
 }
 
 // ResolveSession determines the effective auth for this invocation, most
@@ -27,9 +63,13 @@ type Session struct {
 //
 //  1. profileFlag (the --profile flag)
 //  2. BASETEN_API_KEY (+ optional BASETEN_REMOTE_URL), ephemeral
-//  3. BASETEN_PROFILE
-//  4. defaultProfile (a baked-in fallback, e.g. from the SSH config)
-//  5. the current profile in auth.json, or an *ErrExplicitProfileRequired when
+//  3. BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID with
+//     BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE or BASETEN_WORKLOAD_IDENTITY_TOKEN
+//     (+ optional BASETEN_REMOTE_URL), ephemeral workload identity. Setting
+//     these and BASETEN_API_KEY together is an error.
+//  4. BASETEN_PROFILE
+//  5. defaultProfile (a baked-in fallback, e.g. from the SSH config)
+//  6. the current profile in auth.json, or an *ErrExplicitProfileRequired when
 //     explicit profile selection is required
 //
 // defaultProfile is "" for most commands; the SSH sign/proxy commands pass
@@ -55,8 +95,22 @@ func ResolveSession(profileFlag, defaultProfile string) (*Session, error) {
 		return s, nil
 	}
 
+	wi, err := workloadIdentityFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	if key := os.Getenv("BASETEN_API_KEY"); key != "" {
+		// Two environment variables naming different identities are ambiguous,
+		// so neither silently wins.
+		if wi != nil {
+			return nil, fmt.Errorf("both BASETEN_API_KEY and workload identity (%s) are set; unset one", TrustRuleIDEnv)
+		}
 		s.ephemeralAPIKey = key
+		s.remoteURL = os.Getenv("BASETEN_REMOTE_URL")
+		return s, nil
+	}
+	if wi != nil {
+		s.workloadIdentity = wi
 		s.remoteURL = os.Getenv("BASETEN_REMOTE_URL")
 		return s, nil
 	}
@@ -88,6 +142,37 @@ func ResolveSession(profileFlag, defaultProfile string) (*Session, error) {
 	return s, nil
 }
 
+// workloadIdentityFromEnv returns the workload identity configuration, nil
+// when none of its variables is set, and an error when it is incomplete or
+// gives the identity token twice: falling through to another credential would
+// silently run as a different identity.
+// WorkloadIdentityEnvSet reports whether any workload identity variable is
+// set, including in a combination that does not resolve.
+func WorkloadIdentityEnvSet() bool {
+	return os.Getenv(IdentityTokenFileEnv) != "" || os.Getenv(IdentityTokenEnv) != "" || os.Getenv(TrustRuleIDEnv) != ""
+}
+
+func workloadIdentityFromEnv() (*WorkloadIdentity, error) {
+	file, token, rule := os.Getenv(IdentityTokenFileEnv), os.Getenv(IdentityTokenEnv), os.Getenv(TrustRuleIDEnv)
+	switch {
+	case file == "" && token == "" && rule == "":
+		return nil, nil
+	case file != "" && token != "":
+		return nil, fmt.Errorf("both %s and %s are set; set only one", IdentityTokenFileEnv, IdentityTokenEnv)
+	case rule == "":
+		set := IdentityTokenFileEnv
+		if token != "" {
+			set = IdentityTokenEnv
+		}
+		return nil, fmt.Errorf("%s is set but %s is not; workload identity needs both", set, TrustRuleIDEnv)
+	case file == "" && token == "":
+		return nil, fmt.Errorf("%s is set but neither %s nor %s is; workload identity needs an identity token",
+			TrustRuleIDEnv, IdentityTokenFileEnv, IdentityTokenEnv)
+	default:
+		return &WorkloadIdentity{IdentityTokenFile: file, IdentityToken: token, TrustRuleID: rule}, nil
+	}
+}
+
 // RemoteURL is the remote the resolved session targets. It may be empty, in
 // which case the caller applies its own default.
 func (s *Session) RemoteURL() string { return s.remoteURL }
@@ -96,9 +181,38 @@ func (s *Session) RemoteURL() string { return s.remoteURL }
 // is ephemeral or unauthenticated.
 func (s *Session) ProfileName() string { return s.profileName }
 
-// IsEphemeral reports whether the session uses credentials from BASETEN_API_KEY
-// rather than a stored profile.
-func (s *Session) IsEphemeral() bool { return s.ephemeralAPIKey != "" }
+// IsEphemeral reports whether the session uses credentials from the
+// environment (BASETEN_API_KEY or workload identity) rather than a stored
+// profile.
+func (s *Session) IsEphemeral() bool { return s.ephemeralAPIKey != "" || s.workloadIdentity != nil }
+
+// WorkloadIdentity returns the session's workload identity configuration, or
+// nil when the session does not authenticate with workload identity.
+func (s *Session) WorkloadIdentity() *WorkloadIdentity { return s.workloadIdentity }
+
+// NewWorkloadIdentityCredentials builds the credentials that exchange the
+// session's identity token at managementURL. Callers build them once per
+// invocation and share them, so the access token is exchanged once and reused.
+// A nil httpClient uses http.DefaultClient.
+func (s *Session) NewWorkloadIdentityCredentials(managementURL string, httpClient *http.Client) (*client.WorkloadIdentityCredentials, error) {
+	if s.workloadIdentity == nil {
+		return nil, errors.New("the session does not use workload identity")
+	}
+	opts := client.WorkloadIdentityCredentialsOptions{
+		IdentityTokenFile: s.workloadIdentity.IdentityTokenFile,
+		TrustRuleID:       s.workloadIdentity.TrustRuleID,
+		BaseURL:           managementURL,
+	}
+	if token := s.workloadIdentity.IdentityToken; token != "" {
+		opts.IdentityToken = func(context.Context, client.IdentityTokenOptions) (string, error) { return token, nil }
+	}
+	// Assigned only when set: a nil *http.Client in the interface field would
+	// not read as nil to the SDK's default.
+	if httpClient != nil {
+		opts.HTTPClient = httpClient
+	}
+	return client.NewWorkloadIdentityCredentials(opts)
+}
 
 // UsesAPIKey reports whether the session authenticates with an API key, from
 // BASETEN_API_KEY or an API key profile, rather than OAuth.
@@ -123,6 +237,12 @@ func (s *Session) APIKey(ctx context.Context) (string, error) {
 	return s.store.GetAPIKey(ctx, s.profileName)
 }
 
+// CachesCapabilityTokens reports whether sandbox and Grid tokens minted for
+// the session may be cached across invocations. Not under workload identity:
+// another workload can present a different identity through the same token
+// file path, which no cache key derived from the session tells apart.
+func (s *Session) CachesCapabilityTokens() bool { return s.workloadIdentity == nil }
+
 // CacheIdentity returns a stable, filesystem-safe token for the resolved
 // credential, scoping on-disk caches so an entry written under one credential is
 // never read under another. Hashed to keep the profile name (an email by default)
@@ -132,6 +252,12 @@ func (s *Session) CacheIdentity() string {
 	case s.ephemeralAPIKey != "":
 		sum := sha256.Sum256([]byte(s.ephemeralAPIKey))
 		return "key-" + hex.EncodeToString(sum[:8])
+	case s.workloadIdentity != nil:
+		// The trust rule and identity token source together name the workload;
+		// NUL separators keep distinct triples from hashing alike.
+		wi := s.workloadIdentity
+		sum := sha256.Sum256([]byte(wi.TrustRuleID + "\x00" + wi.IdentityTokenFile + "\x00" + wi.IdentityToken))
+		return "wif-" + hex.EncodeToString(sum[:8])
 	case s.profileName != "":
 		sum := sha256.Sum256([]byte(s.profileName))
 		return "profile-" + hex.EncodeToString(sum[:8])
@@ -176,7 +302,15 @@ type Transport struct {
 	// OAuthConfig is the OAuth2 configuration used for token refresh.
 	OAuthConfig *oauth2.Config
 
+	// WorkloadIdentity exchanges and caches access tokens for a workload
+	// identity session. Required when the session uses workload identity.
+	WorkloadIdentity client.Credentials
+
 	Base http.RoundTripper
+
+	// refused is the last workload identity token Baseten refused, passed to
+	// the next exchange so the credentials replace it.
+	refused atomic.Pointer[string]
 }
 
 func (t *Transport) base() http.RoundTripper {
@@ -202,20 +336,75 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	return t.base().RoundTrip(req)
+	resp, err := t.base().RoundTrip(req)
+	// The request is not sent again, since it may have side effects; only the
+	// next request gets a new token.
+	if err == nil && t.Session.workloadIdentity != nil && refusedByBaseten(resp) {
+		t.refused.Store(&token)
+	}
+	return resp, err
+}
+
+// refusedByBaseten reports whether Baseten's auth layer refused the request's
+// access token, which it signals with this challenge. A model's own error
+// response cannot carry it, since its headers are not forwarded.
+func refusedByBaseten(resp *http.Response) bool {
+	if resp.StatusCode != http.StatusUnauthorized {
+		return false
+	}
+	for _, challenge := range resp.Header.Values("WWW-Authenticate") {
+		if strings.HasPrefix(challenge, "Bearer ") &&
+			strings.Contains(challenge, `realm="baseten"`) &&
+			strings.Contains(challenge, `error="invalid_token"`) {
+			return true
+		}
+	}
+	return false
 }
 
 // Credential resolves the session's credential as a bearer token: an API key
-// verbatim, or an OAuth access token, refreshed and persisted when it has
-// expired. The backend accepts either kind under the Bearer scheme, which is
-// also the only shape the truss CLI's forwarded credential accepts.
+// verbatim, or an access token from [Transport.AccessToken]. The backend
+// accepts either kind under the Bearer scheme, which is also the only shape the
+// truss CLI's forwarded credential accepts.
 func (t *Transport) Credential(ctx context.Context) (string, error) {
+	if t.Session.UsesAPIKey() {
+		return t.Session.APIKey(ctx)
+	}
+	token, err := t.AccessToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	return token.Token, nil
+}
+
+// AccessToken returns a current access token for a workload identity or OAuth
+// session: a workload identity token is exchanged, or reused while cached; an
+// OAuth token is refreshed and persisted when it has expired. API key sessions
+// have no access token and get an error.
+func (t *Transport) AccessToken(ctx context.Context) (client.AccessToken, error) {
 	if t.Session.ephemeralAPIKey != "" {
-		return t.Session.ephemeralAPIKey, nil
+		return client.AccessToken{}, errors.New("the session authenticates with BASETEN_API_KEY, which is not an access token")
+	}
+
+	if wi := t.Session.workloadIdentity; wi != nil {
+		if t.WorkloadIdentity == nil {
+			return client.AccessToken{}, errors.New("workload identity session requires WorkloadIdentity to be set on Transport")
+		}
+		var opts client.AccessTokenOptions
+		if refused := t.refused.Swap(nil); refused != nil {
+			opts.RefusedToken = *refused
+		}
+		token, err := t.WorkloadIdentity.AccessToken(ctx, opts)
+		if IsTokenExchangeRefused(err) {
+			// The SDK's hint names the trust rule; this adds where it came from.
+			return client.AccessToken{}, fmt.Errorf("workload identity (%s=%s, %s): %w",
+				TrustRuleIDEnv, wi.TrustRuleID, wi.IdentityTokenSource(), err)
+		}
+		return token, err
 	}
 
 	if t.Session.profileName == "" {
-		return "", fmt.Errorf("not logged in; run `baseten auth login` or set BASETEN_API_KEY")
+		return client.AccessToken{}, fmt.Errorf("not logged in; run `baseten auth login` or set BASETEN_API_KEY")
 	}
 
 	profileName := t.Session.profileName
@@ -223,22 +412,22 @@ func (t *Transport) Credential(ctx context.Context) (string, error) {
 	if !ok {
 		names, err := t.Session.store.ProfileNames()
 		if err != nil {
-			return "", err
+			return client.AccessToken{}, err
 		}
-		return "", NewErrProfileNotFound(names, profileName)
+		return client.AccessToken{}, NewErrProfileNotFound(names, profileName)
 	}
 
 	switch profile.AuthType {
 	case AuthTypeAPIKey:
-		return t.Session.store.GetAPIKey(ctx, profileName)
+		return client.AccessToken{}, fmt.Errorf("profile %q authenticates with an API key, which is not an access token", profileName)
 
 	case AuthTypeOAuth:
 		if t.OAuthConfig == nil {
-			return "", fmt.Errorf("OAuth credential requires OAuthConfig to be set on Transport")
+			return client.AccessToken{}, fmt.Errorf("OAuth credential requires OAuthConfig to be set on Transport")
 		}
 		cred, err := t.Session.store.GetOAuthCredential(ctx, profileName)
 		if err != nil {
-			return "", err
+			return client.AccessToken{}, err
 		}
 		token := &oauth2.Token{
 			AccessToken:  cred.AccessToken,
@@ -249,7 +438,7 @@ func (t *Transport) Credential(ctx context.Context) (string, error) {
 		src := t.OAuthConfig.TokenSource(OAuthContext(ctx, t.base()), token)
 		newToken, err := src.Token()
 		if err != nil {
-			return "", fmt.Errorf("token expired and refresh failed: %w (run `baseten auth login` to re-authenticate)", err)
+			return client.AccessToken{}, fmt.Errorf("token expired and refresh failed: %w (run `baseten auth login` to re-authenticate)", err)
 		}
 		if newToken.AccessToken != cred.AccessToken {
 			updated := OAuthCredential{
@@ -258,12 +447,26 @@ func (t *Transport) Credential(ctx context.Context) (string, error) {
 				Expiry:       newToken.Expiry,
 			}
 			if err := t.Session.store.SetOAuthProfile(ctx, profileName, profile.RemoteURL, updated, false, nil); err != nil {
-				return "", fmt.Errorf("storing refreshed credential: %w", err)
+				return client.AccessToken{}, fmt.Errorf("storing refreshed credential: %w", err)
 			}
 		}
-		return newToken.AccessToken, nil
+		return client.AccessToken{Token: newToken.AccessToken, ExpiresAt: newToken.Expiry}, nil
 
 	default:
-		return "", fmt.Errorf("unknown auth type %q", profile.AuthType)
+		return client.AccessToken{}, fmt.Errorf("unknown auth type %q", profile.AuthType)
 	}
+}
+
+// IsTokenExchangeRefused reports whether err carries the token exchange's
+// OAuth invalid_grant answer, which Baseten sends for every refused identity
+// token.
+func IsTokenExchangeRefused(err error) bool {
+	var re *managementapi.ResponseError
+	if !errors.As(err, &re) {
+		return false
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal([]byte(re.Body), &body) == nil && body.Error == "invalid_grant"
 }

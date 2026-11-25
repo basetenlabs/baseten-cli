@@ -25,6 +25,7 @@ func init() {
 	Register("auth logout", commandAuthLogout)
 	Register("auth switch", commandAuthSwitch)
 	Register("auth status", commandAuthStatus)
+	Register("auth workload-identity-token", commandAuthWorkloadIdentityToken)
 	Register("auth list", commandAuthList)
 	Register("auth config describe", commandAuthConfigDescribe)
 	Register("auth config update", commandAuthConfigUpdate)
@@ -250,6 +251,33 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 		return err
 	}
 
+	if wi := session.WorkloadIdentity(); wi != nil {
+		remoteURL := session.RemoteURL()
+		if remoteURL == "" {
+			remoteURL = "https://app.baseten.co"
+		}
+		if ctx.JSON {
+			ctx.OutputJSON(cmd.AuthStatusResult{
+				RemoteURL:              remoteURL,
+				AuthType:               cmd.AuthSourceWorkloadIdentity,
+				RequireExplicitProfile: af.RequireExplicitProfile,
+				Source:                 cmd.AuthSourceWorkloadIdentity,
+				TrustRuleID:            wi.TrustRuleID,
+				IdentityTokenFile:      wi.IdentityTokenFile,
+				IdentityTokenInline:    wi.IdentityToken != "",
+			})
+		} else {
+			// The inline token is a credential, so only where it comes from is shown.
+			tokenLine := "Identity token file: " + wi.IdentityTokenFile
+			if wi.IdentityToken != "" {
+				tokenLine = "Identity token: from " + auth.IdentityTokenEnv
+			}
+			ctx.Outputf("Using workload identity\n  Trust rule: %s\n  %s\n  Remote: %s\n",
+				wi.TrustRuleID, tokenLine, hyperlink(ctx.Stdout, remoteURL))
+		}
+		return nil
+	}
+
 	if session.IsEphemeral() {
 		remoteURL := session.RemoteURL()
 		if remoteURL == "" {
@@ -260,6 +288,7 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 				RemoteURL:              remoteURL,
 				AuthType:               string(auth.AuthTypeAPIKey),
 				RequireExplicitProfile: af.RequireExplicitProfile,
+				Source:                 cmd.AuthSourceAPIKeyEnv,
 			})
 		} else {
 			ctx.Outputf("Using API key from BASETEN_API_KEY\n  Remote: %s\n", hyperlink(ctx.Stdout, remoteURL))
@@ -286,6 +315,7 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 			RemoteURL:              profile.RemoteURL,
 			AuthType:               string(profile.AuthType),
 			RequireExplicitProfile: af.RequireExplicitProfile,
+			Source:                 cmd.AuthSourceProfile,
 		})
 	} else {
 		ctx.Outputf("%s\n  Remote: %s\n  Auth type: %s\n", profileName, hyperlink(ctx.Stdout, profile.RemoteURL), profile.AuthType)
@@ -293,6 +323,38 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 			ctx.OutputLine("  Explicit profile selection: required")
 		}
 	}
+	return nil
+}
+
+// commandAuthWorkloadIdentityToken prints an access token exchanged through
+// workload identity.
+func commandAuthWorkloadIdentityToken(ctx *CommandContext, flags *cmd.AuthWorkloadIdentityTokenFlags) error {
+	session, err := ctx.authInfo.Session()
+	if err != nil {
+		return err
+	}
+	if session.WorkloadIdentity() == nil {
+		return cmd.NewErrUsagef("workload identity is not configured; set %s and %s or %s",
+			auth.TrustRuleIDEnv, auth.IdentityTokenFileEnv, auth.IdentityTokenEnv)
+	}
+	transport, _, err := ctx.AuthTransport()
+	if err != nil {
+		return err
+	}
+	token, err := transport.AccessToken(ctx)
+	if err != nil {
+		return err
+	}
+	if ctx.JSON {
+		result := cmd.AuthWorkloadIdentityTokenResult{Token: token.Token}
+		if !token.ExpiresAt.IsZero() {
+			expiresAt := token.ExpiresAt.UTC()
+			result.ExpiresAt = &expiresAt
+		}
+		ctx.OutputJSON(result)
+		return nil
+	}
+	ctx.Outputf("%s\n", token.Token)
 	return nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
+	"github.com/basetenlabs/baseten-cli/internal/auth"
 )
 
 // sandboxTestTime is what every fixture record uses, so output assertions
@@ -135,6 +136,27 @@ func Test_Sandbox_TokenRevokedRemintsAndReplacesCache(t *testing.T) {
 	h.Require.NoError(h.Execute("sandbox", "list"))
 	h.Require.Len(sandboxTestCalls(m, "POST", "/v1/token"), 2)
 	h.Require.Equal([]string{"tok-1", "tok-2", "tok-2"}, listTokens)
+}
+
+func Test_Sandbox_WorkloadIdentityTokenNotCachedAcrossInvocations(t *testing.T) {
+	h := NewCommandHarness(t)
+	setWorkloadIdentityEnv(t)
+	var listTokens []string
+	m := sandboxTestTokenAPI(h, time.Hour, "", &listTokens)
+	serveTokenExchange(h, false)
+	session, err := auth.ResolveSession("", "")
+	h.Require.NoError(err)
+	scope := auth.SandboxTokenScope{ManagementURL: m.URL, Identity: session.CacheIdentity()}
+	seeded := auth.SandboxToken{Token: "tok-seeded", ExpiresAt: time.Now().Add(time.Hour)}
+	h.Require.NoError(configDirStore(t).SetSandboxToken(t.Context(), scope, seeded))
+
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.NoError(h.Execute("sandbox", "list"))
+	h.Require.Len(sandboxTestCalls(m, "POST", "/v1/token"), 2)
+	h.Require.Equal([]string{"tok-1", "tok-2"}, listTokens)
+	stored, err := configDirStore(t).GetSandboxToken(t.Context(), scope)
+	h.Require.NoError(err)
+	h.Require.Equal("tok-seeded", stored.Token)
 }
 
 func Test_Sandbox_List_FollowsPages(t *testing.T) {

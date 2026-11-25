@@ -394,6 +394,12 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if err != nil {
 		return err
 	}
+	// Workload identity has neither a profile the helper could resolve inside
+	// the harness nor a long-lived key to install.
+	if session.WorkloadIdentity() != nil {
+		return cmd.NewErrUsagef("harness setup needs a stored profile or an API key; workload identity " +
+			"credentials are short-lived and cannot be installed in a harness")
+	}
 	// With no current profile, sign in here instead of sending the user to
 	// auth login. The new profile becomes the current one, as auth login's
 	// would; there is none to displace. A dry run changes nothing, so it does
@@ -1972,23 +1978,28 @@ func commandGridToken(ctx *CommandContext, flags *cmd.GridTokenFlags) error {
 		return err
 	}
 	scope := auth.GridTokenScope{ManagementURL: remote.ManagementURL(), Identity: session.CacheIdentity()}
-	token, err := store.GetGridToken(ctx, scope, teamID)
-	if err != nil {
-		return err
-	}
-	if token != nil && time.Until(token.ExpiresAt) > gridTokenMinimumLeft {
-		ctx.Output(token.Token + "\n")
-		return nil
+	persist := session.CachesCapabilityTokens()
+	if persist {
+		token, err := store.GetGridToken(ctx, scope, teamID)
+		if err != nil {
+			return err
+		}
+		if token != nil && time.Until(token.ExpiresAt) > gridTokenMinimumLeft {
+			ctx.Output(token.Token + "\n")
+			return nil
+		}
 	}
 	minted, err := cl.API().PostGridToken(ctx, managementapi.CreateGridTokenRequest{TeamId: &teamID})
 	if err != nil {
 		return fmt.Errorf("creating a Grid token: %w", err)
 	}
-	token = &auth.GridToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
-	if err := store.SetGridToken(ctx, scope, teamID, *token, ctx.Warn); err != nil {
-		return err
+	if persist {
+		token := auth.GridToken{Token: minted.Token, ExpiresAt: minted.ExpiresAt}
+		if err := store.SetGridToken(ctx, scope, teamID, token, ctx.Warn); err != nil {
+			return err
+		}
 	}
-	ctx.Output(token.Token + "\n")
+	ctx.Output(minted.Token + "\n")
 	return nil
 }
 

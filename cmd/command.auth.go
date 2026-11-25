@@ -1,5 +1,7 @@
 package cmd
 
+import "time"
+
 var commandAuth = Command{
 	Name:    "auth",
 	Summary: "Manage authentication",
@@ -82,12 +84,17 @@ var commandAuth = Command{
 			},
 		},
 		{
-			Name:        "status",
-			Summary:     "Show authentication status",
-			Description: "Show the resolved authentication state, including the profile, remote, and auth type.",
-			Flags:       AuthStatusFlags{},
+			Name:    "status",
+			Summary: "Show authentication status",
+			Description: "Show the resolved authentication state: which credential source is active " +
+				"(a stored profile, BASETEN_API_KEY, or workload identity), the remote, and the auth type.\n\n" +
+				"Credentials are selected in this order: --profile, BASETEN_API_KEY or workload identity " +
+				"(setting both is an error), BASETEN_PROFILE, then the current profile. Does not contact Baseten.",
+			Flags: AuthStatusFlags{},
 			Output: &CommandOutput[AuthStatusResult]{
-				TextDescription: "Summary of the resolved profile: profile name, remote URL, and auth type.",
+				TextDescription: "Summary of the active credential source: the profile name, BASETEN_API_KEY, or " +
+					"workload identity with its trust rule ID and where its identity token comes from; then the " +
+					"remote URL and, for a profile, the auth type.",
 				Examples: []CommandExample{
 					{
 						Description: "Show the current auth status.",
@@ -97,6 +104,29 @@ var commandAuth = Command{
 				JQExample: CommandExample{
 					Description: "Print just the auth type.",
 					Command:     "baseten auth status --jq '.auth_type'",
+				},
+			},
+		},
+		{
+			Name:    "workload-identity-token",
+			Summary: "Print an access token exchanged through workload identity",
+			Description: "Exchange the workload identity token for a short-lived Baseten access token and print " +
+				"it, for scripts and clients that call Baseten directly with \"Authorization: Bearer <token>\".\n\n" +
+				"Needs BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID and either BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE or " +
+				"BASETEN_WORKLOAD_IDENTITY_TOKEN.\n\n" +
+				"Access tokens expire; request a new one rather than storing it.",
+			Flags: AuthWorkloadIdentityTokenFlags{},
+			Output: &CommandOutput[AuthWorkloadIdentityTokenResult]{
+				TextDescription: "Prints the access token alone on one line to stdout.",
+				Examples: []CommandExample{
+					{
+						Description: "Call the management API with a fresh access token.",
+						Command:     `curl -H "Authorization: Bearer $(baseten auth workload-identity-token)" https://api.baseten.co/v1/models`,
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print when the access token expires.",
+					Command:     "baseten auth workload-identity-token --jq '.expires_at'",
 				},
 			},
 		},
@@ -200,12 +230,35 @@ type AuthSwitchResult struct {
 	Profile string `json:"profile"`
 }
 
+// Credential sources reported by `baseten auth status`.
+const (
+	AuthSourceProfile          = "profile"
+	AuthSourceAPIKeyEnv        = "api_key_env"
+	AuthSourceWorkloadIdentity = "workload_identity"
+)
+
 // AuthStatusResult is the JSON output of `baseten auth status`.
 type AuthStatusResult struct {
 	Profile                string `json:"profile"`
 	RemoteURL              string `json:"remote_url"`
 	AuthType               string `json:"auth_type"`
 	RequireExplicitProfile bool   `json:"require_explicit_profile"`
+	// Source is the active credential source: "profile", "api_key_env", or
+	// "workload_identity".
+	Source string `json:"source"`
+	// TrustRuleID is set for workload identity, with IdentityTokenFile, or
+	// IdentityTokenInline when the token comes from BASETEN_WORKLOAD_IDENTITY_TOKEN.
+	TrustRuleID         string `json:"trust_rule_id,omitempty"`
+	IdentityTokenFile   string `json:"identity_token_file,omitempty"`
+	IdentityTokenInline bool   `json:"identity_token_inline,omitempty"`
+}
+
+// AuthWorkloadIdentityTokenResult is the JSON output of
+// `baseten auth workload-identity-token`.
+type AuthWorkloadIdentityTokenResult struct {
+	Token string `json:"token"`
+	// ExpiresAt is omitted when the token's expiry is unknown.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // AuthListResult is the JSON output of `baseten auth list`.
@@ -243,6 +296,12 @@ type AuthSwitchFlags struct {
 
 // AuthStatusFlags are the flags for baseten auth status.
 type AuthStatusFlags struct {
+	CommandFlags
+}
+
+// AuthWorkloadIdentityTokenFlags are the flags for baseten auth
+// workload-identity-token.
+type AuthWorkloadIdentityTokenFlags struct {
 	CommandFlags
 }
 
