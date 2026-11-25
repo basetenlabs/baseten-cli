@@ -177,7 +177,7 @@ buckets:
 	if me, err := api.GetGridTeamSettingsUsersUserId(ctx, "me", managementapi.GetV1GridTeamSettingsUsersUserIdParams{TeamId: team}); err == nil {
 		ctx.OutputLine("\n" + gridUsageLimitLine(ctx, me))
 	} else {
-		ctx.Logf("Your spend this month against your limit isn't shown: %v\n", err)
+		ctx.VerboseLogf("Your spend this month against your limit isn't shown: %v\n", err)
 	}
 	if hitLimit {
 		ctx.Logf("Reached the --limit of %d buckets; more exist. Increase --limit or use --limit 0 for no limit.\n", q.Limit)

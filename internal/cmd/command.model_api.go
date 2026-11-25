@@ -19,6 +19,7 @@ import (
 func init() {
 	Register("model-api describe", commandModelAPIDescribe)
 	Register("model-api list", commandModelAPIList)
+	Register("model-api metrics", commandModelAPIMetrics)
 	Register("model-api predict", commandModelAPIPredict)
 }
 
@@ -140,6 +141,28 @@ func commandModelAPIDescribe(ctx *CommandContext, flags *cmd.ModelAPIDescribeFla
 		}
 	}
 	return nil
+}
+
+func commandModelAPIMetrics(ctx *CommandContext, flags *cmd.ModelAPIMetricsFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	teamIDs, err := ResolveTeams(ctx, cl.API(), flags.Teams)
+	if err != nil {
+		return err
+	}
+	fetch := func(q metricsQuery) (*managementapi.GetMetricsResponse, error) {
+		return cl.API().GetModelApisMetrics(ctx, flags.Model,
+			managementapi.GetV1ModelApisModelApiNameMetricsParams{
+				Mode:             &q.Mode,
+				StartEpochMillis: q.StartEpochMillis,
+				EndEpochMillis:   q.EndEpochMillis,
+				Metrics:          q.Metrics,
+				TeamIds:          teamIDs,
+			})
+	}
+	return runMetricsCommand(ctx, &flags.MetricsFlags, fetch)
 }
 
 func commandModelAPIPredict(ctx *CommandContext, flags *cmd.ModelAPIPredictFlags) error {

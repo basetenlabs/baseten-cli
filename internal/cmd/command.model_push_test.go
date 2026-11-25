@@ -192,6 +192,9 @@ func Test_Model_Push_NewModel(t *testing.T) {
 
 	// No existing-model route hit.
 	h.Require.Nil(h.API.FindCall("POST", "/v1/models/model-123/deployments"))
+
+	// The predict hint targets the deployment just pushed, not production.
+	h.Require.Contains(h.Stdout.String(), "baseten model predict --model-id model-123 --deployment-id deploy-456")
 }
 
 // Existing model: GetModels finds a match, push routes through

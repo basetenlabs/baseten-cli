@@ -94,6 +94,16 @@ const claudeTranscriptWindow = 64 << 10
 // 1M, via a [1m] model ID suffix. Smaller windows get its 200K default.
 const extendedContextWindow = 500000
 
+var claudeTierModelKeys = []string{
+	"ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+}
+
+var claudeCacheTTLs = [][2]string{
+	{"CLAUDE_CODE_PROMPT_CACHE_TTL", "1h"},
+	{"CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL", "5m"},
+}
+
 var claudePaths = [][]string{
 	{"model"}, {"fallbackModel"}, {"modelPicker", "options"},
 	{"modelPicker", "replaceBuiltInOptions"}, {"availableModels"},
@@ -157,7 +167,7 @@ func (h claudeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 		credentialPath = nil
 	}
 	p, err := prepareSettings(path, credentialPath, func(data map[string]any) ([]setting, error) {
-		return claudeSettings(routes, s, endpoint, data, helper, cli, opts.NoClaudeServedModel, opts.GitContext)
+		return claudeSettings(routes, s, endpoint, data, helper, cli, opts.NoClaudeServedModel, opts.GitContext, opts.ClaudeExtendedPromptCache)
 	})
 	if err != nil {
 		return nil, err
@@ -176,7 +186,7 @@ func (h claudeHarness) Prepare(path string, routes []Route, opts PrepareOptions)
 	return plans, nil
 }
 
-func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string, noServedModel, gitContext bool) ([]setting, error) {
+func claudeSettings(routes []Route, selection Selection, endpoint string, current map[string]any, helper *Helper, cli string, noServedModel, gitContext, extendedPromptCache bool) ([]setting, error) {
 	s, err := selection.Resolve(routes)
 	if err != nil {
 		return nil, err
@@ -192,12 +202,22 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 	}
 	options := []any{}
 	allowed := []any{}
+	allow := func(id string) {
+		if !slices.Contains(allowed, any(id)) {
+			allowed = append(allowed, id)
+		}
+	}
 	overrides := map[string]any{}
 	effort := map[string]any{}
 	for _, r := range routes {
 		id := modelID(r.Name)
 		options = append(options, map[string]any{"model": id, "label": r.DisplayName})
-		allowed = append(allowed, id)
+		allow(id)
+		// Claude Code checks a tier alias such as fable against the allowlist by its
+		// built-in model ID, which the gateway serves through a route alias.
+		for _, alias := range r.Aliases {
+			allow(alias)
+		}
 		if id != r.Name {
 			overrides[id] = r.Name
 		}
@@ -206,9 +226,7 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 			effort[id] = map[string]any{"maxEffortLevel": high}
 		}
 	}
-	if !slices.Contains(allowed, any(modelID(background))) {
-		allowed = append(allowed, modelID(background))
-	}
+	allow(modelID(background))
 	values := []setting{
 		desired([]string{"model"}, modelID(s.Primary)),
 		desired([]string{"fallbackModel"}, []string{modelID(s.Fallback)}),
@@ -222,10 +240,6 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{claudeMarker, "1"},
 		{"ANTHROPIC_BASE_URL", endpoint},
 		{"ANTHROPIC_MODEL", modelID(s.Primary)},
-		{"ANTHROPIC_DEFAULT_SONNET_MODEL", modelID(s.Primary)},
-		{"ANTHROPIC_DEFAULT_OPUS_MODEL", modelID(s.Primary)},
-		{"ANTHROPIC_DEFAULT_FABLE_MODEL", modelID(s.Primary)},
-		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", modelID(background)},
 		{"CLAUDE_CODE_AUTO_MODE_MODEL", modelID(background)},
 		{"ANTHROPIC_SMALL_FAST_MODEL", modelID(background)},
 		{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "0"},
@@ -235,6 +249,17 @@ func claudeSettings(routes []Route, selection Selection, endpoint string, curren
 		{"CLAUDE_CODE_TETHER_LIVE", "0"},
 	} {
 		values = append(values, desired([]string{"env", kv[0]}, kv[1]))
+	}
+	for _, kv := range claudeCacheTTLs {
+		if extendedPromptCache {
+			values = append(values, desired([]string{"env", kv[0]}, kv[1]))
+		} else if get(current, []string{"env", kv[0]}).Data == kv[1] {
+			values = append(values, setting{Path: []string{"env", kv[0]}})
+		}
+	}
+	// Claude Code's built-in tier aliases keep their own model IDs; the gateway maps them to routes.
+	for _, key := range claudeTierModelKeys {
+		values = append(values, setting{Path: []string{"env", key}})
 	}
 	if helper != nil {
 		// Removed, not blanked: a static token overrides the helper.
@@ -523,6 +548,11 @@ func claudeTeardownPaths(data map[string]any) [][]string {
 	if claudeServedModelOwned(get(data, claudeStatusLinePath).Data) {
 		paths = append(paths, claudeStatusLinePath)
 	}
+	for _, kv := range claudeCacheTTLs {
+		if get(data, []string{"env", kv[0]}).Data == kv[1] {
+			paths = append(paths, []string{"env", kv[0]})
+		}
+	}
 	return paths
 }
 
@@ -593,7 +623,7 @@ func (claudeHarness) Inspect(d Detection) (Status, error) {
 		if _, ok := claudeHooksSetting(claudeSessionStartHooksPath, claudeSessionStartOwned, data, nil); ok {
 			r.Managed = append(r.Managed, pathKey(claudeSessionStartHooksPath))
 		}
-		r.BackgroundRoute, _ = get(data, []string{"env", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}).Data.(string)
+		r.BackgroundRoute, _ = get(data, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data.(string)
 		r.addRoutes(claudeRoutes(data))
 	}
 	// Claude Desktop's files belong to the same harness; they describe it when

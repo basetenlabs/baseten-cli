@@ -27,15 +27,16 @@ var commandGrid = Command{
 				"Setup sets Grid as the gateway in each harness's settings, replacing the model and endpoint settings it manages; 'baseten grid teardown' removes them but does not restore previous values. Running setup again refreshes them. Use --dry-run to see each change first. " +
 				"The Grid API key is created on first setup and reused afterward. With --use-session-credential, the session's API key is installed instead and never created or deleted by this CLI. " +
 				"Setup records its team and options so 'grid sync' can replay them. Restart the harness after setup. " +
-				"For Codex, setup also signs out of OpenAI/ChatGPT and disables ChatGPT login while the Baseten harness is configured, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
+				"For Codex, setup also signs Codex out of ChatGPT and turns off ChatGPT login while Grid is set up, unless you answer No or pass --keep-chatgpt-login, and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. " +
 				"For OpenCode, setup writes the original settings format, which OpenCode 1 and 2 both read, unless the file already has OpenCode 2's native settings, in which case it writes those. " +
 				"For Claude Desktop, setup adds a config to the app's third-party config library and switches the app to third-party mode; quit and reopen the app to load it.\n\n" +
 				"Setup also adds a served-model indicator for intelligent routes in Claude Code, Pi, and OpenCode 2. " +
 				"To turn it off, set BASETEN_CLAUDE_SERVED_MODEL, BASETEN_PI_SERVED_MODEL, or BASETEN_OPENCODE_SERVED_MODEL to 0.\n\n" +
-				"With --git-context, setup makes each harness add the git origin URL, branch, and commit to the session context when a session starts inside a git repository. This is used for training an improved custom router.",
+				"With --git-context, setup makes each harness add the git origin URL, branch, and commit to the session context when a session starts inside a git repository. This is used for training an improved custom router.\n\n" +
+				"With --claude-extended-prompt-cache, setup gives Claude Code's main conversation a 1-hour prompt cache, while subagents and background requests keep 5 minutes. One-hour cache writes cost more than five-minute ones.",
 			Flags: GridSetupFlags{},
 			Output: &CommandOutput[GridPlanList]{
-				TextDescription: "The created key and follow-up commands. --dry-run lists each setting setup will add, update or remove and stops; --verbose lists the same changes before asking to apply.",
+				TextDescription: "Which harnesses were set up and what to restart. --dry-run lists each setting setup will add, update or remove and stops; --verbose lists the same changes before asking to apply.",
 				Examples: []CommandExample{
 					{
 						Description: "Configure installed harnesses interactively.",
@@ -75,7 +76,7 @@ var commandGrid = Command{
 				"Stored routes the team has removed fall back to their defaults with a warning. Only harnesses whose record matches the current profile are synced, " +
 				"and a machine with no record needs 'grid setup' first. Harnesses set up with --use-session-credential re-resolve the session's API key; " +
 				"when it is unavailable, sync errors instead of creating a replacement.\n\n" +
-				"Using --hide-served-model-indicator and --git-context overrides the flags set in previous harness configurations.\n" +
+				"Using --hide-served-model-indicator, --git-context, and --claude-extended-prompt-cache overrides the flags set in previous harness configurations.\n" +
 				"When nothing changes, sync does nothing and exits 0, so it is safe to run from a schedule; pass --yes to skip the prompt when changes are found. " +
 				"For Codex, sync restarts the app-server daemon like setup does, asking first when sessions are attached unless --yes is passed; an in-progress turn is interrupted, " +
 				"and thread history is preserved. A declined or failed restart is retried on the next sync.",
@@ -123,16 +124,16 @@ var commandGrid = Command{
 		},
 		{
 			Name:    "teardown",
-			Summary: "Remove Baseten harness settings (PRE-RELEASE)",
+			Summary: "Remove Grid from harnesses (PRE-RELEASE)",
 			Description: gridPrereleaseNotice +
-				"Remove the Baseten integration settings so the harness's own defaults apply. Previous values are not restored, " +
-				"and unrelated settings are kept. Without --harness, removes every integration configured at its default path. " +
+				"Remove Grid's settings so the harness's own defaults apply. Previous values are not restored, " +
+				"and unrelated settings are kept. Without --harness, removes Grid from every harness set up at its default path. " +
 				"It also removes the served-model status line, Stop hook, extension, or plugin and the git context hook, plugin, or extension that setup added, and keeps your own.\n\n" +
 				"Teardown also deletes the Grid API key the removed harnesses use, once no other harness on this machine uses it, " +
 				"except a key installed with --use-session-credential, whose lifecycle this CLI does not own. " +
 				"It forgets the recorded setup so 'grid sync' no longer refreshes the removed harnesses. " +
 				"It works after the harness is uninstalled. For Codex, teardown re-enables ChatGPT login and restarts Codex's background server if one is running, asking first when Codex sessions are attached to it. Run 'codex login' to sign back in. " +
-				"For Claude Desktop, teardown switches the app back to its own login and removes Baseten's config from the library.",
+				"For Claude Desktop, teardown switches the app back to its own login and removes Grid's config from the library.",
 			Flags: GridTeardownFlags{},
 			Output: &CommandOutput[GridPlanList]{
 				TextDescription: "The settings removed from each harness. Use --verbose for configuration paths and setting names.",
@@ -448,7 +449,7 @@ var commandGrid = Command{
 						}},
 						JQExample: CommandExample{
 							Description: "Print the models the route classifier picks from.",
-							Command:     "baseten grid route-classifier describe --id <id> --jq '.decidable_models[]'",
+							Command:     "baseten grid route-classifier describe --id <id> --jq '.decidable_canonical_model_ids[]'",
 						},
 					},
 				},
@@ -645,26 +646,29 @@ type GridStatusFlags struct {
 type GridSetupFlags struct {
 	CommandFlags
 	GridHarnessFlags
-	Team                 string `flag:"team" desc:"Team name or ID whose routes to use. Omit to let the API select your only team. Run 'baseten org team list' to see teams."`
-	KeyName              string `flag:"key-name" desc:"Name of the Grid API key, if setup creates one. Defaults to baseten-harness-<hostname>-<random suffix>."`
-	PrimaryRouteID       string `flag:"primary-route-id" desc:"Primary route ID. Defaults to the team's default for the harness, else the first route the harness lists."`
-	BackgroundRouteID    string `flag:"background-route-id" desc:"Route ID for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
-	SubagentRouteID      string `flag:"subagent-route-id" desc:"Route ID for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
-	FallbackRouteID      string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
-	HideServedModel      bool   `flag:"hide-served-model-indicator" desc:"Hide which model served each response on intelligent routes in the selected harnesses (a status line or Stop hook in Claude Code, an extension in Pi, a plugin in OpenCode 2), and remove it if setup added it before. When omitted, setup shows it, asking first when interactive."`
-	GitContext           bool   `flag:"git-context" desc:"Add the git origin URL, branch, and commit to each Claude Code, OpenCode, and Pi session's context, through a SessionStart hook, plugin, or extension. Without it, setup removes them if it added them before."`
-	UseSessionCredential bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
-	DryRun               bool   `flag:"dry-run" desc:"Show the changes without applying them or creating an API key."`
-	Yes                  bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+	Team                      string `flag:"team" desc:"Team name or ID whose routes to use. Omit to let the API select your only team; when you belong to several, setup asks which one on a terminal. Run 'baseten org team list' to see teams."`
+	KeyName                   string `flag:"key-name" desc:"Name of the Grid API key, if setup creates one. Defaults to baseten-harness-<hostname>-<random suffix>."`
+	PrimaryRouteID            string `flag:"primary-route-id" desc:"Primary route ID. Defaults to the team's default for the harness, else the first route the harness lists."`
+	BackgroundRouteID         string `flag:"background-route-id" desc:"Route ID for lightweight background tasks (Claude Code and OpenCode). Defaults to the team's default for the harness, else deepseek-ai/DeepSeek-V4.1-Flash."`
+	SubagentRouteID           string `flag:"subagent-route-id" desc:"Route ID for subagents (Claude Code and OpenCode). Defaults to the harness's own setting."`
+	FallbackRouteID           string `flag:"fallback-route-id" desc:"Route ID to fall back to when the default is unavailable (Claude Code). Defaults to the primary route."`
+	HideServedModel           bool   `flag:"hide-served-model-indicator" desc:"Hide which model served each response on intelligent routes in the selected harnesses (a status line or Stop hook in Claude Code, an extension in Pi, a plugin in OpenCode 2), and remove it if setup added it before. When omitted, setup shows it, asking first when interactive."`
+	GitContext                bool   `flag:"git-context" desc:"Add the git origin URL, branch, and commit to each Claude Code, OpenCode, and Pi session's context, through a SessionStart hook, plugin, or extension. Without it, setup removes them if it added them before."`
+	ClaudeExtendedPromptCache bool   `flag:"claude-extended-prompt-cache" desc:"Give Claude Code's main conversation a 1-hour prompt cache; subagents and background requests keep 5 minutes. One-hour cache writes cost more than five-minute ones. Without it, setup removes the cache settings if it added them before."`
+	KeepChatGPTLogin          bool   `flag:"keep-chatgpt-login" desc:"Keep Codex signed in to ChatGPT and its ChatGPT login enabled. A ChatGPT workspace can then switch new Codex threads off Grid's model. When omitted, setup signs Codex out, asking first when interactive and signed in."`
+	UseSessionCredential      bool   `flag:"use-session-credential" desc:"Install the session's API key (BASETEN_API_KEY or an API-key profile) as the harness credential instead of creating a Grid API key. The key is never created, rotated, or deleted by this CLI. Mutually exclusive with --key-name."`
+	DryRun                    bool   `flag:"dry-run" desc:"Show the changes without applying them or creating an API key."`
+	Yes                       bool   `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
 // GridSyncFlags are the flags for `baseten grid sync`.
 type GridSyncFlags struct {
 	CommandFlags
-	HideServedModel bool `flag:"hide-served-model-indicator" desc:"Hide which model served each response on intelligent routes in the synced harnesses (a status line or Stop hook in Claude Code, an extension in Pi, a plugin in OpenCode 2), and remove it if setup added it before. Records the choice; when omitted, sync keeps the recorded one."`
-	GitContext      bool `flag:"git-context" desc:"Add the git origin URL, branch, and commit to each Claude Code, OpenCode, and Pi session's context, through a SessionStart hook, plugin, or extension. Records the choice; =false removes them."`
-	DryRun          bool `flag:"dry-run" desc:"Show the changes without applying them or creating an API key."`
-	Yes             bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
+	HideServedModel           bool `flag:"hide-served-model-indicator" desc:"Hide which model served each response on intelligent routes in the synced harnesses (a status line or Stop hook in Claude Code, an extension in Pi, a plugin in OpenCode 2), and remove it if setup added it before. Records the choice; when omitted, sync keeps the recorded one."`
+	GitContext                bool `flag:"git-context" desc:"Add the git origin URL, branch, and commit to each Claude Code, OpenCode, and Pi session's context, through a SessionStart hook, plugin, or extension. Records the choice; =false removes them."`
+	ClaudeExtendedPromptCache bool `flag:"claude-extended-prompt-cache" desc:"Give Claude Code's main conversation a 1-hour prompt cache; subagents and background requests keep 5 minutes. One-hour cache writes cost more than five-minute ones. Records the choice; =false removes the cache settings."`
+	DryRun                    bool `flag:"dry-run" desc:"Show the changes without applying them or creating an API key."`
+	Yes                       bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
 }
 
 // GridTeardownFlags are the flags for `baseten grid teardown`.

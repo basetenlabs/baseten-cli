@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	publiccmd "github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-cli/internal/cmd"
 )
 
@@ -249,8 +250,37 @@ func Test_Org_Describe_Text(t *testing.T) {
 	h.Require.Contains(out, "Service Account Keys: blocked for new keys")
 	h.Require.NotContains(out, "Teams")
 	h.Require.NotContains(out, "OIDC")
+	h.Require.NotContains(out, "Team Role Management")
 	h.Require.Contains(out, "AWS AssumeRole:\n  Baseten Role ARN:     arn:aws:iam::337139236424:role/baseten-customer-access")
 	h.Require.Contains(out, "AWS External ID:      baseten-2fdd8a01c4c34e6bb92a2b96fca29b70")
+}
+
+func Test_Org_Describe_Text_TeamRoleManagement(t *testing.T) {
+	for _, tc := range []struct {
+		allowed bool
+		want    string
+	}{
+		{true, "Team Role Management: team admins allowed"},
+		{false, "Team Role Management: organization admins only"},
+	} {
+		h := NewCommandHarness(t)
+		info := orgInfoFixture(nil)
+		info["allow_team_admins_to_manage_roles"] = tc.allowed
+		h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200, info)
+
+		h.Require.NoError(h.Execute("org", "describe"))
+		h.Require.Contains(h.Stdout.String(), tc.want)
+	}
+}
+
+func Test_Org_Describe_JQ_TeamRoleManagement(t *testing.T) {
+	h := NewCommandHarness(t)
+	info := orgInfoFixture(nil)
+	info["allow_team_admins_to_manage_roles"] = false
+	h.MockManagementAPI().SetRoute("GET", "/v1/organizations/me", 200, info)
+
+	h.Require.NoError(h.Execute("org", "describe", "--jq", ".allow_team_admins_to_manage_roles"))
+	h.Require.Equal("false\n", h.Stdout.String())
 }
 
 func Test_Org_Describe_Text_AssumeRoleNotEnabled(t *testing.T) {
@@ -307,7 +337,101 @@ func Test_Org_Update_JQ(t *testing.T) {
 	h.Require.Equal("true\n", h.Stdout.String())
 }
 
+func Test_Org_Update_TeamAdminsManageRoles(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	info := orgInfoFixture(nil)
+	info["allow_team_admins_to_manage_roles"] = false
+	m.SetRoute("PATCH", "/v1/organizations/me", 200, info)
+
+	h.Require.NoError(h.Execute("org", "update", "--allow-team-admins-to-manage-roles", "false"))
+	h.Require.Equal(map[string]any{"allow_team_admins_to_manage_roles": false},
+		m.FindCall("PATCH", "/v1/organizations/me").BodyJSON(t))
+	h.Require.Contains(h.Stderr.String(), "Updated organization")
+	h.Require.Equal("", h.Stdout.String())
+}
+
+// The server refuses the setting for an organization without custom roles
+// (change_team_admin_role_management in the API), so the CLI reports its error.
+func Test_Org_Update_TeamAdminsManageRoles_WithoutCustomRolesFails(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("PATCH", "/v1/organizations/me", 400, map[string]any{
+		"code": "VALIDATION_ERROR", "message": "Custom roles aren't available to your organization.",
+	})
+
+	h.Require.ErrorContains(h.Execute("org", "update", "--allow-team-admins-to-manage-roles", "true"),
+		"Custom roles aren't available to your organization.")
+	h.Require.Equal(int(publiccmd.ExitValidation), h.ExitCode)
+	h.Require.NotContains(h.Stderr.String(), "Updated organization")
+}
+
 func Test_Org_Update_NothingToUpdate(t *testing.T) {
 	h := NewCommandHarness(t)
 	h.Require.ErrorContains(h.Execute("org", "update"), "nothing to update")
+}
+
+func Test_Org_AccessCheck_InTeamWhereAResourceSetSelects(t *testing.T) {
+	h := NewCommandHarness(t)
+	orgRoleRoutes(h)
+	m := h.MockManagementAPI()
+	resourceSet := []any{
+		map[string]any{"type": "MODEL", "identifier": "m1"},
+		map[string]any{"type": "ENVIRONMENT", "identifier": "staging"},
+	}
+	m.SetRoute("POST", "/v1/access/check", 200, map[string]any{
+		"results": []any{map[string]any{
+			"permission":   "model.deployment.write",
+			"team_id":      "t123456",
+			"resource_set": resourceSet,
+			"allowed":      true,
+		}},
+	})
+
+	h.Require.NoError(h.Execute("org", "access-check", "--permission", "model.deployment.write",
+		"--team", "Engineering", "--resource-set", "model:m1,environment:staging"))
+	h.Require.Equal(map[string]any{
+		"checks": []any{map[string]any{
+			"permission":   "model.deployment.write",
+			"team_id":      "t123456",
+			"resource_set": resourceSet,
+		}},
+	}, m.FindCall("POST", "/v1/access/check").BodyJSON(t))
+	h.Require.Regexp(`model\.deployment\.write\s+model:m1,environment:staging\s+true\s`, h.Stdout.String())
+	h.Require.NotContains(h.Stdout.String(), "TEAM")
+	h.Require.NotContains(h.Stdout.String(), "t123456")
+}
+
+func Test_Org_AccessCheck_ForTheOrganization(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("POST", "/v1/access/check", 200, map[string]any{"results": []any{}})
+
+	h.Require.NoError(h.Execute("org", "access-check", "--permission", "access.role.write"))
+	h.Require.Equal(map[string]any{
+		"checks": []any{map[string]any{"permission": "access.role.write"}},
+	}, m.FindCall("POST", "/v1/access/check").BodyJSON(t))
+}
+
+func Test_Org_Permissions_ShowsWhichAreAssignable(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/access/permissions", 200, map[string]any{
+		"categories": []any{map[string]any{
+			"name": "model", "display_name": "Models", "description": "",
+			"resource_types": []any{"MODEL"}, "supports_environments": true,
+		}},
+		"permissions": []any{
+			map[string]any{
+				"name": "model.read", "category": "model", "display_name": "View models", "description": "",
+				"role_kinds": []any{"TEAM"}, "reserved": false, "available": true,
+			},
+			map[string]any{
+				"name": "access.role.write", "category": "access.role", "display_name": "Manage roles",
+				"description": "", "role_kinds": []any{"ORGANIZATION", "TEAM"}, "reserved": true, "available": true,
+			},
+		},
+	})
+
+	h.Require.NoError(h.Execute("org", "permissions"))
+	h.Require.Regexp(`model\.read\s+View models\s+team\s+true\s`, h.Stdout.String())
+	h.Require.Regexp(`access\.role\.write\s+Manage roles\s+organization,team\s+false\s`, h.Stdout.String())
 }

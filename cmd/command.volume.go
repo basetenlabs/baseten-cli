@@ -458,8 +458,15 @@ type VolumeRefFlags struct {
 	FullRef bool `flag:"full-ref" desc:"Write refs with the whole digest instead of shortening it to 12 hex characters."`
 }
 
+// VolumeHostingFlags chooses where the volumes a command addresses are stored.
+// The same name in two hostings is two different volumes.
+type VolumeHostingFlags struct {
+	Hosting string `flag:"hosting" desc:"Where the volume is stored: baseten-cloud (Baseten's shared fleet), single-tenant, or self-hosted. Defaults to your organization's hosting, and is required when your organization has more than one." enum:"baseten-cloud,single-tenant,self-hosted"`
+}
+
 type VolumeLsFlags struct {
 	CommandFlags
+	VolumeHostingFlags
 
 	Recursive bool `flag:"recursive" short:"R" desc:"List every entry beneath the ref instead of only its immediate children."`
 }
@@ -467,17 +474,20 @@ type VolumeLsFlags struct {
 type VolumeStatFlags struct {
 	CommandFlags
 	VolumeRefFlags
+	VolumeHostingFlags
 }
 
 type VolumeCatFlags struct {
 	CommandFlags
 	VolumeTransferFlags
+	VolumeHostingFlags
 }
 
 type VolumePushFlags struct {
 	CommandFlags
 	VolumeRefFlags
 	VolumeTransferFlags
+	VolumeHostingFlags
 
 	Tags []string `flag:"tag" desc:"Tag to apply to the new version at commit. May be repeated, and adds to a tag written on REF."`
 
@@ -490,6 +500,7 @@ type VolumePullFlags struct {
 	CommandFlags
 	VolumeRefFlags
 	VolumeTransferFlags
+	VolumeHostingFlags
 
 	Overwrite bool `flag:"overwrite" desc:"Allow writing into a non-empty directory. Files already there that the version does not describe are left alone."`
 
@@ -502,6 +513,7 @@ type VolumePullFlags struct {
 type VolumeRmFlags struct {
 	CommandFlags
 	VolumeRefFlags
+	VolumeHostingFlags
 
 	Recursive bool `flag:"recursive" short:"r" desc:"Delete every live version of the volume. Required for a ref that names a volume rather than one version."`
 	Yes       bool `flag:"yes" desc:"Skip the interactive confirmation prompt. Required when stdin is not a terminal."`
@@ -509,6 +521,7 @@ type VolumeRmFlags struct {
 
 type VolumeVersionsFlags struct {
 	CommandFlags
+	VolumeHostingFlags
 
 	IncludeTombstoned bool `flag:"include-tombstoned" desc:"Include deleted versions that are still inside their recovery window."`
 }
@@ -516,11 +529,13 @@ type VolumeVersionsFlags struct {
 type VolumeRestoreFlags struct {
 	CommandFlags
 	VolumeRefFlags
+	VolumeHostingFlags
 }
 
 type VolumeTagSetFlags struct {
 	CommandFlags
 	VolumeRefFlags
+	VolumeHostingFlags
 
 	VolumeRef string `flag:"volume-ref" desc:"Ref of the version to tag, as bdn:<namespace>/<volume> for the version head points at, or with a :<tag> or @<digest> selector for that version." required:"true"`
 	Tag       string `flag:"tag" desc:"Tag to point at the version. May be 'head'." required:"true"`
@@ -530,6 +545,7 @@ type VolumeTagSetFlags struct {
 
 type VolumeTagDeleteFlags struct {
 	CommandFlags
+	VolumeHostingFlags
 
 	VolumeRef string `flag:"volume-ref" desc:"Ref of the volume the tag belongs to, as bdn:<namespace>/<volume>, with no selector and no path." required:"true"`
 	Tag       string `flag:"tag" desc:"Tag to delete. May be 'head'." required:"true"`
@@ -538,6 +554,7 @@ type VolumeTagDeleteFlags struct {
 
 type VolumeUpdateFlags struct {
 	CommandFlags
+	VolumeHostingFlags
 
 	ExpiresAt      string `flag:"expires-at" desc:"Time at which the volume expires, as an RFC 3339 date-time with a UTC offset, as in 2030-01-01T00:00:00Z. It must be in the future and at most ten years ahead." oneof:"expiration"`
 	ClearExpiresAt bool   `flag:"clear-expires-at" desc:"Clear the volume's expiration time." oneof:"expiration"`

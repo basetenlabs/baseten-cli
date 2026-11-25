@@ -268,6 +268,30 @@ var commandModel = Command{
 				},
 			},
 		},
+		{
+			Name:    "instance-types",
+			Summary: "List available instance types and prices",
+			Description: "List the instance types the organization can deploy models on, with the " +
+				"price the organization pays for each, sorted by price.\n\n" +
+				"Pass an instance type's ID to 'baseten model push --instance-type' or use it as " +
+				"`resources.instance_type` in config.yaml.",
+			Flags: ModelInstanceTypesFlags{},
+			Output: &CommandOutput[managementapi.InstanceTypePrices]{
+				TextDescription: "Table with columns: ID, $/MIN, VCPU, RAM, GPU, VRAM. When no instance " +
+					"types are available, prints \"No instance types found.\" to stderr.",
+				Examples: []CommandExample{
+					{
+						Description: "List instance types and prices.",
+						Command:     "baseten model instance-types",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the IDs of H100 instance types.",
+					Command: "baseten model instance-types " +
+						"--jq '.instance_types[].instance_type | select(.gpu_type == \"H100\") | .id'",
+				},
+			},
+		},
 		commandModelDeployment,
 		commandModelEnvironment,
 		commandModelImage,
@@ -365,8 +389,9 @@ type LogFlags struct {
 }
 
 // MetricsFlags is the shared metric-query flag set for `baseten model deployment
-// metrics` and `baseten model environment metrics`. Both commands accept the
-// same mode, window, and metric-selection flags; only the metric source differs.
+// metrics`, `baseten model environment metrics`, and `baseten model-api metrics`.
+// All accept the same mode, window, and metric-selection flags; only the metric
+// source differs.
 type MetricsFlags struct {
 	Mode string `flag:"mode" desc:"Aggregation mode. 'current' returns an instantaneous snapshot at now; 'summary' aggregates the whole window into one value per metric; 'series' returns evenly-spaced points across the window. --start/--end/--since are only meaningful for summary and series." enum:"current,summary,series" default:"current"`
 
@@ -478,4 +503,8 @@ type ModelAuditLogsFlags struct {
 	CommandFlags
 	ModelRefFlags
 	AuditLogFlags
+}
+
+type ModelInstanceTypesFlags struct {
+	CommandFlags
 }

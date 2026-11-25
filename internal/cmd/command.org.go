@@ -25,6 +25,8 @@ func init() {
 	Register("org describe", commandOrgDescribe)
 	Register("org update", commandOrgUpdate)
 	Register("org regions", commandOrgRegions)
+	Register("org access-check", commandOrgAccessCheck)
+	Register("org permissions", commandOrgPermissions)
 }
 
 func commandOrgBillingUsage(ctx *CommandContext, flags *cmd.OrgBillingUsageFlags) error {
@@ -568,6 +570,13 @@ func commandOrgDescribe(ctx *CommandContext, flags *cmd.OrgDescribeFlags) error 
 	}
 	ctx.Outputf("Personal API Keys:    %s\n", orgAPIKeySettingText(info.AllowPersonalApiKeys))
 	ctx.Outputf("Service Account Keys: %s\n", orgAPIKeySettingText(info.AllowServiceAccountApiKeys))
+	if info.AllowTeamAdminsToManageRoles != nil {
+		roleAdmins := "organization admins only"
+		if *info.AllowTeamAdminsToManageRoles {
+			roleAdmins = "team admins allowed"
+		}
+		ctx.Outputf("Team Role Management: %s\n", roleAdmins)
+	}
 	if info.AwsAssumeRole != nil {
 		ctx.Outputf("AWS AssumeRole:\n")
 		ctx.Outputf("  Baseten Role ARN:     %s\n", info.AwsAssumeRole.BasetenRoleArn)
@@ -586,11 +595,13 @@ func orgAPIKeySettingText(allowed bool) string {
 
 func commandOrgUpdate(ctx *CommandContext, flags *cmd.OrgUpdateFlags) error {
 	req := managementapi.UpdateOrganizationRequest{
-		AllowPersonalApiKeys:       flags.AllowPersonalAPIKeys.Pointer(),
-		AllowServiceAccountApiKeys: flags.AllowServiceAccountAPIKeys.Pointer(),
+		AllowPersonalApiKeys:         flags.AllowPersonalAPIKeys.Pointer(),
+		AllowServiceAccountApiKeys:   flags.AllowServiceAccountAPIKeys.Pointer(),
+		AllowTeamAdminsToManageRoles: flags.AllowTeamAdminsToManageRoles.Pointer(),
 	}
 	if req == (managementapi.UpdateOrganizationRequest{}) {
-		return cmd.NewErrUsagef("nothing to update; pass --allow-personal-api-keys or --allow-service-account-api-keys")
+		return cmd.NewErrUsagef("nothing to update; pass --allow-personal-api-keys, --allow-service-account-api-keys " +
+			"or --allow-team-admins-to-manage-roles")
 	}
 	cl, err := ctx.NewManagementClient()
 	if err != nil {
@@ -605,5 +616,76 @@ func commandOrgUpdate(ctx *CommandContext, flags *cmd.OrgUpdateFlags) error {
 		return nil
 	}
 	ctx.LogLine("Updated organization")
+	return nil
+}
+
+func commandOrgAccessCheck(ctx *CommandContext, flags *cmd.OrgAccessCheckFlags) error {
+	var resourceSet *[]managementapi.AccessResourceRequest
+	if flags.ResourceSet != "" {
+		set, err := orgRoleParseResourceSet(flags.ResourceSet)
+		if err != nil {
+			return err
+		}
+		resourceSet = &set
+	}
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	var teamID *string
+	if flags.Team != "" {
+		id, err := ResolveTeam(ctx, cl.API(), flags.Team)
+		if err != nil {
+			return err
+		}
+		teamID = &id
+	}
+	checks := make([]managementapi.AccessCheck, 0, len(flags.Permissions))
+	for _, permission := range flags.Permissions {
+		checks = append(checks, managementapi.AccessCheck{Permission: permission, TeamId: teamID, ResourceSet: resourceSet})
+	}
+	results, err := cl.API().PostAccessCheck(ctx, managementapi.CheckAccessRequest{Checks: checks})
+	if err != nil {
+		return fmt.Errorf("checking access: %w", err)
+	}
+	if ctx.JSON {
+		results.Results = normalizeJSONSlice(results.Results)
+		ctx.OutputJSON(results)
+		return nil
+	}
+	rows := make([][]string, 0, len(results.Results))
+	for _, r := range results.Results {
+		rows = append(rows, []string{r.Permission, orgRoleResourceSetText(r.ResourceSet, "-"), strconv.FormatBool(r.Allowed)})
+	}
+	ctx.OutputTable(TableOutput{Headers: []string{"PERMISSION", "RESOURCE SET", "ALLOWED"}, Rows: rows})
+	return nil
+}
+
+func commandOrgPermissions(ctx *CommandContext, _ *cmd.OrgPermissionsFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	catalog, err := cl.API().GetAccessPermissions(ctx)
+	if err != nil {
+		return fmt.Errorf("listing permissions: %w", err)
+	}
+	if ctx.JSON {
+		catalog.Categories = normalizeJSONSlice(catalog.Categories)
+		catalog.Permissions = normalizeJSONSlice(catalog.Permissions)
+		ctx.OutputJSON(catalog)
+		return nil
+	}
+	rows := make([][]string, 0, len(catalog.Permissions))
+	for _, p := range catalog.Permissions {
+		kinds := make([]string, 0, len(p.RoleKinds))
+		for _, kind := range p.RoleKinds {
+			kinds = append(kinds, strings.ToLower(string(kind)))
+		}
+		rows = append(rows, []string{
+			p.Name, p.DisplayName, strings.Join(kinds, ","), strconv.FormatBool(p.Available && !p.Reserved),
+		})
+	}
+	ctx.OutputTable(TableOutput{Headers: []string{"NAME", "LABEL", "ROLE KINDS", "ASSIGNABLE"}, Rows: rows})
 	return nil
 }

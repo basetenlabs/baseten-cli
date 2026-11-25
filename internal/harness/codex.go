@@ -136,6 +136,10 @@ func CodexLogout(ctx context.Context, execer Execer, dir string) error {
 	return err
 }
 
+func codexDaemonSettingsPath(dir string) string {
+	return filepath.Join(dir, "app-server-daemon", "settings.json")
+}
+
 func CodexCloudConfigPath(dir string) string {
 	return filepath.Join(dir, "cloud-config-bundle-cache.json")
 }
@@ -190,6 +194,38 @@ func codexSocketClients(lsof, socket string) (int, error) {
 		return 0, errors.New("the daemon socket is not listed by lsof")
 	}
 	return sockets - 1, nil
+}
+
+const codexShutdownGraceKey = "shutdownGraceSeconds"
+
+func CodexSkipShutdownGrace(dir string) (func() error, error) {
+	path := codexDaemonSettingsPath(dir)
+	original, err := os.ReadFile(path)
+	missing := errors.Is(err, os.ErrNotExist)
+	if err != nil && !missing {
+		return nil, err
+	}
+	settings := map[string]any{}
+	if !missing && (json.Unmarshal(original, &settings) != nil || settings == nil) {
+		return nil, fmt.Errorf("%s is not a JSON object", path)
+	}
+	settings[codexShutdownGraceKey] = 0
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return nil, err
+	}
+	if missing {
+		return func() error {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			return nil
+		}, nil
+	}
+	return func() error { return os.WriteFile(path, original, 0o600) }, nil
 }
 
 func RestartCodexDaemon(ctx context.Context, execer Execer, dir string) (int, error) {
@@ -267,10 +303,21 @@ func (codexHarness) Prepare(path string, routes []Route, opts PrepareOptions) ([
 		desired([]string{"model_provider"}, providerID),
 		desired([]string{"model_catalog_json"}, catalogPath(path)),
 		desired([]string{"review_model"}, s.Primary),
-		desired([]string{"forced_login_method"}, "api"),
 		desired([]string{"model_providers", providerID}, provider),
 	}
-	p, err := prepareSettings(path, credentialPath, func(map[string]any) ([]setting, error) { return values, nil })
+	// Blocking ChatGPT login keeps a ChatGPT workspace's default model from
+	// overriding the route in new threads.
+	forcedLogin := []string{"forced_login_method"}
+	p, err := prepareSettings(path, credentialPath, func(data map[string]any) ([]setting, error) {
+		switch {
+		case !opts.KeepChatGPTLogin:
+			return append(values, desired(forcedLogin, "api")), nil
+		case data["forced_login_method"] == "api":
+			return append(values, setting{Path: forcedLogin}), nil
+		default:
+			return values, nil
+		}
+	})
 	if err != nil {
 		return nil, err
 	}

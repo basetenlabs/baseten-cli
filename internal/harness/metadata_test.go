@@ -3,6 +3,8 @@ package harness
 import (
 	"encoding/json"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -37,6 +39,8 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	mid := testRoute("acme/mid", "Mid")
 	mid.ContextWindow = 200000
 	path := settingsPath(t, claudeHarness{})
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(`{"env": {"ANTHROPIC_DEFAULT_OPUS_MODEL": "acme/old", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "acme/old"}}`), 0o600))
 	setup(t, claudeHarness{}, path, []Route{huge, mid}, Selection{})
 	d := load(t, path)
 	require.Equal(t, "acme/huge[1m]", d["model"])
@@ -49,7 +53,9 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	require.Equal(t, map[string]any{
 		"acme/huge[1m]": map[string]any{"maxEffortLevel": "xhigh"},
 	}, d["modelSettings"])
-	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_DEFAULT_OPUS_MODEL"}).Data)
+	for _, key := range claudeTierModelKeys {
+		require.False(t, get(d, []string{"env", key}).Exists, key)
+	}
 	require.Equal(t, "4096", get(d, []string{"env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}).Data)
 	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
@@ -59,6 +65,33 @@ func TestClaudeWideContextRoutesMintWindowAliases(t *testing.T) {
 	require.Equal(t, []any{"acme/mid", "acme/huge[1m]"}, d["availableModels"])
 	require.Equal(t, "acme/huge[1m]", get(d, []string{"env", "ANTHROPIC_SMALL_FAST_MODEL"}).Data)
 	require.Equal(t, d["model"], get(d, []string{"env", "ANTHROPIC_MODEL"}).Data)
+}
+
+func TestClaudeAllowsRouteAliases(t *testing.T) {
+	// Grid gives each Anthropic route on the team an ALIAS for Claude Code's built-in model ID.
+	fable := testRoute("anthropic/claude-fable-5-2--anthropic", "Fable")
+	fable.ContextWindow = 1000000
+	fable.Aliases = []string{"claude-fable-5-2"}
+	fableAgain := testRoute("acme/fable", "Fable again")
+	fableAgain.Aliases = []string{"claude-fable-5-2", "acme/glm"}
+	desktopOnly := testRoute("anthropic/claude-opus-5-5--bedrock", "Opus on Bedrock")
+	glm := testRoute("acme/glm", "GLM")
+	glm.Aliases = []string{"claude-haiku-5-5"}
+	routes := []Route{fable, fableAgain, desktopOnly, glm}
+	path := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, path, routes, Selection{Background: glm.Name})
+	d := load(t, path)
+	require.Equal(t, []any{
+		"anthropic/claude-fable-5-2--anthropic[1m]", "claude-fable-5-2", "acme/fable", "acme/glm",
+		"anthropic/claude-opus-5-5--bedrock", "claude-haiku-5-5",
+	}, d["availableModels"])
+
+	for i := range routes {
+		routes[i].Aliases = nil
+	}
+	unaliased := settingsPath(t, claudeHarness{})
+	setup(t, claudeHarness{}, unaliased, routes, Selection{Background: glm.Name})
+	require.Equal(t, get(load(t, unaliased), []string{"modelPicker"}).Data, d["modelPicker"], "aliases stay out of the picker")
 }
 
 func TestReasoningBoundsSkipNone(t *testing.T) {
@@ -301,10 +334,12 @@ func TestNewRoute(t *testing.T) {
 	r, err := NewRoute(managementapi.GridRoute{Name: "acme/primary", DisplayName: "Primary", Metadata: &managementapi.GridRouteMetadata{
 		ContextWindow: &ctx, MaxOutputTokens: &out, InputModalities: []string{"text"}, Tools: &tools, ApiFormats: chatCompletionsFormats,
 		Cost: &managementapi.ExploreCost{Input: ptr(0.3), Output: ptr(1.2), LongContext: &managementapi.ExploreCostValues{Input: ptr(0.6)}},
-	}}, nil, RouteAlias{Name: "ignored", Kind: "OTHER"}, RouteAlias{Name: "claude-desktop-from-api", Kind: RouteAliasKindClaudeDesktop})
+	}}, nil, RouteAlias{Name: "ignored", Kind: "OTHER"}, RouteAlias{Name: "claude-desktop-from-api", Kind: RouteAliasKindClaudeDesktop},
+		RouteAlias{Name: "claude-primary-1", Kind: RouteAliasKindAlias}, RouteAlias{Name: "claude-primary-2", Kind: RouteAliasKindAlias})
 	require.NoError(t, err)
 	require.Equal(t, &Cost{Input: 0.3, Output: 1.2}, r.Cost, "a long-context price without output is dropped")
 	require.Equal(t, "claude-desktop-from-api", r.ClaudeDesktopAlias)
+	require.Equal(t, []string{"claude-primary-1", "claude-primary-2"}, r.Aliases)
 }
 
 func TestRouteTargetComesFromConnections(t *testing.T) {

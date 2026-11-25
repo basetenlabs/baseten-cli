@@ -136,6 +136,27 @@ var commandOrgServiceAccount = Command{
 				},
 			},
 		},
+		{
+			Name:    "access",
+			Summary: "Describe a service account's roles and access (PRE-RELEASE)",
+			Description: orgRolePrereleaseNotice +
+				"List every role a service account holds, through an assignment to it or through " +
+				"organization and team membership, and the permissions they grant. " + orgRoleUnavailable,
+			Flags: OrgServiceAccountAccessFlags{},
+			Output: &CommandOutput[managementapi.EffectiveAccess]{
+				TextDescription: orgSubjectAccessText,
+				Examples: []CommandExample{
+					{
+						Description: "Describe a service account's access.",
+						Command:     "baseten org service-account access --name ci-deployer",
+					},
+				},
+				JQExample: CommandExample{
+					Description: "Print the names of the roles it holds.",
+					Command:     "baseten org service-account access --name ci-deployer --jq '.assignments[].role_name'",
+				},
+			},
+		},
 	},
 }
 
@@ -156,6 +177,11 @@ type OrgServiceAccountPermissionFlags struct {
 	ModelIDs      []string `flag:"model-id" desc:"Restrict the account to a model. May be repeated. Only valid with --type workspace-invoke or workspace-export-metrics."`
 	Environments  []string `flag:"environment" desc:"With --type workspace-invoke, an environment the account may call; with workspace-manage-all, a restricted environment it may also manage. May be repeated."`
 	ModelAPISlugs []string `flag:"model-api-slug" desc:"Restrict the account to a Model API. May be repeated. Only valid with --type workspace-invoke-model-apis."`
+}
+
+type OrgServiceAccountAccessFlags struct {
+	CommandFlags
+	OrgServiceAccountRefFlags
 }
 
 type OrgServiceAccountCreateFlags struct {

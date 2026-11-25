@@ -39,11 +39,14 @@ type Record struct {
 	// CodexRestartPending records that the codex app-server daemon still needs
 	// a restart, because the last one was declined or failed. Retried on the
 	// next sync.
-	CodexRestartPending   bool `json:"codex_restart_pending,omitempty"`
-	NoClaudeServedModel   bool `json:"no_claude_served_model,omitempty"`
-	NoPiServedModel       bool `json:"no_pi_served_model,omitempty"`
-	NoOpenCodeServedModel bool `json:"no_opencode_served_model,omitempty"`
-	GitContext            bool `json:"git_context,omitempty"`
+	CodexRestartPending       bool `json:"codex_restart_pending,omitempty"`
+	NoClaudeServedModel       bool `json:"no_claude_served_model,omitempty"`
+	NoPiServedModel           bool `json:"no_pi_served_model,omitempty"`
+	NoOpenCodeServedModel     bool `json:"no_opencode_served_model,omitempty"`
+	GitContext                bool `json:"git_context,omitempty"`
+	ClaudeExtendedPromptCache bool `json:"claude_extended_prompt_cache,omitempty"`
+	// KeepChatGPTLogin leaves Codex signed in to ChatGPT and its ChatGPT login enabled.
+	KeepChatGPTLogin bool `json:"keep_chatgpt_login,omitempty"`
 }
 
 // RecordFile is the on-disk harness.json structure. Unrecognized keys are

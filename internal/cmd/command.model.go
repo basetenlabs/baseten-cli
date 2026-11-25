@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"math"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +21,7 @@ func init() {
 	Register("model delete", commandModelDelete)
 	Register("model rename", commandModelRename)
 	Register("model audit-logs", commandModelAuditLogs)
+	Register("model instance-types", commandModelInstanceTypes)
 }
 
 // ModelRef is the result of resolving [cmd.ModelRefFlags] against the
@@ -291,4 +296,60 @@ func commandModelRename(ctx *CommandContext, flags *cmd.ModelRenameFlags) error 
 	ctx.Logf("Renamed model %s to %s\n", ref.ID, model.Name)
 	ctx.Warn("update model_name in config.yaml, or pushes that still use the old name will create another model")
 	return nil
+}
+
+func commandModelInstanceTypes(ctx *CommandContext, flags *cmd.ModelInstanceTypesFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	prices, err := cl.API().GetInstanceTypePrices(ctx)
+	if err != nil {
+		return fmt.Errorf("listing instance types: %w", err)
+	}
+	// The endpoint does not promise an order.
+	slices.SortFunc(prices.InstanceTypes, func(a, b managementapi.InstanceTypeWithPrice) int {
+		if c := cmp.Compare(a.Price, b.Price); c != 0 {
+			return c
+		}
+		return strings.Compare(a.InstanceType.Name, b.InstanceType.Name)
+	})
+
+	if ctx.JSON {
+		ctx.OutputJSON(prices)
+		return nil
+	}
+	if len(prices.InstanceTypes) == 0 {
+		ctx.LogLine("No instance types found.")
+		return nil
+	}
+	rows := make([][]string, 0, len(prices.InstanceTypes))
+	for _, p := range prices.InstanceTypes {
+		it := p.InstanceType
+		gpu, vram := "-", "-"
+		if it.GpuCount > 0 && it.GpuType != nil {
+			gpu = fmt.Sprintf("%dx %s", it.GpuCount, *it.GpuType)
+			if it.GpuMemoryLimitMib != nil {
+				vram = modelInstanceTypesFormatMiB(*it.GpuMemoryLimitMib)
+			}
+		}
+		rows = append(rows, []string{
+			it.Id,
+			fmt.Sprintf("$%.5f", p.Price),
+			strconv.FormatFloat(float64(it.MillicpuLimit)/1000, 'f', -1, 64),
+			modelInstanceTypesFormatMiB(it.MemoryLimitMib),
+			gpu,
+			vram,
+		})
+	}
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"ID", "$/MIN", "VCPU", "RAM", "GPU", "VRAM"},
+		Rows:    rows,
+	})
+	return nil
+}
+
+// modelInstanceTypesFormatMiB formats mebibytes as whole GiB.
+func modelInstanceTypesFormatMiB(mib int) string {
+	return strconv.FormatFloat(math.Round(float64(mib)/1024), 'f', 0, 64) + " GiB"
 }

@@ -36,6 +36,7 @@ func commandVolumeSyncStart(ctx *CommandContext, flags *cmd.VolumeSyncStartFlags
 	sync, err := api.PostVolumesSyncs(ctx, managementapi.CreateVolumeSyncRequest{
 		Source:      source,
 		Destination: managementapi.VolumeSyncDestination{Ref: destination},
+		Hosting:     volumeHostingParam(flags.VolumeHostingFlags),
 	})
 	if err != nil {
 		return fmt.Errorf("starting volume sync: %w", err)

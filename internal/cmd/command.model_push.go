@@ -806,7 +806,8 @@ func printModelPushSummary(
 
 	group("🚀", "Invoke your model:", []hint{
 		{label: "URL:", value: hyperlink(w, predictURL), rendered: true},
-		{label: "CLI:", value: fmt.Sprintf("baseten model predict --model-id %s", modelID)},
+		{label: "CLI:", value: fmt.Sprintf(
+			"baseten model predict --model-id %s --deployment-id %s", modelID, deploymentID)},
 	})
 
 	// SSH last, and only when the pushed config enabled it.

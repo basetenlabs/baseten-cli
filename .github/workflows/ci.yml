@@ -13,9 +13,9 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: chainguard-actions/actions-checkout@31bbccf724702f8a0dc7a3ed7db8fcca2066babc # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: chainguard-actions/actions-setup-go@320f6f2294d8e82641a27424fb8def0a2a1e80e6 # v5.6.0
         with:
           go-version-file: go.mod
 
@@ -29,7 +29,7 @@ jobs:
       # CLIs against a local gateway, and skip any that are missing. Harness
       # setup is only supported on macOS and Linux so far. OpenCode 1 and 2
       # both install `opencode`, so OpenCode 2 goes in its own prefix.
-      - uses: actions/setup-node@v4
+      - uses: chainguard-actions/actions-setup-node@031fc9bd73e651da81e6a7294b2af29e64d5f39c # v4.4.0
         if: matrix.os != 'windows-latest'
         with:
           node-version: 22
@@ -59,7 +59,9 @@ jobs:
       # `uv tool run`.
       - name: Install uv
         if: matrix.os == 'ubuntu-latest'
-        uses: astral-sh/setup-uv@v5
+        uses: chainguard-actions/astral-sh-setup-uv@d074662c6bd48040f94d5f5eeae1479d285f0177 # v10.3.3
+        with:
+          prune-cache: true
 
       - name: E2E test
         if: matrix.os == 'ubuntu-latest'
