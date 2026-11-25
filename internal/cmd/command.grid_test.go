@@ -5522,6 +5522,7 @@ func Test_Grid_Token(t *testing.T) {
 }
 
 func Test_Grid_Setup_RejectsWorkloadIdentity(t *testing.T) {
+	skipUnlessSupported(t)
 	h := NewCommandHarness(t)
 	setWorkloadIdentityEnv(t)
 
