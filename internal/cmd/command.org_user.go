@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	"github.com/basetenlabs/baseten-cli/cmd"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
 )
 
 func init() {
+	Register("org user access", commandOrgUserAccess)
 	Register("org user describe", commandOrgUserDescribe)
 	Register("org user list", commandOrgUserList)
 }
@@ -61,16 +64,10 @@ func commandOrgUserDescribe(ctx *CommandContext, flags *cmd.OrgUserDescribeFlags
 
 	var user *managementapi.UserInfo
 	if flags.UserEmail != "" {
-		resp, err := cl.API().GetUsers(ctx, managementapi.GetV1UsersParams{Email: &flags.UserEmail})
+		user, err = orgUserByEmail(ctx, cl.API(), flags.UserEmail)
 		if err != nil {
-			return fmt.Errorf("describe user %q: %w", flags.UserEmail, err)
+			return err
 		}
-		if len(resp.Items) == 0 {
-			return fmt.Errorf("no user with email %q", flags.UserEmail)
-		} else if len(resp.Items) > 1 {
-			return fmt.Errorf("multiple users with email %q", flags.UserEmail)
-		}
-		user = &resp.Items[0]
 	} else if flags.UserID == "me" {
 		// "me" routes to the dedicated authenticated-user endpoint.
 		user, err = cl.API().GetUsersMe(ctx)
@@ -92,6 +89,21 @@ func commandOrgUserDescribe(ctx *CommandContext, flags *cmd.OrgUserDescribeFlags
 	return nil
 }
 
+// orgUserByEmail looks up the organization's user with this email.
+func orgUserByEmail(ctx context.Context, api *managementapi.Client, email string) (*managementapi.UserInfo, error) {
+	resp, err := api.GetUsers(ctx, managementapi.GetV1UsersParams{Email: &email})
+	if err != nil {
+		return nil, fmt.Errorf("looking up user %q: %w", email, err)
+	}
+	switch len(resp.Items) {
+	case 0:
+		return nil, cmd.NewErrNotFound(fmt.Errorf("no user with email %q", email))
+	case 1:
+		return &resp.Items[0], nil
+	}
+	return nil, cmd.NewErrUsagef("more than one user has email %q; pass --user-id instead", email)
+}
+
 // writeUserInfo prints a UserInfo as a field-per-line summary. Shared by
 // `org user describe` and `whoami`.
 func writeUserInfo(ctx *CommandContext, user *managementapi.UserInfo) {
@@ -105,4 +117,71 @@ func writeUserInfo(ctx *CommandContext, user *managementapi.UserInfo) {
 	if ws := deref(user.WorkspaceName); ws != "" {
 		ctx.Outputf("Workspace:  %s\n", ws)
 	}
+}
+
+func commandOrgUserAccess(ctx *CommandContext, flags *cmd.OrgUserAccessFlags) error {
+	cl, err := ctx.NewManagementClient()
+	if err != nil {
+		return err
+	}
+	var access *managementapi.EffectiveAccess
+	if flags.UserID == "me" {
+		access, err = cl.API().GetUsersMeAccess(ctx)
+	} else {
+		userID := flags.UserID
+		if flags.UserEmail != "" {
+			user, err := orgUserByEmail(ctx, cl.API(), flags.UserEmail)
+			if err != nil {
+				return err
+			}
+			userID = user.UserId
+		}
+		access, err = cl.API().GetUsersAccess(ctx, userID)
+	}
+	if err != nil {
+		return fmt.Errorf("describing access: %w", err)
+	}
+	return orgOutputSubjectAccess(ctx, access)
+}
+
+// orgOutputSubjectAccess prints the roles and permissions a principal holds.
+func orgOutputSubjectAccess(ctx *CommandContext, access *managementapi.EffectiveAccess) error {
+	if ctx.JSON {
+		access.Assignments = normalizeJSONSlice(access.Assignments)
+		ctx.OutputJSON(access)
+		return nil
+	}
+	ctx.Outputf("%s (%s)\n", orgRoleHolderText(access.SubjectType, access.SubjectName), access.SubjectId)
+	rows := make([][]string, 0, len(access.Assignments))
+	for _, held := range access.Assignments {
+		via := strings.ToLower(string(held.GrantedVia))
+		if held.SubjectType == managementapi.AccessSubjectType_DIRECTORY_GROUP {
+			via += " to group " + held.SubjectName
+		}
+		rows = append(rows, []string{
+			held.RoleName, via, orgRoleOrDash(held.TeamName), orgRoleResourceSetsText(held.ResourceSets),
+			orgRoleOrDash(held.Id),
+		})
+	}
+	ctx.OutputTable(TableOutput{
+		Headers: []string{"ROLE", "HELD VIA", "TEAM", "RESOURCE SETS", "ASSIGNMENT"},
+		Rows:    rows,
+	})
+	if access.Permissions == nil {
+		ctx.LogLine("Effective permissions aren't available yet.")
+		return nil
+	}
+	var grants [][]string
+	for _, permission := range *access.Permissions {
+		for _, grant := range permission.Grants {
+			team := "organization"
+			if grant.TeamName != nil {
+				team = *grant.TeamName
+			}
+			grants = append(grants, []string{permission.Name, team, orgRoleResourceSetText(grant.ResourceSet, "all")})
+		}
+	}
+	ctx.Outputf("\n")
+	ctx.OutputTable(TableOutput{Headers: []string{"PERMISSION", "TEAM", "RESOURCE SET"}, Rows: grants})
+	return nil
 }

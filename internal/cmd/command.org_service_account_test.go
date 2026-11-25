@@ -217,3 +217,32 @@ func Test_Org_ServiceAccount_Delete_ByName(t *testing.T) {
 	h.Require.Contains(h.Stderr.String(), "Deleted service account sa1")
 	h.Require.Equal("", h.Stdout.String())
 }
+
+func Test_Org_ServiceAccount_Access_PicksServiceAccount(t *testing.T) {
+	access := map[string]any{
+		"subject_type": "USER",
+		"subject_id":   "u1",
+		"subject_name": "Ada",
+		"assignments":  []any{},
+		"permissions":  nil,
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		path string
+	}{
+		{"service account by name", []string{"--name", "ci-deployer"}, "/v1/service_accounts/sa1/access"},
+		{"service account by ID", []string{"--id", "sa2"}, "/v1/service_accounts/sa2/access"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			orgRoleRoutes(h)
+			m := h.MockManagementAPI()
+			m.SetRoute("GET", tc.path, 200, access)
+
+			h.Require.NoError(h.Execute(append([]string{"org", "service-account", "access"}, tc.args...)...))
+			h.Require.NotNil(m.FindCall("GET", tc.path))
+			h.Require.Contains(h.Stderr.String(), "Effective permissions aren't available yet.")
+		})
+	}
+}

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/basetenlabs/baseten-cli/cmd"
 )
 
 func userFixture(id, email, name string) map[string]any {
@@ -125,6 +127,22 @@ func Test_Org_User_Describe_ByEmail_NotFound(t *testing.T) {
 	h.Require.ErrorContains(err, `no user with email "ghost@acme.io"`)
 }
 
+// Deliberately unrealistic: the API is not expected to return two users for one
+// email, but if it does the CLI must not pick one.
+func Test_Org_User_Describe_ByEmail_SharedEmailNeedsID(t *testing.T) {
+	h := NewCommandHarness(t)
+	h.MockManagementAPI().SetRoute("GET", "/v1/users", 200, map[string]any{
+		"items": []any{
+			userFixture("u1", "ada@acme.io", "Ada"), userFixture("u2", "ada@acme.io", "Ada L."),
+		},
+		"pagination": map[string]any{"has_more": false},
+	})
+
+	err := h.Execute("org", "user", "describe", "--user-email", "ada@acme.io")
+	h.Require.ErrorContains(err, `more than one user has email "ada@acme.io"; pass --user-id instead`)
+	h.Require.Equal(int(cmd.ExitUsage), h.ExitCode)
+}
+
 func Test_Org_User_Describe_IDAndEmail_Rejected(t *testing.T) {
 	h := NewCommandHarness(t)
 	err := h.Execute("org", "user", "describe", "--user-id", "u1", "--user-email", "ada@acme.io")
@@ -138,4 +156,63 @@ func Test_Org_User_Describe_JSON(t *testing.T) {
 
 	h.Require.NoError(h.Execute("org", "user", "describe", "--user-id", "me", "--output", "json"))
 	h.Require.Contains(h.Stdout.String(), `"user_id": "u1"`)
+}
+
+func Test_Org_User_Access_PicksUser(t *testing.T) {
+	access := map[string]any{
+		"subject_type": "USER",
+		"subject_id":   "u1",
+		"subject_name": "Ada",
+		"assignments":  []any{},
+		"permissions":  nil,
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		path string
+	}{
+		{"yourself", []string{"--user-id", "me"}, "/v1/users/me/access"},
+		{"user by ID", []string{"--user-id", "u2"}, "/v1/users/u2/access"},
+		{"user by email", []string{"--user-email", "ada@example.com"}, "/v1/users/u1/access"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCommandHarness(t)
+			orgRoleRoutes(h)
+			m := h.MockManagementAPI()
+			m.SetRoute("GET", tc.path, 200, access)
+
+			h.Require.NoError(h.Execute(append([]string{"org", "user", "access"}, tc.args...)...))
+			h.Require.NotNil(m.FindCall("GET", tc.path))
+			h.Require.Contains(h.Stderr.String(), "Effective permissions aren't available yet.")
+		})
+	}
+}
+
+func Test_Org_User_Access_ListsWhereEachPermissionIsHeld(t *testing.T) {
+	h := NewCommandHarness(t)
+	m := h.MockManagementAPI()
+	m.SetRoute("GET", "/v1/users/me/access", 200, map[string]any{
+		"subject_type": "SERVICE_ACCOUNT",
+		"subject_id":   "sa1",
+		"subject_name": "ci-deployer",
+		"assignments":  []any{orgRoleAssignmentFixture()},
+		"permissions": []any{map[string]any{
+			"name":         "model.deployment.write",
+			"display_name": "Push deployments",
+			"category":     "model.deployment",
+			"grants": []any{map[string]any{
+				"team_id":   "t123456",
+				"team_name": "Engineering",
+				"resource_set": []any{
+					map[string]any{"type": "MODEL", "identifier": "m1"},
+					map[string]any{"type": "ENVIRONMENT", "identifier": "staging"},
+				},
+			}},
+		}},
+	})
+
+	h.Require.NoError(h.Execute("org", "user", "access", "--user-id", "me"))
+	h.Require.Contains(h.Stdout.String(), "service account ci-deployer (sa1)")
+	h.Require.Contains(h.Stdout.String(), "model:m1,environment:staging")
+	h.Require.NotContains(h.Stderr.String(), "aren't available")
 }
