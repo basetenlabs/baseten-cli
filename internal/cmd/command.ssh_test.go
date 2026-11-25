@@ -311,6 +311,20 @@ func Test_SSH_Setup_RejectsWorkloadIdentity(t *testing.T) {
 	h.Require.Empty(entries, "no keypair is generated")
 }
 
+func Test_SSH_Setup_RejectsIncompleteWorkloadIdentity(t *testing.T) {
+	h := NewCommandHarness(t)
+	dir, configPath := sshEnv(t)
+	setWorkloadIdentityEnv(t)
+	t.Setenv("BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID", "")
+
+	h.Require.Error(h.Execute("ssh", "setup"))
+	h.Require.Contains(h.Stderr.String(), "BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID")
+	h.Require.NoFileExists(configPath)
+	entries, err := os.ReadDir(dir)
+	h.Require.NoError(err)
+	h.Require.Empty(entries, "no keypair is generated")
+}
+
 func Test_SSH_Sign_RejectsWorkloadIdentity(t *testing.T) {
 	h := NewCommandHarness(t)
 	sshEnv(t)

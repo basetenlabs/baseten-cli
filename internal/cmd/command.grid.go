@@ -383,12 +383,6 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	if f.UseSessionCredential && f.KeyName != "" {
 		return cmd.NewErrUsagef("--key-name is not used with --use-session-credential; the session's API key already exists")
 	}
-	// Workload identity has neither a profile the helper could resolve inside
-	// the harness nor a long-lived key to install.
-	if session, err := ctx.authInfo.Session(); err == nil && session.WorkloadIdentity() != nil {
-		return cmd.NewErrUsagef("harness setup needs a stored profile or an API key; workload identity " +
-			"credentials are short-lived and cannot be installed in a harness")
-	}
 	if err := gridRequireGit(ctx, f.GitContext); err != nil {
 		return err
 	}
@@ -399,6 +393,12 @@ func commandGridSetup(ctx *CommandContext, f *cmd.GridSetupFlags) error {
 	session, err := ctx.authInfo.Session()
 	if err != nil {
 		return err
+	}
+	// Workload identity has neither a profile the helper could resolve inside
+	// the harness nor a long-lived key to install.
+	if session.WorkloadIdentity() != nil {
+		return cmd.NewErrUsagef("harness setup needs a stored profile or an API key; workload identity " +
+			"credentials are short-lived and cannot be installed in a harness")
 	}
 	// With no current profile, sign in here instead of sending the user to
 	// auth login. The new profile becomes the current one, as auth login's

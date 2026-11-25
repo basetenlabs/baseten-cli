@@ -434,6 +434,51 @@ func assertWorkloadIdentityBearer(t *testing.T, session *auth.Session, creds cli
 	require.Equal(t, []string{"identity-jwt"}, exchange.Assertions)
 }
 
+func TestTransport_WorkloadIdentityRefusedTokenIsReplaced(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		challenge string
+		replaced  bool
+	}{
+		{"baseten refusal", `Bearer realm="baseten", error="invalid_token"`, true},
+		// A model's own 401 is not Baseten refusing the token.
+		{"other 401", `Bearer error="invalid_token"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			storeWithConfigDir(t)
+			setWorkloadIdentityEnv(t, "rule-1")
+			exchange := newTokenExchangeServer(t, false)
+			session := mustResolve(t, "")
+			creds, err := session.NewWorkloadIdentityCredentials(exchange.URL, nil)
+			require.NoError(t, err)
+
+			var seen []string
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = append(seen, r.Header.Get("Authorization"))
+				if len(seen) == 1 {
+					w.Header().Set("WWW-Authenticate", tc.challenge)
+					w.WriteHeader(http.StatusUnauthorized)
+				}
+			}))
+			t.Cleanup(api.Close)
+
+			tr := &auth.Transport{Session: session, WorkloadIdentity: creds}
+			for range 2 {
+				resp, err := tr.Do(mustRequest(t, api.URL))
+				require.NoError(t, err)
+				resp.Body.Close()
+			}
+
+			second := "Bearer access-1"
+			if tc.replaced {
+				second = "Bearer access-2"
+			}
+			// The refused request is not sent again; only the next one gets a new token.
+			require.Equal(t, []string{"Bearer access-1", second}, seen)
+		})
+	}
+}
+
 func TestTransport_WorkloadIdentityInvalidGrant(t *testing.T) {
 	storeWithConfigDir(t)
 	file := setWorkloadIdentityEnv(t, "rule-1")

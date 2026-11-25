@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
+	"sync/atomic"
 
 	"github.com/basetenlabs/baseten-go/client"
 	"github.com/basetenlabs/baseten-go/client/managementapi"
@@ -144,6 +146,12 @@ func ResolveSession(profileFlag, defaultProfile string) (*Session, error) {
 // when none of its variables is set, and an error when it is incomplete or
 // gives the identity token twice: falling through to another credential would
 // silently run as a different identity.
+// WorkloadIdentityEnvSet reports whether any workload identity variable is
+// set, including in a combination that does not resolve.
+func WorkloadIdentityEnvSet() bool {
+	return os.Getenv(IdentityTokenFileEnv) != "" || os.Getenv(IdentityTokenEnv) != "" || os.Getenv(TrustRuleIDEnv) != ""
+}
+
 func workloadIdentityFromEnv() (*WorkloadIdentity, error) {
 	file, token, rule := os.Getenv(IdentityTokenFileEnv), os.Getenv(IdentityTokenEnv), os.Getenv(TrustRuleIDEnv)
 	switch {
@@ -299,6 +307,10 @@ type Transport struct {
 	WorkloadIdentity client.Credentials
 
 	Base http.RoundTripper
+
+	// refused is the last workload identity token Baseten refused, passed to
+	// the next exchange so the credentials replace it.
+	refused atomic.Pointer[string]
 }
 
 func (t *Transport) base() http.RoundTripper {
@@ -324,7 +336,30 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	return t.base().RoundTrip(req)
+	resp, err := t.base().RoundTrip(req)
+	// The request is not sent again, since it may have side effects; only the
+	// next request gets a new token.
+	if err == nil && t.Session.workloadIdentity != nil && refusedByBaseten(resp) {
+		t.refused.Store(&token)
+	}
+	return resp, err
+}
+
+// refusedByBaseten reports whether Baseten's auth layer refused the request's
+// access token, which it signals with this challenge. A model's own error
+// response cannot carry it, since its headers are not forwarded.
+func refusedByBaseten(resp *http.Response) bool {
+	if resp.StatusCode != http.StatusUnauthorized {
+		return false
+	}
+	for _, challenge := range resp.Header.Values("WWW-Authenticate") {
+		if strings.HasPrefix(challenge, "Bearer ") &&
+			strings.Contains(challenge, `realm="baseten"`) &&
+			strings.Contains(challenge, `error="invalid_token"`) {
+			return true
+		}
+	}
+	return false
 }
 
 // Credential resolves the session's credential as a bearer token: an API key
@@ -355,7 +390,11 @@ func (t *Transport) AccessToken(ctx context.Context) (client.AccessToken, error)
 		if t.WorkloadIdentity == nil {
 			return client.AccessToken{}, errors.New("workload identity session requires WorkloadIdentity to be set on Transport")
 		}
-		token, err := t.WorkloadIdentity.AccessToken(ctx, client.AccessTokenOptions{})
+		var opts client.AccessTokenOptions
+		if refused := t.refused.Swap(nil); refused != nil {
+			opts.RefusedToken = *refused
+		}
+		token, err := t.WorkloadIdentity.AccessToken(ctx, opts)
 		if IsTokenExchangeRefused(err) {
 			// The SDK's hint names the trust rule; this adds where it came from.
 			return client.AccessToken{}, fmt.Errorf("workload identity (%s=%s, %s): %w",

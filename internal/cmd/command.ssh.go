@@ -29,7 +29,9 @@ func commandSSHSetup(ctx *CommandContext, flags *cmd.SSHSetupFlags) error {
 		profile = session.ProfileName()
 	} else if errors.As(err, &required) {
 		ctx.Warn("no profile selected to pin; pass --profile to pin one. Connections will use BASETEN_PROFILE.")
-	} else if errors.Is(err, huh.ErrUserAborted) {
+	} else if errors.Is(err, huh.ErrUserAborted) || auth.WorkloadIdentityEnvSet() {
+		// Sign and proxy would reject the same workload identity variables, so
+		// fail here rather than write a config that cannot connect.
 		return err
 	}
 	keyPath, reused, err := ssh.EnsureKeypair()
