@@ -87,15 +87,14 @@ var commandAuth = Command{
 			Name:    "status",
 			Summary: "Show authentication status",
 			Description: "Show the resolved authentication state: which credential source is active " +
-				"(a stored profile, BASETEN_API_KEY, or workload identity from BASETEN_IDENTITY_TOKEN_FILE " +
-				"and BASETEN_TRUST_RULE_ID), the remote, and the auth type.\n\n" +
-				"Credentials are selected in this order: --profile, BASETEN_API_KEY, workload identity, " +
-				"BASETEN_PROFILE, then the current profile. Does not contact Baseten.",
+				"(a stored profile, BASETEN_API_KEY, or workload identity), the remote, and the auth type.\n\n" +
+				"Credentials are selected in this order: --profile, BASETEN_API_KEY or workload identity " +
+				"(setting both is an error), BASETEN_PROFILE, then the current profile. Does not contact Baseten.",
 			Flags: AuthStatusFlags{},
 			Output: &CommandOutput[AuthStatusResult]{
 				TextDescription: "Summary of the active credential source: the profile name, BASETEN_API_KEY, or " +
-					"workload identity with its trust rule ID and identity token file; then the remote URL and, " +
-					"for a profile, the auth type. Notes when BASETEN_API_KEY shadows workload identity variables.",
+					"workload identity with its trust rule ID and where its identity token comes from; then the " +
+					"remote URL and, for a profile, the auth type.",
 				Examples: []CommandExample{
 					{
 						Description: "Show the current auth status.",
@@ -109,27 +108,25 @@ var commandAuth = Command{
 			},
 		},
 		{
-			Name:    "token",
-			Summary: "Print an access token",
-			Description: "Print a current Baseten access token for the resolved credential, for scripts that " +
-				"call the Baseten API directly with \"Authorization: Bearer <token>\".\n\n" +
-				"With workload identity (BASETEN_IDENTITY_TOKEN_FILE and BASETEN_TRUST_RULE_ID), exchanges the " +
-				"identity token for a short-lived access token. With an OAuth profile, prints its access token, " +
-				"refreshed first if it has expired. API keys are not access tokens, so an API key credential " +
-				"is an error; use the key itself.\n\n" +
+			Name:    "workload-identity-token",
+			Summary: "Print an access token exchanged through workload identity",
+			Description: "Exchange the workload identity token for a short-lived Baseten access token and print " +
+				"it, for scripts and clients that call Baseten directly with \"Authorization: Bearer <token>\".\n\n" +
+				"Needs BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID and either BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE or " +
+				"BASETEN_WORKLOAD_IDENTITY_TOKEN.\n\n" +
 				"Access tokens expire; request a new one rather than storing it.",
-			Flags: AuthTokenFlags{},
-			Output: &CommandOutput[AuthTokenResult]{
+			Flags: AuthWorkloadIdentityTokenFlags{},
+			Output: &CommandOutput[AuthWorkloadIdentityTokenResult]{
 				TextDescription: "Prints the access token alone on one line to stdout.",
 				Examples: []CommandExample{
 					{
 						Description: "Call the management API with a fresh access token.",
-						Command:     `curl -H "Authorization: Bearer $(baseten auth token)" https://api.baseten.co/v1/models`,
+						Command:     `curl -H "Authorization: Bearer $(baseten auth workload-identity-token)" https://api.baseten.co/v1/models`,
 					},
 				},
 				JQExample: CommandExample{
 					Description: "Print when the access token expires.",
-					Command:     "baseten auth token --jq '.expires_at'",
+					Command:     "baseten auth workload-identity-token --jq '.expires_at'",
 				},
 			},
 		},
@@ -249,16 +246,16 @@ type AuthStatusResult struct {
 	// Source is the active credential source: "profile", "api_key_env", or
 	// "workload_identity".
 	Source string `json:"source"`
-	// TrustRuleID and IdentityTokenFile are set for workload identity.
-	TrustRuleID       string `json:"trust_rule_id,omitempty"`
-	IdentityTokenFile string `json:"identity_token_file,omitempty"`
-	// WorkloadIdentityShadowed is true when workload identity variables are set
-	// but BASETEN_API_KEY takes precedence over them.
-	WorkloadIdentityShadowed bool `json:"workload_identity_shadowed,omitempty"`
+	// TrustRuleID is set for workload identity, with IdentityTokenFile, or
+	// IdentityTokenInline when the token comes from BASETEN_WORKLOAD_IDENTITY_TOKEN.
+	TrustRuleID         string `json:"trust_rule_id,omitempty"`
+	IdentityTokenFile   string `json:"identity_token_file,omitempty"`
+	IdentityTokenInline bool   `json:"identity_token_inline,omitempty"`
 }
 
-// AuthTokenResult is the JSON output of `baseten auth token`.
-type AuthTokenResult struct {
+// AuthWorkloadIdentityTokenResult is the JSON output of
+// `baseten auth workload-identity-token`.
+type AuthWorkloadIdentityTokenResult struct {
 	Token string `json:"token"`
 	// ExpiresAt is omitted when the token's expiry is unknown.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -302,8 +299,9 @@ type AuthStatusFlags struct {
 	CommandFlags
 }
 
-// AuthTokenFlags are the flags for baseten auth token.
-type AuthTokenFlags struct {
+// AuthWorkloadIdentityTokenFlags are the flags for baseten auth
+// workload-identity-token.
+type AuthWorkloadIdentityTokenFlags struct {
 	CommandFlags
 }
 

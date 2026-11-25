@@ -66,7 +66,7 @@ func trussCommand(ctx *CommandContext, inv trussInvocation) (*exec.Cmd, error) {
 		if os.Getenv(name) != "" {
 			return nil, cmd.NewErrUsagef(
 				"%s is set, which would point truss at a remote this CLI knows nothing about; "+
-					"unset it and use BASETEN_API_KEY, or BASETEN_IDENTITY_TOKEN_FILE and BASETEN_TRUST_RULE_ID, "+
+					"unset it and use BASETEN_API_KEY or the BASETEN_WORKLOAD_IDENTITY_* variables, "+
 					"plus BASETEN_REMOTE_URL for a non-default remote, "+
 					"which are forwarded to truss for you", name)
 		}
@@ -116,10 +116,11 @@ func trussCommand(ctx *CommandContext, inv trussInvocation) (*exec.Cmd, error) {
 			return nil, err
 		}
 		// Truss also reads the workload identity variables, so a session
-		// resolved to something else (--profile, BASETEN_API_KEY) drops them,
+		// resolved to something else (--profile) drops them,
 		// leaving the forwarded credential the only one truss sees.
 		env = slices.DeleteFunc(env, func(kv string) bool {
-			return strings.HasPrefix(kv, auth.IdentityTokenFileEnv+"=") || strings.HasPrefix(kv, auth.TrustRuleIDEnv+"=")
+			return strings.HasPrefix(kv, auth.IdentityTokenFileEnv+"=") || strings.HasPrefix(kv, auth.IdentityTokenEnv+"=") ||
+				strings.HasPrefix(kv, auth.TrustRuleIDEnv+"=")
 		})
 		env = append(env, forwarded...)
 	}
@@ -149,16 +150,19 @@ func trussAuthEnv(ctx *CommandContext) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		env := []string{
+			trussAuthRemoteURLEnv + "=" + remote.RemoteURL(),
+			auth.TrustRuleIDEnv + "=" + wi.TrustRuleID,
+		}
+		if wi.IdentityToken != "" {
+			return append(env, auth.IdentityTokenEnv+"="+wi.IdentityToken), nil
+		}
 		// Absolute because some commands run truss in another directory.
 		tokenFile, err := filepath.Abs(wi.IdentityTokenFile)
 		if err != nil {
 			return nil, err
 		}
-		return []string{
-			trussAuthRemoteURLEnv + "=" + remote.RemoteURL(),
-			auth.IdentityTokenFileEnv + "=" + tokenFile,
-			auth.TrustRuleIDEnv + "=" + wi.TrustRuleID,
-		}, nil
+		return append(env, auth.IdentityTokenFileEnv+"="+tokenFile), nil
 	}
 	transport, remote, err := ctx.AuthTransport()
 	if err != nil {

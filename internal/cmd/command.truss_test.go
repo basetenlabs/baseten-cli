@@ -272,27 +272,24 @@ func Test_Truss_ForwardsWorkloadIdentity(t *testing.T) {
 	// access token through a long push; nothing is exchanged here.
 	env := fake.only(t).Env
 	h.Require.Contains(env, "BASETEN_TRUSS_AUTH_REMOTE_URL=http://127.0.0.1:1")
-	h.Require.Contains(env, "BASETEN_IDENTITY_TOKEN_FILE="+file)
-	h.Require.Contains(env, "BASETEN_TRUST_RULE_ID=rule-1")
+	h.Require.Contains(env, "BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE="+file)
+	h.Require.Contains(env, "BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID=rule-1")
 	for _, kv := range env {
 		h.Require.False(strings.HasPrefix(kv, "BASETEN_TRUSS_AUTH_API_KEY="), kv)
 	}
 }
 
-func Test_Truss_APIKeyShadowingWorkloadIdentityDropsIt(t *testing.T) {
+func Test_Truss_ForwardsInlineWorkloadIdentity(t *testing.T) {
 	h, fake := newTrussHarness(t)
-	setWorkloadIdentityEnv(t)
-	t.Setenv("BASETEN_API_KEY", "test-key")
+	setInlineWorkloadIdentityEnv(t)
 
 	h.Require.NoError(h.Execute("truss", "push"))
 
-	// Truss is handed the credential the CLI resolved, so the shadowed
-	// workload identity variables must not reach it.
 	env := fake.only(t).Env
-	h.Require.Contains(env, "BASETEN_TRUSS_AUTH_API_KEY=test-key")
+	h.Require.Contains(env, "BASETEN_WORKLOAD_IDENTITY_TOKEN=identity-jwt")
+	h.Require.Contains(env, "BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID=rule-1")
 	for _, kv := range env {
-		h.Require.False(strings.HasPrefix(kv, "BASETEN_IDENTITY_TOKEN_FILE="), kv)
-		h.Require.False(strings.HasPrefix(kv, "BASETEN_TRUST_RULE_ID="), kv)
+		h.Require.False(strings.HasPrefix(kv, "BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE="), kv)
 	}
 }
 
@@ -304,5 +301,5 @@ func Test_Truss_NoForwardAuthKeepsWorkloadIdentityEnv(t *testing.T) {
 	h.Require.NoError(h.Execute("truss", "push", "--truss-no-forward-auth"))
 
 	// Without forwarding, truss sees the caller's environment untouched.
-	h.Require.Contains(fake.only(t).Env, "BASETEN_IDENTITY_TOKEN_FILE="+file)
+	h.Require.Contains(fake.only(t).Env, "BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE="+file)
 }

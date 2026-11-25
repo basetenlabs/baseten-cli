@@ -16,18 +16,32 @@ import (
 )
 
 // Environment variables that select workload identity federation: the CLI
-// exchanges the identity token in IdentityTokenFileEnv for a short-lived
-// Baseten access token under the trust rule in TrustRuleIDEnv.
+// exchanges an identity token, read from IdentityTokenFileEnv or given inline in
+// IdentityTokenEnv, for a short-lived Baseten access token under the trust rule
+// in TrustRuleIDEnv.
 const (
-	IdentityTokenFileEnv = "BASETEN_IDENTITY_TOKEN_FILE"
-	TrustRuleIDEnv       = "BASETEN_TRUST_RULE_ID"
+	IdentityTokenFileEnv = "BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE"
+	IdentityTokenEnv     = "BASETEN_WORKLOAD_IDENTITY_TOKEN"
+	TrustRuleIDEnv       = "BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID"
 )
 
 // WorkloadIdentity is the workload identity federation configuration read
-// from the environment.
+// from the environment. Exactly one of IdentityTokenFile and IdentityToken is
+// set.
 type WorkloadIdentity struct {
 	IdentityTokenFile string
-	TrustRuleID       string
+	// IdentityToken is the identity token itself. Unlike a file, it cannot be
+	// replaced while the CLI runs, so exchanges fail once it expires.
+	IdentityToken string
+	TrustRuleID   string
+}
+
+// IdentityTokenSource names where the identity token comes from, for messages.
+func (w *WorkloadIdentity) IdentityTokenSource() string {
+	if w.IdentityToken != "" {
+		return IdentityTokenEnv
+	}
+	return IdentityTokenFileEnv + "=" + w.IdentityTokenFile
 }
 
 // Session is the auth context resolved once per invocation. Exactly one of the
@@ -40,10 +54,6 @@ type Session struct {
 	ephemeralAPIKey  string
 	workloadIdentity *WorkloadIdentity
 	remoteURL        string
-
-	// workloadIdentityShadowed records that the workload identity variables
-	// are set but BASETEN_API_KEY took precedence over them.
-	workloadIdentityShadowed bool
 }
 
 // ResolveSession determines the effective auth for this invocation, most
@@ -51,8 +61,10 @@ type Session struct {
 //
 //  1. profileFlag (the --profile flag)
 //  2. BASETEN_API_KEY (+ optional BASETEN_REMOTE_URL), ephemeral
-//  3. BASETEN_IDENTITY_TOKEN_FILE and BASETEN_TRUST_RULE_ID (+ optional
-//     BASETEN_REMOTE_URL), ephemeral workload identity
+//  3. BASETEN_WORKLOAD_IDENTITY_TRUST_RULE_ID with
+//     BASETEN_WORKLOAD_IDENTITY_TOKEN_FILE or BASETEN_WORKLOAD_IDENTITY_TOKEN
+//     (+ optional BASETEN_REMOTE_URL), ephemeral workload identity. Setting
+//     these and BASETEN_API_KEY together is an error.
 //  4. BASETEN_PROFILE
 //  5. defaultProfile (a baked-in fallback, e.g. from the SSH config)
 //  6. the current profile in auth.json, or an *ErrExplicitProfileRequired when
@@ -81,16 +93,19 @@ func ResolveSession(profileFlag, defaultProfile string) (*Session, error) {
 		return s, nil
 	}
 
-	if key := os.Getenv("BASETEN_API_KEY"); key != "" {
-		s.ephemeralAPIKey = key
-		s.remoteURL = os.Getenv("BASETEN_REMOTE_URL")
-		s.workloadIdentityShadowed = os.Getenv(IdentityTokenFileEnv) != "" || os.Getenv(TrustRuleIDEnv) != ""
-		return s, nil
-	}
-
 	wi, err := workloadIdentityFromEnv()
 	if err != nil {
 		return nil, err
+	}
+	if key := os.Getenv("BASETEN_API_KEY"); key != "" {
+		// Two environment variables naming different identities are ambiguous,
+		// so neither silently wins.
+		if wi != nil {
+			return nil, fmt.Errorf("both BASETEN_API_KEY and workload identity (%s) are set; unset one", TrustRuleIDEnv)
+		}
+		s.ephemeralAPIKey = key
+		s.remoteURL = os.Getenv("BASETEN_REMOTE_URL")
+		return s, nil
 	}
 	if wi != nil {
 		s.workloadIdentity = wi
@@ -126,19 +141,27 @@ func ResolveSession(profileFlag, defaultProfile string) (*Session, error) {
 }
 
 // workloadIdentityFromEnv returns the workload identity configuration, nil
-// when neither variable is set, and an error when only one is: falling through
-// to a stored profile would silently run as a different identity.
+// when none of its variables is set, and an error when it is incomplete or
+// gives the identity token twice: falling through to another credential would
+// silently run as a different identity.
 func workloadIdentityFromEnv() (*WorkloadIdentity, error) {
-	file, rule := os.Getenv(IdentityTokenFileEnv), os.Getenv(TrustRuleIDEnv)
+	file, token, rule := os.Getenv(IdentityTokenFileEnv), os.Getenv(IdentityTokenEnv), os.Getenv(TrustRuleIDEnv)
 	switch {
-	case file == "" && rule == "":
+	case file == "" && token == "" && rule == "":
 		return nil, nil
-	case file == "":
-		return nil, fmt.Errorf("%s is set but %s is not; workload identity needs both", TrustRuleIDEnv, IdentityTokenFileEnv)
+	case file != "" && token != "":
+		return nil, fmt.Errorf("both %s and %s are set; set only one", IdentityTokenFileEnv, IdentityTokenEnv)
 	case rule == "":
-		return nil, fmt.Errorf("%s is set but %s is not; workload identity needs both", IdentityTokenFileEnv, TrustRuleIDEnv)
+		set := IdentityTokenFileEnv
+		if token != "" {
+			set = IdentityTokenEnv
+		}
+		return nil, fmt.Errorf("%s is set but %s is not; workload identity needs both", set, TrustRuleIDEnv)
+	case file == "" && token == "":
+		return nil, fmt.Errorf("%s is set but neither %s nor %s is; workload identity needs an identity token",
+			TrustRuleIDEnv, IdentityTokenFileEnv, IdentityTokenEnv)
 	default:
-		return &WorkloadIdentity{IdentityTokenFile: file, TrustRuleID: rule}, nil
+		return &WorkloadIdentity{IdentityTokenFile: file, IdentityToken: token, TrustRuleID: rule}, nil
 	}
 }
 
@@ -159,10 +182,6 @@ func (s *Session) IsEphemeral() bool { return s.ephemeralAPIKey != "" || s.workl
 // nil when the session does not authenticate with workload identity.
 func (s *Session) WorkloadIdentity() *WorkloadIdentity { return s.workloadIdentity }
 
-// WorkloadIdentityShadowed reports whether the workload identity variables are
-// set but ignored because BASETEN_API_KEY takes precedence.
-func (s *Session) WorkloadIdentityShadowed() bool { return s.workloadIdentityShadowed }
-
 // NewWorkloadIdentityCredentials builds the credentials that exchange the
 // session's identity token at managementURL. Callers build them once per
 // invocation and share them, so the access token is exchanged once and reused.
@@ -175,6 +194,9 @@ func (s *Session) NewWorkloadIdentityCredentials(managementURL string, httpClien
 		IdentityTokenFile: s.workloadIdentity.IdentityTokenFile,
 		TrustRuleID:       s.workloadIdentity.TrustRuleID,
 		BaseURL:           managementURL,
+	}
+	if token := s.workloadIdentity.IdentityToken; token != "" {
+		opts.IdentityToken = func(context.Context, client.IdentityTokenOptions) (string, error) { return token, nil }
 	}
 	// Assigned only when set: a nil *http.Client in the interface field would
 	// not read as nil to the SDK's default.
@@ -223,9 +245,10 @@ func (s *Session) CacheIdentity() string {
 		sum := sha256.Sum256([]byte(s.ephemeralAPIKey))
 		return "key-" + hex.EncodeToString(sum[:8])
 	case s.workloadIdentity != nil:
-		// The trust rule and token file together name the workload; a NUL
-		// separator keeps distinct pairs from hashing alike.
-		sum := sha256.Sum256([]byte(s.workloadIdentity.TrustRuleID + "\x00" + s.workloadIdentity.IdentityTokenFile))
+		// The trust rule and identity token source together name the workload;
+		// NUL separators keep distinct triples from hashing alike.
+		wi := s.workloadIdentity
+		sum := sha256.Sum256([]byte(wi.TrustRuleID + "\x00" + wi.IdentityTokenFile + "\x00" + wi.IdentityToken))
 		return "wif-" + hex.EncodeToString(sum[:8])
 	case s.profileName != "":
 		sum := sha256.Sum256([]byte(s.profileName))
@@ -335,8 +358,8 @@ func (t *Transport) AccessToken(ctx context.Context) (client.AccessToken, error)
 		token, err := t.WorkloadIdentity.AccessToken(ctx, client.AccessTokenOptions{})
 		if IsTokenExchangeRefused(err) {
 			// The SDK's hint names the trust rule; this adds where it came from.
-			return client.AccessToken{}, fmt.Errorf("workload identity (%s=%s, %s=%s): %w",
-				TrustRuleIDEnv, wi.TrustRuleID, IdentityTokenFileEnv, wi.IdentityTokenFile, err)
+			return client.AccessToken{}, fmt.Errorf("workload identity (%s=%s, %s): %w",
+				TrustRuleIDEnv, wi.TrustRuleID, wi.IdentityTokenSource(), err)
 		}
 		return token, err
 	}

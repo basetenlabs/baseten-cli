@@ -25,7 +25,7 @@ func init() {
 	Register("auth logout", commandAuthLogout)
 	Register("auth switch", commandAuthSwitch)
 	Register("auth status", commandAuthStatus)
-	Register("auth token", commandAuthToken)
+	Register("auth workload-identity-token", commandAuthWorkloadIdentityToken)
 	Register("auth list", commandAuthList)
 	Register("auth config describe", commandAuthConfigDescribe)
 	Register("auth config update", commandAuthConfigUpdate)
@@ -264,10 +264,16 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 				Source:                 cmd.AuthSourceWorkloadIdentity,
 				TrustRuleID:            wi.TrustRuleID,
 				IdentityTokenFile:      wi.IdentityTokenFile,
+				IdentityTokenInline:    wi.IdentityToken != "",
 			})
 		} else {
-			ctx.Outputf("Using workload identity from %s and %s\n  Trust rule: %s\n  Identity token file: %s\n  Remote: %s\n",
-				auth.IdentityTokenFileEnv, auth.TrustRuleIDEnv, wi.TrustRuleID, wi.IdentityTokenFile, hyperlink(ctx.Stdout, remoteURL))
+			// The inline token is a credential, so only where it comes from is shown.
+			tokenLine := "Identity token file: " + wi.IdentityTokenFile
+			if wi.IdentityToken != "" {
+				tokenLine = "Identity token: from " + auth.IdentityTokenEnv
+			}
+			ctx.Outputf("Using workload identity\n  Trust rule: %s\n  %s\n  Remote: %s\n",
+				wi.TrustRuleID, tokenLine, hyperlink(ctx.Stdout, remoteURL))
 		}
 		return nil
 	}
@@ -279,18 +285,13 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 		}
 		if ctx.JSON {
 			ctx.OutputJSON(cmd.AuthStatusResult{
-				RemoteURL:                remoteURL,
-				AuthType:                 string(auth.AuthTypeAPIKey),
-				RequireExplicitProfile:   af.RequireExplicitProfile,
-				Source:                   cmd.AuthSourceAPIKeyEnv,
-				WorkloadIdentityShadowed: session.WorkloadIdentityShadowed(),
+				RemoteURL:              remoteURL,
+				AuthType:               string(auth.AuthTypeAPIKey),
+				RequireExplicitProfile: af.RequireExplicitProfile,
+				Source:                 cmd.AuthSourceAPIKeyEnv,
 			})
 		} else {
 			ctx.Outputf("Using API key from BASETEN_API_KEY\n  Remote: %s\n", hyperlink(ctx.Stdout, remoteURL))
-			if session.WorkloadIdentityShadowed() {
-				ctx.Outputf("  Note: BASETEN_API_KEY shadows workload identity (%s, %s); unset it to use workload identity\n",
-					auth.IdentityTokenFileEnv, auth.TrustRuleIDEnv)
-			}
 		}
 		return nil
 	}
@@ -325,17 +326,16 @@ func commandAuthStatus(ctx *CommandContext, flags *cmd.AuthStatusFlags) error {
 	return nil
 }
 
-// commandAuthToken prints an access token. API keys are refused rather than
-// printed: they are long-lived secrets, not the short-lived token this command
-// promises, and a caller holding one already has it.
-func commandAuthToken(ctx *CommandContext, flags *cmd.AuthTokenFlags) error {
+// commandAuthWorkloadIdentityToken prints an access token exchanged through
+// workload identity.
+func commandAuthWorkloadIdentityToken(ctx *CommandContext, flags *cmd.AuthWorkloadIdentityTokenFlags) error {
 	session, err := ctx.authInfo.Session()
 	if err != nil {
 		return err
 	}
-	if session.UsesAPIKey() {
-		return cmd.NewErrUsagef("the active credential is an API key, which is not an access token; " +
-			"send the key itself as the bearer token, or use workload identity or `baseten auth login --web` for access tokens")
+	if session.WorkloadIdentity() == nil {
+		return cmd.NewErrUsagef("workload identity is not configured; set %s and %s or %s",
+			auth.TrustRuleIDEnv, auth.IdentityTokenFileEnv, auth.IdentityTokenEnv)
 	}
 	transport, _, err := ctx.AuthTransport()
 	if err != nil {
@@ -346,7 +346,7 @@ func commandAuthToken(ctx *CommandContext, flags *cmd.AuthTokenFlags) error {
 		return err
 	}
 	if ctx.JSON {
-		result := cmd.AuthTokenResult{Token: token.Token}
+		result := cmd.AuthWorkloadIdentityTokenResult{Token: token.Token}
 		if !token.ExpiresAt.IsZero() {
 			expiresAt := token.ExpiresAt.UTC()
 			result.ExpiresAt = &expiresAt
